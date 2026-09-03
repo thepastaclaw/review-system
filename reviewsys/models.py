@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from enum import StrEnum
 
 
@@ -72,40 +71,6 @@ class StepName(StrEnum):
     PHASE2 = "phase2"
     VERIFY2 = "verify2"
     PUBLISH = "publish"
-
-
-STEP_ORDER: tuple[StepName, ...] = (
-    StepName.WORKTREE,
-    StepName.SELECT,
-    StepName.CONTEXT,
-    StepName.PHASE1,
-    StepName.VERIFY1,
-    StepName.GATE,
-    StepName.PHASE2,
-    StepName.VERIFY2,
-    StepName.PUBLISH,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class PrRef:
-    repo: str
-    number: int
-
-    def __str__(self) -> str:
-        return f"{self.repo}#{self.number}"
-
-    @property
-    def owner(self) -> str:
-        return self.repo.split("/", 1)[0]
-
-    @property
-    def name(self) -> str:
-        return self.repo.split("/", 1)[1]
-
-    @property
-    def slug(self) -> str:
-        return f"{self.repo.replace('/', '-')}-{self.number}"
 
 
 class ReviewError(Exception):

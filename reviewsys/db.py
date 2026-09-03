@@ -84,8 +84,18 @@ MIGRATIONS: dict[int, str] = {
 }
 
 
+def fmt_ts(value: datetime) -> str:
+    """Render a datetime the way every timestamp column stores it: ISO-8601 with a `Z`."""
+    return value.isoformat().replace("+00:00", "Z")
+
+
+def now_dt() -> datetime:
+    """Current UTC time at the whole-second resolution used for stored timestamps."""
+    return datetime.now(UTC).replace(microsecond=0)
+
+
 def now() -> str:
-    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return fmt_ts(now_dt())
 
 
 def parse_ts(value: str) -> datetime:

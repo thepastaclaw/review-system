@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
 from .config import Config
@@ -209,7 +208,3 @@ def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
         }
         for f in findings
     ]
-
-
-def artifact_path(run_dir: Path, name: str) -> Path:
-    return run_dir / name

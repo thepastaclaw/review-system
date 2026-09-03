@@ -9,7 +9,7 @@ from datetime import timedelta
 from pathlib import Path
 
 from .config import Config
-from .db import event, now, parse_ts, tx
+from .db import event, fmt_ts, now_dt, tx
 
 
 def _dir_size(path: Path) -> int:
@@ -31,7 +31,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             "SELECT worktree FROM runs WHERE status IN ('spawned','running') AND worktree IS NOT NULL"
         )
     }
-    cutoff = parse_ts(now()) - timedelta(days=cfg.artifact_retention_days)
+    cutoff = now_dt() - timedelta(days=cfg.artifact_retention_days)
     # worktrees not tied to an active run and older than 24h
     if cfg.worktrees_dir.exists():
         for wt in sorted(cfg.worktrees_dir.iterdir(), key=lambda p: p.stat().st_mtime):
@@ -54,7 +54,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
     if cfg.runs_dir.exists():
         for rd in cfg.runs_dir.iterdir():
             try:
-                if parse_ts(now()) - timedelta(seconds=time.time() - rd.stat().st_mtime) < cutoff:
+                if now_dt() - timedelta(seconds=time.time() - rd.stat().st_mtime) < cutoff:
                     shutil.rmtree(rd, ignore_errors=True)
                     stats["runs_removed"] += 1
             except OSError:
@@ -62,12 +62,12 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
     with tx(conn):
         c = conn.execute(
             "DELETE FROM events WHERE ts < ?",
-            ((parse_ts(now()) - timedelta(days=90)).isoformat().replace("+00:00", "Z"),),
+            (fmt_ts(now_dt() - timedelta(days=90)),),
         )
         stats["events_pruned"] = c.rowcount
         c = conn.execute(
             "DELETE FROM inbox WHERE handled_at IS NOT NULL AND seen_at < ?",
-            ((parse_ts(now()) - timedelta(days=30)).isoformat().replace("+00:00", "Z"),),
+            (fmt_ts(now_dt() - timedelta(days=30)),),
         )
         stats["inbox_pruned"] = c.rowcount
         event(conn, "gc.run", detail=str(stats))

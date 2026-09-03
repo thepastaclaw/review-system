@@ -9,7 +9,7 @@ from datetime import timedelta
 from typing import Any
 
 from .config import Config
-from .db import event, kv_get, kv_set, now, parse_ts, tx
+from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .models import HeadStatus, Trigger
 
@@ -117,13 +117,7 @@ def enqueue_head(
             number=number,
             detail=f"head {row['id']} superseded by {sha[:8]}",
         )
-    eligible = (
-        ts
-        if priority
-        else (parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    eligible = ts if priority else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
     conn.execute(
         "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
         (repo, number, sha, trigger.value, priority, HeadStatus.QUEUED.value, ts, eligible),
@@ -233,7 +227,7 @@ def ingest_notifications(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
     since = kv_get(conn, "notify.cursor")
     if since is None:
         # first run: start from now rather than replaying weeks of history through the router
-        since = (parse_ts(now()) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+        since = fmt_ts(now_dt() - timedelta(minutes=10))
         with tx(conn):
             kv_set(conn, "notify.cursor", since)
     endpoint = f"/notifications?all=true&per_page=100&since={since}"

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from . import proc
 from .config import Config
-from .db import event, now, parse_ts, tx
+from .db import event, fmt_ts, now, parse_ts, tx
 from .models import FailKind, HeadStatus, RunStatus
 
 log = logging.getLogger(__name__)
@@ -72,11 +72,7 @@ def _start_run(
 ) -> int | None:
     attempt = int(head["attempts"]) + 1
     token = secrets.token_hex(8)
-    deadline = (
-        (parse_ts(ts) + timedelta(minutes=cfg.run_timeout_minutes))
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    deadline = fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.run_timeout_minutes))
     with tx(conn):
         cur = conn.execute(
             "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,?,?,?,?,?)",
@@ -177,7 +173,7 @@ def _requeue_or_fail(
             if cfg.retry_backoff_minutes
             else 5
         )
-        eligible = (parse_ts(ts) + timedelta(minutes=backoff)).isoformat().replace("+00:00", "Z")
+        eligible = fmt_ts(parse_ts(ts) + timedelta(minutes=backoff))
         conn.execute(
             "UPDATE heads SET status='queued', eligible_at=?, reason=? WHERE id=?",
             (eligible, reason[:500], head_id),

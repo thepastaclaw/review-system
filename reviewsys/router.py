@@ -17,7 +17,7 @@ from datetime import timedelta
 from typing import Any
 
 from .config import Config
-from .db import event, now, parse_ts, tx
+from .db import event, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .ingest import enqueue_head
 from .models import Trigger
@@ -71,69 +71,88 @@ def route_inbox(
     ts = now()
     meta_cache: dict[tuple[str, int], dict[str, Any] | None] = {}
     for row in rows:
-        repo, number, kind = row["repo"], row["number"], row["kind"]
-        action = "ignored"
+        repo, number = row["repo"], row["number"]
         if number is None or not repo:
-            _handled(conn, row["id"], action, ts)
+            _handled(conn, row["id"], "ignored", ts)
             stats["ignored"] += 1
             continue
-        watched = repo in cfg.enabled_repos
         if (repo, number) not in meta_cache:
             meta_cache[(repo, number)] = _pr_meta(gh, repo, number)
         meta = meta_cache[(repo, number)]
         if meta is None:
             continue  # leave unhandled; retry next tick
-        own_pr = str((meta.get("user") or {}).get("login") or "").lower() == cfg.bot_login.lower()
-        head = str((meta.get("head") or {}).get("sha") or "")
-        is_open = meta.get("state") == "open" and not meta.get("draft")
-
-        if kind == "review_requested" and watched and is_open and head and not own_pr:
-            with tx(conn):
-                enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REQUESTED, ts=ts)
-                _handled(conn, row["id"], "review_requested", ts)
-            stats["review_requested"] += 1
-            continue
-
-        comment = _comment(gh, str(row["body"] or "")) if row["body"] else None
-        body = str((comment or {}).get("body") or "")
-        actor = str(((comment or {}).get("user") or {}).get("login") or "")
-
-        if (
-            kind == "mention"
-            and watched
-            and is_open
-            and head
-            and mention_re.search(body)
-            and not own_pr
-        ):
-            with tx(conn):
-                enqueue_head(conn, cfg, repo, number, head, Trigger.MENTION, ts=ts)
-                _handled(conn, row["id"], "mention", ts)
-            stats["mention"] += 1
-            continue
-
-        if own_pr and comment and actor and actor.lower() != cfg.bot_login.lower():
-            assoc = str(comment.get("author_association") or "")
-            trusted = (
-                assoc in TRUSTED_ASSOCIATIONS
-                or actor in cfg.trusted_reviewers
-                or actor.lower() in ALLOWED_BOTS
-            )
-            if trusted:
-                with tx(conn):
-                    conn.execute(
-                        "UPDATE inbox SET actor=?, body=?, action='own_pr_comment' WHERE id=?",
-                        (actor, body[:4000], row["id"]),
-                    )
-                    # handled_at stays NULL until the batch is flushed
-                stats["own_pr_comment"] += 1
-                continue
-        with tx(conn):
-            _handled(conn, row["id"], action, ts)
-        stats["ignored"] += 1
+        stats[_route_row(conn, cfg, gh, row, meta=meta, mention_re=mention_re, ts=ts)] += 1
 
     stats["batches_sent"] = flush_batches(conn, cfg, notifier)
     return stats
+
+
+def _route_row(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    gh: Gh,
+    row: sqlite3.Row,
+    *,
+    meta: dict[str, Any],
+    mention_re: re.Pattern[str],
+    ts: str,
+) -> str:
+    """Handle one inbox row. Returns the stats key describing what was done."""
+    repo, number, kind = row["repo"], row["number"], row["kind"]
+    watched = repo in cfg.enabled_repos
+    own_pr = str((meta.get("user") or {}).get("login") or "").lower() == cfg.bot_login.lower()
+    head = str((meta.get("head") or {}).get("sha") or "")
+    is_open = meta.get("state") == "open" and not meta.get("draft")
+
+    if kind == "review_requested" and watched and is_open and head and not own_pr:
+        with tx(conn):
+            enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REQUESTED, ts=ts)
+            _handled(conn, row["id"], "review_requested", ts)
+        return "review_requested"
+
+    comment = _comment(gh, str(row["body"] or "")) if row["body"] else None
+    body = str((comment or {}).get("body") or "")
+    actor = str(((comment or {}).get("user") or {}).get("login") or "")
+
+    if (
+        kind == "mention"
+        and watched
+        and is_open
+        and head
+        and mention_re.search(body)
+        and not own_pr
+    ):
+        with tx(conn):
+            enqueue_head(conn, cfg, repo, number, head, Trigger.MENTION, ts=ts)
+            _handled(conn, row["id"], "mention", ts)
+        return "mention"
+
+    if (
+        own_pr
+        and comment
+        and actor
+        and actor.lower() != cfg.bot_login.lower()
+        and _trusted(cfg, comment, actor)
+    ):
+        with tx(conn):
+            conn.execute(
+                "UPDATE inbox SET actor=?, body=?, action='own_pr_comment' WHERE id=?",
+                (actor, body[:4000], row["id"]),
+            )
+            # handled_at stays NULL until the batch is flushed
+        return "own_pr_comment"
+
+    with tx(conn):
+        _handled(conn, row["id"], "ignored", ts)
+    return "ignored"
+
+
+def _trusted(cfg: Config, comment: dict[str, Any], actor: str) -> bool:
+    return (
+        str(comment.get("author_association") or "") in TRUSTED_ASSOCIATIONS
+        or actor in cfg.trusted_reviewers
+        or actor.lower() in ALLOWED_BOTS
+    )
 
 
 def _handled(conn: sqlite3.Connection, inbox_id: int, action: str, ts: str) -> None:
@@ -146,7 +165,7 @@ def flush_batches(conn: sqlite3.Connection, cfg: Config, notifier: Notifier) -> 
         "SELECT repo, number, MAX(occurred_at) AS newest, COUNT(*) AS n FROM inbox WHERE handled_at IS NULL AND action='own_pr_comment' GROUP BY repo, number"
     ).fetchall()
     sent = 0
-    cutoff = parse_ts(now()) - BATCH_DELAY
+    cutoff = now_dt() - BATCH_DELAY
     for b in pending:
         if parse_ts(b["newest"]) > cutoff:
             continue

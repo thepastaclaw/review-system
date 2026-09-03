@@ -156,10 +156,7 @@ class ReviewModel:
 
     @property
     def canonical_event(self) -> str:
-        blockers = self.verified.blocker_count
-        if self.phase == "preliminary" and blockers:
-            return "REQUEST_CHANGES"
-        if blockers:
+        if self.verified.blocker_count:
             return "REQUEST_CHANGES"
         return "APPROVE" if self.verified.review_action == "APPROVE" else "COMMENT"
 
@@ -265,15 +262,17 @@ def render(m: ReviewModel) -> str:
         parts += [m.superseded_note, ""]
     parts += _provenance_lines(m.provenance, m.phase)
     parts.append("")
-    cp = []
-    if counts["blocking"]:
-        cp.append(f"{SEVERITY_ICONS['blocking']} {counts['blocking']} blocking")
-    if counts["suggestion"]:
-        cp.append(f"{SEVERITY_ICONS['suggestion']} {counts['suggestion']} suggestion(s)")
-    if counts["nitpick"]:
-        cp.append(f"{SEVERITY_ICONS['nitpick']} {counts['nitpick']} nitpick(s)")
-    if cp:
-        parts.append(" | ".join(cp))
+    counts_line = " | ".join(
+        f"{SEVERITY_ICONS[sev]} {counts[sev]} {label}"
+        for sev, label in (
+            ("blocking", "blocking"),
+            ("suggestion", "suggestion(s)"),
+            ("nitpick", "nitpick(s)"),
+        )
+        if counts[sev]
+    )
+    if counts_line:
+        parts.append(counts_line)
     if m.skipped:
         if m.body_only:
             parts.append(
@@ -338,11 +337,11 @@ class PublishResult:
     posted: bool
     event: str
     transport_event: str
-    review_id: int | None
-    review_url: str | None
     body: str
-    comments: list[dict[str, Any]]
-    suppressed: list[Suppressed]
+    review_id: int | None = None
+    review_url: str | None = None
+    comments: list[dict[str, Any]] = field(default_factory=list)
+    suppressed: list[Suppressed] = field(default_factory=list)
     skipped_reason: str | None = None
 
 
@@ -465,14 +464,11 @@ def publish(gh: Gh, m: ReviewModel, *, bot_login: str, dry_run: bool) -> Publish
         and m.phase != "preliminary"
     ):
         return PublishResult(
-            False,
-            event,
-            event,
-            None,
-            None,
-            body,
-            [],
-            m.suppressed,
+            posted=False,
+            event=event,
+            transport_event=event,
+            body=body,
+            suppressed=m.suppressed,
             skipped_reason="already_reviewed",
         )
     transport = event
@@ -484,26 +480,24 @@ def publish(gh: Gh, m: ReviewModel, *, bot_login: str, dry_run: bool) -> Publish
     payload = {"commit_id": m.head_sha, "body": body, "event": transport, "comments": m.comments}
     if dry_run:
         return PublishResult(
-            False,
-            event,
-            transport,
-            None,
-            None,
-            body,
-            m.comments,
-            m.suppressed,
+            posted=False,
+            event=event,
+            transport_event=transport,
+            body=body,
+            comments=m.comments,
+            suppressed=m.suppressed,
             skipped_reason="dry_run",
         )
     resp = github.post_review(gh, m.repo, m.number, payload)
     return PublishResult(
-        True,
-        event,
-        transport,
-        int(resp["id"]),
-        str(resp.get("html_url") or ""),
-        body,
-        m.comments,
-        m.suppressed,
+        posted=True,
+        event=event,
+        transport_event=transport,
+        body=body,
+        review_id=int(resp["id"]),
+        review_url=str(resp.get("html_url") or ""),
+        comments=m.comments,
+        suppressed=m.suppressed,
     )
 
 

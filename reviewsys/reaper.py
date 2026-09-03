@@ -8,7 +8,7 @@ from datetime import timedelta
 
 from . import proc
 from .config import Config
-from .db import now, parse_ts
+from .db import now_dt, parse_ts
 from .models import FailKind, RunStatus
 from .scheduler import finish_run
 
@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 def reap(conn: sqlite3.Connection, cfg: Config) -> list[tuple[int, str]]:
     """Returns [(run_id, action)] for every run acted on."""
     actions: list[tuple[int, str]] = []
-    ts = parse_ts(now())
+    ts = now_dt()
     stale = timedelta(minutes=cfg.heartbeat_stale_minutes)
     for run in conn.execute("SELECT * FROM runs WHERE status IN ('spawned','running')").fetchall():
         rid, pid = int(run["id"]), run["pid"]

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 from . import gc as gc_mod
 from .config import Config
-from .db import event, kv_get, kv_set, now, parse_ts, tx
+from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .ingest import ingest_notifications, ingest_prs
 from .notify import Notifier
@@ -96,7 +96,7 @@ class Daemon:
         streak = int(kv_get(self.conn, "ingest.error_streak", "0") or 0)
         key = "alert.watchdog_at"
         last = kv_get(self.conn, key)
-        recently = last is not None and (parse_ts(now()) - parse_ts(last)).total_seconds() < 3600
+        recently = last is not None and (now_dt() - parse_ts(last)).total_seconds() < 3600
         if (w["stuck"] or w["ingest_stale"] or streak >= 3) and not recently:
             self.notifier.alert(
                 f"watchdog: stuck={w['stuck']} eligible={w['eligible']} active={w['active']} ingest_stale={w['ingest_stale']} ingest_error_streak={streak}"

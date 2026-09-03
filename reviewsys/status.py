@@ -7,7 +7,7 @@ from datetime import timedelta
 from typing import Any
 
 from .config import Config
-from .db import kv_get, now, parse_ts
+from .db import fmt_ts, kv_get, now, now_dt, parse_ts
 
 
 def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
@@ -40,7 +40,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     median = durations[len(durations) // 2] if durations else None
     failed_24h = conn.execute(
         "SELECT COUNT(*) AS n FROM heads WHERE status='failed' AND finished_at>=?",
-        ((parse_ts(ts) - timedelta(hours=24)).isoformat().replace("+00:00", "Z"),),
+        (fmt_ts(parse_ts(ts) - timedelta(hours=24)),),
     ).fetchone()["n"]
     return {
         "ts": ts,
@@ -60,10 +60,10 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
 
 def watchdog(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     """True 'stuck' when eligible work exists, a slot is free, and nothing started recently."""
-    ts = parse_ts(now())
+    ts = now_dt()
     eligible = conn.execute(
         "SELECT COUNT(*) AS n FROM heads WHERE status='queued' AND eligible_at<=?",
-        (ts.isoformat().replace("+00:00", "Z"),),
+        (fmt_ts(ts),),
     ).fetchone()["n"]
     active = conn.execute(
         "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"

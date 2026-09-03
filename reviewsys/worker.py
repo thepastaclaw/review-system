@@ -57,7 +57,6 @@ class RunContext:
     repo: str
     number: int
     sha: str
-    attempt: int
     token: str
     run_dir: Path
     worktree: Path | None = None
@@ -173,26 +172,46 @@ def _lane_row(
         )
 
 
+_FINDINGS_INSERT = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+
+
+def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Finding]) -> None:
+    """Write finding rows. The caller must already hold the write transaction."""
+    ctx.conn.executemany(
+        _FINDINGS_INSERT,
+        [
+            (
+                ctx.run_id,
+                phase,
+                stage,
+                f.hash,
+                f.file,
+                f.line_start,
+                f.line_end,
+                f.severity,
+                f.confidence,
+                f.category,
+                f.title,
+                f.body[:8000],
+            )
+            for f in findings
+        ],
+    )
+
+
 def _record_findings(ctx: RunContext, phase: str, stage: str, findings: list[Finding]) -> None:
     with tx(ctx.conn):
-        for f in findings:
-            ctx.conn.execute(
-                "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    ctx.run_id,
-                    phase,
-                    stage,
-                    f.hash,
-                    f.file,
-                    f.line_start,
-                    f.line_end,
-                    f.severity,
-                    f.confidence,
-                    f.category,
-                    f.title,
-                    f.body[:8000],
-                ),
-            )
+        _insert_findings(ctx, phase, stage, findings)
+
+
+def _set_run_review(
+    ctx: RunContext, *, blocker_count: int, review_id: int | None, review_url: str | None
+) -> None:
+    """Record the published review on the run row. Caller holds the write transaction."""
+    ctx.conn.execute(
+        "UPDATE runs SET blocker_count=?, review_id=?, review_url=? WHERE id=?",
+        (blocker_count, review_id, review_url, ctx.run_id),
+    )
 
 
 def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
@@ -313,7 +332,6 @@ def _run_lane(
     role: str,
     lm: LaneModel,
     prompt: str,
-    expected_phase: str,
     is_verifier: bool,
 ) -> dict[str, Any]:
     """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output."""
@@ -444,15 +462,7 @@ def _reviewer_lanes(
             prior=ctx.prior,
             prior_sha=ctx.prior_sha,
         )
-        raw = _run_lane(
-            ctx,
-            phase=phase,
-            role=role,
-            lm=lm,
-            prompt=prompt,
-            expected_phase=expected_phase,
-            is_verifier=False,
-        )
+        raw = _run_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt, is_verifier=False)
         outputs[role] = parse_reviewer_output(
             raw,
             expected_phase=expected_phase,
@@ -465,13 +475,7 @@ def _reviewer_lanes(
 
 
 def _verifier_lane(
-    ctx: RunContext,
-    *,
-    phase: str,
-    lm: LaneModel,
-    expected_phase: str,
-    p1: dict[str, ReviewerOutput],
-    p2: dict[str, ReviewerOutput],
+    ctx: RunContext, *, phase: str, lm: LaneModel, expected_phase: str
 ) -> VerifierOutput:
     prompt = verifier_prompt(
         ctx.cfg,
@@ -479,23 +483,15 @@ def _verifier_lane(
         number=ctx.number,
         head_sha=ctx.sha,
         phase=expected_phase,
-        phase1_outputs={r: o.raw for r, o in p1.items()},
-        phase2_outputs={r: o.raw for r, o in p2.items()},
+        phase1_outputs={r: o.raw for r, o in ctx.phase1_outputs.items()},
+        phase2_outputs={r: o.raw for r, o in ctx.phase2_outputs.items()},
         coderabbit=ctx.coderabbit,
         coderabbit_ids=ctx.coderabbit_ids,
         evidence=ctx.evidence,
         prior=ctx.prior,
         prior_sha=ctx.prior_sha,
     )
-    raw = _run_lane(
-        ctx,
-        phase=phase,
-        role="verifier",
-        lm=lm,
-        prompt=prompt,
-        expected_phase=expected_phase,
-        is_verifier=True,
-    )
+    raw = _run_lane(ctx, phase=phase, role="verifier", lm=lm, prompt=prompt, is_verifier=True)
     out = parse_verifier_output(
         raw, expected_phase=expected_phase, expected_coderabbit_ids=ctx.coderabbit_ids
     )
@@ -526,36 +522,16 @@ def _backfill_posted(
                     ts,
                 ),
             )
-        for f in verified.findings:
-            ctx.conn.execute(
-                "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?) ON CONFLICT(repo, number, hash) DO NOTHING",
-                (ctx.repo, ctx.number, f.hash, ctx.sha, review_id, ts),
-            )
-            ctx.conn.execute(
-                "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    ctx.run_id,
-                    phase,
-                    "posted",
-                    f.hash,
-                    f.file,
-                    f.line_start,
-                    f.line_end,
-                    f.severity,
-                    f.confidence,
-                    f.category,
-                    f.title,
-                    f.body[:8000],
-                ),
-            )
-        ctx.conn.execute(
-            "UPDATE runs SET blocker_count=?, review_id=?, review_url=? WHERE id=?",
-            (
-                verified.blocker_count,
-                review_id,
-                str(existing.get("html_url") or "") or None,
-                ctx.run_id,
-            ),
+        ctx.conn.executemany(
+            "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?) ON CONFLICT(repo, number, hash) DO NOTHING",
+            [(ctx.repo, ctx.number, f.hash, ctx.sha, review_id, ts) for f in verified.findings],
+        )
+        _insert_findings(ctx, phase, "posted", verified.findings)
+        _set_run_review(
+            ctx,
+            blocker_count=verified.blocker_count,
+            review_id=review_id,
+            review_url=str(existing.get("html_url") or "") or None,
         )
 
 
@@ -570,16 +546,28 @@ def step_publish(
         # still see these findings as "prior" and never post again for this sha/phase.
         _backfill_posted(ctx, phase, existing, verified)
         return publish.PublishResult(
-            False,
-            "COMMENT",
-            "COMMENT",
-            int(existing.get("id") or 0) or None,
-            str(existing.get("html_url") or "") or None,
-            "",
-            [],
-            [],
+            posted=False,
+            event="COMMENT",
+            transport_event="COMMENT",
+            body="",
+            review_id=int(existing.get("id") or 0) or None,
+            review_url=str(existing.get("html_url") or "") or None,
             skipped_reason="already_published_for_sha",
         )
+    model = _build_review(ctx, phase=phase, verified=verified, verifier_lm=verifier_lm)
+    (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
+    result = publish.publish(ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run)
+    _record_publication(ctx, phase, model, result, verified)
+    if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
+        publish.post_coderabbit_reactions(
+            ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
+        )
+    return result
+
+
+def _build_review(
+    ctx: RunContext, *, phase: str, verified: VerifierOutput, verifier_lm: LaneModel
+) -> publish.ReviewModel:
     diff = github.pr_diff(ctx.gh, ctx.repo, ctx.number)
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
@@ -595,7 +583,7 @@ def step_publish(
     if head_row and head_row["status"] == "superseded":
         live = github.pr_meta(ctx.gh, ctx.repo, ctx.number).head_sha
         note = f"_This review was completed for commit `{ctx.sha[:8]}`; the PR has since moved to `{live[:8]}`. A fresh review of the new head is queued._"
-    model = publish.build(
+    return publish.build(
         ctx.gh,
         repo=ctx.repo,
         number=ctx.number,
@@ -608,8 +596,15 @@ def step_publish(
         dry_run=ctx.dry_run,
         superseded_note=note,
     )
-    (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
-    result = publish.publish(ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run)
+
+
+def _record_publication(
+    ctx: RunContext,
+    phase: str,
+    model: publish.ReviewModel,
+    result: publish.PublishResult,
+    verified: VerifierOutput,
+) -> None:
     with tx(ctx.conn):
         if result.posted:
             ctx.conn.execute(
@@ -625,132 +620,103 @@ def step_publish(
                     now(),
                 ),
             )
-            for f in model.kept:
-                ctx.conn.execute(
-                    "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?) ON CONFLICT(repo, number, hash) DO UPDATE SET sha=excluded.sha, review_id=excluded.review_id, posted_at=excluded.posted_at",
-                    (ctx.repo, ctx.number, f.hash, ctx.sha, result.review_id, now()),
-                )
-            for f in model.kept:
-                ctx.conn.execute(
-                    "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        ctx.run_id,
-                        phase,
-                        "posted",
-                        f.hash,
-                        f.file,
-                        f.line_start,
-                        f.line_end,
-                        f.severity,
-                        f.confidence,
-                        f.category,
-                        f.title,
-                        f.body[:8000],
-                    ),
-                )
-        ctx.conn.execute(
-            "UPDATE runs SET blocker_count=?, review_id=?, review_url=? WHERE id=?",
-            (verified.blocker_count, result.review_id, result.review_url, ctx.run_id),
+            ctx.conn.executemany(
+                "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?) ON CONFLICT(repo, number, hash) DO UPDATE SET sha=excluded.sha, review_id=excluded.review_id, posted_at=excluded.posted_at",
+                [
+                    (ctx.repo, ctx.number, f.hash, ctx.sha, result.review_id, now())
+                    for f in model.kept
+                ],
+            )
+            _insert_findings(ctx, phase, "posted", model.kept)
+        _set_run_review(
+            ctx,
+            blocker_count=verified.blocker_count,
+            review_id=result.review_id,
+            review_url=result.review_url,
         )
-    if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
-        publish.post_coderabbit_reactions(
-            ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
-        )
-    return result
 
 
 # ---- orchestration ----
 
 
+def _reviewer_step(
+    ctx: RunContext, *, step: StepName, phase: str, lm: LaneModel, expected_phase: str
+) -> dict[str, ReviewerOutput]:
+    _step_start(ctx, step)
+    outputs = _reviewer_lanes(ctx, phase=phase, lm=lm, expected_phase=expected_phase)
+    _step_end(ctx, step, "ok", {"roles": list(outputs)})
+    return outputs
+
+
+def _verify_step(
+    ctx: RunContext, *, step: StepName, phase: str, lm: LaneModel, expected_phase: str
+) -> VerifierOutput:
+    _step_start(ctx, step)
+    out = _verifier_lane(ctx, phase=phase, lm=lm, expected_phase=expected_phase)
+    _step_end(ctx, step, "ok", {"blockers": out.blocker_count, "findings": len(out.findings)})
+    return out
+
+
+def _publish_step(
+    ctx: RunContext, *, phase: str, verified: VerifierOutput, verifier_lm: LaneModel
+) -> None:
+    _step_start(ctx, StepName.PUBLISH)
+    res = step_publish(ctx, phase=phase, verified=verified, verifier_lm=verifier_lm)
+    _step_end(
+        ctx,
+        StepName.PUBLISH,
+        "ok",
+        {"posted": res.posted, "event": res.event, "skipped": res.skipped_reason},
+    )
+    _gate_comment(ctx, "done", phase=phase, blocker_count=verified.blocker_count)
+
+
 def run(ctx: RunContext) -> RunStatus:
     pol = ctx.cfg.policy
-    steps: list[tuple[StepName, Any]] = []
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
     _gate_comment(ctx, "in_progress")
-    try:
-        for name, fn in (
-            (StepName.WORKTREE, step_worktree),
-            (StepName.SELECT, step_select),
-            (StepName.CONTEXT, step_context),
-        ):
-            ctx.check_cancel()
-            _step_start(ctx, name)
-            fn(ctx)
-            _step_end(
-                ctx, name, "ok", {"selection": ctx.selection} if name == StepName.SELECT else None
-            )
-        _step_start(ctx, StepName.PHASE1)
-        ctx.phase1_outputs = _reviewer_lanes(
-            ctx, phase="phase1", lm=pol.phase1_reviewer, expected_phase="preliminary"
-        )
-        _step_end(ctx, StepName.PHASE1, "ok", {"roles": list(ctx.phase1_outputs)})
-        _step_start(ctx, StepName.VERIFY1)
-        ctx.verify1 = _verifier_lane(
-            ctx,
-            phase="verify1",
-            lm=pol.phase1_verifier,
-            expected_phase="preliminary",
-            p1=ctx.phase1_outputs,
-            p2={},
-        )
+    for name, fn in (
+        (StepName.WORKTREE, step_worktree),
+        (StepName.SELECT, step_select),
+        (StepName.CONTEXT, step_context),
+    ):
+        ctx.check_cancel()
+        _step_start(ctx, name)
+        fn(ctx)
         _step_end(
-            ctx,
-            StepName.VERIFY1,
-            "ok",
-            {"blockers": ctx.verify1.blocker_count, "findings": len(ctx.verify1.findings)},
+            ctx, name, "ok", {"selection": ctx.selection} if name == StepName.SELECT else None
         )
-        _step_start(ctx, StepName.GATE)
-        admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled)
-        _step_end(ctx, StepName.GATE, "ok", {"admit_phase2": admit})
-        if not admit:
-            ctx.check_cancel()
-            _step_start(ctx, StepName.PUBLISH)
-            res = step_publish(
-                ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=pol.phase1_verifier
-            )
-            _step_end(
-                ctx,
-                StepName.PUBLISH,
-                "ok",
-                {"posted": res.posted, "event": res.event, "skipped": res.skipped_reason},
-            )
-            _gate_comment(ctx, "done", phase="preliminary", blocker_count=ctx.verify1.blocker_count)
-            steps.append((StepName.PUBLISH, res))
-            return RunStatus.DONE
-        _step_start(ctx, StepName.PHASE2)
-        ctx.phase2_outputs = _reviewer_lanes(
-            ctx, phase="phase2", lm=pol.phase2_reviewer, expected_phase="final"
+    ctx.phase1_outputs = _reviewer_step(
+        ctx,
+        step=StepName.PHASE1,
+        phase="phase1",
+        lm=pol.phase1_reviewer,
+        expected_phase="preliminary",
+    )
+    ctx.verify1 = _verify_step(
+        ctx,
+        step=StepName.VERIFY1,
+        phase="verify1",
+        lm=pol.phase1_verifier,
+        expected_phase="preliminary",
+    )
+    _step_start(ctx, StepName.GATE)
+    admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled)
+    _step_end(ctx, StepName.GATE, "ok", {"admit_phase2": admit})
+    if not admit:
+        ctx.check_cancel()
+        _publish_step(
+            ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=pol.phase1_verifier
         )
-        _step_end(ctx, StepName.PHASE2, "ok", {"roles": list(ctx.phase2_outputs)})
-        _step_start(ctx, StepName.VERIFY2)
-        ctx.verify2 = _verifier_lane(
-            ctx,
-            phase="verify2",
-            lm=pol.phase2_verifier,
-            expected_phase="final",
-            p1=ctx.phase1_outputs,
-            p2=ctx.phase2_outputs,
-        )
-        _step_end(
-            ctx,
-            StepName.VERIFY2,
-            "ok",
-            {"blockers": ctx.verify2.blocker_count, "findings": len(ctx.verify2.findings)},
-        )
-        _step_start(ctx, StepName.PUBLISH)
-        res = step_publish(
-            ctx, phase="final", verified=ctx.verify2, verifier_lm=pol.phase2_verifier
-        )
-        _step_end(
-            ctx,
-            StepName.PUBLISH,
-            "ok",
-            {"posted": res.posted, "event": res.event, "skipped": res.skipped_reason},
-        )
-        _gate_comment(ctx, "done", phase="final", blocker_count=ctx.verify2.blocker_count)
         return RunStatus.DONE
-    finally:
-        pass
+    ctx.phase2_outputs = _reviewer_step(
+        ctx, step=StepName.PHASE2, phase="phase2", lm=pol.phase2_reviewer, expected_phase="final"
+    )
+    ctx.verify2 = _verify_step(
+        ctx, step=StepName.VERIFY2, phase="verify2", lm=pol.phase2_verifier, expected_phase="final"
+    )
+    _publish_step(ctx, phase="final", verified=ctx.verify2, verifier_lm=pol.phase2_verifier)
+    return RunStatus.DONE
 
 
 def cleanup(ctx: RunContext, status: RunStatus) -> None:
@@ -786,7 +752,6 @@ def main(
         repo=str(row["repo"]),
         number=int(row["number"]),
         sha=str(row["sha"]),
-        attempt=int(row["attempt"]),
         token=str(row["token"]),
         run_dir=cfg.runs_dir / f"run-{run_id}",
         dry_run=dry_run,
