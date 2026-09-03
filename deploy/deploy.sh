@@ -56,7 +56,12 @@ plutil -lint "$PLIST" >/dev/null
 echo "$TAG $SHA $(date -u +%FT%TZ)" >> "$BASE/deployed.log"
 # restart if running (launchctl kickstart needs a GUI session; kill + KeepAlive respawn works over ssh)
 PID=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
-if [ -n "$PID" ]; then kill "$PID"; sleep 3; fi
+if [ -n "$PID" ]; then
+  kill "$PID"
+  # the tick loop finishes its current task (possibly a slow gh call) before exiting
+  for _ in $(seq 1 60); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
+  kill -0 "$PID" 2>/dev/null && kill -9 "$PID"
+fi
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 sleep 3
