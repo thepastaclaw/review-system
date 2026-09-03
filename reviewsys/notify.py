@@ -60,7 +60,7 @@ class Notifier:
         self.sent.append(("wake", text))
         if not self.wake_enabled:
             log.info("wake suppressed (shadow mode): %s", text[:120])
-            return True
+            return False
         argv = [
             self.cfg.openclaw_bin,
             "system",

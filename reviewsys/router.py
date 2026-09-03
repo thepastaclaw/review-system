@@ -179,6 +179,9 @@ def flush_batches(conn: sqlite3.Connection, cfg: Config, notifier: Notifier) -> 
             f"Read the PR threads, address valid feedback on the PR branch, and reply on GitHub. "
             f"Preview of latest: {str(items[-1]['body'] or '')[:300]!r}"
         )
+        if not notifier.wake_enabled:
+            # shadow mode: observe only; leave the batch unhandled so a live daemon delivers it
+            continue
         ok = notifier.wake_agent(text)
         ts = now()
         with tx(conn):

@@ -194,3 +194,22 @@ def test_own_pr_comment_batches_to_agent(cfg, conn, gh, notifier):
     assert (
         conn.execute("SELECT COUNT(*) FROM heads").fetchone()[0] == 0
     )  # own PRs are never reviewed by us
+
+
+def test_shadow_mode_leaves_own_pr_batches_unhandled(cfg, conn, gh):
+    from reviewsys.db import tx
+    from reviewsys.notify import Notifier
+    from reviewsys.router import flush_batches
+
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at, action) VALUES ('s1','comment','dashpay/platform',5,'shumkov','fix','2026-09-01T10:00:00Z','2026-09-01T10:00:00Z','own_pr_comment')"
+        )
+    shadow = Notifier(cfg, runner=lambda argv: None, wake_enabled=False)  # type: ignore[arg-type,return-value]
+    assert flush_batches(conn, cfg, shadow) == 0
+    assert conn.execute("SELECT handled_at FROM inbox").fetchone()[0] is None
+    live = Notifier(
+        cfg, runner=lambda argv: __import__("subprocess").CompletedProcess(list(argv), 0, "", "")
+    )
+    assert flush_batches(conn, cfg, live) == 1
+    assert conn.execute("SELECT action FROM inbox").fetchone()[0] == "own_pr_comment_delivered"

@@ -34,7 +34,10 @@ export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME
 BASE=$HOME/.reviewsys
 SRC=$BASE/src
 mkdir -p "$BASE"
-if [ ! -d "$SRC/.git" ]; then git clone -q https://github.com/thepastaclaw/review-system.git "$SRC"; fi
+if [ ! -d "$SRC/.git" ]; then
+  [ -d "$SRC" ] && mv "$SRC" "$SRC.pre-git-$(date -u +%Y%m%dT%H%M%SZ)"
+  git clone -q https://github.com/thepastaclaw/review-system.git "$SRC"
+fi
 git -C "$SRC" fetch -q --tags origin
 git -C "$SRC" checkout -q --detach "$SHA"
 if [ ! -x "$BASE/venv/bin/python" ]; then uv venv -q --python 3.14 "$BASE/venv"; fi
