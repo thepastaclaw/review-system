@@ -69,6 +69,7 @@ def route_inbox(
     ).fetchall()
     mention_re = _mention_re(cfg.bot_login)
     ts = now()
+    meta_cache: dict[tuple[str, int], dict[str, Any] | None] = {}
     for row in rows:
         repo, number, kind = row["repo"], row["number"], row["kind"]
         action = "ignored"
@@ -77,7 +78,9 @@ def route_inbox(
             stats["ignored"] += 1
             continue
         watched = repo in cfg.enabled_repos
-        meta = _pr_meta(gh, repo, number)
+        if (repo, number) not in meta_cache:
+            meta_cache[(repo, number)] = _pr_meta(gh, repo, number)
+        meta = meta_cache[(repo, number)]
         if meta is None:
             continue  # leave unhandled; retry next tick
         own_pr = str((meta.get("user") or {}).get("login") or "").lower() == cfg.bot_login.lower()

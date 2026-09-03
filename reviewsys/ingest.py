@@ -231,7 +231,12 @@ def ingest_prs(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict[str, dict[
 def ingest_notifications(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
     """Pull GitHub notifications since the stored cursor into `inbox`. Returns rows added."""
     since = kv_get(conn, "notify.cursor")
-    endpoint = "/notifications?all=true&per_page=100" + (f"&since={since}" if since else "")
+    if since is None:
+        # first run: start from now rather than replaying weeks of history through the router
+        since = (parse_ts(now()) - timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+        with tx(conn):
+            kv_set(conn, "notify.cursor", since)
+    endpoint = f"/notifications?all=true&per_page=100&since={since}"
     rows = gh.api(endpoint, paginate=True) or []
     added = 0
     newest = since

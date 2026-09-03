@@ -118,7 +118,8 @@ def test_notifications_to_inbox_and_routing(cfg, conn, gh, notifier):
     }
     added = ingest_notifications(conn, cfg, gh)
     assert added == 2  # issue notification filtered
-    assert kv_get(conn, "notify.cursor") == "2026-09-01T10:01:00Z"
+    # cursor is bootstrapped to "now - 10m" on first run and only ever moves forward
+    assert kv_get(conn, "notify.cursor") >= "2026-09-01T10:01:00Z"
     assert ingest_notifications(conn, cfg, gh) == 0  # idempotent
     gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
     stats = route_inbox(conn, cfg, gh, notifier)

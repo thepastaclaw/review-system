@@ -42,7 +42,8 @@ def import_queue(conn: sqlite3.Connection, queue_json: Path) -> int:
             )
             # mark the head as done so ingest treats a later push as new_push, not new_pr
             conn.execute(
-                "INSERT OR IGNORE INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at, finished_at, reason) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at, finished_at, reason) VALUES (?,?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(repo, number, sha) DO UPDATE SET status='done', finished_at=excluded.finished_at, reason=excluded.reason WHERE heads.status='queued'",
                 (
                     repo,
                     number,
