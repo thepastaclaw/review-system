@@ -1,0 +1,41 @@
+[project]
+name = "reviewsys"
+version = "0.1.0"
+description = "PastaClaw PR review system: ingest, schedule, orchestrate two-phase LLM reviews, publish to GitHub"
+requires-python = ">=3.13"
+dependencies = []
+
+[project.scripts]
+reviewsys = "reviewsys.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["reviewsys"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+ignore = ["E501", "SIM108", "RUF012", "B008", "RUF001"]
+
+[tool.mypy]
+strict = true
+python_version = "3.13"
+warn_unreachable = true
+exclude = ["legacy/"]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
