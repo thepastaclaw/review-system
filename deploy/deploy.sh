@@ -61,6 +61,21 @@ launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 sleep 3
 NEW=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
-echo "daemon pid: ${NEW:-not running (load the plist from a GUI session or run: launchctl load -w ~/Library/LaunchAgents/$LABEL.plist)}"
+if [ -z "$NEW" ]; then
+  # launchd refuses gui-domain loads over ssh; start detached now. launchd will take over at
+  # the next login, and the daemon's singleton lock makes a second copy exit immediately.
+  ARGS="daemon"; [ -n "$SHADOW" ] && ARGS="daemon --no-spawn --no-wake"
+  "$BASE/venv/bin/python" - "$BASE" "$ARGS" <<'PY'
+import os, subprocess, sys
+base, args = sys.argv[1], sys.argv[2].split()
+env = dict(os.environ, GODEBUG="netdns=go", REVIEWSYS_CONFIG=f"{base}/config.toml", PYTHONUNBUFFERED="1")
+log = open(f"{base}/daemon.log", "ab")
+p = subprocess.Popen([f"{base}/venv/bin/reviewsys", *args], cwd=base, stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env, start_new_session=True)
+print(f"started detached daemon pid {p.pid} ({' '.join(args)})")
+PY
+  sleep 3
+  NEW=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
+fi
+echo "daemon pid: ${NEW:-NOT RUNNING}"
 "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" status
 REMOTE

@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import fcntl
 import logging
+import os
 import signal
 import sqlite3
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import IO
 
 from . import gc as gc_mod
 from .config import Config
@@ -21,6 +25,24 @@ from .scheduler import apply_supersedes, schedule
 from .status import watchdog
 
 log = logging.getLogger(__name__)
+
+
+def acquire_singleton_lock(path: Path) -> IO[str]:
+    """Hold an exclusive flock for the daemon's lifetime; a second daemon exits immediately.
+
+    Guards against launchd starting a twin of a manually started daemon (or vice versa).
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = open(path, "w")  # noqa: SIM115 - kept open for the process lifetime
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fd.close()
+        log.error("another reviewsys daemon already holds %s; exiting", path)
+        raise SystemExit(3) from None
+    fd.write(str(os.getpid()))
+    fd.flush()
+    return fd
 
 
 @dataclass(slots=True)
@@ -134,6 +156,7 @@ class Daemon:
         def _stop(*_: object) -> None:
             self.stop = True
 
+        self._lock = acquire_singleton_lock(self.cfg.db_path.with_suffix(".daemon.lock"))
         signal.signal(signal.SIGTERM, _stop)
         signal.signal(signal.SIGINT, _stop)
         with tx(self.conn):

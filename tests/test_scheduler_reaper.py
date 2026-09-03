@@ -214,3 +214,16 @@ def test_shadow_daemon_creates_no_runs_and_does_not_alert_stuck(cfg, conn, gh, n
     assert "schedule" not in res and "reap" not in res
     assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
     assert not [s for s in notifier.sent if s[0] == "alert" and "stuck=True" in s[1]]
+
+
+def test_daemon_singleton_lock(tmp_path):
+    import pytest
+
+    from reviewsys.daemon import acquire_singleton_lock
+
+    held = acquire_singleton_lock(tmp_path / "d.lock")
+    with pytest.raises(SystemExit):
+        acquire_singleton_lock(tmp_path / "d.lock")
+    held.close()
+    again = acquire_singleton_lock(tmp_path / "d.lock")
+    again.close()
