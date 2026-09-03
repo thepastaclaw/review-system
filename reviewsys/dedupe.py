@@ -164,7 +164,7 @@ def _representative(members: list[int], findings: list[Finding]) -> int:
     def key(i: int) -> tuple[int, int, int, str, int]:
         f = findings[i]
         return (
-            0 if f.root_id else 1,
+            0 if normalize_root_id(f.root_id) is not None else 1,
             -_SEVERITY_RANK.get(f.severity, 0),
             -len(f.body),
             f.dedupe_key,

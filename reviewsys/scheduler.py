@@ -105,12 +105,14 @@ def _start_run(
             env={"REVIEWSYS_CONFIG": str(Path(cfg.db_path).parent / "config.toml")},
         )
     except OSError as exc:
-        with tx(conn):
-            conn.execute(
-                "UPDATE runs SET status='failed', reason=?, fail_kind='infra', finished_at=? WHERE id=?",
-                (f"spawn failed: {exc}", now(), run_id),
-            )
-            _requeue_or_fail(conn, cfg, head["id"], FailKind.INFRA, f"spawn failed: {exc}")
+        finish_run(
+            conn,
+            cfg,
+            run_id,
+            RunStatus.FAILED,
+            reason=f"spawn failed: {exc}",
+            fail_kind=FailKind.INFRA,
+        )
         return None
     with tx(conn):
         conn.execute("UPDATE runs SET pid=? WHERE id=?", (child.pid, run_id))

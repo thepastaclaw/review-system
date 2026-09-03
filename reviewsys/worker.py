@@ -503,18 +503,78 @@ def _verifier_lane(
     return out
 
 
+def _backfill_posted(
+    ctx: RunContext, phase: str, existing: dict[str, Any], verified: VerifierOutput
+) -> None:
+    review_id = int(existing.get("id") or 0) or None
+    ts = now()
+    with tx(ctx.conn):
+        if not ctx.conn.execute(
+            "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? AND phase=?",
+            (ctx.repo, ctx.number, ctx.sha, phase),
+        ).fetchone():
+            ctx.conn.execute(
+                "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    ctx.run_id,
+                    ctx.repo,
+                    ctx.number,
+                    ctx.sha,
+                    phase,
+                    review_id,
+                    str(existing.get("state") or "UNKNOWN"),
+                    ts,
+                ),
+            )
+        for f in verified.findings:
+            ctx.conn.execute(
+                "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?) ON CONFLICT(repo, number, hash) DO NOTHING",
+                (ctx.repo, ctx.number, f.hash, ctx.sha, review_id, ts),
+            )
+            ctx.conn.execute(
+                "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    ctx.run_id,
+                    phase,
+                    "posted",
+                    f.hash,
+                    f.file,
+                    f.line_start,
+                    f.line_end,
+                    f.severity,
+                    f.confidence,
+                    f.category,
+                    f.title,
+                    f.body[:8000],
+                ),
+            )
+        ctx.conn.execute(
+            "UPDATE runs SET blocker_count=?, review_id=?, review_url=? WHERE id=?",
+            (
+                verified.blocker_count,
+                review_id,
+                str(existing.get("html_url") or "") or None,
+                ctx.run_id,
+            ),
+        )
+
+
 def step_publish(
     ctx: RunContext, *, phase: str, verified: VerifierOutput, verifier_lm: LaneModel
 ) -> publish.PublishResult:
-    if github.existing_review_for_sha(
+    existing = github.existing_review_for_sha(
         ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
-    ):
+    )
+    if existing:
+        # A prior attempt posted but died before recording it. Backfill so future rounds
+        # still see these findings as "prior" and never post again for this sha/phase.
+        _backfill_posted(ctx, phase, existing, verified)
         return publish.PublishResult(
             False,
             "COMMENT",
             "COMMENT",
-            None,
-            None,
+            int(existing.get("id") or 0) or None,
+            str(existing.get("html_url") or "") or None,
             "",
             [],
             [],
@@ -643,6 +703,7 @@ def run(ctx: RunContext) -> RunStatus:
         admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled)
         _step_end(ctx, StepName.GATE, "ok", {"admit_phase2": admit})
         if not admit:
+            ctx.check_cancel()
             _step_start(ctx, StepName.PUBLISH)
             res = step_publish(
                 ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=pol.phase1_verifier
@@ -733,7 +794,15 @@ def main(
     if lane_runner:
         ctx.lane_runner = lane_runner
     with tx(conn):
-        conn.execute("UPDATE runs SET heartbeat_at=?, status='running' WHERE id=?", (now(), run_id))
+        claimed = conn.execute(
+            "UPDATE runs SET heartbeat_at=?, status='running' WHERE id=? AND token=? AND status IN ('spawned','running')",
+            (now(), run_id, ctx.token),
+        ).rowcount
+    if not claimed:
+        # reaped or replaced between our read and this write; never resurrect a terminal run
+        return RunStatus(
+            conn.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()["status"]
+        )
     stop = threading.Event()
     hb = (
         threading.Thread(target=_heartbeat_loop, args=(ctx, stop), daemon=True)

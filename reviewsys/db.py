@@ -108,21 +108,20 @@ def connect(path: Path | str) -> sqlite3.Connection:
 
 def migrate(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
-    row = conn.execute("SELECT version FROM schema_version").fetchone()
-    current = int(row[0]) if row else 0
     for version in sorted(MIGRATIONS):
-        if version <= current:
-            continue
         with tx(conn):
-            # executescript() would implicitly COMMIT; run statements one by one instead
-            for stmt in MIGRATIONS[version].split(";"):
-                if stmt.strip():
-                    conn.execute(stmt)
-            if current == 0 and version == 1:
-                conn.execute("INSERT INTO schema_version VALUES (?)", (version,))
-            else:
-                conn.execute("UPDATE schema_version SET version=?", (version,))
-        current = version
+            # re-read under the write lock: another process may have migrated first
+            row = conn.execute("SELECT version FROM schema_version").fetchone()
+            current = int(row[0]) if row else 0
+            if version > current:
+                # executescript() would implicitly COMMIT; run statements one by one instead
+                for stmt in MIGRATIONS[version].split(";"):
+                    if stmt.strip():
+                        conn.execute(stmt)
+                if row is None:
+                    conn.execute("INSERT INTO schema_version VALUES (?)", (version,))
+                else:
+                    conn.execute("UPDATE schema_version SET version=?", (version,))
 
 
 @contextmanager
