@@ -50,12 +50,16 @@ class Daemon:
             Task("ingest", cfg.ingest_interval_seconds, self.t_ingest),
             Task("notify", cfg.notify_interval_seconds, self.t_notify),
             Task("route", 30, self.t_route),
-            Task("supersede", 0, self.t_supersede),
-            Task("reap", 0, self.t_reap),
-            Task("schedule", 0, self.t_schedule),
-            Task("watchdog", 300, self.t_watchdog),
-            Task("gc", 3600, self.t_gc),
         ]
+        if spawn:
+            # shadow mode (spawn=False) observes ingest/routing only: no runs are created,
+            # so nothing needs reaping, superseding or scheduling
+            self.tasks += [
+                Task("supersede", 0, self.t_supersede),
+                Task("reap", 0, self.t_reap),
+                Task("schedule", 0, self.t_schedule),
+            ]
+        self.tasks += [Task("watchdog", 300, self.t_watchdog), Task("gc", 3600, self.t_gc)]
 
     # ---- tasks ----
     def t_ingest(self) -> object:
@@ -97,7 +101,8 @@ class Daemon:
         key = "alert.watchdog_at"
         last = kv_get(self.conn, key)
         recently = last is not None and (now_dt() - parse_ts(last)).total_seconds() < 3600
-        if (w["stuck"] or w["ingest_stale"] or streak >= 3) and not recently:
+        stuck = w["stuck"] and self.spawn  # a shadow daemon never schedules, so "stuck" is expected
+        if (stuck or w["ingest_stale"] or streak >= 3) and not recently:
             self.notifier.alert(
                 f"watchdog: stuck={w['stuck']} eligible={w['eligible']} active={w['active']} ingest_stale={w['ingest_stale']} ingest_error_streak={streak}"
             )
@@ -133,7 +138,9 @@ class Daemon:
         signal.signal(signal.SIGINT, _stop)
         with tx(self.conn):
             event(self.conn, "daemon.start")
-        self.notifier.alert("daemon started")
+        self.notifier.alert(
+            "daemon started" + ("" if self.spawn else " in shadow mode (no reviews will run)")
+        )
         try:
             while not self.stop:
                 self.tick()

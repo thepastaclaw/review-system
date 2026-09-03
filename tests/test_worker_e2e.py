@@ -350,9 +350,13 @@ def test_daemon_tick_shadow_mode(cfg, conn, gh, notifier):
     d = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False)
     res = d.tick(force=True)
     assert res["ingest"]["dashpay/platform"]["created"] == 1
-    assert res["schedule"] == []  # debounced
+    assert "schedule" not in res  # shadow mode observes only
     with tx(conn):
         conn.execute("UPDATE heads SET eligible_at=queued_at")
-    res = d.tick(force=True)
+    d.tick(force=True)
+    assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+    # a live daemon on the same DB schedules it
+    live = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=True)
+    res = live.tick(force=True)
     assert len(res["schedule"]) == 1
     assert conn.execute("SELECT status FROM runs").fetchone()["status"] == "spawned"

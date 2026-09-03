@@ -131,7 +131,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("daemon", help="run the tick loop forever")
     s.add_argument(
-        "--no-spawn", action="store_true", help="schedule but never spawn workers (shadow mode)"
+        "--no-spawn",
+        action="store_true",
+        help="shadow mode: ingest and route only, never start reviews",
     )
     s.add_argument(
         "--no-wake", action="store_true", help="never wake the OpenClaw agent (shadow mode)"

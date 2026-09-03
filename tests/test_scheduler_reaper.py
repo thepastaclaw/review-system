@@ -203,3 +203,14 @@ def test_spawn_real_worker_process(cfg, conn, tmp_path, monkeypatch):
             time.sleep(0.05)
         except ProcessLookupError:
             break
+
+
+def test_shadow_daemon_creates_no_runs_and_does_not_alert_stuck(cfg, conn, gh, notifier):
+    from reviewsys.daemon import Daemon
+
+    queue(conn, cfg, 2)
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False)
+    res = d.tick(force=True)
+    assert "schedule" not in res and "reap" not in res
+    assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+    assert not [s for s in notifier.sent if s[0] == "alert" and "stuck=True" in s[1]]
