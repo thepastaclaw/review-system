@@ -114,3 +114,35 @@ def test_verifier_output_contract():
 def test_finding_invalid_severity():
     with pytest.raises(ReviewError, match="severity"):
         Finding.from_dict({"file": "f", "title": "t", "severity": "critical"})
+
+
+def test_lane_argv_includes_budget_cap(tmp_path):
+    from reviewsys.lane import LaneSpec, argv_for
+
+    spec = LaneSpec(
+        role="general",
+        agent="a",
+        model="m",
+        effort="high",
+        prompt="p",
+        cwd=tmp_path,
+        add_dir=tmp_path,
+        timeout_seconds=1,
+        claude_bin="claude",
+        max_budget_usd=4.0,
+    )
+    argv = argv_for(spec)
+    assert argv[-2:] == ["--max-budget-usd", "4.00"] and "--output-format" in argv
+    assert "--max-budget-usd" not in argv_for(
+        LaneSpec(
+            role="r",
+            agent="a",
+            model="m",
+            effort="low",
+            prompt="p",
+            cwd=tmp_path,
+            add_dir=tmp_path,
+            timeout_seconds=1,
+            claude_bin="claude",
+        )
+    )

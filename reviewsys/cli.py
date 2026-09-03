@@ -17,6 +17,7 @@ from .daemon import Daemon
 from .gh import Gh
 from .ingest import enqueue_head
 from .models import Trigger
+from .notify import Notifier
 
 
 def _cfg(args: argparse.Namespace) -> cfg_mod.Config:
@@ -26,14 +27,18 @@ def _cfg(args: argparse.Namespace) -> cfg_mod.Config:
 def cmd_daemon(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     conn = db_mod.connect(cfg.db_path)
-    Daemon(cfg, conn, spawn=not args.no_spawn).run_forever()
+    Daemon(
+        cfg, conn, spawn=not args.no_spawn, notifier=Notifier(cfg, wake_enabled=not args.no_wake)
+    ).run_forever()
     return 0
 
 
 def cmd_tick(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     conn = db_mod.connect(cfg.db_path)
-    res = Daemon(cfg, conn, spawn=not args.no_spawn).tick(force=True)
+    res = Daemon(
+        cfg, conn, spawn=not args.no_spawn, notifier=Notifier(cfg, wake_enabled=not args.no_wake)
+    ).tick(force=True)
     print(json.dumps(res, default=str, indent=1))
     return 0
 
@@ -128,9 +133,13 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--no-spawn", action="store_true", help="schedule but never spawn workers (shadow mode)"
     )
+    s.add_argument(
+        "--no-wake", action="store_true", help="never wake the OpenClaw agent (shadow mode)"
+    )
     s.set_defaults(fn=cmd_daemon)
     s = sub.add_parser("tick", help="run one tick of every task and exit")
     s.add_argument("--no-spawn", action="store_true")
+    s.add_argument("--no-wake", action="store_true")
     s.set_defaults(fn=cmd_tick)
     s = sub.add_parser("worker", help="execute one run")
     s.add_argument("--run-id", type=int, required=True)

@@ -18,9 +18,12 @@ def _run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
 
 
 class Notifier:
-    def __init__(self, cfg: Config, runner: Runner | None = None) -> None:
+    def __init__(
+        self, cfg: Config, runner: Runner | None = None, *, wake_enabled: bool = True
+    ) -> None:
         self.cfg = cfg
         self.runner = runner or _run
+        self.wake_enabled = wake_enabled
         self.sent: list[tuple[str, str]] = []
 
     def alert(self, text: str) -> bool:
@@ -55,6 +58,9 @@ class Notifier:
     def wake_agent(self, text: str) -> bool:
         """Wake the OpenClaw main agent with a system event (used for incoming review comments)."""
         self.sent.append(("wake", text))
+        if not self.wake_enabled:
+            log.info("wake suppressed (shadow mode): %s", text[:120])
+            return True
         argv = [
             self.cfg.openclaw_bin,
             "system",

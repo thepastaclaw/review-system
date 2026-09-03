@@ -351,6 +351,7 @@ def _run_lane(
             add_dir=ctx.run_dir,
             timeout_seconds=ctx.cfg.lane_timeout_minutes * 60,
             claude_bin=ctx.cfg.claude_bin,
+            max_budget_usd=ctx.cfg.lane_budget_usd,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)

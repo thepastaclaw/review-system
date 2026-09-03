@@ -30,6 +30,7 @@ class LaneSpec:
     add_dir: Path
     timeout_seconds: int
     claude_bin: str
+    max_budget_usd: float | None = None
 
 
 @dataclass(slots=True)
@@ -49,7 +50,7 @@ class LaneResult:
 
 
 def argv_for(spec: LaneSpec) -> list[str]:
-    return [
+    argv = [
         spec.claude_bin,
         "--bare",
         "--permission-mode",
@@ -65,6 +66,9 @@ def argv_for(spec: LaneSpec) -> list[str]:
         "--no-session-persistence",
         "--print",
     ]
+    if spec.max_budget_usd:
+        argv += ["--max-budget-usd", f"{spec.max_budget_usd:.2f}"]
+    return argv
 
 
 def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneResult:

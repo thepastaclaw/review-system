@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sqlite3
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -106,14 +107,34 @@ def connect(path: Path | str) -> sqlite3.Connection:
     p = Path(path)
     if str(p) != ":memory:":
         p.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(p), timeout=10, isolation_level=None)
+    conn = sqlite3.connect(str(p), timeout=30, isolation_level=None)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=30000")
+    # Switching a fresh file to WAL needs an exclusive lock and SQLite does not honour
+    # busy_timeout for that particular pragma, so retry it briefly under contention.
+    for attempt in range(50):
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            break
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or attempt == 49:
+                raise
+            time.sleep(0.05 * (attempt + 1))
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.execute("PRAGMA busy_timeout=10000")
     conn.execute("PRAGMA synchronous=NORMAL")
-    migrate(conn)
+    _retry_locked(lambda: migrate(conn))
     return conn
+
+
+def _retry_locked(fn: Callable[[], None], attempts: int = 50) -> None:
+    for attempt in range(attempts):
+        try:
+            fn()
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or attempt == attempts - 1:
+                raise
+            time.sleep(0.05 * (attempt + 1))
 
 
 def migrate(conn: sqlite3.Connection) -> None:
