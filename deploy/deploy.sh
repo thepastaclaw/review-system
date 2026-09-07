@@ -29,7 +29,7 @@ fi
 echo "deploying $TAG ($SHA) to $HOST"
 ssh -o BatchMode=yes "$HOST" bash -s -- "$TAG" "$SHA" "$LABEL" "$SHADOW" <<'REMOTE'
 set -euo pipefail
-TAG="$1"; SHA="$2"; LABEL="$3"; SHADOW="$4"
+TAG="$1"; SHA="$2"; LABEL="$3"; SHADOW="${4:-}"
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin
 BASE=$HOME/.reviewsys
 SRC=$BASE/src
