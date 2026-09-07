@@ -143,7 +143,8 @@ debounce_minutes = 30
 max_attempts = 3
 retry_backoff_minutes = [5, 15, 45]
 lane_timeout_minutes = 180
-lane_budget_usd = 4.0
+# runaway guard only (claude's list-price estimate, not real spend); a normal lane is $3-10
+lane_budget_usd = 50.0
 run_timeout_minutes = 360
 heartbeat_seconds = 15
 heartbeat_stale_minutes = 5
@@ -239,7 +240,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         lane_timeout_minutes=int(
             s.get("lane_timeout_minutes", settings.get("agent_timeout_minutes", 180))
         ),
-        lane_budget_usd=float(s.get("lane_budget_usd", 4.0)),
+        lane_budget_usd=float(s.get("lane_budget_usd", 50.0)),
         run_timeout_minutes=int(s["run_timeout_minutes"]),
         heartbeat_seconds=int(s["heartbeat_seconds"]),
         heartbeat_stale_minutes=int(s["heartbeat_stale_minutes"]),

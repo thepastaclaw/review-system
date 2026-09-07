@@ -17,7 +17,7 @@ from datetime import timedelta
 from typing import Any
 
 from .config import Config
-from .db import event, now, now_dt, parse_ts, tx
+from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .ingest import enqueue_head
 from .models import Trigger
@@ -26,6 +26,7 @@ from .notify import Notifier
 log = logging.getLogger(__name__)
 
 BATCH_DELAY = timedelta(minutes=5)
+BATCH_RETRY = timedelta(minutes=15)
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
 ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
 
@@ -182,22 +183,26 @@ def flush_batches(conn: sqlite3.Connection, cfg: Config, notifier: Notifier) -> 
         if not notifier.wake_enabled:
             # shadow mode: observe only; leave the batch unhandled so a live daemon delivers it
             continue
+        retry_key = f"router.batch_retry_after:{b['repo']}#{b['number']}"
+        retry_after = kv_get(conn, retry_key)
+        if retry_after and parse_ts(retry_after) > now_dt():
+            continue
         ok = notifier.wake_agent(text)
-        ts = now()
         with tx(conn):
-            for i in items:
-                _handled(
-                    conn,
-                    i["id"],
-                    "own_pr_comment_delivered" if ok else "own_pr_comment_delivery_failed",
-                    ts,
-                )
+            if ok:
+                ts = now()
+                for i in items:
+                    _handled(conn, i["id"], "own_pr_comment_delivered", ts)
+                conn.execute("DELETE FROM kv WHERE key=?", (retry_key,))
+            else:
+                # leave the rows unhandled and try again later; never drop review feedback
+                kv_set(conn, retry_key, fmt_ts(now_dt() + BATCH_RETRY))
             event(
                 conn,
-                "router.batch",
+                "router.batch" if ok else "router.batch_failed",
                 repo=b["repo"],
                 number=b["number"],
                 detail=f"{len(items)} comments delivered={ok}",
             )
-        sent += 1
+        sent += int(ok)
     return sent

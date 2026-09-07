@@ -43,6 +43,9 @@ class LaneResult:
     tokens_out: int | None = None
     timed_out: bool = False
     result_text: str = ""
+    cost_usd: float | None = None
+    turns: int | None = None
+    subtype: str | None = None
 
     @property
     def ok(self) -> bool:
@@ -117,6 +120,9 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
                 "timed_out": timed_out,
                 "tokens_in": res.tokens_in,
                 "tokens_out": res.tokens_out,
+                "cost_usd": res.cost_usd,
+                "turns": res.turns,
+                "subtype": res.subtype,
                 "argv": argv_for(spec),
             },
             indent=1,
@@ -126,7 +132,8 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
 
 
 def _extract_result(res: LaneResult) -> None:
-    """claude --output-format json wraps the model's text in {"result": ..., "usage": {...}}."""
+    """claude --output-format json wraps the model's text in {"result": ..., "usage": {...}}.
+    Error envelopes (budget exhausted, max turns) carry usage/cost but no `result`."""
     text = res.stdout.strip()
     if not text:
         return
@@ -135,24 +142,38 @@ def _extract_result(res: LaneResult) -> None:
     except json.JSONDecodeError:
         res.result_text = text
         return
-    if isinstance(env, dict) and "result" in env:
-        res.result_text = str(env.get("result") or "")
-        usage = env.get("usage") or {}
-        if isinstance(usage, dict):
-            res.tokens_in = int(usage.get("input_tokens") or 0) + int(
-                usage.get("cache_read_input_tokens") or 0
-            )
-            res.tokens_out = int(usage.get("output_tokens") or 0)
-        if env.get("is_error"):
-            res.exit_code = res.exit_code or 1
-    else:
+    if not isinstance(env, dict) or ("result" not in env and env.get("type") != "result"):
         res.result_text = text
+        return
+    res.result_text = str(env.get("result") or "")
+    usage = env.get("usage") or {}
+    if isinstance(usage, dict):
+        res.tokens_in = int(usage.get("input_tokens") or 0) + int(
+            usage.get("cache_read_input_tokens") or 0
+        )
+        res.tokens_out = int(usage.get("output_tokens") or 0)
+    cost = env.get("total_cost_usd")
+    if isinstance(cost, int | float):
+        res.cost_usd = round(float(cost), 4)
+    turns = env.get("num_turns")
+    if isinstance(turns, int):
+        res.turns = turns
+    subtype = env.get("subtype")
+    if subtype:
+        res.subtype = str(subtype)
+    if env.get("is_error"):
+        res.exit_code = res.exit_code or 1
 
 
 def lane_output(res: LaneResult) -> dict[str, Any]:
     if res.timed_out:
         raise ReviewError(FailKind.INFRA, "lane timed out")
     if res.exit_code != 0:
+        if res.subtype and res.subtype.startswith("error_"):
+            raise ReviewError(
+                FailKind.INFRA,
+                f"lane {res.subtype.removeprefix('error_')} after {res.turns or '?'} turns, ${res.cost_usd or '?'}",
+            )
         raise ReviewError(
             FailKind.INFRA, f"lane exit {res.exit_code}: {(res.stderr or res.result_text)[:200]}"
         )

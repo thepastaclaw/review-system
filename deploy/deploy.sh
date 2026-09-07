@@ -47,40 +47,32 @@ uv pip install -q --python "$BASE/venv/bin/python" "$SRC"
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 if [ -n "$SHADOW" ]; then
   sed 's#<string>daemon</string>#<string>daemon</string><string>--no-spawn</string><string>--no-wake</string>#' "$SRC/deploy/ai.thepastaclaw.reviewsys.plist" > "$PLIST"
-  echo "mode: SHADOW (daemon --no-spawn --no-wake)"
+  echo shadow > "$BASE/mode"; echo "mode: SHADOW (daemon --no-spawn --no-wake)"
 else
   cp "$SRC/deploy/ai.thepastaclaw.reviewsys.plist" "$PLIST"
-  echo "mode: LIVE"
+  echo live > "$BASE/mode"; echo "mode: LIVE"
 fi
 plutil -lint "$PLIST" >/dev/null
 echo "$TAG $SHA $(date -u +%FT%TZ)" >> "$BASE/deployed.log"
-# restart if running (launchctl kickstart needs a GUI session; kill + KeepAlive respawn works over ssh)
+# watchdog cron line (idempotent): launchd never supervises this user, cron does
+WD="* * * * * $BASE/src/deploy/reviewsys-watchdog.sh >/dev/null 2>&1"
+{ crontab -l 2>/dev/null | grep -v reviewsys-watchdog || true; echo "$WD"; } | crontab -
+# restart: stop the old daemon (tick loop finishes its current task first), then start detached.
+# launchctl load is attempted for the day `claw` gets a GUI session; the singleton lock makes
+# a launchd-started twin exit immediately.
 PID=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
 if [ -n "$PID" ]; then
   kill "$PID"
-  # the tick loop finishes its current task (possibly a slow gh call) before exiting
   for _ in $(seq 1 60); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
   kill -0 "$PID" 2>/dev/null && kill -9 "$PID"
 fi
 launchctl unload "$PLIST" 2>/dev/null || true
-launchctl load -w "$PLIST" 2>/dev/null || launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
+launchctl load -w "$PLIST" 2>/dev/null || true
+sleep 2
+"$SRC/deploy/start-daemon.sh" ${SHADOW:+--shadow}
 sleep 3
 NEW=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
-if [ -z "$NEW" ]; then
-  # launchd refuses gui-domain loads over ssh; start detached now. launchd will take over at
-  # the next login, and the daemon's singleton lock makes a second copy exit immediately.
-  ARGS="daemon"; [ -n "$SHADOW" ] && ARGS="daemon --no-spawn --no-wake"
-  "$BASE/venv/bin/python" - "$BASE" "$ARGS" <<'PY'
-import os, subprocess, sys
-base, args = sys.argv[1], sys.argv[2].split()
-env = dict(os.environ, GODEBUG="netdns=go", REVIEWSYS_CONFIG=f"{base}/config.toml", PYTHONUNBUFFERED="1")
-log = open(f"{base}/daemon.log", "ab")
-p = subprocess.Popen([f"{base}/venv/bin/reviewsys", *args], cwd=base, stdin=subprocess.DEVNULL, stdout=log, stderr=log, env=env, start_new_session=True)
-print(f"started detached daemon pid {p.pid} ({' '.join(args)})")
-PY
-  sleep 3
-  NEW=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
-fi
-echo "daemon pid: ${NEW:-NOT RUNNING}"
+if [ -z "$NEW" ]; then echo "daemon NOT RUNNING after deploy; see $BASE/daemon.stderr.log" >&2; exit 1; fi
+echo "daemon pid: $NEW"
 "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" status
 REMOTE

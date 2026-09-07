@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import config as cfg_mod
@@ -18,6 +20,7 @@ from .gh import Gh
 from .ingest import enqueue_head
 from .models import Trigger
 from .notify import Notifier
+from .scheduler import request_cancel
 
 
 def _cfg(args: argparse.Namespace) -> cfg_mod.Config:
@@ -88,6 +91,58 @@ def cmd_enqueue(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cancel(args: argparse.Namespace) -> int:
+    cfg = _cfg(args)
+    conn = db_mod.connect(cfg.db_path)
+    active = conn.execute(
+        "SELECT 1 FROM runs WHERE id=? AND status IN ('spawned','running')", (args.run_id,)
+    ).fetchone()
+    if active is None:
+        print(f"run {args.run_id} is not active", file=sys.stderr)
+        return 1
+    request_cancel(conn, args.run_id, args.reason)
+    print(f"cancel requested for run {args.run_id}")
+    return 0
+
+
+def cmd_retry(args: argparse.Namespace) -> int:
+    """Re-queue the most recent failed head of a PR with a fresh attempt counter."""
+    cfg = _cfg(args)
+    conn = db_mod.connect(cfg.db_path)
+    with db_mod.tx(conn):
+        live = conn.execute(
+            "SELECT 1 FROM heads WHERE repo=? AND number=? AND status IN ('queued','running')",
+            (args.repo, args.number),
+        ).fetchone()
+        if live:
+            print(f"{args.repo}#{args.number} already has a queued/running head", file=sys.stderr)
+            return 1
+        head = conn.execute(
+            "SELECT id, sha FROM heads WHERE repo=? AND number=? AND status='failed' ORDER BY id DESC LIMIT 1",
+            (args.repo, args.number),
+        ).fetchone()
+        if head is None:
+            print(f"no failed head for {args.repo}#{args.number}", file=sys.stderr)
+            return 1
+        pr = conn.execute(
+            "SELECT head_sha FROM prs WHERE repo=? AND number=?", (args.repo, args.number)
+        ).fetchone()
+        if pr and pr["head_sha"] != head["sha"]:
+            print(
+                f"failed head {head['sha'][:8]} is not the PR's current head {pr['head_sha'][:8]}; "
+                "use `enqueue` instead",
+                file=sys.stderr,
+            )
+            return 1
+        conn.execute(
+            "UPDATE heads SET status='queued', attempts=0, eligible_at=?, finished_at=NULL, reason=NULL WHERE id=?",
+            (db_mod.now(), head["id"]),
+        )
+        db_mod.event(conn, "head.retried", repo=args.repo, number=args.number, detail="operator")
+    print(f"requeued {args.repo}#{args.number}@{head['sha'][:8]}")
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     ok = doctor_mod.run(cfg, probe_models=not args.no_models)
@@ -154,6 +209,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("repo")
     s.add_argument("number", type=int)
     s.set_defaults(fn=cmd_enqueue)
+    s = sub.add_parser("cancel", help="request cancellation of an active run")
+    s.add_argument("--run-id", type=int, required=True)
+    s.add_argument("--reason", default="operator")
+    s.set_defaults(fn=cmd_cancel)
+    s = sub.add_parser("retry", help="re-queue the failed head of a PR")
+    s.add_argument("repo")
+    s.add_argument("number", type=int)
+    s.set_defaults(fn=cmd_retry)
     s = sub.add_parser("doctor", help="check gh, claude, proxy, models")
     s.add_argument("--no-models", action="store_true")
     s.set_defaults(fn=cmd_doctor)
@@ -170,9 +233,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    log_file = os.environ.get("REVIEWSYS_LOG_FILE")
+    handlers: list[logging.Handler] | None = None
+    if log_file and args.cmd == "daemon":
+        handlers = [RotatingFileHandler(log_file, maxBytes=20 * 1024 * 1024, backupCount=5)]
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=handlers,
     )
     fn = args.fn
     return int(fn(args))

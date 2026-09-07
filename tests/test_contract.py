@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from reviewsys.contract import (
@@ -129,10 +131,10 @@ def test_lane_argv_includes_budget_cap(tmp_path):
         add_dir=tmp_path,
         timeout_seconds=1,
         claude_bin="claude",
-        max_budget_usd=4.0,
+        max_budget_usd=50.0,
     )
     argv = argv_for(spec)
-    assert argv[-2:] == ["--max-budget-usd", "4.00"] and "--output-format" in argv
+    assert argv[-2:] == ["--max-budget-usd", "50.00"] and "--output-format" in argv
     assert "--max-budget-usd" not in argv_for(
         LaneSpec(
             role="r",
@@ -146,3 +148,22 @@ def test_lane_argv_includes_budget_cap(tmp_path):
             claude_bin="claude",
         )
     )
+
+
+def test_extract_result_error_envelope_is_readable():
+    from reviewsys.lane import LaneResult, _extract_result, lane_output
+
+    env = {
+        "type": "result",
+        "subtype": "error_max_budget_usd",
+        "is_error": True,
+        "num_turns": 63,
+        "total_cost_usd": 4.0086,
+        "usage": {"input_tokens": 100, "cache_read_input_tokens": 900, "output_tokens": 50},
+    }
+    res = LaneResult(exit_code=0, stdout=json.dumps(env), stderr="", duration_s=1.0)
+    _extract_result(res)
+    assert (res.tokens_in, res.tokens_out, res.turns, res.cost_usd) == (1000, 50, 63, 4.0086)
+    assert res.exit_code == 1
+    with pytest.raises(ReviewError, match=r"lane max_budget_usd after 63 turns, \$4.0086"):
+        lane_output(res)

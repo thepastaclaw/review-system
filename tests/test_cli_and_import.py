@@ -50,3 +50,37 @@ def test_db_migration_idempotent(tmp_path):
     c2 = connect(p)
     assert c2.execute("SELECT version FROM schema_version").fetchone()[0] == 1
     assert c2.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_cli_retry_and_cancel(cfg, conn, tmp_path, capsys):
+    from reviewsys.db import tx
+    from reviewsys.ingest import enqueue_head
+    from reviewsys.models import Trigger
+    from reviewsys.scheduler import schedule
+
+    cfg_path = tmp_path / "config.toml"  # written by the cfg fixture
+    argv = ["--config", str(cfg_path)]
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 7, "a" * 40, Trigger.NEW_PR)
+        conn.execute("UPDATE heads SET eligible_at=queued_at")
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert cli.main([*argv, "cancel", "--run-id", str(rid)]) == 0
+    assert conn.execute("SELECT cancel_requested FROM runs WHERE id=?", (rid,)).fetchone()[0] == 1
+    assert cli.main([*argv, "retry", "dashpay/platform", "7"]) == 1  # head is running
+    with tx(conn):
+        conn.execute("UPDATE runs SET status='failed'")
+        conn.execute("UPDATE heads SET status='failed', attempts=3")
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, title, author, is_draft, state, updated_at) VALUES ('dashpay/platform',7,?,'t','u',0,'open','2026-09-01T00:00:00Z')",
+            ("b" * 40,),
+        )
+    assert cli.main([*argv, "retry", "dashpay/platform", "7"]) == 1  # PR moved on
+    with tx(conn):
+        conn.execute("UPDATE prs SET head_sha=?", ("a" * 40,))
+    assert cli.main([*argv, "retry", "dashpay/platform", "7"]) == 0
+    h = conn.execute("SELECT status, attempts FROM heads").fetchone()
+    assert (h["status"], h["attempts"]) == ("queued", 0)
+    assert cli.main([*argv, "cancel", "--run-id", str(rid)]) == 1  # no longer active
+    assert cli.main([*argv, "retry", "dashpay/platform", "8"]) == 1
+    capsys.readouterr()

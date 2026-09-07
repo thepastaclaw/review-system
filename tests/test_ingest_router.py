@@ -213,3 +213,32 @@ def test_shadow_mode_leaves_own_pr_batches_unhandled(cfg, conn, gh):
     )
     assert flush_batches(conn, cfg, live) == 1
     assert conn.execute("SELECT action FROM inbox").fetchone()[0] == "own_pr_comment_delivered"
+
+
+def test_failed_wake_keeps_batch_and_retries_later(cfg, conn, gh):
+    import subprocess
+
+    from reviewsys.db import kv_get, tx
+    from reviewsys.notify import Notifier
+    from reviewsys.router import flush_batches
+
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at, action) VALUES ('s1','comment','dashpay/platform',5,'shumkov','fix','2026-09-01T10:00:00Z','2026-09-01T10:00:00Z','own_pr_comment')"
+        )
+    broken = Notifier(
+        cfg, runner=lambda argv: subprocess.CompletedProcess(list(argv), 1, "", "down")
+    )
+    assert flush_batches(conn, cfg, broken) == 0
+    assert conn.execute("SELECT handled_at FROM inbox").fetchone()[0] is None
+    assert kv_get(conn, "router.batch_retry_after:dashpay/platform#5") is not None
+    assert conn.execute("SELECT kind FROM events ORDER BY id DESC LIMIT 1").fetchone()[0] == (
+        "router.batch_failed"
+    )
+    # still inside the retry window: not re-attempted
+    assert flush_batches(conn, cfg, broken) == 0
+    with tx(conn):
+        conn.execute("DELETE FROM kv WHERE key LIKE 'router.batch_retry_after:%'")
+    live = Notifier(cfg, runner=lambda argv: subprocess.CompletedProcess(list(argv), 0, "", ""))
+    assert flush_batches(conn, cfg, live) == 1
+    assert conn.execute("SELECT action FROM inbox").fetchone()[0] == "own_pr_comment_delivered"
