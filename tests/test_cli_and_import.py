@@ -21,14 +21,21 @@ def test_import_legacy_done_rows(cfg, conn, tmp_path):
                         "result": {"phase": "preliminary", "review_id": 5083420338},
                     },
                     {"repo": "dashpay/platform", "pr": 1, "sha": "x" * 40, "status": "pending"},
+                    {
+                        "repo": "dashpay/platform",
+                        "pr": 3,
+                        "sha": "z" * 40,
+                        "status": "done",
+                        "result": "legacy free-text result",
+                    },
                     {"repo": "dashpay/platform", "pr": 2, "sha": "y" * 40, "status": "superseded"},
                 ]
             }
         )
     )
-    assert import_queue(conn, q) == 1
+    assert import_queue(conn, q) == 2
     assert import_queue(conn, q) == 0  # idempotent
-    r = conn.execute("SELECT * FROM reviews").fetchone()
+    r = conn.execute("SELECT * FROM reviews WHERE number=4581").fetchone()
     assert (
         r["imported"] == 1 and r["github_review_id"] == 5083420338 and r["phase"] == "preliminary"
     )

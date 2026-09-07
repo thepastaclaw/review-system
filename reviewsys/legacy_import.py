@@ -20,8 +20,9 @@ def import_queue(conn: sqlite3.Connection, queue_json: Path) -> int:
             if it.get("status") != "done" or not it.get("sha"):
                 continue
             repo, number, sha = str(it["repo"]), int(it["pr"]), str(it["sha"])
-            phase = str((it.get("result") or {}).get("phase") or it.get("gating_status") or "final")
-            review_id = (it.get("result") or {}).get("review_id") or it.get("review_id")
+            result = it.get("result") if isinstance(it.get("result"), dict) else {}
+            phase = str(result.get("phase") or it.get("gating_status") or "final")
+            review_id = result.get("review_id") or it.get("review_id")
             exists = conn.execute(
                 "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1",
                 (repo, number, sha),
