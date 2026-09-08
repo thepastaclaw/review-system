@@ -68,6 +68,9 @@ class RunContext:
     files: list[dict[str, Any]] = field(default_factory=list)
     triage: Triage | None = None
     tier: str = "normal"
+    phase1_skipped: str | None = (
+        None  # reason when the backlog rule sent this run straight to Phase 2
+    )
     evidence: dict[str, Any] = field(default_factory=dict)
     coderabbit: dict[str, Any] = field(default_factory=dict)
     coderabbit_ids: list[int] = field(default_factory=list)
@@ -225,6 +228,8 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
         return
     if ctx.triage is not None:
         kw.setdefault("tier", ctx.tier)
+    if ctx.phase1_skipped:
+        kw.setdefault("phase1_skipped", ctx.phase1_skipped)
     try:
         github.upsert_gate_comment(
             ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, github.gate_body(status, ctx.sha, **kw)
@@ -534,6 +539,7 @@ def _verifier_lane(
         evidence=ctx.evidence,
         prior=ctx.prior,
         prior_sha=ctx.prior_sha,
+        phase1_skipped=ctx.phase1_skipped,
     )
     raw = _run_lane(ctx, phase=phase, role="verifier", lm=lm, prompt=prompt, is_verifier=True)
     out = parse_verifier_output(
@@ -635,6 +641,7 @@ def _build_review(
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
+        phase1_skipped=ctx.phase1_skipped,
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -760,6 +767,38 @@ def _with_effort(lm: LaneModel, effort: str | None) -> LaneModel:
     return dataclasses.replace(lm, effort=effort) if effort else lm
 
 
+def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool:
+    """Throughput rule: with a deep queue, skip the slow Phase-1 reviewers and go straight to Phase 2.
+
+    Only when Phase 2 is enabled and the tier would have run it (a trivial tier has no Phase 2 to
+    fall through to, so it keeps its Phase-1-only path). Recorded as a `phase1` step with status
+    `skipped`, an event, and disclosed in the review provenance and the gate comment.
+    """
+    limit = ctx.cfg.backlog_skip_phase1_above
+    if limit <= 0 or not ctx.cfg.policy.phase2_enabled or phase2_effort is None:
+        return False
+    queued = ctx.conn.execute("SELECT COUNT(*) AS n FROM heads WHERE status='queued'").fetchone()[
+        "n"
+    ]
+    if queued <= limit:
+        return False
+    reason = f"skipped for throughput: {queued} PRs queued, above the {limit} limit"
+    ctx.phase1_skipped = reason
+    _step_start(ctx, StepName.PHASE1)
+    _step_end(ctx, StepName.PHASE1, "skipped", {"reason": reason, "queued": queued, "limit": limit})
+    with tx(ctx.conn):
+        event(
+            ctx.conn,
+            "phase1.skipped_backlog",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=reason,
+        )
+    _gate_comment(ctx, "in_progress")
+    return True
+
+
 def run(ctx: RunContext) -> RunStatus:
     pol = ctx.cfg.policy
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
@@ -782,6 +821,23 @@ def run(ctx: RunContext) -> RunStatus:
             detail = dataclasses.asdict(ctx.triage)
         _step_end(ctx, name, "ok", detail)
     effort = pol.tier_effort(ctx.tier)
+    if _backlog_skips_phase1(ctx, phase2_effort=effort.phase2):
+        ctx.phase2_outputs = _reviewer_step(
+            ctx,
+            step=StepName.PHASE2,
+            phase="phase2",
+            lm=_with_effort(pol.phase2_reviewer, effort.phase2),
+            expected_phase="final",
+        )
+        ctx.verify2 = _verify_step(
+            ctx,
+            step=StepName.VERIFY2,
+            phase="verify2",
+            lm=pol.phase2_verifier,
+            expected_phase="final",
+        )
+        _publish_step(ctx, phase="final", verified=ctx.verify2, verifier_lm=pol.phase2_verifier)
+        return RunStatus.DONE
     ctx.phase1_outputs = _reviewer_step(
         ctx,
         step=StepName.PHASE1,

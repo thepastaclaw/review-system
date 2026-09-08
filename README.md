@@ -17,7 +17,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | slots (2 + 1 priority), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no slot can be ghosted |
-| `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish |
+| `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
 | `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
 | `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage |
 | `prompts.py` | assembles prompts from the `thepastaclaw/skills` repo templates |
@@ -56,6 +56,21 @@ policy behaves as a single `normal` tier at the configured reasoning levels.
 CLIProxyAPI clamps `--effort` to the `thinking.levels` declared per model in its
 config; the zai GLM entries must declare `[low, high, max]` or `max` reaches z.ai
 as `high` (fixed on the box 2026-09-08).
+
+## Backlog mode: Phase 2 only
+
+`backlog_skip_phase1_above` in `config.toml` (default 10, `0` disables) trades depth
+for throughput. When a run starts and more heads than that are queued, the worker
+records the `phase1` step as `skipped`, emits `phase1.skipped_backlog`, and goes
+straight to the Phase-2 gpt-6-astra reviewers and final verifier. The verifier is
+told the Phase-1 block is intentionally empty. The review is titled "Final validation
+— Phase 2 only (queue backlog)", the provenance says
+"Phase 1 reviewers: **not run (skipped for throughput: N PRs queued, above the L
+limit)**", and the gate comment carries "Phase 2 only (queue backlog)". Blockers found
+by the final verifier still publish REQUEST_CHANGES. The rule never applies to a
+`trivial` tier (which has no Phase 2) or when Phase 2 is disabled. Measured
+2026-09-08: GLM Phase-1 lanes took 65–140 min each, sequentially; astra Phase-2 lanes
+3–11 min.
 
 ## Queue comment and priority requests
 

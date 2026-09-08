@@ -149,6 +149,7 @@ def verifier_prompt(
     evidence: dict[str, Any],
     prior: list[dict[str, Any]],
     prior_sha: str | None,
+    phase1_skipped: str | None = None,
 ) -> str:
     project_skill, review_skill = skill_texts(cfg, repo)
     template = read_template(cfg, "prompts/verifier-agent.md")
@@ -168,6 +169,11 @@ def verifier_prompt(
         "\n\n## Exact evidence, source-of-truth, phase, adjudication, and provenance requirements\n\n"
         f"- `review_phase` must be `{phase}`.\n- Exact head: `{head_sha}`.\n"
         "- In the template above, 'Codex' findings are the Phase-1 reviewer lanes and 'Claude' findings are the Phase-2 reviewer lanes; the model names are historical.\n"
+        + (
+            f"- The Phase-1 reviewer lanes did not run for this head ({phase1_skipped}); the 'Codex' block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
+            if phase1_skipped
+            else ""
+        )
         + prior_findings_block(prior, prior_sha)
         + "- Independently verify every supplied reviewer claim against the exact source range and the PR evidence below.\n"
         "```json\n" + json.dumps(evidence, indent=2) + "\n```\n"

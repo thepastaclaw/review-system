@@ -476,3 +476,73 @@ def test_policy_without_triage_block_runs_single_tier(cfg, conn, gh, lanes, skil
     }
     assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] is None
     assert "- Triage:" not in gh.posted_reviews[0]["body"]
+
+
+def _queue_extra_heads(conn, cfg, n):
+    with tx(conn):
+        for i in range(n):
+            enqueue_head(conn, cfg, "dashpay/platform", 100 + i, f"{i:040x}", Trigger.NEW_PR)
+
+
+def test_deep_backlog_skips_phase1_and_discloses_it(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_sugg()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["final"] = _verifier([_sugg()])
+    _queue_extra_heads(conn, cfg, cfg.backlog_skip_phase1_above + 1)  # + the head under test
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    calls = _reviewer_calls(lanes)
+    assert calls and all(s.model == "gpt-6-astra" for s in calls), "no GLM lane may run"
+    assert not any(
+        s.role == "verifier" and "must be `preliminary`" in s.prompt for s in lanes.calls
+    )
+    verifier = [s for s in lanes.calls if s.role == "verifier"]
+    assert len(verifier) == 1 and "Phase-1 reviewer lanes did not run" in verifier[0].prompt
+    step = conn.execute(
+        "SELECT status, detail FROM steps WHERE run_id=? AND name='phase1'", (rid,)
+    ).fetchone()
+    assert step["status"] == "skipped" and "queued" in json.loads(step["detail"])
+    assert not conn.execute(
+        "SELECT 1 FROM steps WHERE run_id=? AND name IN ('verify1','gate')", (rid,)
+    ).fetchone()
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM events WHERE kind='phase1.skipped_backlog' AND run_id=?", (rid,)
+        ).fetchone()[0]
+        == 1
+    )
+    review = gh.posted_reviews[0]
+    assert "phase=final" in review["body"]
+    assert "## Final validation — Phase 2 only (queue backlog)" in review["body"]
+    assert "- Phase 1 reviewers: **not run (skipped for throughput: " in review["body"]
+    assert "- Phase 2 reviewers: `gpt-6-astra`" in review["body"]
+    assert "Phase 2 only (queue backlog)" in gh.gate_bodies[-1]
+
+
+def test_backlog_at_or_below_limit_runs_both_phases(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    _queue_extra_heads(conn, cfg, cfg.backlog_skip_phase1_above - 1)  # exactly at the limit
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    assert {s.model for s in _reviewer_calls(lanes)} == {"glm-5.3-flash", "gpt-6-astra"}
+    assert (
+        conn.execute(
+            "SELECT status FROM steps WHERE run_id=? AND name='phase1'", (rid,)
+        ).fetchone()["status"]
+        == "ok"
+    )
+    assert "Phase 1 + Phase 2" in gh.posted_reviews[0]["body"]
+
+
+def test_backlog_skip_does_not_apply_to_trivial_tier(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.triage = {"tier": "trivial", "reasoning": "typo"}
+    _queue_extra_heads(conn, cfg, cfg.backlog_skip_phase1_above + 5)
+    _run(cfg, conn, gh, lanes)
+    assert all(s.model == "glm-5.3-flash" for s in _reviewer_calls(lanes))
+    assert "Phase 1 only (trivial change)" in gh.posted_reviews[0]["body"]

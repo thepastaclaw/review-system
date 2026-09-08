@@ -252,9 +252,12 @@ def gate_body(
     reason: str | None = None,
     tier: str | None = None,
     phase2_skipped: str | None = None,
+    phase1_skipped: str | None = None,
 ) -> str:
     s = sha[:8]
     t = f" · triage: {tier}" if tier else ""
+    if phase1_skipped:
+        t += " · Phase 2 only (queue backlog)"
     if status == "queued":
         q = "next in queue" if not queue_ahead else f"{queue_ahead} ahead in queue"
         return f"{GATE_MARKER}\n🕓 Ready for review — {q} (commit {s})"

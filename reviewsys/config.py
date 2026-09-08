@@ -101,6 +101,7 @@ class Config:
     tick_seconds: int
     watchdog_minutes: int
     comment_budget: int
+    backlog_skip_phase1_above: int  # queued heads above this -> runs skip Phase 1 (0 disables)
     # identity / alerting
     bot_login: str
     slack_target: str | None
@@ -175,6 +176,9 @@ queue_comment_interval_seconds = 180
 tick_seconds = 20
 watchdog_minutes = 30
 comment_budget = 10
+# when more heads than this are queued, new runs skip the Phase-1 (GLM) reviewers and go
+# straight to Phase 2; 0 disables. Disclosed in the review and the gate comment.
+backlog_skip_phase1_above = 10
 
 [identity]
 bot_login = "thepastaclaw"
@@ -297,6 +301,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         tick_seconds=int(s["tick_seconds"]),
         watchdog_minutes=int(s["watchdog_minutes"]),
         comment_budget=int(s.get("comment_budget", settings.get("comment_budget", 10))),
+        backlog_skip_phase1_above=int(s.get("backlog_skip_phase1_above", 10)),
         bot_login=str(i["bot_login"]),
         slack_target=i.get("slack_target"),
         slack_account=str(i.get("slack_account", "default")),
