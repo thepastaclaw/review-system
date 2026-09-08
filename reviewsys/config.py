@@ -25,6 +25,17 @@ class LaneModel:
     effort: str = "high"
 
 
+EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+@dataclass(frozen=True, slots=True)
+class TierEffort:
+    """Reviewer effort for one triage tier. `phase2=None` means Phase 2 is skipped."""
+
+    phase1: str
+    phase2: str | None
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPolicy:
     name: str
@@ -36,6 +47,14 @@ class ModelPolicy:
     repair_model: str
     selector_model: str
     phase2_enabled: bool = True
+    # complexity triage: None = not configured, every PR is `fallback_tier`
+    triage: LaneModel | None = None
+    tiers: dict[str, TierEffort] = field(default_factory=dict)
+    fallback_tier: str = "normal"
+
+    def tier_effort(self, tier: str) -> TierEffort:
+        default = TierEffort(phase1=self.phase1_reviewer.effort, phase2=self.phase2_reviewer.effort)
+        return self.tiers.get(tier) or self.tiers.get(self.fallback_tier) or default
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,18 +221,43 @@ def load_skills_config(
     )
     pol = raw["review_model_policy"]
     settings = raw.get("settings", {})
+    p1 = _lane(pol["phase1"], "reviewer")
+    p2 = _lane(pol["phase2"], "reviewer")
+    triage_node = pol.get("triage") or {}
     policy = ModelPolicy(
         name=str(pol["name"]),
         fingerprint=str(pol["fingerprint"]),
-        phase1_reviewer=_lane(pol["phase1"], "reviewer"),
+        phase1_reviewer=p1,
         phase1_verifier=_lane(pol["phase1"], "verifier"),
-        phase2_reviewer=_lane(pol["phase2"], "reviewer"),
+        phase2_reviewer=p2,
         phase2_verifier=_lane(pol["phase2"], "verifier"),
         repair_model=str(settings.get("repair_model", "gpt-5.6-luna")),
         selector_model=str(settings.get("selector_model", "gpt-5.6-terra")),
         phase2_enabled=bool(pol.get("phase2_enabled", True)),
+        triage=_lane(pol, "triage") if triage_node else None,
+        tiers=_tiers(triage_node, p1.effort, p2.effort),
+        fallback_tier=str(triage_node.get("fallback_tier", "normal")).lower(),
     )
+    if policy.fallback_tier not in policy.tiers:
+        raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
     return repos, specialists, policy, settings
+
+
+def _tiers(node: dict[str, Any], p1_default: str, p2_default: str) -> dict[str, TierEffort]:
+    """Tier -> effort table from `review_model_policy.triage.tiers`.
+    Without a triage block there is a single `normal` tier at the policy's default efforts."""
+    if not node:
+        return {"normal": TierEffort(phase1=p1_default, phase2=p2_default)}
+    out: dict[str, TierEffort] = {}
+    for tier, spec in node["tiers"].items():
+        p1 = str(spec.get("phase1", p1_default))
+        raw2 = spec.get("phase2", p2_default)
+        p2 = None if raw2 is None else str(raw2)
+        for level in (p1, p2):
+            if level is not None and level not in EFFORT_LEVELS:
+                raise ValueError(f"tier {tier!r}: effort {level!r} not in {EFFORT_LEVELS}")
+        out[str(tier).lower()] = TierEffort(phase1=p1, phase2=p2)
+    return out
 
 
 def load(path: Path | None = None, *, skills_override: Path | None = None) -> Config:

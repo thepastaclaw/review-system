@@ -93,19 +93,23 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
     lanes.verifier["final"] = _verifier([_sugg()])
     rid, status = _run(cfg, conn, gh, lanes)
     assert status == RunStatus.DONE
-    roles = [(s.role, s.model) for s in lanes.calls]
-    # selector, then phase1 general+security+always-on (GLM), verifier (Sol), phase2 x3 (Sol), final verifier
+    roles = [(s.role, s.model, s.effort) for s in lanes.calls]
+    # selector, triage, phase1 general+always-on+security (GLM @max), verifier (Sol),
+    # phase2 x3 (astra @high for the `normal` tier), final verifier (astra, fixed high)
     assert roles[0][0] == "selector"
-    assert roles[1:4] == [
-        ("general", "glm-5.3-flash"),
-        ("always-on", "glm-5.3-flash"),
-        ("security-auditor", "glm-5.3-flash"),
+    assert roles[1] == ("triage", "gpt-6-astra", "low")
+    assert roles[2:5] == [
+        ("general", "glm-5.3-flash", "max"),
+        ("always-on", "glm-5.3-flash", "max"),
+        ("security-auditor", "glm-5.3-flash", "max"),
     ]
-    assert roles[4] == ("verifier", "gpt-5.6-sol")
-    assert [r[1] for r in roles[5:8]] == ["gpt-5.6-sol"] * 3 and roles[8] == (
-        "verifier",
-        "gpt-5.6-sol",
-    )
+    assert roles[5] == ("verifier", "gpt-5.6-sol", "high")
+    assert [r[1:] for r in roles[6:9]] == [("gpt-6-astra", "high")] * 3
+    assert roles[9] == ("verifier", "gpt-6-astra", "high")
+    assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] == "normal"
+    assert {r["effort"] for r in conn.execute("SELECT effort FROM lanes WHERE phase='phase2'")} == {
+        "high"
+    }
     assert len(gh.posted_reviews) == 1
     review = gh.posted_reviews[0]
     assert review["event"] == "COMMENT" and review["commit_id"] == HEAD
@@ -120,6 +124,7 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
     assert steps == {
         "worktree": "ok",
         "select": "ok",
+        "triage": "ok",
         "context": "ok",
         "phase1": "ok",
         "verify1": "ok",
@@ -155,7 +160,8 @@ def test_blocker_gate_publishes_preliminary_request_changes(cfg, conn, gh, lanes
     assert len(gh.posted_reviews) == 1 and gh.posted_reviews[0]["event"] == "REQUEST_CHANGES"
     assert "phase=preliminary" in gh.posted_reviews[0]["body"]
     assert all(
-        s.model == "glm-5.3-flash" or s.role in ("verifier", "selector") for s in lanes.calls
+        s.model == "glm-5.3-flash" or s.role in ("verifier", "selector", "triage")
+        for s in lanes.calls
     ), "phase 2 must not run"
     assert not conn.execute(
         "SELECT 1 FROM steps WHERE run_id=? AND name='phase2'", (rid,)
@@ -360,3 +366,113 @@ def test_daemon_tick_shadow_mode(cfg, conn, gh, notifier):
     res = live.tick(force=True)
     assert len(res["schedule"]) == 1
     assert conn.execute("SELECT status FROM runs").fetchone()["status"] == "spawned"
+
+
+def _reviewer_calls(lanes):
+    return [s for s in lanes.calls if s.role not in ("selector", "triage", "verifier", "repair")]
+
+
+def test_tier_scales_effort_and_is_disclosed(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.triage = {"tier": "critical", "reasoning": "touches consensus"}
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    efforts = {(s.model, s.effort) for s in _reviewer_calls(lanes)}
+    assert efforts == {("glm-5.3-flash", "max"), ("gpt-6-astra", "xhigh")}
+    body = gh.posted_reviews[0]["body"]
+    assert "- Triage: `critical` by `gpt-6-astra` (effort low) — touches consensus" in body
+    assert "general (completed, effort xhigh); agent `phase2-reviewer`" in body
+    assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] == "critical"
+    gate = json.loads(
+        conn.execute("SELECT detail FROM steps WHERE run_id=? AND name='gate'", (rid,)).fetchone()[
+            "detail"
+        ]
+    )
+    assert gate == {"admit_phase2": True, "tier": "critical", "phase2_effort": "xhigh"}
+
+
+def test_low_tier_uses_medium_phase2(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.triage = {"tier": "low", "reasoning": "small"}
+    _run(cfg, conn, gh, lanes)
+    assert {(s.model, s.effort) for s in _reviewer_calls(lanes)} == {
+        ("glm-5.3-flash", "high"),
+        ("gpt-6-astra", "medium"),
+    }
+
+
+def test_trivial_tier_publishes_final_from_phase1(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_sugg()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = {**_verifier([_sugg()]), "review_action": "APPROVE"}
+    lanes.triage = {"tier": "trivial", "reasoning": "typo fix"}
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    assert all(s.model == "glm-5.3-flash" for s in _reviewer_calls(lanes)), "phase 2 must not run"
+    assert not conn.execute(
+        "SELECT 1 FROM steps WHERE run_id=? AND name='phase2'", (rid,)
+    ).fetchone()
+    review = gh.posted_reviews[0]
+    # a Phase-1-only verdict is published as COMMENT even when the verifier said APPROVE
+    assert review["event"] == "COMMENT" and "phase=final" in review["body"]
+    assert "## Final review — Phase 1 only (trivial change)" in review["body"]
+    assert "- Phase 2 reviewers: **not run (triage rated this change trivial)**" in review["body"]
+    assert "never approves" in review["body"]
+    assert "Validated blockers were found" not in review["body"]
+    gate = gh.gate_bodies[-1]
+    assert "Final review complete — Phase 1 only" in gate and "triage: trivial" in gate
+
+
+def test_trivial_tier_with_blockers_stays_preliminary(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_blocking()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([_blocking()])
+    lanes.triage = {"tier": "trivial", "reasoning": "looks small"}
+    _run(cfg, conn, gh, lanes)
+    review = gh.posted_reviews[0]
+    assert review["event"] == "REQUEST_CHANGES" and "phase=preliminary" in review["body"]
+    assert "deferred by blocker gate" in review["body"]
+
+
+def test_triage_failure_falls_back_and_is_recorded(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.triage = "garbage"
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] == "normal"
+    assert (
+        conn.execute("SELECT COUNT(*) FROM events WHERE kind='triage.degraded'").fetchone()[0] == 1
+    )
+    t = json.loads((cfg.runs_dir / f"run-{rid}" / "triage.json").read_text())
+    assert t["method"] == "fallback" and t["tier"] == "normal" and t["error"]
+    assert "- Triage: `normal` by fallback after triage failure" in gh.posted_reviews[0]["body"]
+
+
+def test_policy_without_triage_block_runs_single_tier(cfg, conn, gh, lanes, skills_dir, tmp_path):
+    from reviewsys import config as cfg_mod
+
+    raw = json.loads((skills_dir / "config.json").read_text())
+    del raw["review_model_policy"]["triage"]
+    (skills_dir / "config.json").write_text(json.dumps(raw))
+    cfg2 = cfg_mod.load(tmp_path / "config.toml")  # written by the cfg fixture
+    assert cfg2.policy.triage is None and list(cfg2.policy.tiers) == ["normal"]
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    rid, status = _run(cfg2, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    assert not any(s.role == "triage" for s in lanes.calls)
+    assert {(s.model, s.effort) for s in _reviewer_calls(lanes)} == {
+        ("glm-5.3-flash", "max"),
+        ("gpt-6-astra", "high"),
+    }
+    assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] is None
+    assert "- Triage:" not in gh.posted_reviews[0]["body"]

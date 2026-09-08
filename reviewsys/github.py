@@ -250,19 +250,23 @@ def gate_body(
     blocker_count: int | None = None,
     queue_ahead: int | None = None,
     reason: str | None = None,
+    tier: str | None = None,
+    phase2_skipped: str | None = None,
 ) -> str:
     s = sha[:8]
+    t = f" · triage: {tier}" if tier else ""
     if status == "queued":
         q = "next in queue" if not queue_ahead else f"{queue_ahead} ahead in queue"
         return f"{GATE_MARKER}\n🕓 Ready for review — {q} (commit {s})"
     if status == "in_progress":
-        return f"{GATE_MARKER}\n🔍 Review in progress — actively reviewing now (commit {s})"
+        return f"{GATE_MARKER}\n🔍 Review in progress — actively reviewing now (commit {s}){t}"
     if status == "done":
         if phase == "preliminary":
-            return f"{GATE_MARKER}\n⛔ Blockers found — Phase 2 deferred (commit {s})\n_Canonical validated blockers: {blocker_count or 0}_"
+            return f"{GATE_MARKER}\n⛔ Blockers found — Phase 2 deferred (commit {s}){t}\n_Canonical validated blockers: {blocker_count or 0}_"
         n = blocker_count or 0
         head = "⛔" if n else "✅"
-        return f"{GATE_MARKER}\n{head} Final review complete — {'no blockers' if not n else f'{n} blocking finding(s)'} (commit {s})"
+        scope = " — Phase 1 only" if phase2_skipped else ""
+        return f"{GATE_MARKER}\n{head} Final review complete{scope} — {'no blockers' if not n else f'{n} blocking finding(s)'} (commit {s}){t}"
     if status == "failed":
         return f"{GATE_MARKER}\n⚠️ Automated review could not complete (commit {s})\n_Reason: {reason or 'unknown'}_"
     return f"{GATE_MARKER}\n{status} (commit {s})"

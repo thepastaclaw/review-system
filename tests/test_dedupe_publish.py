@@ -148,7 +148,7 @@ def _model(phase: str, findings: list[Finding]) -> ReviewModel:
             }
         ],
         verifier={"model": "gpt-5.6-sol", "agent": "sol-verifier", "role": "verifier"},
-        policy_fingerprint="22877dfb48e564e821abd8c72e8a33376cabf3a5a9591ca07804a62aebcf1e4d",
+        policy_fingerprint="3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
     )
     return ReviewModel(
         repo="dashpay/platform",
@@ -172,7 +172,7 @@ def test_render_preliminary_body_golden():
         body.splitlines()[1]
         == "<!-- thepastaclaw-review-phase v1 phase=preliminary sha="
         + "a" * 40
-        + " policy=22877dfb48e564e8 -->"
+        + " policy=3f3f3f3f3f3f3f3f -->"
     )
     assert "## Preliminary review — Phase 1 blocker gate" in body
     assert body.count("Source: ") == 1, "exactly one Source line"

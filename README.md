@@ -1,7 +1,7 @@
 # reviewsys
 
 PastaClaw's PR review system: polls GitHub, schedules two-phase LLM reviews
-(cheap Phase-1 reviewers → verifier → blocker gate → Phase-2 reviewers →
+(triage → cheap Phase-1 reviewers → verifier → blocker gate → Phase-2 reviewers →
 final verifier), and posts one GitHub review per PR head with inline comments.
 
 It replaces the crontab + `review_orchestrator.py` pipeline that lived in the
@@ -17,7 +17,8 @@ tested, one daemon, one SQLite file, no lock files.
 | `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | slots (2 + 1 priority), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no slot can be ghosted |
-| `worker.py` | one run: worktree → select → context → phase1 → verify1 → gate → phase2 → verify2 → publish |
+| `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish |
+| `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
 | `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage |
 | `prompts.py` | assembles prompts from the `thepastaclaw/skills` repo templates |
 | `contract.py` | reviewer/verifier JSON contracts; legacy-compatible `finding_hash` / `dedupe_key` |
@@ -28,6 +29,33 @@ tested, one daemon, one SQLite file, no lock files.
 | `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model |
 
 State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps, lanes, findings, posted_findings, reviews, inbox, events, kv`.
+
+## Model policy and effort tiers
+
+Models, agents and default reasoning levels come from `review_model_policy` in the
+skills repo's `config.json`, read at every config load (no redeploy to change them).
+If the policy has a `triage` block, a `gpt-6-astra --effort low` lane rates each PR
+and the tier picks the `--effort` of the reviewer lanes; verifiers keep their fixed
+level. Blockers always win: a Phase-1 blocker publishes the preliminary review
+regardless of tier. `trivial` with no blockers publishes a *final* review from
+Phase 1 only and says so in the provenance block. Triage failure falls back to
+`fallback_tier` and is recorded as a `triage.degraded` event.
+
+| tier | Phase 1 (glm-5.3-flash) | Phase 2 (gpt-6-astra) |
+|---|---|---|
+| trivial | high | skipped |
+| low | high | medium |
+| normal | max | high |
+| critical | max | xhigh |
+
+Efforts are validated against `low|medium|high|xhigh|max` at load. Every lane's
+effort is stored in `lanes.effort`, the tier in `runs.tier`, and both are printed
+in the review's provenance block and the gate comment. Without a `triage` block the
+policy behaves as a single `normal` tier at the configured reasoning levels.
+
+CLIProxyAPI clamps `--effort` to the `thinking.levels` declared per model in its
+config; the zai GLM entries must declare `[low, high, max]` or `max` reaches z.ai
+as `high` (fixed on the box 2026-09-08).
 
 ## Liveness model
 

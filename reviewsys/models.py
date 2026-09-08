@@ -64,6 +64,7 @@ class Phase(StrEnum):
 class StepName(StrEnum):
     WORKTREE = "worktree"
     SELECT = "select"
+    TRIAGE = "triage"
     CONTEXT = "context"
     PHASE1 = "phase1"
     VERIFY1 = "verify1"

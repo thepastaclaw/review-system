@@ -37,17 +37,29 @@ SKILLS_CONFIG = {
         "debounce_minutes": 30,
     },
     "review_model_policy": {
-        "name": "glm-flash-blocker-gate-sol-final-v2",
-        "version": 2,
-        "fingerprint": "22877dfb48e564e821abd8c72e8a33376cabf3a5a9591ca07804a62aebcf1e4d",
+        "name": "glm-tiered-astra-final-v3",
+        "version": 3,
+        "fingerprint": "3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f3f",
         "phase2_enabled": True,
         "phase1": {
-            "reviewer": {"agent": "phase1-reviewer", "model": "glm-5.3-flash", "reasoning": "high"},
+            "reviewer": {"agent": "phase1-reviewer", "model": "glm-5.3-flash", "reasoning": "max"},
             "verifier": {"agent": "sol-verifier", "model": "gpt-5.6-sol", "reasoning": "high"},
         },
         "phase2": {
-            "reviewer": {"agent": "phase2-reviewer", "model": "gpt-5.6-sol", "reasoning": "high"},
-            "verifier": {"agent": "sol-verifier", "model": "gpt-5.6-sol", "reasoning": "high"},
+            "reviewer": {"agent": "phase2-reviewer", "model": "gpt-6-astra", "reasoning": "high"},
+            "verifier": {"agent": "astra-verifier", "model": "gpt-6-astra", "reasoning": "high"},
+        },
+        "triage": {
+            "agent": "triage",
+            "model": "gpt-6-astra",
+            "reasoning": "low",
+            "fallback_tier": "normal",
+            "tiers": {
+                "trivial": {"phase1": "high", "phase2": None},
+                "low": {"phase1": "high", "phase2": "medium"},
+                "normal": {"phase1": "max", "phase2": "high"},
+                "critical": {"phase1": "max", "phase2": "xhigh"},
+            },
         },
     },
     "specialists": [
@@ -290,6 +302,7 @@ class FakeLanes:
         self.reviewer: dict[str, Any] = {}
         self.verifier: dict[str, Any] = {}
         self.selector: Any = {"selected": ["security-auditor"], "reasoning": "rust crypto"}
+        self.triage: Any = {"tier": "normal", "reasoning": "ordinary change"}
         self.broken_once: set[str] = set()
         self.timeout_roles: set[str] = set()
 
@@ -300,6 +313,8 @@ class FakeLanes:
             return LaneResult(exit_code=None, stdout="", stderr="", duration_s=1, timed_out=True)
         if spec.role == "selector":
             out = self.selector
+        elif spec.role == "triage":
+            out = self.triage
         elif spec.role == "repair":
             # the broken payload is the original JSON with its closing brace removed
             out = json.loads(spec.prompt.split("Do not add fences.\n\n", 1)[1] + "}")

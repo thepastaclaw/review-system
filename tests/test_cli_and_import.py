@@ -55,7 +55,7 @@ def test_db_migration_idempotent(tmp_path):
     c1 = connect(p)
     c1.close()
     c2 = connect(p)
-    assert c2.execute("SELECT version FROM schema_version").fetchone()[0] == 1
+    assert c2.execute("SELECT version FROM schema_version").fetchone()[0] == 2
     assert c2.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 

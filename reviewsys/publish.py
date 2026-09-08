@@ -133,9 +133,11 @@ def map_comment(f: Finding, parsed: dict[str, list[dict[str, int]]]) -> dict[str
 
 @dataclass(slots=True)
 class Provenance:
-    reviewers: list[dict[str, Any]]  # {model, agent, role, status, phase}
+    reviewers: list[dict[str, Any]]  # {model, agent, role, effort?, status, phase}
     verifier: dict[str, Any]  # {model, agent, role}
     policy_fingerprint: str
+    triage: dict[str, Any] | None = None  # {tier, model, effort, method, reasoning, error}
+    phase2_skipped: str | None = None  # set when a final review was published from Phase 1 only
 
 
 @dataclass(slots=True)
@@ -158,6 +160,9 @@ class ReviewModel:
     def canonical_event(self) -> str:
         if self.verified.blocker_count:
             return "REQUEST_CHANGES"
+        if self.provenance.phase2_skipped:
+            # a Phase-1-only verdict never approves: the second-round reviewers did not run
+            return "COMMENT"
         return "APPROVE" if self.verified.review_action == "APPROVE" else "COMMENT"
 
 
@@ -209,19 +214,35 @@ def _source_line(p: Provenance) -> str:
     return "Source: " + "; ".join(parts)
 
 
+def _triage_line(t: dict[str, Any]) -> str:
+    if str(t.get("method", "")).startswith("llm:"):
+        how = f"`{t['model']}` (effort {t['effort']})"
+    else:
+        how = f"fallback after triage failure ({t.get('error') or 'unknown'})"
+    why = f" — {t['reasoning']}" if t.get("reasoning") else ""
+    return f"- Triage: `{t['tier']}` by {how}{why}"
+
+
 def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     def fmt(r: dict[str, Any]) -> str:
-        return f"`{r['model']}` — {r['role']} ({r['status']}); agent `{r['agent']}`"
+        status = r["status"] + (f", effort {r['effort']}" if r.get("effort") else "")
+        return f"`{r['model']}` — {r['role']} ({status}); agent `{r['agent']}`"
 
     p1 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase1"]
     p2 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase2"]
-    lines = [
-        "### Review provenance",
+    lines = ["### Review provenance"]
+    if p.triage:
+        lines.append(_triage_line(p.triage))
+    lines += [
         "- Phase 1 reviewers: " + (", ".join(p1) if p1 else "provenance missing"),
         f"- Fresh verifier: `{p.verifier['model']}` — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]
     if phase == "preliminary":
         lines.append("- Phase 2 reviewers: **not run (deferred by blocker gate)**")
+    elif p.phase2_skipped:
+        lines.append(
+            f"- Phase 2 reviewers: **not run ({p.phase2_skipped})**; this review comments and never approves"
+        )
     else:
         lines.append(
             "- Phase 2 reviewers: " + (", ".join(p2) if p2 else "no successful evidence recorded")
@@ -235,11 +256,13 @@ def render(m: ReviewModel) -> str:
         counts[f.severity if f.severity in counts else "nitpick"] += 1
     if m.phase == "preliminary":
         counts["blocking"] = m.verified.blocker_count
-    title = (
-        "Preliminary review — Phase 1 blocker gate"
-        if m.phase == "preliminary"
-        else "Final validation — Phase 1 + Phase 2"
-    )
+    if m.phase == "preliminary":
+        title = "Preliminary review — Phase 1 blocker gate"
+    elif m.provenance.phase2_skipped:
+        tier = (m.provenance.triage or {}).get("tier", "trivial")
+        title = f"Final review — Phase 1 only ({tier} change)"
+    else:
+        title = "Final validation — Phase 1 + Phase 2"
     summary = "\n".join(
         line for line in m.verified.summary.splitlines() if not _SUMMARY_SOURCE_LINE_RE.match(line)
     ).strip()

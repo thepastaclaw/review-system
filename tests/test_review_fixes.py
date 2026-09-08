@@ -32,7 +32,7 @@ def test_concurrent_first_migration_does_not_crash(tmp_path):
         t.join()
     assert not errors, errors
     c = sqlite3.connect(p)
-    assert c.execute("SELECT version FROM schema_version").fetchall() == [(1,)]
+    assert c.execute("SELECT version FROM schema_version").fetchall() == [(2,)]
 
 
 def test_worker_never_resurrects_a_reaped_run(cfg, conn, gh, lanes):

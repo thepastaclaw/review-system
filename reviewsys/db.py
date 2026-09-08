@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -81,6 +81,10 @@ MIGRATIONS: dict[int, str] = {
         repo TEXT, number INTEGER, run_id INTEGER, detail TEXT);
     CREATE INDEX events_ts ON events (ts);
     CREATE TABLE kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+    """,
+    2: """
+    ALTER TABLE lanes ADD COLUMN effort TEXT;
+    ALTER TABLE runs ADD COLUMN tier TEXT;
     """,
 }
 

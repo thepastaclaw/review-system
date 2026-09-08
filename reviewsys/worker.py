@@ -1,6 +1,6 @@
 """Worker: runs one review (one `runs` row) end to end.
 
-Steps: worktree -> select -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
+Steps: worktree -> select -> triage -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
 Every step is recorded in `steps`. Any ReviewError ends the run as failed with
 its classification; the scheduler decides on retry. Cooperative cancellation
 is checked on every heartbeat.
@@ -9,6 +9,7 @@ is checked on every heartbeat.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import logging
 import shutil
@@ -39,6 +40,7 @@ from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, verifier_
 from .scheduler import finish_run
 from .select import select, write_selection
 from .steps import worktree as wt
+from .triage import Triage, triage, write_triage
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +65,9 @@ class RunContext:
     mirror: Path | None = None
     meta: github.PrMeta | None = None
     selection: list[str] = field(default_factory=list)
+    files: list[dict[str, Any]] = field(default_factory=list)
+    triage: Triage | None = None
+    tier: str = "normal"
     evidence: dict[str, Any] = field(default_factory=dict)
     coderabbit: dict[str, Any] = field(default_factory=dict)
     coderabbit_ids: list[int] = field(default_factory=list)
@@ -150,13 +155,14 @@ def _lane_row(
 ) -> None:
     with tx(ctx.conn):
         ctx.conn.execute(
-            "INSERT INTO lanes (run_id, phase, role, agent, model, attempt, attempt_id, status, exit_code, tokens_in, tokens_out, started_at, finished_at, artifact_dir, prompt_sha, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO lanes (run_id, phase, role, agent, model, effort, attempt, attempt_id, status, exit_code, tokens_in, tokens_out, started_at, finished_at, artifact_dir, prompt_sha, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 ctx.run_id,
                 phase,
                 role,
                 lm.agent,
                 lm.model,
+                lm.effort,
                 attempt,
                 attempt_id,
                 status,
@@ -217,6 +223,8 @@ def _set_run_review(
 def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
     if ctx.dry_run:
         return
+    if ctx.triage is not None:
+        kw.setdefault("tier", ctx.tier)
     try:
         github.upsert_gate_comment(
             ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, github.gate_body(status, ctx.sha, **kw)
@@ -259,7 +267,8 @@ def step_select(ctx: RunContext) -> None:
     files_raw = (
         ctx.gh.api(f"repos/{ctx.repo}/pulls/{ctx.number}/files?per_page=100", paginate=True) or []
     )
-    files = [str(f.get("filename")) for f in files_raw if isinstance(f, dict)]
+    ctx.files = [f for f in files_raw if isinstance(f, dict)]
+    files = [str(f.get("filename")) for f in ctx.files]
     sel = select(
         ctx.cfg,
         repo=ctx.repo,
@@ -282,6 +291,39 @@ def step_select(ctx: RunContext) -> None:
                 run_id=ctx.run_id,
                 detail=f"method={sel.method} error={sel.error}",
             )
+
+
+def step_triage(ctx: RunContext) -> None:
+    """Rate the PR so reviewer effort can scale; no-op unless the policy configures triage."""
+    assert ctx.meta and ctx.worktree
+    if ctx.cfg.policy.triage is None:
+        return
+    t = triage(
+        ctx.cfg,
+        repo=ctx.repo,
+        base_ref=ctx.meta.base_ref,
+        title=ctx.meta.title,
+        body=ctx.meta.body,
+        files=ctx.files,
+        run_dir=ctx.run_dir,
+        worktree=ctx.worktree,
+        runner=ctx.lane_runner,
+    )
+    write_triage(ctx.run_dir, t)
+    ctx.triage = t
+    ctx.tier = t.tier
+    with tx(ctx.conn):
+        ctx.conn.execute("UPDATE runs SET tier=? WHERE id=?", (t.tier, ctx.run_id))
+        if t.error:
+            event(
+                ctx.conn,
+                "triage.degraded",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"tier={t.tier} method={t.method} error={t.error}",
+            )
+    _gate_comment(ctx, "in_progress")
 
 
 def step_context(ctx: RunContext) -> None:
@@ -407,6 +449,7 @@ def _run_lane(
                     "model": lm.model,
                     "agent": lm.agent,
                     "role": role,
+                    "effort": lm.effort,
                     "status": "completed",
                     "phase": phase,
                     "attempt_id": attempt_id,
@@ -537,7 +580,12 @@ def _backfill_posted(
 
 
 def step_publish(
-    ctx: RunContext, *, phase: str, verified: VerifierOutput, verifier_lm: LaneModel
+    ctx: RunContext,
+    *,
+    phase: str,
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+    phase2_skipped: str | None = None,
 ) -> publish.PublishResult:
     existing = github.existing_review_for_sha(
         ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
@@ -555,7 +603,9 @@ def step_publish(
             review_url=str(existing.get("html_url") or "") or None,
             skipped_reason="already_published_for_sha",
         )
-    model = _build_review(ctx, phase=phase, verified=verified, verifier_lm=verifier_lm)
+    model = _build_review(
+        ctx, phase=phase, verified=verified, verifier_lm=verifier_lm, phase2_skipped=phase2_skipped
+    )
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
     result = publish.publish(ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run)
     _record_publication(ctx, phase, model, result, verified)
@@ -567,7 +617,12 @@ def step_publish(
 
 
 def _build_review(
-    ctx: RunContext, *, phase: str, verified: VerifierOutput, verifier_lm: LaneModel
+    ctx: RunContext,
+    *,
+    phase: str,
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+    phase2_skipped: str | None = None,
 ) -> publish.ReviewModel:
     diff = github.pr_diff(ctx.gh, ctx.repo, ctx.number)
     prov = publish.Provenance(
@@ -578,6 +633,8 @@ def _build_review(
             "role": "verifier" if phase == "preliminary" else "final-verifier",
         },
         policy_fingerprint=ctx.cfg.policy.fingerprint,
+        triage=_triage_provenance(ctx),
+        phase2_skipped=phase2_skipped,
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -597,6 +654,20 @@ def _build_review(
         dry_run=ctx.dry_run,
         superseded_note=note,
     )
+
+
+def _triage_provenance(ctx: RunContext) -> dict[str, Any] | None:
+    t, lm = ctx.triage, ctx.cfg.policy.triage
+    if t is None or lm is None:
+        return None
+    return {
+        "tier": t.tier,
+        "model": lm.model,
+        "effort": lm.effort,
+        "method": t.method,
+        "reasoning": t.reasoning,
+        "error": t.error,
+    }
 
 
 def _record_publication(
@@ -659,17 +730,34 @@ def _verify_step(
 
 
 def _publish_step(
-    ctx: RunContext, *, phase: str, verified: VerifierOutput, verifier_lm: LaneModel
+    ctx: RunContext,
+    *,
+    phase: str,
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+    phase2_skipped: str | None = None,
 ) -> None:
     _step_start(ctx, StepName.PUBLISH)
-    res = step_publish(ctx, phase=phase, verified=verified, verifier_lm=verifier_lm)
+    res = step_publish(
+        ctx, phase=phase, verified=verified, verifier_lm=verifier_lm, phase2_skipped=phase2_skipped
+    )
     _step_end(
         ctx,
         StepName.PUBLISH,
         "ok",
         {"posted": res.posted, "event": res.event, "skipped": res.skipped_reason},
     )
-    _gate_comment(ctx, "done", phase=phase, blocker_count=verified.blocker_count)
+    _gate_comment(
+        ctx,
+        "done",
+        phase=phase,
+        blocker_count=verified.blocker_count,
+        phase2_skipped=phase2_skipped,
+    )
+
+
+def _with_effort(lm: LaneModel, effort: str | None) -> LaneModel:
+    return dataclasses.replace(lm, effort=effort) if effort else lm
 
 
 def run(ctx: RunContext) -> RunStatus:
@@ -679,19 +767,26 @@ def run(ctx: RunContext) -> RunStatus:
     for name, fn in (
         (StepName.WORKTREE, step_worktree),
         (StepName.SELECT, step_select),
+        (StepName.TRIAGE, step_triage),
         (StepName.CONTEXT, step_context),
     ):
+        if name == StepName.TRIAGE and pol.triage is None:
+            continue
         ctx.check_cancel()
         _step_start(ctx, name)
         fn(ctx)
-        _step_end(
-            ctx, name, "ok", {"selection": ctx.selection} if name == StepName.SELECT else None
-        )
+        detail: dict[str, Any] | None = None
+        if name == StepName.SELECT:
+            detail = {"selection": ctx.selection}
+        elif name == StepName.TRIAGE and ctx.triage:
+            detail = dataclasses.asdict(ctx.triage)
+        _step_end(ctx, name, "ok", detail)
+    effort = pol.tier_effort(ctx.tier)
     ctx.phase1_outputs = _reviewer_step(
         ctx,
         step=StepName.PHASE1,
         phase="phase1",
-        lm=pol.phase1_reviewer,
+        lm=_with_effort(pol.phase1_reviewer, effort.phase1),
         expected_phase="preliminary",
     )
     ctx.verify1 = _verify_step(
@@ -702,16 +797,36 @@ def run(ctx: RunContext) -> RunStatus:
         expected_phase="preliminary",
     )
     _step_start(ctx, StepName.GATE)
-    admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled)
-    _step_end(ctx, StepName.GATE, "ok", {"admit_phase2": admit})
+    tier_allows = effort.phase2 is not None
+    admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled, tier_allows=tier_allows)
+    _step_end(
+        ctx,
+        StepName.GATE,
+        "ok",
+        {"admit_phase2": admit, "tier": ctx.tier, "phase2_effort": effort.phase2},
+    )
     if not admit:
         ctx.check_cancel()
-        _publish_step(
-            ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=pol.phase1_verifier
-        )
+        if ctx.verify1.blocker_count or not pol.phase2_enabled:
+            _publish_step(
+                ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=pol.phase1_verifier
+            )
+        else:
+            # no blockers and the tier says a second round adds nothing: final from Phase 1
+            _publish_step(
+                ctx,
+                phase="final",
+                verified=ctx.verify1,
+                verifier_lm=pol.phase1_verifier,
+                phase2_skipped=f"triage rated this change {ctx.tier}",
+            )
         return RunStatus.DONE
     ctx.phase2_outputs = _reviewer_step(
-        ctx, step=StepName.PHASE2, phase="phase2", lm=pol.phase2_reviewer, expected_phase="final"
+        ctx,
+        step=StepName.PHASE2,
+        phase="phase2",
+        lm=_with_effort(pol.phase2_reviewer, effort.phase2),
+        expected_phase="final",
     )
     ctx.verify2 = _verify_step(
         ctx, step=StepName.VERIFY2, phase="verify2", lm=pol.phase2_verifier, expected_phase="final"

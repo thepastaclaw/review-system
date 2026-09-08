@@ -110,6 +110,8 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
                 cfg.policy.repair_model,
                 cfg.policy.selector_model,
             }
+            if cfg.policy.triage:
+                models.add(cfg.policy.triage.model)
             for m in sorted(models):
                 good, detail = probe_single_stop(m, key)
                 ok &= _ok(f"proxy model {m} (single stop_sequence)", good, detail)
