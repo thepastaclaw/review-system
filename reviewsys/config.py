@@ -97,6 +97,7 @@ class Config:
     heartbeat_stale_minutes: int
     ingest_interval_seconds: int
     notify_interval_seconds: int
+    queue_comment_interval_seconds: int
     tick_seconds: int
     watchdog_minutes: int
     comment_budget: int
@@ -169,6 +170,8 @@ heartbeat_seconds = 15
 heartbeat_stale_minutes = 5
 ingest_interval_seconds = 180
 notify_interval_seconds = 120
+# refresh queue-position comments and honour the priority checkbox this often
+queue_comment_interval_seconds = 180
 tick_seconds = 20
 watchdog_minutes = 30
 comment_budget = 10
@@ -290,6 +293,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         heartbeat_stale_minutes=int(s["heartbeat_stale_minutes"]),
         ingest_interval_seconds=int(s["ingest_interval_seconds"]),
         notify_interval_seconds=int(s["notify_interval_seconds"]),
+        queue_comment_interval_seconds=int(s.get("queue_comment_interval_seconds", 180)),
         tick_seconds=int(s["tick_seconds"]),
         watchdog_minutes=int(s["watchdog_minutes"]),
         comment_budget=int(s.get("comment_budget", settings.get("comment_budget", 10))),

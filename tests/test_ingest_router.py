@@ -3,6 +3,7 @@ from datetime import timedelta
 from reviewsys.db import kv_get, parse_ts, tx
 from reviewsys.ingest import enqueue_head, ingest_notifications, ingest_prs
 from reviewsys.models import Trigger
+from reviewsys.queue_status import PRIORITY_BOX, queued_order, update_queue_comments
 from reviewsys.router import route_inbox
 
 
@@ -242,3 +243,105 @@ def test_failed_wake_keeps_batch_and_retries_later(cfg, conn, gh):
     live = Notifier(cfg, runner=lambda argv: subprocess.CompletedProcess(list(argv), 0, "", ""))
     assert flush_batches(conn, cfg, live) == 1
     assert conn.execute("SELECT action FROM inbox").fetchone()[0] == "own_pr_comment_delivered"
+
+
+def _queue(conn, cfg, n):
+    with tx(conn):
+        for i in range(n):
+            enqueue_head(conn, cfg, "dashpay/platform", 300 + i, f"{i:040x}", Trigger.NEW_PR)
+
+
+def test_queue_comments_posted_with_position_eta_and_checkbox(cfg, conn, gh):
+    _queue(conn, cfg, 3)
+    with tx(conn):
+        conn.execute("UPDATE heads SET eligible_at=queued_at")  # past debounce
+    stats = update_queue_comments(conn, cfg, gh)
+    assert stats == {"written": 3, "promoted": 0, "deferred": 0}
+    assert len(gh.gate_bodies) == 3
+    first = gh.gate_bodies[0]
+    assert "thepastaclaw-gate" in first and "1st in line" in first
+    # idle system (no active runs): the first two heads fit the two slots -> start now
+    assert "estimated start in ~5 min" in first
+    assert "3rd in line" in gh.gate_bodies[2] and "estimated start in ~2.0 h" in gh.gate_bodies[2]
+    assert PRIORITY_BOX in first
+    assert "of 3" not in first  # total omitted so bodies stay stable
+    assert (
+        conn.execute("SELECT COUNT(*) FROM kv WHERE key LIKE 'queue.comment_id:%'").fetchone()[0]
+        == 3
+    )
+    # unchanged queue -> re-read (by cached id) but no writes
+    gh.issue_comments = [{"id": 77, "user": {"login": "thepastaclaw"}, "body": gh.gate_bodies[-1]}]
+    gh.routes["repos/dashpay/platform/issues/comments/77"] = gh.issue_comments[0]
+    # PRs 300/301 differ from the shared body, so only those two are rewritten
+    assert update_queue_comments(conn, cfg, gh)["written"] == 2
+
+
+def test_ticked_checkbox_promotes_head_to_front(cfg, conn, gh):
+    _queue(conn, cfg, 3)
+    with tx(conn):
+        conn.execute("UPDATE heads SET eligible_at=queued_at")
+    update_queue_comments(conn, cfg, gh)
+    # serve a ticked box only for PR 302 (comment id 302), untouched bodies for the others
+    for n, body in zip((300, 301, 302), gh.gate_bodies, strict=True):
+        b = body.replace("- [ ] **Request", "- [x] **Request") if n == 302 else body
+        gh.routes[f"repos/dashpay/platform/issues/comments/{n}"] = {
+            "id": n,
+            "node_id": f"IC_{n}",
+            "user": {"login": "thepastaclaw"},
+            "body": b,
+        }
+    with tx(conn):
+        for n in (300, 301, 302):
+            conn.execute(
+                "INSERT OR REPLACE INTO kv (key, value) VALUES (?, ?)",
+                (f"queue.comment_id:dashpay/platform#{n}", str(n)),
+            )
+    gh.routes["graphql:userContentEdits"] = {
+        "node": {
+            "userContentEdits": {
+                "nodes": [
+                    {"editedAt": "2026-09-01T00:00:00Z", "editor": {"login": "thepastaclaw"}},
+                    {"editedAt": "2026-09-02T00:00:00Z", "editor": {"login": "QuantumExplorer"}},
+                ]
+            }
+        }
+    }
+    stats = update_queue_comments(conn, cfg, gh)
+    assert stats["promoted"] == 1
+    promoted = conn.execute(
+        "SELECT number, trigger, priority FROM heads WHERE priority=1"
+    ).fetchall()
+    assert [(p["number"], p["trigger"]) for p in promoted] == [(302, "priority_request")]
+    ev = conn.execute("SELECT detail FROM events WHERE kind='head.priority_requested'").fetchone()[
+        "detail"
+    ]
+    assert "QuantumExplorer" in ev
+    assert queued_order(conn)[0]["number"] == 302
+    latest_302 = [b for b in gh.gate_bodies if "⚡ Priority review — 1st in line" in b]
+    assert latest_302 and "- [ ]" not in latest_302[-1]
+    # second pass: box already consumed, nothing promoted again
+    assert update_queue_comments(conn, cfg, gh)["promoted"] == 0
+
+
+def test_requeued_head_replaces_worker_written_gate_comment(cfg, conn, gh):
+    _queue(conn, cfg, 1)
+    with tx(conn):
+        conn.execute("UPDATE heads SET eligible_at=queued_at")
+    update_queue_comments(conn, cfg, gh)
+    # the worker overwrote the comment ("failed"), then the head was requeued for retry
+    gh.routes["repos/dashpay/platform/issues/comments/77"] = {
+        "id": 77,
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-gate v1 -->\n⚠️ Automated review could not complete",
+    }
+    stats = update_queue_comments(conn, cfg, gh)
+    assert stats["written"] == 1 and "Queued for automated review" in gh.gate_bodies[-1]
+
+
+def test_queue_comment_writes_are_capped_per_pass(cfg, conn, gh, monkeypatch):
+    from reviewsys import queue_status
+
+    monkeypatch.setattr(queue_status, "MAX_WRITES_PER_PASS", 2)
+    _queue(conn, cfg, 5)
+    stats = queue_status.update_queue_comments(conn, cfg, gh)
+    assert stats["written"] == 2 and stats["deferred"] == 3

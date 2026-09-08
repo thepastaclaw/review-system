@@ -221,6 +221,8 @@ class FakeGh(Gh):
                 return {
                     "data": {"resolveReviewThread": {"thread": {"id": "t", "isResolved": True}}}
                 }
+            if "userContentEdits" in q and "graphql:userContentEdits" in self.routes:
+                return {"data": self.routes["graphql:userContentEdits"]}
             if "node(id:" in q:
                 return {
                     "data": {
@@ -238,6 +240,13 @@ class FakeGh(Gh):
             ep = args[1]
             method = args[args.index("--method") + 1] if "--method" in args else "GET"
             body = json.loads(stdin) if stdin else None
+            if "/issues/comments/" in ep and method == "PATCH":
+                new_body = (body or {})["body"]
+                self.gate_bodies.append(new_body)
+                route = self.routes.get(ep)
+                if isinstance(route, dict):
+                    self.routes[ep] = {**route, "body": new_body}
+                return {"id": 77}
             if ep in self.routes:
                 return self.routes[ep]
             if ep.startswith("/notifications"):
@@ -268,9 +277,6 @@ class FakeGh(Gh):
                 return self.inline
             if "/pulls/" in ep and "/files" in ep:
                 return self.files
-            if "/issues/comments/" in ep and method == "PATCH":
-                self.gate_bodies.append((body or {})["body"])
-                return {"id": 77}
             if "/issues/" in ep and ep.endswith("/comments") and method == "POST":
                 self.gate_bodies.append((body or {})["body"])
                 self.issue_comments.append(

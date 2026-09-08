@@ -57,6 +57,21 @@ CLIProxyAPI clamps `--effort` to the `thinking.levels` declared per model in its
 config; the zai GLM entries must declare `[low, high, max]` or `max` reaches z.ai
 as `high` (fixed on the box 2026-09-08).
 
+## Queue comment and priority requests
+
+As soon as a PR head is queued the daemon posts (and keeps updated, every
+`queue_comment_interval_seconds`) one gate comment with the PR's place in line, an
+estimated start time (slot-pipeline model over the median of recent run durations,
+plus any debounce/backoff still to elapse) and an estimated review duration. The
+comment carries a checkbox, **Request priority review**; ticking it promotes the
+head to the priority lane (front of the queue, extra overflow slot, no debounce),
+records `head.priority_requested` with the editor's login from the comment's edit
+history, and re-renders the comment without the box. GitHub only renders the box as
+clickable to users who can edit the comment, i.e. repository collaborators. The
+same comment is reused by the worker for "in progress" / "done" / "failed" states,
+so a PR never has more than one bot status comment. Writes are capped at 25 per
+pass to respect GitHub's content-creation limits; the rest catch up next pass.
+
 ## Liveness model
 
 The daemon spawns `reviewsys worker --run-id N` in its own session. The worker

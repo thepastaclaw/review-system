@@ -19,6 +19,7 @@ from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .ingest import ingest_notifications, ingest_prs
 from .notify import Notifier
+from .queue_status import update_queue_comments
 from .reaper import reap
 from .router import route_inbox
 from .scheduler import apply_supersedes, schedule
@@ -80,6 +81,7 @@ class Daemon:
                 Task("supersede", 0, self.t_supersede),
                 Task("reap", 0, self.t_reap),
                 Task("schedule", 0, self.t_schedule),
+                Task("queue_comments", cfg.queue_comment_interval_seconds, self.t_queue_comments),
             ]
         self.tasks += [Task("watchdog", 300, self.t_watchdog), Task("gc", 3600, self.t_gc)]
 
@@ -92,6 +94,9 @@ class Daemon:
 
     def t_route(self) -> object:
         return route_inbox(self.conn, self.cfg, self.gh, self.notifier)
+
+    def t_queue_comments(self) -> object:
+        return update_queue_comments(self.conn, self.cfg, self.gh)
 
     def t_supersede(self) -> object:
         return apply_supersedes(self.conn, self.cfg)

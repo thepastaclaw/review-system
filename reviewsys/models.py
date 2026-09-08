@@ -49,11 +49,17 @@ class Trigger(StrEnum):
     NEW_PUSH = "new_push"
     MENTION = "mention"
     REVIEW_REQUESTED = "review_requested"
+    PRIORITY_REQUEST = "priority_request"  # checkbox ticked on the queue comment
     MANUAL = "manual"
 
     @property
     def priority(self) -> bool:
-        return self in {Trigger.MENTION, Trigger.REVIEW_REQUESTED, Trigger.MANUAL}
+        return self in {
+            Trigger.MENTION,
+            Trigger.REVIEW_REQUESTED,
+            Trigger.PRIORITY_REQUEST,
+            Trigger.MANUAL,
+        }
 
 
 class Phase(StrEnum):

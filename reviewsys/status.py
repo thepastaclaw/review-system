@@ -10,6 +10,19 @@ from .config import Config
 from .db import fmt_ts, kv_get, now, now_dt, parse_ts
 
 
+def median_run_minutes(conn: sqlite3.Connection) -> float | None:
+    """Median wall-clock minutes of the last 20 completed runs, or None before the first one."""
+    recent_done = conn.execute(
+        "SELECT started_at, finished_at FROM runs WHERE status='done' ORDER BY finished_at DESC LIMIT 20"
+    ).fetchall()
+    durations = sorted(
+        (parse_ts(r["finished_at"]) - parse_ts(r["started_at"])).total_seconds() / 60
+        for r in recent_done
+        if r["finished_at"]
+    )
+    return durations[len(durations) // 2] if durations else None
+
+
 def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     ts = now()
     counts = {
@@ -29,15 +42,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     last_done = conn.execute(
         "SELECT MAX(finished_at) AS f FROM runs WHERE status='done'"
     ).fetchone()["f"]
-    recent_done = conn.execute(
-        "SELECT started_at, finished_at FROM runs WHERE status='done' ORDER BY finished_at DESC LIMIT 20"
-    ).fetchall()
-    durations = sorted(
-        (parse_ts(r["finished_at"]) - parse_ts(r["started_at"])).total_seconds() / 60
-        for r in recent_done
-        if r["finished_at"]
-    )
-    median = durations[len(durations) // 2] if durations else None
+    median = median_run_minutes(conn)
     failed_24h = conn.execute(
         "SELECT COUNT(*) AS n FROM heads WHERE status='failed' AND finished_at>=?",
         (fmt_ts(parse_ts(ts) - timedelta(hours=24)),),
