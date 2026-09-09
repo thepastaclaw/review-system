@@ -78,6 +78,8 @@ class RunContext:
     prior_sha: str | None = None
     # finding_hash -> {comment_id, thread_id, replies} for prior findings with human replies
     prior_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # finding_hash -> thread facts for every unresolved bot finding thread on the PR
+    open_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     coverage_from: str = ""
     phase1_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
     phase2_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
@@ -352,7 +354,8 @@ def step_context(ctx: RunContext) -> None:
     ]
     # prior findings: last posted set for this PR from our DB, plus any human replies on
     # their inline threads (the reviewer must engage with pushback, not re-raise past it)
-    replied = github.replied_finding_threads(threads, ctx.cfg.bot_login)
+    ctx.open_threads = github.finding_threads(threads, ctx.cfg.bot_login)
+    replied = {h: t for h, t in ctx.open_threads.items() if t["awaiting_answer"]}
     rows = ctx.conn.execute(
         "SELECT pf.hash, pf.sha, f.file, f.line_start, f.line_end, f.severity, f.category, f.title, f.body FROM posted_findings pf LEFT JOIN findings f ON f.hash=pf.hash AND f.stage='posted' WHERE pf.repo=? AND pf.number=? ORDER BY pf.posted_at DESC, f.id DESC",
         (ctx.repo, ctx.number),
@@ -631,10 +634,14 @@ def step_publish(
     if existing:
         # Either a prior attempt posted but died before recording it, or this is a reply-
         # triggered re-review of an already-reviewed commit. Backfill so future rounds still
-        # see these findings as "prior", never post again for this sha/phase, and answer the
-        # threads that were replied to (the only output that reaches the author here).
+        # see these findings as "prior", never re-post the review for this sha/phase, answer the
+        # threads that were replied to, and, if the verdict moved (a blocker withdrawn or a new
+        # one found), post a short follow-up review so the standing verdict is not left stale.
         _backfill_posted(ctx, phase, existing, verified)
         _answer_threads(ctx, phase, verified)
+        update = _verdict_update(ctx, phase, existing, verified, verifier_lm)
+        if update is not None:
+            return update
         return publish.PublishResult(
             posted=False,
             event="COMMENT",
@@ -659,7 +666,7 @@ def step_publish(
 
 
 def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
-    if not ctx.prior_threads or ctx.dry_run:
+    if not ctx.open_threads or ctx.dry_run:
         return
     answered = publish.answer_replied_threads(
         ctx.gh,
@@ -667,6 +674,7 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
         ctx.number,
         ctx.sha,
         threads=ctx.prior_threads,
+        open_threads=ctx.open_threads,
         reconciliation=_reconciliation(ctx, phase),
         verified=verified,
     )
@@ -680,6 +688,79 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
                 run_id=ctx.run_id,
                 detail=json.dumps(a),
             )
+
+
+def _verdict_update(
+    ctx: RunContext,
+    phase: str,
+    existing: dict[str, Any],
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+) -> publish.PublishResult | None:
+    """On a same-sha re-review, post a follow-up review when the blocker verdict changed."""
+    was_blocking = str(existing.get("state") or "") == "CHANGES_REQUESTED"
+    now_blocking = verified.blocker_count > 0
+    if was_blocking == now_blocking or ctx.dry_run:
+        return None
+    withdrawn = [
+        str(r.get("finding_hash"))
+        for r in _reconciliation(ctx, phase).values()
+        if r.get("status") in {"WITHDRAWN", "FIXED", "OUTDATED"}
+    ]
+    titles = [
+        t["title"]
+        for h, t in ctx.open_threads.items()
+        if h in withdrawn and t.get("title") and t.get("severity") == "blocking"
+    ]
+    prov = publish.Provenance(
+        reviewers=ctx.reviewers,
+        verifier={"model": verifier_lm.model, "agent": verifier_lm.agent, "role": "final-verifier"},
+        policy_fingerprint=ctx.cfg.policy.fingerprint,
+        triage=_triage_provenance(ctx),
+        phase1_skipped=ctx.phase1_skipped,
+        adhoc=ctx.adhoc,
+    )
+    result = publish.publish_verdict_update(
+        ctx.gh,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        phase=phase,
+        verified=verified,
+        provenance=prov,
+        previous_event=str(existing.get("state") or ""),
+        withdrawn_blockers=titles,
+        bot_login=ctx.cfg.bot_login,
+    )
+    with tx(ctx.conn):
+        ctx.conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                ctx.run_id,
+                ctx.repo,
+                ctx.number,
+                ctx.sha,
+                phase,
+                result.review_id,
+                result.event,
+                now(),
+            ),
+        )
+        _set_run_review(
+            ctx,
+            blocker_count=verified.blocker_count,
+            review_id=result.review_id,
+            review_url=result.review_url,
+        )
+        event(
+            ctx.conn,
+            "review.verdict_updated",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{existing.get('state')} -> {result.event} on {ctx.sha[:8]}",
+        )
+    return result
 
 
 def _reconciliation(ctx: RunContext, phase: str) -> dict[str, dict[str, Any]]:

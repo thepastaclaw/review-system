@@ -104,9 +104,15 @@ threads only when a reviewer stated that status. The verifier's kept set overrid
 reviewer (a kept finding is "still applies" even if a lane said otherwise; a dropped one
 is "withdrawn"); a defaulted withdrawal is answered but never resolves the thread.
 Threads a maintainer has already resolved are left alone. Reasons are capped at 1200
-chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded. If the
-commit already has a review (same sha), no second review is posted; the thread answers
-are the output. Every answer is an event `thread.answered`.
+chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded. Open bot
+threads nobody replied to get the same note and resolution when a reviewer explicitly
+withdrew that finding, so a dropped finding never lingers. If the commit already has a
+review (same sha), the standing review is not re-posted; the thread answers are the
+output, plus, only when the blocker verdict changed, one short follow-up review
+("Re-review after discussion", marker `thepastaclaw-review-update v1`, no inline
+comments) that moves the standing verdict (`review.verdict_updated`). `reviewsys enqueue`
+on an already-reviewed head re-opens it the same way. Every answer is an event
+`thread.answered`.
 
 ## Ad hoc reviews (repos without a skill)
 

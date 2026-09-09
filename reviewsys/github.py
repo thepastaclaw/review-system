@@ -186,14 +186,12 @@ def evidence_bundle(
     return {"pr": meta.as_dict(), "issue_comments": ev_comments, "review_threads": ev_threads}
 
 
-def replied_finding_threads(
-    threads: list[dict[str, Any]], bot_login: str
-) -> dict[str, dict[str, Any]]:
-    """finding_hash -> thread facts for every unresolved bot finding thread whose newest human
-    reply is newer than the bot's newest answer in it (i.e. someone is waiting on us).
+def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, dict[str, Any]]:
+    """finding_hash -> thread facts for every unresolved bot finding thread.
 
-    Resolved threads are left alone: a maintainer who closed the discussion does not want it
-    reopened by a bot comment."""
+    `awaiting_answer` is True when the newest human reply is newer than the bot's newest
+    answer in that thread (someone is waiting on us). Resolved threads are left out entirely:
+    a maintainer who closed the discussion does not want it reopened by a bot comment."""
     out: dict[str, dict[str, Any]] = {}
     for t in threads:
         cs = t.get("comments") or []
@@ -217,19 +215,17 @@ def replied_finding_threads(
             for c in cs[1:]
             if not _is_bot(c, bot_login)
         ]
-        if not replies:
-            continue
         last_bot = max(
             (str(c.get("created_at") or "") for c in cs[1:] if _is_bot(c, bot_login)),
             default="",
         )
-        if str(replies[-1].get("created_at") or "") <= last_bot:
-            continue  # we already answered after the last human reply
+        awaiting = bool(replies) and str(replies[-1].get("created_at") or "") > last_bot
         severity, title = _finding_title(body)
         out[m.group(1)] = {
             "comment_id": root.get("id"),
             "thread_id": t.get("thread_id"),
-            "latest_reply_id": replies[-1].get("id"),
+            "awaiting_answer": awaiting,
+            "latest_reply_id": replies[-1].get("id") if replies else None,
             "path": t.get("path"),
             "line": t.get("line"),
             "severity": severity,
@@ -238,6 +234,13 @@ def replied_finding_threads(
             "replies": replies,
         }
     return out
+
+
+def replied_finding_threads(
+    threads: list[dict[str, Any]], bot_login: str
+) -> dict[str, dict[str, Any]]:
+    """Subset of `finding_threads` where a human is waiting on an answer."""
+    return {h: t for h, t in finding_threads(threads, bot_login).items() if t["awaiting_answer"]}
 
 
 def _finding_title(body: str) -> tuple[str, str]:

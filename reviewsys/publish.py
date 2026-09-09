@@ -625,10 +625,13 @@ def answer_replied_threads(
     threads: dict[str, dict[str, Any]],
     reconciliation: dict[str, dict[str, Any]],
     verified: VerifierOutput,
+    open_threads: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Reply once per (human reply, head) on each replied prior finding thread with the
     reconciliation outcome, and resolve threads whose finding a reviewer explicitly withdrew,
-    fixed or marked outdated. Returns what was done."""
+    fixed or marked outdated. Other open bot threads (`open_threads`, nobody replied) get the
+    same note and resolution when a reviewer explicitly withdrew their finding, so a dropped
+    finding never lingers as an open comment. Returns what was done."""
     # a verifier that echoes the carried finding without its finding_hash must not turn a
     # kept finding into "withdrawn": fall back to the finding's own hash as well
     kept_hashes = {f.prior_hash for f in verified.findings if f.prior_hash} | {
@@ -636,7 +639,14 @@ def answer_replied_threads(
     }
     posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
     done: list[dict[str, Any]] = []
-    for h, t in threads.items():
+    todo = dict(threads)
+    for h, t in (open_threads or {}).items():
+        if h in todo or h in kept_hashes:
+            continue
+        stated = str((reconciliation.get(h) or {}).get("status") or "")
+        if stated in {"WITHDRAWN", "FIXED", "OUTDATED"}:
+            todo[h] = {**t, "latest_reply_id": None}
+    for h, t in todo.items():
         cid = t.get("comment_id")
         if not cid:
             continue
@@ -666,3 +676,91 @@ def answer_replied_threads(
                 item["resolved"] = f"failed: {exc}"
         done.append(item)
     return done
+
+
+# ---- same-sha verdict update ----
+
+UPDATE_MARKER = "<!-- thepastaclaw-review-update v1 phase={phase} sha={sha} -->"
+
+
+def render_verdict_update(
+    *,
+    head_sha: str,
+    phase: str,
+    verified: VerifierOutput,
+    provenance: Provenance,
+    previous_event: str,
+    new_event: str,
+    withdrawn_blockers: list[str],
+) -> str:
+    n = verified.blocker_count
+    summary = "\n".join(
+        line for line in verified.summary.splitlines() if not _SUMMARY_SOURCE_LINE_RE.match(line)
+    ).strip()
+    parts = [
+        UPDATE_MARKER.format(phase=phase, sha=head_sha),
+        f"## Re-review after discussion — commit {head_sha[:8]}",
+        "",
+        f"Verdict updated from `{previous_event}` to `{new_event}`: "
+        + ("no blocking findings remain." if not n else f"{n} blocking finding(s) now stand."),
+        "",
+    ]
+    if withdrawn_blockers:
+        parts += ["Withdrawn blocking finding(s):", *(f"- {t}" for t in withdrawn_blockers), ""]
+    if summary:
+        parts += [summary, ""]
+    parts += [
+        "_Same commit as the standing review; the inline threads above carry the per-finding "
+        "outcome. This follow-up exists only to correct the verdict._",
+        "",
+        _source_line(provenance),
+        "",
+        *_provenance_lines(provenance, phase),
+    ]
+    return "\n".join(parts)
+
+
+def publish_verdict_update(
+    gh: Gh,
+    *,
+    repo: str,
+    number: int,
+    head_sha: str,
+    phase: str,
+    verified: VerifierOutput,
+    provenance: Provenance,
+    previous_event: str,
+    withdrawn_blockers: list[str],
+    bot_login: str,
+) -> PublishResult:
+    if verified.blocker_count:
+        event = "REQUEST_CHANGES"
+    elif verified.review_action == "APPROVE" and not provenance.phase2_skipped:
+        event = "APPROVE"
+    else:
+        event = "COMMENT"
+    body = render_verdict_update(
+        head_sha=head_sha,
+        phase=phase,
+        verified=verified,
+        provenance=provenance,
+        previous_event=previous_event,
+        new_event=event,
+        withdrawn_blockers=withdrawn_blockers,
+    )
+    transport = event
+    if event in {"APPROVE", "REQUEST_CHANGES"}:
+        author = github.pr_meta(gh, repo, number).author
+        if author.lower() == bot_login.lower():
+            transport = "COMMENT"
+    resp = github.post_review(
+        gh, repo, number, {"commit_id": head_sha, "body": body, "event": transport, "comments": []}
+    )
+    return PublishResult(
+        posted=True,
+        event=event,
+        transport_event=transport,
+        body=body,
+        review_id=int(resp["id"]),
+        review_url=str(resp.get("html_url") or "") or None,
+    )

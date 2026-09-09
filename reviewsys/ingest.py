@@ -100,12 +100,12 @@ def enqueue_head(
                 (trigger.value, ts, existing["id"]),
             )
             return "promoted"
-        if trigger == Trigger.REVIEW_REPLY and existing["status"] in (
+        if trigger in (Trigger.REVIEW_REPLY, Trigger.MANUAL) and existing["status"] in (
             HeadStatus.DONE,
             HeadStatus.FAILED,
         ):
-            # same commit, already reviewed: a human answered a finding, so review it again
-            # with the thread in context and answer on the thread
+            # same commit, already reviewed: a human answered a finding (or an operator asked),
+            # so review it again with the threads in context and answer on them
             conn.execute(
                 "UPDATE heads SET status='queued', priority=1, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
                 (trigger.value, ts, ts, existing["id"]),
@@ -115,7 +115,7 @@ def enqueue_head(
                 "head.requeued",
                 repo=repo,
                 number=number,
-                detail=f"{sha[:8]} re-opened by review reply",
+                detail=f"{sha[:8]} re-opened by {trigger.value}",
             )
             return "requeued"
         return "noop"

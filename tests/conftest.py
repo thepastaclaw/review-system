@@ -263,8 +263,14 @@ class FakeGh(Gh):
                     "html_url": f"https://github.com/r/pull/1#pullrequestreview-{rid}",
                 }
             if "/pulls/" in ep and "/reviews" in ep:
+                states = {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}
                 return [
-                    {"id": r["id"], "user": {"login": "thepastaclaw"}, "body": r.get("body", "")}
+                    {
+                        "id": r["id"],
+                        "user": {"login": "thepastaclaw"},
+                        "body": r.get("body", ""),
+                        "state": r.get("state") or states.get(r.get("event", ""), "COMMENTED"),
+                    }
                     for r in self.posted_reviews
                 ]
             if "/pulls/" in ep and "/comments/" in ep and ep.endswith("/replies"):

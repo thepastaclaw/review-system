@@ -612,10 +612,18 @@ def _seed_prior(conn, finding, *, body="old body"):
 
     f = Finding.from_dict(finding)
     with tx(conn):
-        hid = conn.execute(
-            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
-            ("dashpay/platform", 1, "b" * 40, "new_pr", 0, "done", "2026-09-07", "2026-09-07"),
-        ).lastrowid
+        row = conn.execute(
+            "SELECT id FROM heads WHERE repo=? AND number=? AND sha=?",
+            ("dashpay/platform", 1, "b" * 40),
+        ).fetchone()
+        hid = (
+            row["id"]
+            if row
+            else conn.execute(
+                "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
+                ("dashpay/platform", 1, "b" * 40, "new_pr", 0, "done", "2026-09-07", "2026-09-07"),
+            ).lastrowid
+        )
         rid = conn.execute(
             "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,1,'done','t','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z')",
             (hid,),
@@ -970,3 +978,122 @@ def test_reply_on_legacy_finding_without_db_row_is_adjudicated(cfg, conn, gh, la
     assert '"finding_hash": "c5669452cde4"' in prompt and '"original_title": "T"' in prompt
     assert '"severity": "suggestion"' in prompt and "old body" in prompt
     assert len(gh.replies) == 1 and "**Withdrawn**" in gh.replies[0]["body"]
+
+
+def test_same_sha_rereview_withdraws_blocker_and_updates_verdict(cfg, conn, gh, lanes):
+    """Author pushes back on one finding; the re-review withdraws a *different* blocking
+    finding nobody replied to. The blocker thread gets a note and is resolved, and a follow-up
+    review corrects the standing REQUEST_CHANGES verdict on the same commit."""
+    blocker = _blocking()
+    sugg = _sugg()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    sh = _seed_prior(conn, sugg)
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "disagree",
+        "created_at": "2026-09-08T20:00:00Z",
+        "association": "COLLABORATOR",
+    }
+    blocker_thread = _prior_thread(bh, replies=[])
+    blocker_thread["id"], blocker_thread["comments"]["nodes"][0]["databaseId"] = "PRRT_B", 800
+    blocker_thread["comments"]["nodes"][0]["body"] = (
+        f"<!-- thepastaclaw-review v1 finding={bh} dedupe=x -->\n**🔴 Blocking: {blocker['title']}**\n\nblocker body"
+    )
+    gh.threads = [blocker_thread, _prior_thread(sh, replies=[human])]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    carried = {**sugg, "finding_hash": sh}
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [carried],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {
+                "finding_hash": bh,
+                "status": "WITHDRAWN",
+                "reason": "Latency, not a correctness failure.",
+            },
+            {
+                "finding_hash": sh,
+                "status": "STILL_VALID",
+                "reason": "FIFO still serialises warmers.",
+            },
+        ],
+    }
+    lanes.verifier["default"] = _verifier([carried])
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        assert enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL) == "requeued"
+    (rid,) = schedule(conn, cfg, spawn=False)
+    status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+    assert status == RunStatus.DONE
+    texts = [r["body"] for r in gh.replies]
+    assert any("**Still applies**" in t and "FIFO" in t for t in texts)
+    assert any("**Withdrawn**" in t and "Latency" in t and "reply=None" in t for t in texts)
+    assert sum("resolveReviewThread" in " ".join(c) for c in gh.calls) == 1
+    # follow-up review corrects the verdict without re-posting inline comments
+    assert len(gh.posted_reviews) == 2
+    upd = gh.posted_reviews[1]
+    assert upd["event"] == "COMMENT" and upd["comments"] == []
+    assert "## Re-review after discussion" in upd["body"]
+    assert "from `CHANGES_REQUESTED` to `COMMENT`" in upd["body"]
+    assert f"- {blocker['title']}" in upd["body"]
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM reviews WHERE event='COMMENT' AND run_id=?", (rid,)
+        ).fetchone()[0]
+        == 1
+    )
+    ev = conn.execute("SELECT detail FROM events WHERE kind='review.verdict_updated'").fetchone()
+    assert ev and "CHANGES_REQUESTED -> COMMENT" in ev["detail"]
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
+
+
+def test_same_sha_rereview_with_unchanged_verdict_posts_no_update(cfg, conn, gh, lanes):
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "?",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    gh.threads = [_prior_thread(fh, replies=[human])]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "COMMENT",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    carried = {**s, "finding_hash": fh}
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [carried],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "STILL_VALID", "reason": "Yes."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([carried])
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.posted_reviews) == 1 and len(gh.replies) == 1
+    assert (
+        conn.execute("SELECT COUNT(*) FROM events WHERE kind='review.verdict_updated'").fetchone()[
+            0
+        ]
+        == 0
+    )
