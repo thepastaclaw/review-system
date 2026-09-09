@@ -1260,3 +1260,56 @@ def test_same_sha_rereview_that_finds_a_blocker_updates_final_verdict(cfg, conn,
     assert "Standing review was `COMMENTED`; this re-review is `REQUEST_CHANGES`" in upd["body"]
     assert "1 blocking finding(s) now stand" in upd["body"]
     assert any("**Resolved**" in r["body"] for r in gh.replies)
+
+
+def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
+    """On the bot's own PR GitHub records every review as COMMENTED, so the idempotency check
+    must compare the transport state, or a blocking re-review would repost every run."""
+    from reviewsys.publish import EVENT_STATE, transport_event
+
+    assert transport_event("REQUEST_CHANGES", own_pr=True) == "COMMENT"
+    assert transport_event("REQUEST_CHANGES", own_pr=False) == "REQUEST_CHANGES"
+    assert EVENT_STATE[transport_event("APPROVE", own_pr=True)] == "COMMENTED"
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "?",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    gh.threads = [_prior_thread(fh, replies=[human])]
+    gh.pr = {**gh.pr, "user": {"login": "thepastaclaw"}}
+    # standing: a COMMENT-transport review (state COMMENTED) on the bot's own PR
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "COMMENT",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    b = _blocking()
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [b],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "FIXED", "reason": "Done."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([b])
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    # blockers found, but on an own PR the transport is COMMENT == standing COMMENTED: no update
+    assert len(gh.posted_reviews) == 1
+    assert (
+        conn.execute("SELECT COUNT(*) FROM events WHERE kind='review.verdict_updated'").fetchone()[
+            0
+        ]
+        == 0
+    )

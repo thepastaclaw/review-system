@@ -727,10 +727,12 @@ def _verdict_update(
     )
     if state not in {"CHANGES_REQUESTED", "COMMENTED", "APPROVED"}:
         return None  # dismissed (or unknown): a human overrode us; do not re-assert
+    # compare what GitHub would record (transport), not the canonical event: on a bot-authored
+    # PR both collapse to COMMENTED, and comparing the canonical event would repost forever
+    assert ctx.meta
+    own = ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
     new_event = publish.verdict_event(verified, prov)
-    if {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}.get(
-        new_event, "COMMENTED"
-    ) == state:
+    if publish.EVENT_STATE[publish.transport_event(new_event, own_pr=own)] == state:
         return None
     withdrawn = [
         str(r.get("finding_hash"))

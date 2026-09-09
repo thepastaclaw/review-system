@@ -747,6 +747,19 @@ def verdict_event(verified: VerifierOutput, provenance: Provenance) -> str:
     return "COMMENT"
 
 
+def transport_event(event: str, *, own_pr: bool) -> str:
+    """GitHub refuses APPROVE/REQUEST_CHANGES from the PR author, so a bot-authored PR gets
+    COMMENT transport and the canonical verdict goes in the body."""
+    return "COMMENT" if own_pr and event in {"APPROVE", "REQUEST_CHANGES"} else event
+
+
+EVENT_STATE = {
+    "REQUEST_CHANGES": "CHANGES_REQUESTED",
+    "APPROVE": "APPROVED",
+    "COMMENT": "COMMENTED",
+}
+
+
 def publish_verdict_update(
     gh: Gh,
     *,
@@ -770,11 +783,10 @@ def publish_verdict_update(
         new_event=event,
         withdrawn_blockers=withdrawn_blockers,
     )
-    transport = event
-    if event in {"APPROVE", "REQUEST_CHANGES"}:
-        author = github.pr_meta(gh, repo, number).author
-        if author.lower() == bot_login.lower():
-            transport = "COMMENT"
+    own = github.pr_meta(gh, repo, number).author.lower() == bot_login.lower()
+    transport = transport_event(event, own_pr=own)
+    if transport != event:
+        body += f"\n\n_Canonical verifier result: `{event}`; submitted as `COMMENT` because GitHub does not allow authors to approve or request changes on their own pull requests._"
     resp = github.post_review(
         gh, repo, number, {"commit_id": head_sha, "body": body, "event": transport, "comments": []}
     )
