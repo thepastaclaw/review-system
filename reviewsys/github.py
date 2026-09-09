@@ -236,13 +236,6 @@ def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, 
     return out
 
 
-def replied_finding_threads(
-    threads: list[dict[str, Any]], bot_login: str
-) -> dict[str, dict[str, Any]]:
-    """Subset of `finding_threads` where a human is waiting on an answer."""
-    return {h: t for h, t in finding_threads(threads, bot_login).items() if t["awaiting_answer"]}
-
-
 def _finding_title(body: str) -> tuple[str, str]:
     """(severity, title) from a posted finding comment's bold headline."""
     for line in body.splitlines():

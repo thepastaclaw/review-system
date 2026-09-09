@@ -631,6 +631,14 @@ def step_publish(
     existing = github.existing_review_for_sha(
         ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
     )
+    if existing is None and phase == "preliminary":
+        # a same-sha re-review that now finds blockers after a FINAL review stood: correct the
+        # final verdict with a follow-up rather than stacking a second full review
+        existing = github.existing_review_for_sha(
+            ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
+        )
+        if existing:
+            phase = "final"
     if existing:
         # Either a prior attempt posted but died before recording it, or this is a reply-
         # triggered re-review of an already-reviewed commit. Backfill so future rounds still
@@ -639,7 +647,7 @@ def step_publish(
         # one found), post a short follow-up review so the standing verdict is not left stale.
         _backfill_posted(ctx, phase, existing, verified)
         _answer_threads(ctx, phase, verified)
-        update = _verdict_update(ctx, phase, existing, verified, verifier_lm)
+        update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
         if update is not None:
             return update
         return publish.PublishResult(
@@ -693,14 +701,36 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
 def _verdict_update(
     ctx: RunContext,
     phase: str,
-    existing: dict[str, Any],
     verified: VerifierOutput,
     verifier_lm: LaneModel,
+    *,
+    phase2_skipped: str | None,
 ) -> publish.PublishResult | None:
-    """On a same-sha re-review, post a follow-up review when the blocker verdict changed."""
-    was_blocking = str(existing.get("state") or "") == "CHANGES_REQUESTED"
-    now_blocking = verified.blocker_count > 0
-    if was_blocking == now_blocking or ctx.dry_run:
+    """On a same-sha re-review, post a follow-up review when the verdict moved.
+
+    Compares against the bot's LATEST review state for this (sha, phase), which includes
+    earlier follow-ups, so the same correction is never posted twice. A review a maintainer
+    dismissed is left dismissed: we only ever move from a state we set ourselves."""
+    if ctx.dry_run:
+        return None
+    prov = publish.Provenance(
+        reviewers=ctx.reviewers,
+        verifier={"model": verifier_lm.model, "agent": verifier_lm.agent, "role": "final-verifier"},
+        policy_fingerprint=ctx.cfg.policy.fingerprint,
+        triage=_triage_provenance(ctx),
+        phase2_skipped=phase2_skipped,
+        phase1_skipped=ctx.phase1_skipped,
+        adhoc=ctx.adhoc,
+    )
+    state = publish.standing_verdict(
+        github.reviews(ctx.gh, ctx.repo, ctx.number), ctx.sha, phase, ctx.cfg.bot_login
+    )
+    if state not in {"CHANGES_REQUESTED", "COMMENTED", "APPROVED"}:
+        return None  # dismissed (or unknown): a human overrode us; do not re-assert
+    new_event = publish.verdict_event(verified, prov)
+    if {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}.get(
+        new_event, "COMMENTED"
+    ) == state:
         return None
     withdrawn = [
         str(r.get("finding_hash"))
@@ -712,14 +742,6 @@ def _verdict_update(
         for h, t in ctx.open_threads.items()
         if h in withdrawn and t.get("title") and t.get("severity") == "blocking"
     ]
-    prov = publish.Provenance(
-        reviewers=ctx.reviewers,
-        verifier={"model": verifier_lm.model, "agent": verifier_lm.agent, "role": "final-verifier"},
-        policy_fingerprint=ctx.cfg.policy.fingerprint,
-        triage=_triage_provenance(ctx),
-        phase1_skipped=ctx.phase1_skipped,
-        adhoc=ctx.adhoc,
-    )
     result = publish.publish_verdict_update(
         ctx.gh,
         repo=ctx.repo,
@@ -728,7 +750,7 @@ def _verdict_update(
         phase=phase,
         verified=verified,
         provenance=prov,
-        previous_event=str(existing.get("state") or ""),
+        previous_event=state,
         withdrawn_blockers=titles,
         bot_login=ctx.cfg.bot_login,
     )
@@ -758,7 +780,7 @@ def _verdict_update(
             repo=ctx.repo,
             number=ctx.number,
             run_id=ctx.run_id,
-            detail=f"{existing.get('state')} -> {result.event} on {ctx.sha[:8]}",
+            detail=f"{state} -> {result.event} on {ctx.sha[:8]}",
         )
     return result
 

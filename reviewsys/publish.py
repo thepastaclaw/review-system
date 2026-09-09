@@ -573,7 +573,9 @@ def post_coderabbit_reactions(
 
 # ---- answering human replies on prior finding threads ----
 
-THREAD_ANSWER_MARKER = "<!-- thepastaclaw-thread-answer v1 sha={sha} reply={reply} -->"
+THREAD_ANSWER_MARKER = (
+    "<!-- thepastaclaw-thread-answer v1 sha={sha} reply={reply} finding={finding} -->"
+)
 _REASON_MAX = 1200
 _ANSWER_LEAD = {
     "WITHDRAWN": "Withdrawn",
@@ -650,7 +652,9 @@ def answer_replied_threads(
         cid = t.get("comment_id")
         if not cid:
             continue
-        marker = THREAD_ANSWER_MARKER.format(sha=head_sha, reply=t.get("latest_reply_id"))
+        marker = THREAD_ANSWER_MARKER.format(
+            sha=head_sha, reply=t.get("latest_reply_id"), finding=h
+        )
         status, reason, explicit = _answer_outcome(h, reconciliation.get(h) or {}, kept_hashes)
         item: dict[str, Any] = {"finding_hash": h, "status": status, "comment_id": cid}
         if any(marker in b for b in posted):
@@ -701,7 +705,7 @@ def render_verdict_update(
         UPDATE_MARKER.format(phase=phase, sha=head_sha),
         f"## Re-review after discussion — commit {head_sha[:8]}",
         "",
-        f"Verdict updated from `{previous_event}` to `{new_event}`: "
+        f"Standing review was `{previous_event}`; this re-review is `{new_event}`: "
         + ("no blocking findings remain." if not n else f"{n} blocking finding(s) now stand."),
         "",
     ]
@@ -720,6 +724,29 @@ def render_verdict_update(
     return "\n".join(parts)
 
 
+def standing_verdict(
+    reviews: list[dict[str, Any]], head_sha: str, phase: str, bot_login: str
+) -> str | None:
+    """The bot's most recent review state for this (sha, phase), counting follow-up updates, or
+    None when the bot has not reviewed that head/phase. Dismissed reviews count as dismissed."""
+    marker = f"phase={phase} sha={head_sha}"
+    latest: str | None = None
+    for r in reviews:
+        if (r.get("user") or {}).get("login") != bot_login:
+            continue
+        if marker in str(r.get("body") or ""):
+            latest = str(r.get("state") or "")
+    return latest
+
+
+def verdict_event(verified: VerifierOutput, provenance: Provenance) -> str:
+    if verified.blocker_count:
+        return "REQUEST_CHANGES"
+    if verified.review_action == "APPROVE" and not provenance.phase2_skipped:
+        return "APPROVE"
+    return "COMMENT"
+
+
 def publish_verdict_update(
     gh: Gh,
     *,
@@ -733,12 +760,7 @@ def publish_verdict_update(
     withdrawn_blockers: list[str],
     bot_login: str,
 ) -> PublishResult:
-    if verified.blocker_count:
-        event = "REQUEST_CHANGES"
-    elif verified.review_action == "APPROVE" and not provenance.phase2_skipped:
-        event = "APPROVE"
-    else:
-        event = "COMMENT"
+    event = verdict_event(verified, provenance)
     body = render_verdict_update(
         head_sha=head_sha,
         phase=phase,

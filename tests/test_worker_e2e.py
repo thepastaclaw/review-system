@@ -857,7 +857,7 @@ def test_reason_is_scrubbed_of_mentions_and_retriggers(cfg, conn, gh, lanes):
 
 
 def test_resolved_and_already_answered_threads_are_left_alone(cfg, conn, gh, lanes):
-    from reviewsys.github import replied_finding_threads
+    from reviewsys.github import finding_threads
 
     human = {
         "id": 901,
@@ -891,10 +891,12 @@ def test_resolved_and_already_answered_threads_are_left_alone(cfg, conn, gh, lan
             "comments": comments,
         }
 
-    assert replied_finding_threads([parsed([root, human], resolved=True)], "thepastaclaw") == {}
-    assert replied_finding_threads([parsed([root, human, bot_answer])], "thepastaclaw") == {}
+    assert finding_threads([parsed([root, human], resolved=True)], "thepastaclaw") == {}
+    quiet = finding_threads([parsed([root, human, bot_answer])], "thepastaclaw")
+    assert quiet["abc"]["awaiting_answer"] is False  # known open thread, nobody waiting
     again = {**human, "id": 903, "created_at": "2026-09-08T22:00:00Z"}
-    out = replied_finding_threads([parsed([root, human, bot_answer, again])], "thepastaclaw")
+    out = finding_threads([parsed([root, human, bot_answer, again])], "thepastaclaw")
+    assert out["abc"]["awaiting_answer"] is True
     assert out["abc"]["latest_reply_id"] == 903 and [r["id"] for r in out["abc"]["replies"]] == [
         901,
         903,
@@ -1043,7 +1045,7 @@ def test_same_sha_rereview_withdraws_blocker_and_updates_verdict(cfg, conn, gh, 
     upd = gh.posted_reviews[1]
     assert upd["event"] == "COMMENT" and upd["comments"] == []
     assert "## Re-review after discussion" in upd["body"]
-    assert "from `CHANGES_REQUESTED` to `COMMENT`" in upd["body"]
+    assert "Standing review was `CHANGES_REQUESTED`; this re-review is `COMMENT`" in upd["body"]
     assert f"- {blocker['title']}" in upd["body"]
     assert (
         conn.execute(
@@ -1097,3 +1099,164 @@ def test_same_sha_rereview_with_unchanged_verdict_posts_no_update(cfg, conn, gh,
         ]
         == 0
     )
+
+
+def test_verdict_update_is_not_reposted_and_respects_dismissal(cfg, conn, gh, lanes):
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import Provenance, standing_verdict, verdict_event
+
+    prov = Provenance(
+        reviewers=[], verifier={"model": "m", "agent": "a", "role": "r"}, policy_fingerprint="x"
+    )
+    clean = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    original = {
+        "user": {"login": "thepastaclaw"},
+        "state": "CHANGES_REQUESTED",
+        "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} -->",
+    }
+    update = {
+        "user": {"login": "thepastaclaw"},
+        "state": "COMMENTED",
+        "body": f"<!-- thepastaclaw-review-update v1 phase=final sha={HEAD} -->",
+    }
+    assert standing_verdict([original], HEAD, "final", "thepastaclaw") == "CHANGES_REQUESTED"
+    # after one follow-up the standing verdict is the follow-up's state: no second post
+    assert standing_verdict([original, update], HEAD, "final", "thepastaclaw") == "COMMENTED"
+    assert verdict_event(clean, prov) == "COMMENT"
+    dismissed = {**original, "state": "DISMISSED"}
+    assert standing_verdict([dismissed], HEAD, "final", "thepastaclaw") == "DISMISSED"
+    other = {**original, "user": {"login": "someone"}}
+    assert standing_verdict([other], HEAD, "final", "thepastaclaw") is None
+    # a Phase-1-only re-review never approves, even via the update path
+    approving = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final", "review_action": "APPROVE"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    assert verdict_event(approving, prov) == "APPROVE"
+    assert (
+        verdict_event(
+            approving,
+            Provenance(
+                reviewers=[],
+                verifier=prov.verifier,
+                policy_fingerprint="x",
+                phase2_skipped="trivial",
+            ),
+        )
+        == "COMMENT"
+    )
+
+
+def test_second_withdrawn_finding_at_same_sha_still_gets_its_note(cfg, conn, gh, lanes):
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    verified = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    open_threads = {
+        "aaa": {
+            "comment_id": 900,
+            "thread_id": "T1",
+            "awaiting_answer": False,
+            "latest_reply_id": None,
+            "replies": [],
+        },
+        "bbb": {
+            "comment_id": 910,
+            "thread_id": "T2",
+            "awaiting_answer": False,
+            "latest_reply_id": None,
+            "replies": [],
+        },
+    }
+    out = answer_replied_threads(
+        gh,
+        "dashpay/platform",
+        1,
+        HEAD,
+        threads={},
+        open_threads=open_threads,
+        reconciliation={"aaa": {"finding_hash": "aaa", "status": "WITHDRAWN", "reason": "first"}},
+        verified=verified,
+    )
+    assert [o["action"] for o in out] == ["replied"] and "finding=aaa" in gh.replies[0]["body"]
+    # a later run at the same sha withdraws the second finding: the first is already answered,
+    # the second must still be noted and resolved
+    gh.inline = [
+        {
+            "id": 901,
+            "in_reply_to_id": 900,
+            "user": {"login": "thepastaclaw"},
+            "body": gh.replies[0]["body"],
+        }
+    ]
+    out = answer_replied_threads(
+        gh,
+        "dashpay/platform",
+        1,
+        HEAD,
+        threads={},
+        open_threads=open_threads,
+        reconciliation={
+            "aaa": {"finding_hash": "aaa", "status": "WITHDRAWN", "reason": "first"},
+            "bbb": {"finding_hash": "bbb", "status": "WITHDRAWN", "reason": "second"},
+        },
+        verified=verified,
+    )
+    assert {o["finding_hash"]: o["action"] for o in out} == {
+        "aaa": "already_answered",
+        "bbb": "replied",
+    }
+    assert sum("resolveReviewThread" in " ".join(c) for c in gh.calls) == 2
+
+
+def test_same_sha_rereview_that_finds_a_blocker_updates_final_verdict(cfg, conn, gh, lanes):
+    """The standing review is a clean FINAL; the re-review finds a blocker at Phase 1. Instead of
+    stacking a full preliminary review on the same commit, the final verdict gets a follow-up."""
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "are you sure?",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    gh.threads = [_prior_thread(fh, replies=[human])]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "COMMENT",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    b = _blocking()
+    lanes.reviewer["default"] = {
+        "summary": "found a real problem",
+        "findings": [b],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "FIXED", "reason": "Addressed."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([b])
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.posted_reviews) == 2
+    upd = gh.posted_reviews[1]
+    assert upd["event"] == "REQUEST_CHANGES" and upd["comments"] == []
+    assert "Standing review was `COMMENTED`; this re-review is `REQUEST_CHANGES`" in upd["body"]
+    assert "1 blocking finding(s) now stand" in upd["body"]
+    assert any("**Resolved**" in r["body"] for r in gh.replies)

@@ -108,11 +108,14 @@ chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded.
 threads nobody replied to get the same note and resolution when a reviewer explicitly
 withdrew that finding, so a dropped finding never lingers. If the commit already has a
 review (same sha), the standing review is not re-posted; the thread answers are the
-output, plus, only when the blocker verdict changed, one short follow-up review
-("Re-review after discussion", marker `thepastaclaw-review-update v1`, no inline
-comments) that moves the standing verdict (`review.verdict_updated`). `reviewsys enqueue`
-on an already-reviewed head re-opens it the same way. Every answer is an event
-`thread.answered`.
+output, plus, only when the verdict moved, one short follow-up review ("Re-review after
+discussion", marker `thepastaclaw-review-update v1`, no inline comments) that moves the
+standing verdict (`review.verdict_updated`). The comparison is against the bot's latest
+review state for that commit, follow-ups included, so a correction is posted once; a
+review a maintainer dismissed is never re-asserted; a re-review that finds blockers after
+a clean final review corrects that final verdict instead of stacking a preliminary
+review. `reviewsys enqueue` on an already-reviewed head re-opens it the same way. Every
+answer is an event `thread.answered`.
 
 ## Ad hoc reviews (repos without a skill)
 
