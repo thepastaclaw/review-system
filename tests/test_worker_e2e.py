@@ -1313,3 +1313,216 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
         ]
         == 0
     )
+    # ... yet our own record (and so the verdict label) carries the canonical REQUEST_CHANGES
+    from reviewsys import labels
+
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
+            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
+        )
+    rows = [r["event"] for r in conn.execute("SELECT event FROM reviews ORDER BY id")]
+    assert rows == ["COMMENTED", "REQUEST_CHANGES"]
+    assert labels.wanted(conn, "dashpay/platform", 1) == "pastaclaw:changes-requested"
+    ev = conn.execute("SELECT detail FROM events WHERE kind='review.verdict_recorded'").fetchone()
+    assert ev and "COMMENT -> REQUEST_CHANGES" in ev["detail"]
+    # recording the same verdict again is a no-op
+    from reviewsys.contract import parse_verifier_output
+
+    ctx = worker.RunContext.__new__(worker.RunContext)
+    ctx.conn, ctx.repo, ctx.number, ctx.sha, ctx.run_id = conn, "dashpay/platform", 1, HEAD, rid
+    out = parse_verifier_output(
+        {**_verifier([b]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    worker._record_verdict(ctx, "final", out, "REQUEST_CHANGES")
+    assert conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 2
+
+
+def _reconcile(conn, gh, disabled=None):
+    from reviewsys import labels
+
+    return labels.reconcile(conn, gh, disabled=set() if disabled is None else disabled)
+
+
+def test_verdict_label_follows_review_push_and_close(cfg, conn, gh, lanes):
+    """The label is reconciled from DB state: a posted verdict sets it, a push (new head, from
+    ingest or the router) clears it before the re-review starts, a follow-up review swaps it,
+    and closing the PR clears it. Repos that never created the labels are disabled after the
+    first failed add, and a dry run touches nothing."""
+    lanes.reviewer["default"] = {
+        "summary": "x",
+        "findings": [_blocking()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([_blocking()])
+    gh.labels = ["pastaclaw:approved", "bug"]  # stale from an earlier commit
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
+            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
+        )
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE and gh.posted_reviews[0]["event"] == "REQUEST_CHANGES"
+    assert gh.labels == ["pastaclaw:approved", "bug"]  # the worker itself never touches labels
+    assert _reconcile(conn, gh) == 1
+    assert gh.labels == ["bug", "pastaclaw:changes-requested"]
+    assert gh.label_calls == [
+        ("DELETE", "pastaclaw:approved"),
+        ("POST", "pastaclaw:changes-requested"),
+    ]
+    ev = conn.execute("SELECT detail FROM events WHERE kind='label.synced'").fetchone()
+    assert ev and ev["detail"] == "pastaclaw:changes-requested"
+    # idempotent: re-running changes nothing
+    gh.label_calls.clear()
+    assert _reconcile(conn, gh) == 0 and gh.label_calls == []
+
+    # a new commit arrives via the router (mention on the new head) before ingest has seen it:
+    # label cleared at once, the standing review describes a commit that is no longer live
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done'")
+        assert (
+            enqueue_head(conn, cfg, "dashpay/platform", 1, "b" * 40, Trigger.MENTION) == "created"
+        )
+    assert _reconcile(conn, gh) == 1
+    assert gh.labels == ["bug"] and gh.label_calls == [("DELETE", "pastaclaw:changes-requested")]
+
+    # ingest catches up and the review for the new head is recorded (as a run would): set again
+    with tx(conn):
+        conn.execute(
+            "UPDATE prs SET head_sha=?, updated_at=? WHERE number=1",
+            ("b" * 40, "2099-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at) VALUES (?,?,?,?,?,?,?)",
+            (rid, "dashpay/platform", 1, "b" * 40, "final", "APPROVE", "2099-01-01T00:00:00Z"),
+        )
+    assert _reconcile(conn, gh) == 1 and gh.labels == ["bug", "pastaclaw:approved"]
+
+    # a revert force-push back to the first, already-reviewed commit creates no head row (the
+    # sha is known) but ingest moves prs.head_sha: no verdict stands for the live commit
+    with tx(conn):
+        conn.execute(
+            "UPDATE prs SET head_sha=?, updated_at=? WHERE number=1", (HEAD, "2099-01-01T12:00:00Z")
+        )
+    assert _reconcile(conn, gh) == 1 and gh.labels == ["bug"]
+    with tx(conn):
+        conn.execute(
+            "UPDATE prs SET head_sha=?, updated_at=? WHERE number=1",
+            ("b" * 40, "2099-01-01T13:00:00Z"),
+        )
+    assert _reconcile(conn, gh) == 1 and gh.labels == ["bug", "pastaclaw:approved"]
+
+    # a same-sha follow-up that moved the verdict (as _verdict_update records it)
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at) VALUES (?,?,?,?,?,?,?)",
+            (rid, "dashpay/platform", 1, "b" * 40, "final", "COMMENT", "2099-01-02T00:00:00Z"),
+        )
+    assert _reconcile(conn, gh) == 1 and gh.labels == ["bug", "pastaclaw:commented"]
+
+    # PR closes: cleared once; reopened at the same commit: the standing verdict is restored
+    with tx(conn):
+        conn.execute(
+            "UPDATE prs SET state='closed', updated_at=? WHERE number=1", ("2099-01-03T00:00:00Z",)
+        )
+    assert _reconcile(conn, gh) == 1 and gh.labels == ["bug"]
+    with tx(conn):
+        conn.execute(
+            "UPDATE prs SET state='open', updated_at=? WHERE number=1", ("2099-01-03T01:00:00Z",)
+        )
+    assert _reconcile(conn, gh) == 1 and gh.labels == ["bug", "pastaclaw:commented"]
+    # once the cursor is past every timestamp the PR is not even looked at
+    with tx(conn):
+        conn.execute("UPDATE kv SET value='2099-01-04T00:00:00Z' WHERE key='labels.reconciled_at'")
+    gh.calls.clear()
+    assert _reconcile(conn, gh) == 0 and not any("/labels" in " ".join(c) for c in gh.calls)
+
+
+def test_verdict_label_skips_repos_without_labels_and_dismissed_reviews(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "x",
+        "findings": [_blocking()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([_blocking()])
+    gh.labels_defined = False
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
+            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
+        )
+    _run(cfg, conn, gh, lanes)
+    disabled: set[str] = set()
+    assert _reconcile(conn, gh, disabled) == 0
+    assert disabled == {"dashpay/platform"} and gh.labels == []
+    assert (
+        conn.execute("SELECT COUNT(*) FROM events WHERE kind='label.sync_failed'").fetchone()[0]
+        == 1
+    )
+    # disabled repos are not retried, even when dirty again
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done'")
+        enqueue_head(conn, cfg, "dashpay/platform", 1, "c" * 40, Trigger.MENTION)
+        conn.execute("UPDATE prs SET head_sha=? WHERE number=1", ("c" * 40,))
+    gh.calls.clear()
+    assert _reconcile(conn, gh, disabled) == 0
+    assert not any("/labels" in " ".join(c) for c in gh.calls)
+
+    # a review whose recorded event is a backfilled/dismissed state carries no label
+    from reviewsys import labels
+
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at) VALUES (NULL,?,?,?,?,?,?)",
+            ("dashpay/platform", 1, "c" * 40, "final", "DISMISSED", "2099-01-01T00:00:00Z"),
+        )
+    assert labels.wanted(conn, "dashpay/platform", 1) is None
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at) VALUES (NULL,?,?,?,?,?,?)",
+            ("dashpay/platform", 1, "c" * 40, "final", "APPROVED", "2099-01-02T00:00:00Z"),
+        )
+    assert labels.wanted(conn, "dashpay/platform", 1) == "pastaclaw:approved"
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at, imported) VALUES (NULL,?,?,?,?,?,?,1)",
+            ("dashpay/platform", 1, "c" * 40, "final", "IMPORTED", "2099-01-03T00:00:00Z"),
+        )
+    assert labels.wanted(conn, "dashpay/platform", 1) is None
+
+
+def test_verdict_label_transient_failure_holds_cursor(cfg, conn, gh, lanes):
+    from reviewsys.db import kv_get
+
+    lanes.reviewer["default"] = {
+        "summary": "x",
+        "findings": [_blocking()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([_blocking()])
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
+            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
+        )
+    _run(cfg, conn, gh, lanes)
+    gh.fail_next = ["HTTP 502 Bad Gateway"]
+    disabled: set[str] = set()
+    assert _reconcile(conn, gh, disabled) == 0
+    assert disabled == set() and kv_get(conn, "labels.reconciled_at") is None
+    # backed off: the next pass inside the window does nothing at all
+    gh.calls.clear()
+    assert _reconcile(conn, gh, disabled) == 0 and gh.calls == []
+    with tx(conn):
+        conn.execute("DELETE FROM kv WHERE key='labels.reconciled_at.retry_at'")
+    assert _reconcile(conn, gh, disabled) == 1 and gh.labels == ["pastaclaw:changes-requested"]
+    assert kv_get(conn, "labels.reconciled_at")
+
+
+def test_daemon_runs_label_reconciliation_only_when_live(cfg, conn, gh, notifier):
+    shadow = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False)
+    assert "labels" not in shadow.tick(force=True)
+    live = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=True)
+    assert live.tick(force=True)["labels"] == 0

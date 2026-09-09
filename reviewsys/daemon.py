@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import IO
 
 from . import gc as gc_mod
+from . import labels
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
@@ -68,6 +69,7 @@ class Daemon:
         self.gh = gh or Gh(cfg.gh_bin)
         self.notifier = notifier or Notifier(cfg)
         self.spawn = spawn
+        self.labels_disabled: set[str] = set()  # repos without the pastaclaw:* labels
         self.stop = False
         self.tasks = [
             Task("ingest", cfg.ingest_interval_seconds, self.t_ingest),
@@ -82,6 +84,7 @@ class Daemon:
                 Task("reap", 0, self.t_reap),
                 Task("schedule", 0, self.t_schedule),
                 Task("queue_comments", cfg.queue_comment_interval_seconds, self.t_queue_comments),
+                Task("labels", 60, self.t_labels),
             ]
         self.tasks += [Task("watchdog", 300, self.t_watchdog), Task("gc", 3600, self.t_gc)]
 
@@ -101,6 +104,9 @@ class Daemon:
 
     def t_queue_comments(self) -> object:
         return update_queue_comments(self.conn, self.cfg, self.gh)
+
+    def t_labels(self) -> object:
+        return labels.reconcile(self.conn, self.gh, disabled=self.labels_disabled)
 
     def t_supersede(self) -> object:
         return apply_supersedes(self.conn, self.cfg)

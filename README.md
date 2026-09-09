@@ -24,6 +24,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `contract.py` | reviewer/verifier JSON contracts; legacy-compatible `finding_hash` / `dedupe_key` |
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
+| `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
 | `status.py` | `reviewsys status --json` + watchdog predicate |
 | `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model |
@@ -128,6 +129,38 @@ discretionary specialist to the selector (always-run ones are repo-specific and 
 off), and discloses it: the provenance starts with "Ad hoc review: this repository has
 no PastaClaw review skill …" and the gate comment carries "ad hoc (no repo skill)".
 Open-PR polling still covers only enabled repos; ad hoc is mention-driven by design.
+
+## Verdict labels (filtering by the bot's approval)
+
+GitHub counts a review toward the merge decision only when the reviewer has write
+access, so on repos where the bot has triage its APPROVE / REQUEST_CHANGES is visible
+in the timeline but invisible to `review:approved` and the merge box, and there is no
+`approved-by:<user>` search qualifier. The one per-reviewer filter triage can drive is
+a label. A repo that creates `pastaclaw:approved`, `pastaclaw:changes-requested` and
+`pastaclaw:commented` gets exactly one of them mirroring the bot's latest verdict on
+the live head, and none while no verdict stands.
+
+The label is reconciled from database state, not written by the worker: every minute
+the `labels` daemon task takes the PRs touched since its last pass (a `reviews` row
+written, a head created or re-queued, the PR closed) and makes GitHub match
+`labels.wanted()`, which is the latest `reviews.event` for the PR's newest head. That
+single rule covers a review on a new commit, a same-sha follow-up that moved the
+verdict, a push seen by ingest or by the router (label cleared before the re-review
+starts), a run that published after being superseded (its sha is no longer the newest
+head, so the label stays cleared), a run that died between posting and recording, and a
+dismissed review (recorded as `DISMISSED`, no label). The canonical event is used, so a
+bot-authored PR gets `approved` even though the review itself was submitted as COMMENT.
+
+Filter with `label:"pastaclaw:approved"` (PR list, saved searches, project boards).
+Repos without the labels are not opted in: the first failed add records
+`label.sync_failed` and disables the repo until the daemon restarts. Successful changes
+are `label.synced` events; a canonical verdict recorded without a GitHub review (own PR)
+is `review.verdict_recorded`. The first pass after deploy backfills every open PR once;
+a transient GitHub failure holds the cursor and backs off five minutes.
+
+Two things the label does not see: a human dismissing the bot's review on GitHub (the
+label keeps the verdict the bot last recorded), and a hand-edited `pastaclaw:*` label on
+a PR with no further activity (reconciliation only visits PRs that changed).
 
 ## Queue comment and priority requests
 

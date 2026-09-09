@@ -698,6 +698,34 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
             )
 
 
+def _record_verdict(ctx: RunContext, phase: str, verified: VerifierOutput, new_event: str) -> None:
+    """Keep our own record of the verdict current when nothing is posted: on a bot-authored PR
+    GitHub records every review as COMMENTED, so a canonical APPROVE <-> REQUEST_CHANGES move
+    changes no transport state and gets no follow-up review, yet the verdict label reads
+    `reviews.event` and must see it."""
+    with tx(ctx.conn):
+        last = ctx.conn.execute(
+            "SELECT event FROM reviews WHERE repo=? AND number=? AND sha=? ORDER BY posted_at DESC, id DESC LIMIT 1",
+            (ctx.repo, ctx.number, ctx.sha),
+        ).fetchone()
+        prev = publish.canonical_event(str(last["event"])) if last else None
+        if prev == new_event:
+            return
+        ctx.conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,NULL,?,?)",
+            (ctx.run_id, ctx.repo, ctx.number, ctx.sha, phase, new_event, now()),
+        )
+        _set_run_review(ctx, blocker_count=verified.blocker_count, review_id=None, review_url=None)
+        event(
+            ctx.conn,
+            "review.verdict_recorded",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{prev} -> {new_event} on {ctx.sha[:8]} (not posted: transport state unchanged)",
+        )
+
+
 def _verdict_update(
     ctx: RunContext,
     phase: str,
@@ -733,6 +761,7 @@ def _verdict_update(
     own = ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
     new_event = publish.verdict_event(verified, prov)
     if publish.EVENT_STATE[publish.transport_event(new_event, own_pr=own)] == state:
+        _record_verdict(ctx, phase, verified, new_event)
         return None
     withdrawn = [
         str(r.get("finding_hash"))

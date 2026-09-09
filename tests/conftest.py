@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import urllib.parse
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -142,6 +143,10 @@ def conn(cfg: cfg_mod.Config):
     c.close()
 
 
+class _GhFailure(Exception):
+    """Raised inside FakeGh dispatch to simulate a non-zero gh exit."""
+
+
 class FakeGh(Gh):
     """Scripted gh: `routes` maps a (method, endpoint-prefix) or graphql opname to a response or callable."""
 
@@ -158,6 +163,9 @@ class FakeGh(Gh):
         self.inline: list[dict[str, Any]] = []
         self.issue_comments: list[dict[str, Any]] = []
         self.threads: list[dict[str, Any]] = []
+        self.labels: list[str] = []  # current PR labels
+        self.label_calls: list[tuple[str, str]] = []  # (method, label) mutations
+        self.labels_defined = True  # False: repo has no pastaclaw:* labels -> POST 422s
         self.pr: dict[str, Any] = {
             "title": "T",
             "body": "B",
@@ -181,10 +189,31 @@ class FakeGh(Gh):
         if self.fail_next:
             msg = self.fail_next.pop(0)
             return subprocess.CompletedProcess(args, 1, "", msg)
-        out = self._dispatch(args, stdin)
+        try:
+            out = self._dispatch(args, stdin)
+        except _GhFailure as exc:
+            return subprocess.CompletedProcess(args, 1, "", str(exc))
         return subprocess.CompletedProcess(
             args, 0, out if isinstance(out, str) else json.dumps(out), ""
         )
+
+    def _labels(self, ep: str, method: str, body: dict[str, Any] | None) -> Any:
+        if method == "GET":
+            return [{"name": n} for n in self.labels]
+        if method == "DELETE":
+            name = urllib.parse.unquote(ep.rsplit("/labels/", 1)[1])
+            self.label_calls.append(("DELETE", name))
+            self.labels = [n for n in self.labels if n != name]
+            return {}
+        if method == "POST":
+            if not self.labels_defined:
+                raise _GhFailure("HTTP 404: Not Found")
+            for name in (body or {})["labels"]:
+                self.label_calls.append(("POST", name))
+                if name not in self.labels:
+                    self.labels.append(name)
+            return [{"name": n} for n in self.labels]
+        raise AssertionError(f"unrouted label call {method} {ep}")
 
     def _dispatch(self, args: list[str], stdin: str | None) -> Any:
         if args[:2] == ["pr", "diff"]:
@@ -249,6 +278,8 @@ class FakeGh(Gh):
                 return {"id": 77}
             if ep in self.routes:
                 return self.routes[ep]
+            if "/issues/" in ep and "/labels" in ep:
+                return self._labels(ep, method, body)
             if ep.startswith("/notifications"):
                 return self.notifications
             if ep == "user":

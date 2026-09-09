@@ -758,6 +758,13 @@ EVENT_STATE = {
     "APPROVE": "APPROVED",
     "COMMENT": "COMMENTED",
 }
+STATE_EVENT = {v: k for k, v in EVENT_STATE.items()}
+
+
+def canonical_event(value: str) -> str:
+    """Normalise a `reviews.event` value: canonical events pass through, GitHub review states
+    (as backfilled from an existing review) map back to the event that produced them."""
+    return STATE_EVENT.get(value, value)
 
 
 def publish_verdict_update(
