@@ -29,7 +29,7 @@ CATEGORIES = (
     "general",
     "backport-prereq",
 )
-REVALIDATION_STATUSES = ("STILL_VALID", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED")
+REVALIDATION_STATUSES = ("STILL_VALID", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED", "WITHDRAWN")
 
 _NORMALIZE_RE = re.compile(r"[^\w\s]|_")
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.S)

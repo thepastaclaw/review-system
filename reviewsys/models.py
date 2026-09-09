@@ -50,6 +50,7 @@ class Trigger(StrEnum):
     MENTION = "mention"
     REVIEW_REQUESTED = "review_requested"
     PRIORITY_REQUEST = "priority_request"  # checkbox ticked on the queue comment
+    REVIEW_REPLY = "review_reply"  # a human replied under one of the bot's finding threads
     MANUAL = "manual"
 
     @property
@@ -58,6 +59,7 @@ class Trigger(StrEnum):
             Trigger.MENTION,
             Trigger.REVIEW_REQUESTED,
             Trigger.PRIORITY_REQUEST,
+            Trigger.REVIEW_REPLY,
             Trigger.MANUAL,
         }
 

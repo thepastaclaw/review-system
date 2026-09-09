@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .dedupe import FINDING_MARKER_RE
 from .gh import Gh
 from .models import FailKind, ReviewError
 
@@ -142,6 +143,11 @@ def pr_diff(gh: Gh, repo: str, number: int) -> str | None:
         raise
 
 
+def _is_bot(comment: dict[str, Any], bot_login: str) -> bool:
+    """True when a review-thread comment was authored by us."""
+    return str(comment.get("author") or "").lower() == bot_login.lower()
+
+
 def evidence_bundle(
     gh: Gh, repo: str, number: int, meta: PrMeta, bot_login: str, *, include_coderabbit: bool
 ) -> dict[str, Any]:
@@ -159,8 +165,14 @@ def evidence_bundle(
     ev_threads = []
     for t in threads:
         cs = [c for c in t["comments"] if keep_author(c.get("author"))]
-        if cs:
-            ev_threads.append({**t, "comments": cs})
+        if not cs:
+            continue
+        root = t["comments"][0]
+        if _is_bot(root, bot_login):
+            # a human replied under one of our findings (keep_author dropped the root): the
+            # reply only makes sense with the finding it answers, so keep it in this thread only
+            cs = [root, *cs]
+        ev_threads.append({**t, "comments": cs})
     ev_comments = [
         {
             "author": (c.get("user") or {}).get("login"),
@@ -172,6 +184,78 @@ def evidence_bundle(
         and GATE_MARKER not in str(c.get("body") or "")
     ]
     return {"pr": meta.as_dict(), "issue_comments": ev_comments, "review_threads": ev_threads}
+
+
+def replied_finding_threads(
+    threads: list[dict[str, Any]], bot_login: str
+) -> dict[str, dict[str, Any]]:
+    """finding_hash -> thread facts for every unresolved bot finding thread whose newest human
+    reply is newer than the bot's newest answer in it (i.e. someone is waiting on us).
+
+    Resolved threads are left alone: a maintainer who closed the discussion does not want it
+    reopened by a bot comment."""
+    out: dict[str, dict[str, Any]] = {}
+    for t in threads:
+        cs = t.get("comments") or []
+        if not cs or t.get("is_resolved"):
+            continue
+        root = cs[0]
+        if not _is_bot(root, bot_login):
+            continue
+        body = str(root.get("body") or "")
+        m = FINDING_MARKER_RE.search(body)
+        if not m:
+            continue
+        replies = [
+            {
+                "id": c.get("id"),
+                "author": c.get("author"),
+                "association": c.get("association"),
+                "body": str(c.get("body") or "")[:4000],
+                "created_at": c.get("created_at"),
+            }
+            for c in cs[1:]
+            if not _is_bot(c, bot_login)
+        ]
+        if not replies:
+            continue
+        last_bot = max(
+            (str(c.get("created_at") or "") for c in cs[1:] if _is_bot(c, bot_login)),
+            default="",
+        )
+        if str(replies[-1].get("created_at") or "") <= last_bot:
+            continue  # we already answered after the last human reply
+        severity, title = _finding_title(body)
+        out[m.group(1)] = {
+            "comment_id": root.get("id"),
+            "thread_id": t.get("thread_id"),
+            "latest_reply_id": replies[-1].get("id"),
+            "path": t.get("path"),
+            "line": t.get("line"),
+            "severity": severity,
+            "title": title,
+            "body": body,
+            "replies": replies,
+        }
+    return out
+
+
+def _finding_title(body: str) -> tuple[str, str]:
+    """(severity, title) from a posted finding comment's bold headline."""
+    for line in body.splitlines():
+        s = line.strip()
+        if not (s.startswith("**") and s.endswith("**")):
+            continue
+        label, _, title = s.strip("*").partition(":")
+        low = label.lower()
+        if "blocking" in low:
+            severity = "blocking"
+        elif "suggestion" in low:
+            severity = "suggestion"
+        else:
+            severity = "nitpick"
+        return severity, (title or label).strip()
+    return "nitpick", ""
 
 
 def coderabbit_context(threads: list[dict[str, Any]]) -> dict[str, Any]:
@@ -253,11 +337,14 @@ def gate_body(
     tier: str | None = None,
     phase2_skipped: str | None = None,
     phase1_skipped: str | None = None,
+    adhoc: bool = False,
 ) -> str:
     s = sha[:8]
     t = f" · triage: {tier}" if tier else ""
     if phase1_skipped:
         t += " · Phase 2 only (queue backlog)"
+    if adhoc:
+        t += " · ad hoc (no repo skill)"
     if status == "queued":
         q = "next in queue" if not queue_ahead else f"{queue_ahead} ahead in queue"
         return f"{GATE_MARKER}\n🕓 Ready for review — {q} (commit {s})"

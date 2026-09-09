@@ -76,6 +76,8 @@ class RunContext:
     coderabbit_ids: list[int] = field(default_factory=list)
     prior: list[dict[str, Any]] = field(default_factory=list)
     prior_sha: str | None = None
+    # finding_hash -> {comment_id, thread_id, replies} for prior findings with human replies
+    prior_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     coverage_from: str = ""
     phase1_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
     phase2_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
@@ -89,6 +91,11 @@ class RunContext:
     def check_cancel(self) -> None:
         if self.cancel_flag.is_set():
             raise Cancelled()
+
+    @property
+    def adhoc(self) -> bool:
+        """This repo has no skills entry, so it is reviewed on generic guidance alone."""
+        return self.cfg.repo(self.repo) is None
 
 
 # ---- heartbeat ----
@@ -230,6 +237,8 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
         kw.setdefault("tier", ctx.tier)
     if ctx.phase1_skipped:
         kw.setdefault("phase1_skipped", ctx.phase1_skipped)
+    if ctx.adhoc:
+        kw.setdefault("adhoc", True)
     try:
         github.upsert_gate_comment(
             ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, github.gate_body(status, ctx.sha, **kw)
@@ -341,9 +350,11 @@ def step_context(ctx: RunContext) -> None:
     ctx.coderabbit_ids = [
         int(f["comment_id"]) for f in ctx.coderabbit["findings"] if f.get("comment_id")
     ]
-    # prior findings: last posted set for this PR from our DB
+    # prior findings: last posted set for this PR from our DB, plus any human replies on
+    # their inline threads (the reviewer must engage with pushback, not re-raise past it)
+    replied = github.replied_finding_threads(threads, ctx.cfg.bot_login)
     rows = ctx.conn.execute(
-        "SELECT pf.hash, pf.sha, f.file, f.line_start, f.line_end, f.severity, f.category, f.title FROM posted_findings pf LEFT JOIN findings f ON f.hash=pf.hash AND f.stage='posted' WHERE pf.repo=? AND pf.number=? ORDER BY pf.posted_at DESC",
+        "SELECT pf.hash, pf.sha, f.file, f.line_start, f.line_end, f.severity, f.category, f.title, f.body FROM posted_findings pf LEFT JOIN findings f ON f.hash=pf.hash AND f.stage='posted' WHERE pf.repo=? AND pf.number=? ORDER BY pf.posted_at DESC, f.id DESC",
         (ctx.repo, ctx.number),
     ).fetchall()
     seen: set[str] = set()
@@ -353,18 +364,39 @@ def step_context(ctx: RunContext) -> None:
             continue
         seen.add(r["hash"])
         ctx.prior_sha = ctx.prior_sha or r["sha"]
+        thread = replied.get(r["hash"])
         prior.append(
             Finding(
                 file=r["file"] or "",
                 title=r["title"],
-                body="",
+                body=r["body"] or "",
                 severity=r["severity"] or "nitpick",
                 category=r["category"] or "general",
                 line_start=r["line_start"],
                 line_end=r["line_end"],
+                extra={"thread_replies": thread["replies"]} if thread else {},
             )
         )
-    ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "") if prior else []
+    for h, t in replied.items():
+        if h in seen or not t.get("title"):
+            continue
+        # a finding this database never recorded (posted by the legacy pipeline) that a human
+        # replied to: reconstruct it from the comment so the reply still gets adjudicated
+        seen.add(h)
+        prior.append(
+            Finding(
+                file=t.get("path") or "",
+                title=t["title"],
+                body=t["body"],
+                severity=t["severity"],
+                line_start=t.get("line"),
+                line_end=t.get("line"),
+                prior_hash=h,
+                extra={"thread_replies": t["replies"]},
+            )
+        )
+    ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
+    ctx.prior_threads = {h: t for h, t in replied.items() if h in seen}
     (ctx.run_dir / "evidence.json").write_text(
         json.dumps(
             {"evidence": ctx.evidence, "coderabbit": ctx.coderabbit, "prior": ctx.prior}, indent=1
@@ -597,9 +629,12 @@ def step_publish(
         ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
     )
     if existing:
-        # A prior attempt posted but died before recording it. Backfill so future rounds
-        # still see these findings as "prior" and never post again for this sha/phase.
+        # Either a prior attempt posted but died before recording it, or this is a reply-
+        # triggered re-review of an already-reviewed commit. Backfill so future rounds still
+        # see these findings as "prior", never post again for this sha/phase, and answer the
+        # threads that were replied to (the only output that reaches the author here).
         _backfill_posted(ctx, phase, existing, verified)
+        _answer_threads(ctx, phase, verified)
         return publish.PublishResult(
             posted=False,
             event="COMMENT",
@@ -619,7 +654,51 @@ def step_publish(
         publish.post_coderabbit_reactions(
             ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
         )
+    _answer_threads(ctx, phase, verified)
     return result
+
+
+def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
+    if not ctx.prior_threads or ctx.dry_run:
+        return
+    answered = publish.answer_replied_threads(
+        ctx.gh,
+        ctx.repo,
+        ctx.number,
+        ctx.sha,
+        threads=ctx.prior_threads,
+        reconciliation=_reconciliation(ctx, phase),
+        verified=verified,
+    )
+    with tx(ctx.conn):
+        for a in answered:
+            event(
+                ctx.conn,
+                "thread.answered",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=json.dumps(a),
+            )
+
+
+def _reconciliation(ctx: RunContext, phase: str) -> dict[str, dict[str, Any]]:
+    """Merge every reviewer lane's `prior_finding_reconciliation` for the phase being published.
+
+    Lanes may disagree; the verifier's kept set decides STILL_VALID (handled by the caller), so
+    here the first row with a reason wins per hash, preferring rows that explain themselves.
+    """
+    outputs = ctx.phase1_outputs if phase == "preliminary" else ctx.phase2_outputs
+    outputs = outputs or ctx.phase1_outputs or ctx.phase2_outputs
+    merged: dict[str, dict[str, Any]] = {}
+    for out in outputs.values():
+        for row in out.prior_reconciliation:
+            h = str(row.get("finding_hash") or "")
+            if not h:
+                continue
+            if h not in merged or (row.get("reason") and not merged[h].get("reason")):
+                merged[h] = row
+    return merged
 
 
 def _build_review(
@@ -642,6 +721,7 @@ def _build_review(
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
         phase1_skipped=ctx.phase1_skipped,
+        adhoc=ctx.adhoc,
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()

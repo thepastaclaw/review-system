@@ -546,3 +546,427 @@ def test_backlog_skip_does_not_apply_to_trivial_tier(cfg, conn, gh, lanes):
     _run(cfg, conn, gh, lanes)
     assert all(s.model == "glm-5.3-flash" for s in _reviewer_calls(lanes))
     assert "Phase 1 only (trivial change)" in gh.posted_reviews[0]["body"]
+
+
+def _run_repo(cfg, conn, gh, lanes, repo, number, trigger=Trigger.MENTION):
+    with tx(conn):
+        enqueue_head(conn, cfg, repo, number, HEAD, trigger)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+    return rid, status
+
+
+def test_adhoc_review_of_unlisted_repo(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_sugg()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["default"] = _verifier([_sugg()])
+    lanes.selector = {"selected": ["security-auditor"], "reasoning": "auth code"}
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/quorum-list-server", 14)
+    assert status == RunStatus.DONE
+    sel = lanes.calls[0]
+    assert sel.role == "selector" and "security-auditor" in sel.prompt
+    assert "always-on" not in sel.prompt, "always-run specialists are repo-specific"
+    roles = [s.role for s in _reviewer_calls(lanes)]
+    assert roles == ["general", "security-auditor"] * 2
+    general = next(s for s in _reviewer_calls(lanes) if s.role == "general")
+    assert "ad hoc review" in general.prompt and "PROJECT SKILL" not in general.prompt
+    body = gh.posted_reviews[0]["body"]
+    assert "- Ad hoc review: this repository has no PastaClaw review skill" in body
+    assert "ad hoc (no repo skill)" in gh.gate_bodies[-1]
+
+
+def _gql_comment(c):
+    return {
+        "databaseId": c["id"],
+        "author": {"login": c["author"]},
+        "body": c["body"],
+        "createdAt": c.get("created_at"),
+        "authorAssociation": c.get("association"),
+    }
+
+
+def _prior_thread(fh, *, replies):
+    """Raw GraphQL reviewThreads node (what FakeGh serves) for one bot finding plus replies."""
+    root = {
+        "id": 900,
+        "author": "thepastaclaw",
+        "body": f"<!-- thepastaclaw-review v1 finding={fh} dedupe=x -->\n**🟡 Suggestion: T**\n\nold body",
+        "created_at": "2026-09-07T00:00:00Z",
+        "association": "NONE",
+    }
+    return {
+        "id": "PRRT_1",
+        "isResolved": False,
+        "isOutdated": False,
+        "path": "f.rs",
+        "line": 12,
+        "comments": {"nodes": [_gql_comment(c) for c in (root, *replies)]},
+    }
+
+
+def _seed_prior(conn, finding, *, body="old body"):
+    from reviewsys.contract import Finding
+
+    f = Finding.from_dict(finding)
+    with tx(conn):
+        hid = conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
+            ("dashpay/platform", 1, "b" * 40, "new_pr", 0, "done", "2026-09-07", "2026-09-07"),
+        ).lastrowid
+        rid = conn.execute(
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,1,'done','t','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z')",
+            (hid,),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                rid,
+                "verify2",
+                "posted",
+                f.hash,
+                f.file,
+                f.line_start,
+                f.line_end,
+                f.severity,
+                f.category,
+                f.title,
+                body,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?)",
+            ("dashpay/platform", 1, f.hash, "b" * 40, 1, "2026-09-07T00:00:00Z"),
+        )
+    return f.hash
+
+
+def test_reply_on_prior_finding_reaches_reviewer_and_is_answered(cfg, conn, gh, lanes):
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    reply = {
+        "id": 901,
+        "author": "knst",
+        "body": "The pool has no priorities; this does not apply.",
+        "created_at": "2026-09-08T20:17:36Z",
+        "association": "COLLABORATOR",
+    }
+    gh.threads = [_prior_thread(fh, replies=[reply])]
+    withdrawn = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {
+                "finding_hash": fh,
+                "status": "WITHDRAWN",
+                "reason": "You are right: the pool has no priorities, so the ordering concern does not arise.",
+            }
+        ],
+    }
+    lanes.reviewer["default"] = withdrawn
+    lanes.verifier["default"] = _verifier([])
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    prompt = next(c.prompt for c in _reviewer_calls(lanes))
+    assert "thread_replies" in prompt and "no priorities" in prompt and "old body" in prompt
+    # the reviewer also sees our own root comment inside the evidence thread
+    assert "finding=" + fh in prompt.split("Structured review-thread state", 1)[1]
+    assert gh.replies and gh.replies[0]["body"].startswith(
+        "<!-- thepastaclaw-thread-answer v1 sha=" + HEAD
+    )
+    assert "**Withdrawn** (re-reviewed at `aaaaaaaa`): You are right" in gh.replies[0]["body"]
+    assert any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    ev = conn.execute("SELECT detail FROM events WHERE kind='thread.answered'").fetchone()
+    assert '"status": "WITHDRAWN"' in ev["detail"] and '"resolved": true' in ev["detail"]
+
+
+def test_still_valid_reply_is_answered_without_resolving(cfg, conn, gh, lanes):
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    gh.threads = [
+        _prior_thread(
+            fh,
+            replies=[
+                {
+                    "id": 901,
+                    "author": "knst",
+                    "body": "disagree",
+                    "created_at": "x",
+                    "association": "COLLABORATOR",
+                }
+            ],
+        )
+    ]
+    carried = {**s, "finding_hash": fh, "body": "Still applies because the queue is FIFO."}
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [carried],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {
+                "finding_hash": fh,
+                "status": "STILL_VALID",
+                "reason": "The FIFO queue still serialises warmers ahead of aggregation.",
+            }
+        ],
+    }
+    lanes.verifier["default"] = _verifier([carried])
+    # the existing inline comment makes the carried finding a cross-round duplicate (no new review)
+    gh.inline = [
+        {
+            "id": 900,
+            "node_id": "N1",
+            "user": {"login": "thepastaclaw"},
+            "path": "f.rs",
+            "line": 12,
+            "html_url": "https://gh/900",
+            "body": gh.threads[0]["comments"]["nodes"][0]["body"],
+        }
+    ]
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    assert not gh.posted_reviews  # every finding was a duplicate: no new review round
+    # ...but the human asked a question on the thread, and the answer is the only thing
+    # that reaches them, so it is posted there, and the thread stays open
+    assert len(gh.replies) == 1
+    assert "**Still applies** (re-reviewed at `aaaaaaaa`): The FIFO queue" in gh.replies[0]["body"]
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+
+
+def test_thread_answer_is_posted_once_per_reply(cfg, conn, gh, lanes):
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    verified = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    threads = {
+        "abc": {
+            "comment_id": 900,
+            "thread_id": "PRRT_1",
+            "latest_reply_id": 901,
+            "replies": [{"id": 901, "author": "knst", "body": "x"}],
+        }
+    }
+    recon = {
+        "abc": {"finding_hash": "abc", "status": "FIXED", "reason": "Addressed by the new guard."}
+    }
+    out = answer_replied_threads(
+        gh, "dashpay/platform", 1, HEAD, threads=threads, reconciliation=recon, verified=verified
+    )
+    assert out[0]["action"] == "replied" and out[0]["resolved"] is True
+    gh.inline = [
+        {
+            "id": 902,
+            "in_reply_to_id": 900,
+            "user": {"login": "thepastaclaw"},
+            "body": gh.replies[0]["body"],
+        }
+    ]
+    out = answer_replied_threads(
+        gh, "dashpay/platform", 1, HEAD, threads=threads, reconciliation=recon, verified=verified
+    )
+    assert out[0]["action"] == "already_answered" and len(gh.replies) == 1
+    # a newer human reply on the same thread and head is a new question: answer again
+    threads["abc"]["latest_reply_id"] = 903
+    out = answer_replied_threads(
+        gh, "dashpay/platform", 1, HEAD, threads=threads, reconciliation=recon, verified=verified
+    )
+    assert out[0]["action"] == "replied" and len(gh.replies) == 2
+
+
+def test_defaulted_withdrawal_answers_but_never_resolves(cfg, conn, gh, lanes):
+    """A verifier that drops the finding without any reviewer stating a status: the bot says the
+    finding did not survive, but does not close the human's thread on a default."""
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    verified = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    threads = {
+        "abc": {"comment_id": 900, "thread_id": "PRRT_1", "latest_reply_id": 901, "replies": []}
+    }
+    out = answer_replied_threads(
+        gh, "dashpay/platform", 1, HEAD, threads=threads, reconciliation={}, verified=verified
+    )
+    assert (
+        out[0]["status"] == "WITHDRAWN"
+        and out[0]["action"] == "replied"
+        and "resolved" not in out[0]
+    )
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+
+
+def test_verifier_kept_finding_without_hash_still_counts_as_still_valid(cfg, conn, gh, lanes):
+    from reviewsys.contract import Finding, parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    s = _sugg()
+    fh = Finding.from_dict(s).hash
+    verified = parse_verifier_output(
+        {**_verifier([s]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    assert verified.findings[0].prior_hash is None  # the verifier forgot to echo finding_hash
+    threads = {
+        fh: {"comment_id": 900, "thread_id": "PRRT_1", "latest_reply_id": 901, "replies": []}
+    }
+    recon = {fh: {"finding_hash": fh, "status": "WITHDRAWN", "reason": "a lane thought so"}}
+    out = answer_replied_threads(
+        gh, "dashpay/platform", 1, HEAD, threads=threads, reconciliation=recon, verified=verified
+    )
+    assert out[0]["status"] == "STILL_VALID"
+    assert (
+        "**Still applies**" in gh.replies[0]["body"]
+        and "a lane thought so" not in gh.replies[0]["body"]
+    )
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+
+
+def test_reason_is_scrubbed_of_mentions_and_retriggers(cfg, conn, gh, lanes):
+    from reviewsys.publish import _answer_outcome
+
+    status, reason, explicit = _answer_outcome(
+        "h", {"status": "WITHDRAWN", "reason": "cc @someone; also @coderabbitai review"}, set()
+    )
+    assert (status, explicit) == (
+        "WITHDRAWN",
+        True,
+    ) and reason == "This finding did not survive verification on the current head."
+    status, reason, _ = _answer_outcome(
+        "h", {"status": "WITHDRAWN", "reason": "Agreed with @knst here. " + "x" * 5000}, set()
+    )
+    assert "@\u200bknst" in reason and len(reason) <= 1200
+
+
+def test_resolved_and_already_answered_threads_are_left_alone(cfg, conn, gh, lanes):
+    from reviewsys.github import replied_finding_threads
+
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "no",
+        "created_at": "2026-09-08T20:00:00Z",
+        "association": "COLLABORATOR",
+    }
+    bot_answer = {
+        "id": 902,
+        "author": "thepastaclaw",
+        "body": "answer",
+        "created_at": "2026-09-08T21:00:00Z",
+        "association": "NONE",
+    }
+    root = {
+        "id": 900,
+        "author": "thepastaclaw",
+        "body": "<!-- thepastaclaw-review v1 finding=abc -->\n**🟡 Suggestion: T**",
+        "created_at": "x",
+        "association": "NONE",
+    }
+
+    def parsed(comments, resolved=False):
+        return {
+            "thread_id": "t",
+            "is_resolved": resolved,
+            "is_outdated": False,
+            "path": "f.rs",
+            "line": 1,
+            "comments": comments,
+        }
+
+    assert replied_finding_threads([parsed([root, human], resolved=True)], "thepastaclaw") == {}
+    assert replied_finding_threads([parsed([root, human, bot_answer])], "thepastaclaw") == {}
+    again = {**human, "id": 903, "created_at": "2026-09-08T22:00:00Z"}
+    out = replied_finding_threads([parsed([root, human, bot_answer, again])], "thepastaclaw")
+    assert out["abc"]["latest_reply_id"] == 903 and [r["id"] for r in out["abc"]["replies"]] == [
+        901,
+        903,
+    ]
+
+
+def test_reply_rerun_on_reviewed_commit_answers_thread_without_new_review(cfg, conn, gh, lanes):
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    gh.threads = [
+        _prior_thread(
+            fh,
+            replies=[
+                {
+                    "id": 901,
+                    "author": "knst",
+                    "body": "wrong",
+                    "created_at": "x",
+                    "association": "COLLABORATOR",
+                }
+            ],
+        )
+    ]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "WITHDRAWN", "reason": "Agreed, the guard covers it."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([])
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        assert (
+            enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY) == "requeued"
+        )
+    (rid,) = schedule(conn, cfg, spawn=False)
+    status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+    assert status == RunStatus.DONE
+    assert len(gh.posted_reviews) == 1, "same commit: no second review"
+    assert len(gh.replies) == 1 and "**Withdrawn**" in gh.replies[0]["body"]
+    assert any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+
+
+def test_reply_on_legacy_finding_without_db_row_is_adjudicated(cfg, conn, gh, lanes):
+    # the thread root carries a marker hash this database has never seen
+    gh.threads = [
+        _prior_thread(
+            "c5669452cde4",
+            replies=[
+                {
+                    "id": 901,
+                    "author": "knst",
+                    "body": "does not apply",
+                    "created_at": "x",
+                    "association": "COLLABORATOR",
+                }
+            ],
+        )
+    ]
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": "c5669452cde4", "status": "WITHDRAWN", "reason": "Agreed."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([])
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    prompt = next(c.prompt for c in _reviewer_calls(lanes))
+    assert '"finding_hash": "c5669452cde4"' in prompt and '"original_title": "T"' in prompt
+    assert '"severity": "suggestion"' in prompt and "old body" in prompt
+    assert len(gh.replies) == 1 and "**Withdrawn**" in gh.replies[0]["body"]

@@ -17,7 +17,7 @@ from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
-from .ingest import ingest_notifications, ingest_prs
+from .ingest import ingest_notifications, ingest_prs, ingest_review_replies
 from .notify import Notifier
 from .queue_status import update_queue_comments
 from .reaper import reap
@@ -90,7 +90,11 @@ class Daemon:
         return ingest_prs(self.conn, self.cfg, self.gh)
 
     def t_notify(self) -> object:
-        return ingest_notifications(self.conn, self.cfg, self.gh)
+        added = ingest_notifications(self.conn, self.cfg, self.gh)
+        return {
+            "notifications": added,
+            "replies": ingest_review_replies(self.conn, self.cfg, self.gh),
+        }
 
     def t_route(self) -> object:
         return route_inbox(self.conn, self.cfg, self.gh, self.notifier)

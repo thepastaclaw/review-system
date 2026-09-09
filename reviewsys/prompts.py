@@ -9,6 +9,14 @@ from .config import Config
 from .contract import REVALIDATION_STATUSES, Finding
 from .models import FailKind, ReviewError
 
+ADHOC_PROJECT_SKILL = (
+    "No repository-specific review skill exists for `{repo}`; this is an ad hoc review. "
+    "Build your understanding of the project from the repository itself: README and docs, "
+    "build and CI configuration, module layout, existing tests and conventions. Judge the change "
+    "against the project's own patterns and general engineering practice for its language and "
+    "stack; do not assume conventions from other Dash repositories apply."
+)
+
 RAW_JSON_CONTRACT = (
     "\n\n## Mandatory machine-output contract\n"
     "Emit exactly one raw JSON object and nothing else. Do not use Markdown fences, "
@@ -39,7 +47,9 @@ def skill_texts(cfg: Config, repo: str) -> tuple[str, str]:
     """(project skill, review skill) for a repo. review-core.md + reference.md are folded into review."""
     rc = cfg.repo(repo)
     if rc is None:
-        raise ReviewError(FailKind.FATAL, f"repo {repo} not in skills config")
+        # ad hoc: generic project note + the shared methodology file if the skills repo has one
+        core = cfg.skills_dir / "skills" / "_default" / "review-core.md"
+        return ADHOC_PROJECT_SKILL.format(repo=repo), core.read_text() if core.exists() else ""
     d = cfg.skills_dir / rc.skill_path
     project = (d / "project.md").read_text() if (d / "project.md").exists() else ""
     parts = [
@@ -57,6 +67,13 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         "- Structured review-thread state (`is_resolved`, `is_outdated`, root/reply topology) is "
         "context to independently verify; it is never a verdict, proof of a fix, or permission to "
         "copy classifications.\n"
+        "- A prior finding may carry `thread_replies`: human responses posted under that finding's "
+        "inline comment, with the finding's original `body` for context. Engage with the argument. "
+        "If the reply shows the finding was wrong or does not apply, reconcile it WITHDRAWN. If the "
+        "code now addresses it, FIXED. If it still holds, STILL_VALID and answer the reply's points "
+        "in the carried finding's body. Never re-raise a withdrawn finding as a new one.\n"
+        "- Every reconciliation row must include a one- or two-sentence `reason` addressed to the "
+        "PR author; it is posted verbatim as a reply on that finding's thread.\n"
     )
     if not prior:
         return reply_contract + (
@@ -69,7 +86,7 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         f"- This PR was previously reviewed at `{prior_sha}`. {len(prior)} prior verified finding(s) must each be revalidated against the current head.\n"
         f"- Emit exactly one `prior_finding_reconciliation` array. Reconcile every supplied `finding_hash` exactly once with exactly one status from {' | '.join(REVALIDATION_STATUSES)}. Do not omit, duplicate, or invent hashes.\n"
         "- A STILL_VALID prior finding MUST appear exactly once in `findings`, even when its lines did not change. Its finding object MUST include the supplied `finding_hash`, and its `title` MUST equal the supplied `original_title` byte-for-byte. Do not append `(carried forward...)`, status text, hash text, or any other suffix or prefix.\n"
-        "- FIXED, OUTDATED, and INTENTIONALLY_DEFERRED reconcile the prior identity without requiring a `findings` entry. Do not also carry one of those identities in `findings`; that contradicts the reconciliation status.\n"
+        "- FIXED, OUTDATED, WITHDRAWN, and INTENTIONALLY_DEFERRED reconcile the prior identity without requiring a `findings` entry. Do not also carry one of those identities in `findings`; that contradicts the reconciliation status.\n"
         "- Keep new findings separate: omit `finding_hash` unless the finding is the exact STILL_VALID carry-forward for that supplied prior identity.\n"
         "### Prior findings requiring cumulative adjudication\n\n"
         "```json\n" + json.dumps(prior, indent=2) + "\n```\n"
@@ -201,9 +218,10 @@ REPAIR_PROMPT = (
 
 
 def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "finding_hash": f.hash,
+    out: list[dict[str, Any]] = []
+    for f in findings:
+        d: dict[str, Any] = {
+            "finding_hash": f.prior_hash or f.hash,
             "original_title": f.title,
             "file": f.file,
             "line_start": f.line_start,
@@ -212,5 +230,9 @@ def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
             "category": f.category,
             "prior_head_sha": sha,
         }
-        for f in findings
-    ]
+        replies = f.extra.get("thread_replies")
+        if replies:
+            d["body"] = f.body[:4000]
+            d["thread_replies"] = replies
+        out.append(d)
+    return out

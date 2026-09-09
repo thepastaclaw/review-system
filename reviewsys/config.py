@@ -128,6 +128,10 @@ class Config:
         return None
 
     def specialists_for(self, repo: str) -> tuple[Specialist, ...]:
+        if self.repo(repo) is None:
+            # ad hoc review of a repo without a skills entry: offer every discretionary
+            # specialist to the selector; always-run ones are repo-specific by design
+            return tuple(s for s in self.specialists if not s.always_run)
         return tuple(s for s in self.specialists if repo in s.repos)
 
     @property

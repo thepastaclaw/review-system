@@ -139,6 +139,7 @@ class Provenance:
     triage: dict[str, Any] | None = None  # {tier, model, effort, method, reasoning, error}
     phase2_skipped: str | None = None  # set when a final review was published from Phase 1 only
     phase1_skipped: str | None = None  # set when the run went straight to Phase 2 (queue backlog)
+    adhoc: bool = False  # repo has no skills entry: generic guidance, all specialists offered
 
 
 @dataclass(slots=True)
@@ -232,6 +233,11 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     p1 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase1"]
     p2 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase2"]
     lines = ["### Review provenance"]
+    if p.adhoc:
+        lines.append(
+            "- Ad hoc review: this repository has no PastaClaw review skill; reviewers used "
+            "generic guidance and the repository's own conventions"
+        )
     if p.triage:
         lines.append(_triage_line(p.triage))
     if p.phase1_skipped:
@@ -563,3 +569,100 @@ def post_coderabbit_reactions(
                     item.update(ok=False, error=str(exc))
         results.append(item)
     return results
+
+
+# ---- answering human replies on prior finding threads ----
+
+THREAD_ANSWER_MARKER = "<!-- thepastaclaw-thread-answer v1 sha={sha} reply={reply} -->"
+_REASON_MAX = 1200
+_ANSWER_LEAD = {
+    "WITHDRAWN": "Withdrawn",
+    "FIXED": "Resolved",
+    "OUTDATED": "No longer applies",
+    "INTENTIONALLY_DEFERRED": "Deferred",
+    "STILL_VALID": "Still applies",
+}
+
+
+def _answer_outcome(
+    finding_hash: str, row: dict[str, Any], kept_hashes: set[str]
+) -> tuple[str, str, bool]:
+    """(status, reason, explicit) to post on one replied finding thread.
+
+    The verifier's kept set is canonical: if the reviewer kept a finding the verifier dropped
+    (or nobody reconciled it), the outcome is that the finding does not stand on this head.
+    `explicit` is False when that outcome was defaulted rather than stated by a reviewer; the
+    caller answers but never resolves the thread on a default. A reviewer-written reason only
+    survives when it explains the status we actually publish, and is bounded and scrubbed of
+    bot retriggers before it reaches GitHub.
+    """
+    stated = str(row.get("status") or "")
+    if finding_hash in kept_hashes:
+        status, explicit = "STILL_VALID", True
+    elif stated and stated != "STILL_VALID":
+        status, explicit = stated, True
+    else:
+        status, explicit = "WITHDRAWN", False
+    reason = ""
+    if stated == status:
+        reason = str(row.get("reason") or "").strip()
+        if "@coderabbitai" in reason.lower():
+            reason = ""
+        reason = reason.replace("@", "@\u200b")[:_REASON_MAX]
+    if not reason and status == "STILL_VALID":
+        reason = "The verifier kept this finding on the current head; see the updated review."
+    elif not reason:
+        reason = "This finding did not survive verification on the current head."
+    return status, reason, explicit
+
+
+def answer_replied_threads(
+    gh: Gh,
+    repo: str,
+    number: int,
+    head_sha: str,
+    *,
+    threads: dict[str, dict[str, Any]],
+    reconciliation: dict[str, dict[str, Any]],
+    verified: VerifierOutput,
+) -> list[dict[str, Any]]:
+    """Reply once per (human reply, head) on each replied prior finding thread with the
+    reconciliation outcome, and resolve threads whose finding a reviewer explicitly withdrew,
+    fixed or marked outdated. Returns what was done."""
+    # a verifier that echoes the carried finding without its finding_hash must not turn a
+    # kept finding into "withdrawn": fall back to the finding's own hash as well
+    kept_hashes = {f.prior_hash for f in verified.findings if f.prior_hash} | {
+        f.hash for f in verified.findings
+    }
+    posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
+    done: list[dict[str, Any]] = []
+    for h, t in threads.items():
+        cid = t.get("comment_id")
+        if not cid:
+            continue
+        marker = THREAD_ANSWER_MARKER.format(sha=head_sha, reply=t.get("latest_reply_id"))
+        status, reason, explicit = _answer_outcome(h, reconciliation.get(h) or {}, kept_hashes)
+        item: dict[str, Any] = {"finding_hash": h, "status": status, "comment_id": cid}
+        if any(marker in b for b in posted):
+            item["action"] = "already_answered"
+            done.append(item)
+            continue
+        body = (
+            f"{marker}\n"
+            f"**{_ANSWER_LEAD.get(status, status)}** (re-reviewed at `{head_sha[:8]}`): {reason}"
+        )
+        try:
+            github.post_reply(gh, repo, number, int(cid), body)
+            item["action"] = "replied"
+        except (ReviewError, ValueError) as exc:
+            item["action"] = f"reply_failed: {exc}"
+            done.append(item)
+            continue
+        if explicit and status in {"WITHDRAWN", "FIXED", "OUTDATED"} and t.get("thread_id"):
+            try:
+                github.resolve_thread(gh, str(t["thread_id"]))
+                item["resolved"] = True
+            except ReviewError as exc:
+                item["resolved"] = f"failed: {exc}"
+        done.append(item)
+    return done

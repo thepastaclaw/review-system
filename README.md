@@ -13,8 +13,8 @@ tested, one daemon, one SQLite file, no lock files.
 | module | responsibility |
 |---|---|
 | `daemon.py` | single-threaded tick loop: ingest, notify, route, supersede, reap, schedule, watchdog, gc |
-| `ingest.py` | GitHub GraphQL poll → `prs`/`heads`; notifications → `inbox` |
-| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested) or own-PR comment batches → OpenClaw wake |
+| `ingest.py` | GitHub GraphQL poll → `prs`/`heads`; notifications and inline-comment replies → `inbox` |
+| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | slots (2 + 1 priority), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no slot can be ghosted |
 | `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
@@ -71,6 +71,54 @@ by the final verifier still publish REQUEST_CHANGES. The rule never applies to a
 `trivial` tier (which has no Phase 2) or when Phase 2 is disabled. Measured
 2026-09-08: GLM Phase-1 lanes took 65–140 min each, sequentially; astra Phase-2 lanes
 3–11 min.
+
+## Replies to findings
+
+A human reply under one of the bot's inline finding comments is the highest-value
+signal the system gets, and notifications do not carry a comment URL for it, so the
+`notify` task also lists each posted-on repo's inline comments updated since a per-repo
+cursor (`replies.cursor:<repo>`, trailing the poll start by 2 min so late-listed comments
+are still seen; dedupe is by comment id) and puts replies from non-bot users into
+`inbox` as `review_reply`. The router fetches the thread root; when it is a bot finding
+and the replier is a member/collaborator/contributor or in `trusted_reviewers`, the PR's
+live head is queued as priority with trigger `review_reply` (no debounce). An
+already-reviewed commit is re-opened for the same reason (`head.requeued`). A reply
+while that exact head is *running* is deferred until the run ends; a transient GitHub
+failure while looking up the thread root leaves the row for the next tick. Both waits
+are bounded by `DEFER_MAX` (6 h), after which the row is marked
+`review_reply_expired` / `ignored_unfetchable`. Replies to other people's threads, on
+draft PRs, or on the bot's own PRs are not review triggers (the last go to the own-PR
+comment batch).
+
+The re-review carries the thread: prior findings that were replied to go into the
+prompt with their original `body` and `thread_replies`, the evidence bundle keeps the
+bot's own root comment in those threads (it is stripped everywhere else), and findings
+the legacy pipeline posted are reconstructed from the comment when this database has no
+row for them. Reviewers reconcile each with `STILL_VALID | FIXED | OUTDATED |
+INTENTIONALLY_DEFERRED | WITHDRAWN` plus a `reason` addressed to the author. At publish
+the bot replies on each thread whose newest human reply is newer than the bot's last
+answer there ("**Withdrawn** (re-reviewed at `sha`): …", "**Still applies** …",
+"**Resolved** …"), marked `<!-- thepastaclaw-thread-answer v1 sha=… reply=… -->` so
+each human reply is answered exactly once per head, and resolves withdrawn/fixed/outdated
+threads only when a reviewer stated that status. The verifier's kept set overrides the
+reviewer (a kept finding is "still applies" even if a lane said otherwise; a dropped one
+is "withdrawn"); a defaulted withdrawal is answered but never resolves the thread.
+Threads a maintainer has already resolved are left alone. Reasons are capped at 1200
+chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded. If the
+commit already has a review (same sha), no second review is posted; the thread answers
+are the output. Every answer is an event `thread.answered`.
+
+## Ad hoc reviews (repos without a skill)
+
+`@thepastaclaw review` on a PR in a repo that has no entry in the skills `config.json`
+queues a review when the requester is trusted (same rule as replies). A repo that is
+listed but `enabled: false` stays off no matter who asks. The worker runs with a
+generic project note instead of `project.md`/`review.md` (plus
+`skills/_default/review-core.md` from the skills repo if that file exists), offers every
+discretionary specialist to the selector (always-run ones are repo-specific and stay
+off), and discloses it: the provenance starts with "Ad hoc review: this repository has
+no PastaClaw review skill …" and the gate comment carries "ad hoc (no repo skill)".
+Open-PR polling still covers only enabled repos; ad hoc is mention-driven by design.
 
 ## Queue comment and priority requests
 

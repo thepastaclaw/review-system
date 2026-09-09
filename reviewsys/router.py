@@ -1,7 +1,10 @@
 """Route inbox rows to actions.
 
 - `review_requested` on a watched repo  -> priority head at the live PR head
-- `mention` whose comment says `@<bot> review` -> priority head
+- `mention` whose comment says `@<bot> review` -> priority head (any repo the bot can
+  read: repos without a skills entry get an ad hoc review)
+- `review_reply` from a trusted human under one of the bot's finding threads -> priority
+  head at the live PR head, so the reply is answered on its thread within one review cycle
 - comments/reviews on the bot's own PRs from trusted humans or CodeRabbit ->
   batched per (repo, pr) and delivered to the OpenClaw agent as one wake event
 
@@ -18,6 +21,7 @@ from typing import Any
 
 from .config import Config
 from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
+from .dedupe import FINDING_MARKER_RE
 from .gh import Gh
 from .ingest import enqueue_head
 from .models import Trigger
@@ -25,8 +29,10 @@ from .notify import Notifier
 
 log = logging.getLogger(__name__)
 
+API_ROOT = "https://api.github.com/"
 BATCH_DELAY = timedelta(minutes=5)
 BATCH_RETRY = timedelta(minutes=15)
+DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
 ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
 
@@ -35,24 +41,27 @@ def _mention_re(bot: str) -> re.Pattern[str]:
     return re.compile(rf"@{re.escape(bot)}\b[^\n]{{0,40}}\breview\b", re.IGNORECASE)
 
 
-def _pr_meta(gh: Gh, repo: str, number: int) -> dict[str, Any] | None:
+def _fetch(gh: Gh, endpoint: str, what: str) -> dict[str, Any] | None:
+    """One JSON object from the API, or None when the call fails or returns something else.
+
+    Routing is best effort: a failed lookup leaves the inbox row for the next tick.
+    """
     try:
-        data = gh.api(f"repos/{repo}/pulls/{number}")
+        data = gh.api(endpoint)
     except Exception as exc:
-        log.warning("pr meta %s#%s failed: %s", repo, number, exc)
+        log.warning("%s fetch %s failed: %s", what, endpoint, exc)
         return None
     return data if isinstance(data, dict) else None
+
+
+def _pr_meta(gh: Gh, repo: str, number: int) -> dict[str, Any] | None:
+    return _fetch(gh, f"repos/{repo}/pulls/{number}", "pr meta")
 
 
 def _comment(gh: Gh, url: str) -> dict[str, Any] | None:
-    if not url.startswith("https://api.github.com/"):
+    if not url.startswith(API_ROOT):
         return None
-    try:
-        data = gh.api(url.removeprefix("https://api.github.com/"))
-    except Exception as exc:
-        log.warning("comment fetch %s failed: %s", url, exc)
-        return None
-    return data if isinstance(data, dict) else None
+    return _fetch(gh, url.removeprefix(API_ROOT), "comment")
 
 
 def route_inbox(
@@ -61,6 +70,9 @@ def route_inbox(
     stats = {
         "review_requested": 0,
         "mention": 0,
+        "review_reply": 0,
+        "review_reply_deferred": 0,
+        "deferred": 0,
         "own_pr_comment": 0,
         "ignored": 0,
         "batches_sent": 0,
@@ -112,21 +124,65 @@ def _route_row(
         return "review_requested"
 
     comment = _comment(gh, str(row["body"] or "")) if row["body"] else None
+    if row["body"] and comment is None and kind in {"mention", "review_reply"}:
+        if _too_old(row, ts):
+            with tx(conn):
+                _handled(conn, row["id"], "ignored_unfetchable", ts)
+            return "ignored"
+        return "deferred"  # transient fetch failure: retry next tick, never drop a human's words
     body = str((comment or {}).get("body") or "")
     actor = str(((comment or {}).get("user") or {}).get("login") or "")
+    # a repo with no skills entry is reviewed ad hoc when a trusted human asks; a repo that
+    # is listed but disabled stays off no matter who asks
+    adhoc_ok = cfg.repo(repo) is None and _trusted(cfg, comment or {}, actor)
 
     if (
         kind == "mention"
-        and watched
         and is_open
         and head
         and mention_re.search(body)
         and not own_pr
+        and (watched or adhoc_ok)
     ):
         with tx(conn):
             enqueue_head(conn, cfg, repo, number, head, Trigger.MENTION, ts=ts)
             _handled(conn, row["id"], "mention", ts)
         return "mention"
+
+    if kind == "review_reply" and comment and is_open and head and not own_pr:
+        if not _trusted(cfg, comment, actor):
+            with tx(conn):
+                _handled(conn, row["id"], "ignored", ts)
+            return "ignored"
+        is_ours = _replies_to_bot_finding(gh, comment, cfg.bot_login)
+        if is_ours is None:
+            if _too_old(row, ts):
+                with tx(conn):
+                    _handled(conn, row["id"], "ignored_unfetchable", ts)
+                return "ignored"
+            return "deferred"
+        if not is_ours:
+            with tx(conn):
+                _handled(conn, row["id"], "ignored", ts)
+            return "ignored"
+        with tx(conn):
+            res = enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REPLY, ts=ts)
+            if res == "noop" and _head_running(conn, repo, number, head):
+                # the same head is mid-review and its context predates this reply: leave the
+                # row unhandled so it re-opens the head once that run finishes (bounded)
+                if _too_old(row, ts):
+                    _handled(conn, row["id"], "review_reply_expired", ts)
+                    return "ignored"
+                return "review_reply_deferred"
+            _handled(conn, row["id"], "review_reply", ts)
+            event(
+                conn,
+                "head.review_reply",
+                repo=repo,
+                number=number,
+                detail=f"{actor} replied on comment {comment.get('in_reply_to_id')} -> {res} {head[:8]}",
+            )
+        return "review_reply"
 
     if (
         own_pr
@@ -146,6 +202,38 @@ def _route_row(
     with tx(conn):
         _handled(conn, row["id"], "ignored", ts)
     return "ignored"
+
+
+def _replies_to_bot_finding(gh: Gh, comment: dict[str, Any], bot_login: str) -> bool | None:
+    """True when the comment's thread root is one of the bot's finding comments, False when it
+    is not, None when the root could not be fetched (caller retries next tick)."""
+    parent_id = comment.get("in_reply_to_id")
+    pr_url = str(comment.get("pull_request_url") or "")
+    if not parent_id or not pr_url.startswith(API_ROOT):
+        return False
+    repo_path = pr_url.removeprefix(f"{API_ROOT}repos/").split("/pulls/", 1)[0]
+    root = _fetch(gh, f"repos/{repo_path}/pulls/comments/{parent_id}", "thread root")
+    if root is None:
+        return None
+    login = str((root.get("user") or {}).get("login") or "")
+    return login.lower() == bot_login.lower() and bool(
+        FINDING_MARKER_RE.search(str(root.get("body") or ""))
+    )
+
+
+def _head_running(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM heads WHERE repo=? AND number=? AND sha=? AND status='running'",
+            (repo, number, sha),
+        ).fetchone()
+        is not None
+    )
+
+
+def _too_old(row: sqlite3.Row, ts: str) -> bool:
+    """Deferred rows get a bounded life so a stuck lookup can never wedge the inbox."""
+    return parse_ts(ts) - parse_ts(str(row["seen_at"])) > DEFER_MAX
 
 
 def _trusted(cfg: Config, comment: dict[str, Any], actor: str) -> bool:

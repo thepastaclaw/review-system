@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from reviewsys.db import kv_get, parse_ts, tx
+from reviewsys.db import kv_get, kv_set, now, parse_ts, tx
 from reviewsys.ingest import enqueue_head, ingest_notifications, ingest_prs
 from reviewsys.models import Trigger
 from reviewsys.queue_status import PRIORITY_BOX, queued_order, update_queue_comments
@@ -345,3 +345,292 @@ def test_queue_comment_writes_are_capped_per_pass(cfg, conn, gh, monkeypatch):
     _queue(conn, cfg, 5)
     stats = queue_status.update_queue_comments(conn, cfg, gh)
     assert stats["written"] == 2 and stats["deferred"] == 3
+
+
+def _reply_comment(
+    cid, parent, *, login="knst", created="2026-09-08T20:17:36Z", repo="dashpay/platform", number=7
+):
+    return {
+        "id": cid,
+        "in_reply_to_id": parent,
+        "user": {"login": login},
+        "author_association": "COLLABORATOR",
+        "body": "I disagree: the pool has no priorities.",
+        "created_at": created,
+        "updated_at": created,
+        "url": f"https://api.github.com/repos/{repo}/pulls/comments/{cid}",
+        "pull_request_url": f"https://api.github.com/repos/{repo}/pulls/{number}",
+    }
+
+
+def test_review_reply_under_bot_finding_queues_priority_head(cfg, conn, gh, notifier):
+    from reviewsys.ingest import ingest_review_replies
+
+    # we have posted on this repo before, so it is polled for replies
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?)",
+            ("dashpay/platform", 7, "abc", "b" * 40, 1, "2026-09-07T00:00:00Z"),
+        )
+    reply = _reply_comment(2, 1)
+    bot_reply = _reply_comment(4, 1, login="thepastaclaw")
+    with tx(conn):
+        kv_set(conn, "replies.cursor", "2026-09-08T00:00:00Z")
+    gh.inline = [reply, bot_reply]
+    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**🟡 Suggestion: T**\n\nbody",
+    }
+    gh.routes["repos/dashpay/platform/pulls/comments/2"] = reply
+    assert ingest_review_replies(conn, cfg, gh) == 1  # bot reply skipped
+    assert ingest_review_replies(conn, cfg, gh) == 0  # idempotent by comment id
+    per_repo = kv_get(conn, "replies.cursor:dashpay/platform")
+    assert per_repo and per_repo > "2026-09-08T00:00:00Z"  # cursor advanced, per repo
+    row = conn.execute("SELECT kind, actor, number FROM inbox").fetchone()
+    assert (row["kind"], row["actor"], row["number"]) == ("review_reply", "knst", 7)
+    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["review_reply"] == 1
+    head = conn.execute(
+        "SELECT number, sha, trigger, priority, eligible_at, queued_at FROM heads"
+    ).fetchone()
+    assert (head["number"], head["sha"], head["trigger"], head["priority"]) == (
+        7,
+        "f" * 40,
+        "review_reply",
+        1,
+    )
+    assert head["eligible_at"] <= head["queued_at"]  # no debounce
+    assert (
+        conn.execute("SELECT COUNT(*) FROM events WHERE kind='head.review_reply'").fetchone()[0]
+        == 1
+    )
+
+
+def test_review_reply_under_someone_elses_thread_is_ignored(cfg, conn, gh, notifier):
+    reply = _reply_comment(2, 1)
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "reply:2",
+                "review_reply",
+                "dashpay/platform",
+                7,
+                "knst",
+                reply["url"],
+                reply["created_at"],
+                reply["created_at"],
+            ),
+        )
+    gh.routes["repos/dashpay/platform/pulls/comments/2"] = reply
+    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
+        "user": {"login": "coderabbitai[bot]"},
+        "body": "x",
+    }
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["review_reply"] == 0 and stats["ignored"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM heads").fetchone()[0] == 0
+
+
+def test_mention_on_unlisted_repo_from_trusted_user_queues_adhoc_review(cfg, conn, gh, notifier):
+    gh.notifications = [
+        {
+            "id": "9",
+            "reason": "mention",
+            "updated_at": "2026-09-09T01:00:00Z",
+            "subject": {
+                "type": "PullRequest",
+                "url": "https://api.github.com/repos/dashpay/quorum-list-server/pulls/14",
+                "latest_comment_url": "https://api.github.com/repos/dashpay/quorum-list-server/issues/comments/1",
+            },
+            "repository": {"full_name": "dashpay/quorum-list-server"},
+        },
+        {
+            "id": "10",
+            "reason": "mention",
+            "updated_at": "2026-09-09T01:00:01Z",
+            "subject": {
+                "type": "PullRequest",
+                "url": "https://api.github.com/repos/someone/else/pulls/3",
+                "latest_comment_url": "https://api.github.com/repos/someone/else/issues/comments/2",
+            },
+            "repository": {"full_name": "someone/else"},
+        },
+    ]
+    gh.routes["repos/dashpay/quorum-list-server/issues/comments/1"] = {
+        "body": "@thepastaclaw review please",
+        "user": {"login": "lklimek"},
+        "author_association": "NONE",
+    }
+    gh.routes["repos/someone/else/issues/comments/2"] = {
+        "body": "@thepastaclaw review",
+        "user": {"login": "stranger"},
+        "author_association": "NONE",
+    }
+    ingest_notifications(conn, cfg, gh)
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["mention"] == 1 and stats["ignored"] == 1
+    head = conn.execute("SELECT repo, number, trigger FROM heads").fetchone()
+    assert (head["repo"], head["number"], head["trigger"]) == (
+        "dashpay/quorum-list-server",
+        14,
+        "mention",
+    )
+
+
+def test_review_reply_reopens_a_finished_head_and_waits_for_a_running_one(cfg, conn, gh, notifier):
+    sha = "f" * 40
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 7, sha, Trigger.NEW_PR)
+        conn.execute("UPDATE heads SET status='done', finished_at='x', attempts=2")
+    with tx(conn):
+        assert (
+            enqueue_head(conn, cfg, "dashpay/platform", 7, sha, Trigger.REVIEW_REPLY) == "requeued"
+        )
+    head = conn.execute(
+        "SELECT status, priority, trigger, attempts, finished_at FROM heads"
+    ).fetchone()
+    assert tuple(head) == ("queued", 1, "review_reply", 0, None)
+    assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='head.requeued'").fetchone()[0] == 1
+    # a reply while that head is running is deferred: the inbox row stays unhandled
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='running'")
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "reply:2",
+                "review_reply",
+                "dashpay/platform",
+                7,
+                "knst",
+                "https://api.github.com/repos/dashpay/platform/pulls/comments/2",
+                now(),
+                now(),
+            ),
+        )
+    gh.routes["repos/dashpay/platform/pulls/comments/2"] = _reply_comment(2, 1)
+    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
+    }
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["review_reply_deferred"] == 1
+    assert conn.execute("SELECT handled_at FROM inbox").fetchone()[0] is None
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done'")
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["review_reply"] == 1
+    assert conn.execute("SELECT status, trigger FROM heads").fetchone()[:] == (
+        "queued",
+        "review_reply",
+    )
+
+
+def test_reply_fetch_failure_is_retried_not_dropped(cfg, conn, gh, notifier):
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "reply:2",
+                "review_reply",
+                "dashpay/platform",
+                7,
+                "knst",
+                "https://api.github.com/repos/dashpay/platform/pulls/comments/2",
+                "t",
+                "2026-09-08T20:18:00Z",
+            ),
+        )
+    gh.routes["repos/dashpay/platform/pulls/comments/2"] = _reply_comment(2, 1)
+    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
+    # the thread-root lookup fails transiently: row stays unhandled
+    gh.fail_next = ["502 bad gateway"]
+    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc -->",
+    }
+    import reviewsys.router as router_mod
+    from reviewsys.router import _mention_re, _route_row
+
+    row = conn.execute("SELECT * FROM inbox").fetchone()
+    out = _route_row(
+        conn,
+        cfg,
+        gh,
+        row,
+        meta=gh.pr,
+        mention_re=_mention_re("thepastaclaw"),
+        ts="2026-09-08T20:20:00Z",
+    )
+    assert out == "deferred"
+    assert conn.execute("SELECT handled_at FROM inbox").fetchone()[0] is None
+    # next tick succeeds
+    out = _route_row(
+        conn,
+        cfg,
+        gh,
+        row,
+        meta=gh.pr,
+        mention_re=_mention_re("thepastaclaw"),
+        ts="2026-09-08T20:22:00Z",
+    )
+    assert out == "review_reply"
+    # a row that has waited longer than DEFER_MAX is given up on, with a distinct action
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "reply:9",
+                "review_reply",
+                "dashpay/platform",
+                7,
+                "knst",
+                "https://api.github.com/repos/dashpay/platform/pulls/comments/9",
+                "t",
+                "2026-09-08T00:00:00Z",
+            ),
+        )
+    gh.fail_next = ["502 bad gateway"]
+    row = conn.execute("SELECT * FROM inbox WHERE source_id='reply:9'").fetchone()
+    out = _route_row(
+        conn,
+        cfg,
+        gh,
+        row,
+        meta=gh.pr,
+        mention_re=_mention_re("thepastaclaw"),
+        ts="2026-09-08T20:22:00Z",
+    )
+    assert out == "ignored"
+    assert (
+        conn.execute("SELECT action FROM inbox WHERE source_id='reply:9'").fetchone()[0]
+        == "ignored_unfetchable"
+    )
+    assert router_mod.DEFER_MAX.total_seconds() == 6 * 3600
+
+
+def test_mention_on_disabled_repo_stays_blocked_even_for_trusted_user(cfg, conn, gh, notifier):
+    gh.notifications = [
+        {
+            "id": "11",
+            "reason": "mention",
+            "updated_at": "2026-09-09T01:00:00Z",
+            "subject": {
+                "type": "PullRequest",
+                "url": "https://api.github.com/repos/dashpay/grovedb/pulls/5",
+                "latest_comment_url": "https://api.github.com/repos/dashpay/grovedb/issues/comments/3",
+            },
+            "repository": {"full_name": "dashpay/grovedb"},
+        }
+    ]
+    gh.routes["repos/dashpay/grovedb/issues/comments/3"] = {
+        "body": "@thepastaclaw review",
+        "user": {"login": "QuantumExplorer"},
+        "author_association": "MEMBER",
+    }
+    ingest_notifications(conn, cfg, gh)
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["mention"] == 0 and stats["ignored"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM heads").fetchone()[0] == 0

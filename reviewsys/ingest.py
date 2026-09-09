@@ -80,8 +80,8 @@ def enqueue_head(
 ) -> str:
     """Create a queued head for (repo, number, sha), superseding any older active head.
 
-    Returns one of: created, promoted (existing head got priority), noop.
-    Caller holds a transaction.
+    Returns one of: created, promoted (existing head got priority), requeued (a finished
+    head re-opened by a review reply), noop. Caller holds a transaction.
     """
     ts = ts or now()
     existing = conn.execute(
@@ -100,6 +100,24 @@ def enqueue_head(
                 (trigger.value, ts, existing["id"]),
             )
             return "promoted"
+        if trigger == Trigger.REVIEW_REPLY and existing["status"] in (
+            HeadStatus.DONE,
+            HeadStatus.FAILED,
+        ):
+            # same commit, already reviewed: a human answered a finding, so review it again
+            # with the thread in context and answer on the thread
+            conn.execute(
+                "UPDATE heads SET status='queued', priority=1, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
+                (trigger.value, ts, ts, existing["id"]),
+            )
+            event(
+                conn,
+                "head.requeued",
+                repo=repo,
+                number=number,
+                detail=f"{sha[:8]} re-opened by review reply",
+            )
+            return "requeued"
         return "noop"
     # supersede older active heads for this PR
     for row in conn.execute(
@@ -221,15 +239,26 @@ def ingest_prs(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict[str, dict[
 
 # ---- notifications -> inbox ----
 
+INBOX_INSERT = (
+    "INSERT OR IGNORE INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at)"
+    " VALUES (?,?,?,?,?,?,?,?)"
+)
+
+
+def _poll_cursor(conn: sqlite3.Connection, key: str) -> str:
+    """Stored poll cursor for `key`, seeded on first run to just-now rather than replaying
+    weeks of history through the router."""
+    since = kv_get(conn, key)
+    if since is None:
+        since = fmt_ts(now_dt() - timedelta(minutes=10))
+        with tx(conn):
+            kv_set(conn, key, since)
+    return since
+
 
 def ingest_notifications(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
     """Pull GitHub notifications since the stored cursor into `inbox`. Returns rows added."""
-    since = kv_get(conn, "notify.cursor")
-    if since is None:
-        # first run: start from now rather than replaying weeks of history through the router
-        since = fmt_ts(now_dt() - timedelta(minutes=10))
-        with tx(conn):
-            kv_set(conn, "notify.cursor", since)
+    since = _poll_cursor(conn, "notify.cursor")
     endpoint = f"/notifications?all=true&per_page=100&since={since}"
     rows = gh.api(endpoint, paginate=True) or []
     added = 0
@@ -247,7 +276,7 @@ def ingest_notifications(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
             updated = str(n.get("updated_at") or now())
             source_id = f"{n.get('id')}:{updated}"
             cur = conn.execute(
-                "INSERT OR IGNORE INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) VALUES (?,?,?,?,?,?,?,?)",
+                INBOX_INSERT,
                 (
                     source_id,
                     str(n.get("reason") or ""),
@@ -265,4 +294,68 @@ def ingest_notifications(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
         if newest:
             kv_set(conn, "notify.cursor", newest)
         kv_set(conn, "notify.last_at", now())
+    return added
+
+
+# ---- review-comment replies -> inbox ----
+
+REPLY_OVERLAP = timedelta(minutes=2)
+
+
+def ingest_review_replies(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
+    """Pull inline review comments updated since the cursor for every repo we have posted on,
+    and put replies (comments with `in_reply_to_id`) from non-bot users into `inbox` as kind
+    `review_reply`. Notifications do not carry the comment URL for these, so this is the only
+    reliable way to notice that someone answered one of our findings. Returns rows added."""
+    repos = [
+        r["repo"]
+        for r in conn.execute("SELECT DISTINCT repo FROM posted_findings ORDER BY repo").fetchall()
+    ]
+    added = 0
+    for repo in repos:
+        # one cursor per repo so a repo that stops answering only stalls itself; the cursor
+        # trails the poll start by REPLY_OVERLAP so a comment that becomes listable late is
+        # still seen (dedupe is by comment id, so re-listing is free)
+        key = f"replies.cursor:{repo}"
+        since = kv_get(conn, key) or _poll_cursor(conn, "replies.cursor")
+        poll_start = now_dt()
+        try:
+            rows = (
+                gh.api(
+                    f"repos/{repo}/pulls/comments?sort=updated&direction=asc&since={since}&per_page=100",
+                    paginate=True,
+                )
+                or []
+            )
+        except Exception as exc:
+            log.warning("reply ingest %s failed: %s", repo, exc)
+            continue
+        with tx(conn):
+            for c in rows:
+                if not isinstance(c, dict):
+                    continue
+                actor = str((c.get("user") or {}).get("login") or "")
+                if not c.get("in_reply_to_id") or actor.lower() == cfg.bot_login.lower():
+                    continue
+                pr_url = str(c.get("pull_request_url") or "")
+                tail = pr_url.rsplit("/", 1)[-1]
+                if not tail.isdigit():
+                    continue
+                cur = conn.execute(
+                    INBOX_INSERT,
+                    (
+                        f"reply:{c.get('id')}",
+                        "review_reply",
+                        repo,
+                        int(tail),
+                        actor,
+                        str(c.get("url") or ""),
+                        str(c.get("created_at") or now()),
+                        now(),
+                    ),
+                )
+                added += cur.rowcount
+            kv_set(conn, key, fmt_ts(poll_start - REPLY_OVERLAP))
+    with tx(conn):
+        kv_set(conn, "replies.last_at", now())
     return added
