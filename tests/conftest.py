@@ -165,7 +165,7 @@ class FakeGh(Gh):
         self.threads: list[dict[str, Any]] = []
         self.labels: list[str] = []  # current PR labels
         self.label_calls: list[tuple[str, str]] = []  # (method, label) mutations
-        self.labels_defined = True  # False: repo has no pastaclaw:* labels -> POST 422s
+        self.labels_defined = True  # False: repo has no pastaclaw:* labels -> the add 404s
         self.pr: dict[str, Any] = {
             "title": "T",
             "body": "B",

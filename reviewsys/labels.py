@@ -6,14 +6,12 @@ on repos where the bot has triage its APPROVE / REQUEST_CHANGES is invisible to
 triage can set, so a repo that defines the `pastaclaw:*` labels gets exactly one of them
 mirroring the bot's latest verdict on the live head, and none while no verdict stands.
 
-The label is a *reconciliation* of database state, not an event hook: the wanted label
-for a PR is derived from its live commit (newest head row, cross-checked against GitHub's
-head sha) and the latest row in `reviews` for that sha, and `reconcile()` compares it with what GitHub shows and fixes the
-difference. Running that on a daemon tick covers every path that can change either side
-(a review posted, a same-sha follow-up, a push seen by ingest or by the router, a revert
-to an already-reviewed commit, a run that published after being superseded, a run that
-died between posting and labelling, a bot-authored PR whose canonical verdict moved while
-GitHub's transport state could not)
+The label is a *reconciliation* of database state, not an event hook: `reconcile()` derives
+the wanted label from the database and fixes whatever GitHub currently shows. Running that on
+a daemon tick covers every path that can change either side (a review posted, a same-sha
+follow-up, a push seen by ingest or by the router, a revert to an already-reviewed commit, a
+run that published after being superseded, a run that died between posting and labelling, a
+bot-authored PR whose canonical verdict moved while GitHub's transport state could not)
 without each of them having to remember to touch the label.
 
 Repos that have not created the labels are opted out: their add fails (404 on write
@@ -50,13 +48,23 @@ CURSOR_OVERLAP = timedelta(seconds=60)
 RETRY_BACKOFF = timedelta(minutes=5)
 
 
+def latest_verdict(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str | None:
+    """The canonical event of the newest `reviews` row for this commit, or None if the bot has
+    no record of reviewing it."""
+    row = conn.execute(
+        "SELECT event FROM reviews WHERE repo=? AND number=? AND sha=? ORDER BY posted_at DESC, id DESC LIMIT 1",
+        (repo, number, sha),
+    ).fetchone()
+    return canonical_event(str(row["event"])) if row else None
+
+
 def wanted(conn: sqlite3.Connection, repo: str, number: int) -> str | None:
-    """The label this PR should carry right now, or None: the bot's latest review of the PR's
-    live head, if any. The live head is the newest head row (ingest and the router both create
-    one for a new commit) and it must agree with `prs.head_sha` (GitHub's view, refreshed every
-    poll): when they differ the commit moved without a review being possible yet, or with no
-    new head row at all (revert to an already-reviewed sha, push while draft), and no verdict
-    stands. A PR with no `prs` row (ad hoc review of an unlisted repo) has only the head."""
+    """The label this PR should carry right now, or None: the bot's latest verdict on the PR's
+    live head. The live head is the newest head row (ingest and the router both create one for
+    a new commit) and it must agree with `prs.head_sha` (GitHub's view, refreshed every poll):
+    when they differ the commit moved without a review being possible yet, or with no new head
+    row at all (revert to an already-reviewed sha, push while draft), and no verdict stands. A
+    PR with no `prs` row (ad hoc review of an unlisted repo) has only the head."""
     pr = conn.execute(
         "SELECT state, head_sha FROM prs WHERE repo=? AND number=?", (repo, number)
     ).fetchone()
@@ -67,13 +75,8 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int) -> str | None:
     ).fetchone()
     if not head or (pr and pr["head_sha"] != head["sha"]):
         return None
-    row = conn.execute(
-        "SELECT event FROM reviews WHERE repo=? AND number=? AND sha=? ORDER BY posted_at DESC, id DESC LIMIT 1",
-        (repo, number, head["sha"]),
-    ).fetchone()
-    if not row:
-        return None
-    return VERDICT_LABELS.get(canonical_event(str(row["event"])))
+    verdict = latest_verdict(conn, repo, number, str(head["sha"]))
+    return VERDICT_LABELS.get(verdict) if verdict else None
 
 
 def _dirty_prs(conn: sqlite3.Connection, since: str) -> list[tuple[str, int]]:
@@ -109,7 +112,7 @@ def reconcile(
     retry_at = kv_get(conn, since_key + ".retry_at")
     if retry_at and parse_ts(retry_at) > start:
         return 0
-    since = kv_get(conn, since_key, "") or ""
+    since = kv_get(conn, since_key) or ""
     changed = 0
     deferred = False
     for repo, number in _dirty_prs(conn, since):
@@ -144,21 +147,19 @@ def sync(gh: Gh, repo: str, number: int, want: str | None) -> bool:
     """Make the PR carry exactly `want` among the `pastaclaw:*` labels (None: none of them).
     Returns True when a label was added or removed. Raises ReviewError on API failure."""
     current = _current(gh, repo, number)
-    if want in current and len(current) == 1:
+    target: set[str] = {want} if want else set()
+    if current == target:
         return False
-    for name in sorted(current - ({want} if want else set())):
+    for name in sorted(current - target):
         gh.api(f"repos/{repo}/issues/{number}/labels/{quote(name, safe='')}", method="DELETE")
     if want and want not in current:
         gh.api(f"repos/{repo}/issues/{number}/labels", method="POST", body={"labels": [want]})
-    return bool(current or want)
+    return True
 
 
 def _current(gh: Gh, repo: str, number: int) -> set[str]:
     data: Any = gh.api(f"repos/{repo}/issues/{number}/labels?per_page=100", paginate=True)
     if not isinstance(data, list):
         return set()
-    return {
-        str(lbl.get("name"))
-        for lbl in data
-        if isinstance(lbl, dict) and str(lbl.get("name") or "").startswith(PREFIX)
-    }
+    names = {str(lbl.get("name") or "") for lbl in data if isinstance(lbl, dict)}
+    return {name for name in names if name.startswith(PREFIX)}

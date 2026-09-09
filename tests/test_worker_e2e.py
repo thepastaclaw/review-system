@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from reviewsys import worker
+from reviewsys import labels, worker
 from reviewsys.daemon import Daemon
-from reviewsys.db import tx
+from reviewsys.db import kv_get, tx
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import RunStatus, Trigger
 from reviewsys.scheduler import schedule
@@ -73,6 +73,15 @@ def _verifier(findings):
         "prerequisite_adjudications": [],
         "adjudication_complete": True,
     }
+
+
+def _open_pr(conn, sha=HEAD, updated_at="2026-01-01T00:00:00Z"):
+    """The `prs` row ingest would have written for an open PR at `sha`."""
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
+            ("dashpay/platform", 1, sha, "open", updated_at),
+        )
 
 
 def _run(cfg, conn, gh, lanes, *, dry_run=False):
@@ -1314,13 +1323,7 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
         == 0
     )
     # ... yet our own record (and so the verdict label) carries the canonical REQUEST_CHANGES
-    from reviewsys import labels
-
-    with tx(conn):
-        conn.execute(
-            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
-            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
-        )
+    _open_pr(conn)
     rows = [r["event"] for r in conn.execute("SELECT event FROM reviews ORDER BY id")]
     assert rows == ["COMMENTED", "REQUEST_CHANGES"]
     assert labels.wanted(conn, "dashpay/platform", 1) == "pastaclaw:changes-requested"
@@ -1341,29 +1344,27 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
 
 
 def _reconcile(conn, gh, disabled=None):
-    from reviewsys import labels
-
     return labels.reconcile(conn, gh, disabled=set() if disabled is None else disabled)
 
 
-def test_verdict_label_follows_review_push_and_close(cfg, conn, gh, lanes):
-    """The label is reconciled from DB state: a posted verdict sets it, a push (new head, from
-    ingest or the router) clears it before the re-review starts, a follow-up review swaps it,
-    and closing the PR clears it. Repos that never created the labels are disabled after the
-    first failed add, and a dry run touches nothing."""
+def _run_blocking(cfg, conn, gh, lanes):
+    """One review of an open PR at HEAD that lands on REQUEST_CHANGES."""
     lanes.reviewer["default"] = {
         "summary": "x",
         "findings": [_blocking()],
         "out_of_scope_findings": [],
     }
     lanes.verifier["preliminary"] = _verifier([_blocking()])
+    _open_pr(conn)
+    return _run(cfg, conn, gh, lanes)
+
+
+def test_verdict_label_follows_review_push_and_close(cfg, conn, gh, lanes):
+    """The label is reconciled from DB state: a posted verdict sets it, a push (new head, from
+    ingest or the router) clears it before the re-review starts, a revert or a follow-up review
+    swaps it, closing the PR clears it and reopening restores it."""
     gh.labels = ["pastaclaw:approved", "bug"]  # stale from an earlier commit
-    with tx(conn):
-        conn.execute(
-            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
-            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
-        )
-    rid, status = _run(cfg, conn, gh, lanes)
+    rid, status = _run_blocking(cfg, conn, gh, lanes)
     assert status == RunStatus.DONE and gh.posted_reviews[0]["event"] == "REQUEST_CHANGES"
     assert gh.labels == ["pastaclaw:approved", "bug"]  # the worker itself never touches labels
     assert _reconcile(conn, gh) == 1
@@ -1441,19 +1442,8 @@ def test_verdict_label_follows_review_push_and_close(cfg, conn, gh, lanes):
 
 
 def test_verdict_label_skips_repos_without_labels_and_dismissed_reviews(cfg, conn, gh, lanes):
-    lanes.reviewer["default"] = {
-        "summary": "x",
-        "findings": [_blocking()],
-        "out_of_scope_findings": [],
-    }
-    lanes.verifier["preliminary"] = _verifier([_blocking()])
     gh.labels_defined = False
-    with tx(conn):
-        conn.execute(
-            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
-            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
-        )
-    _run(cfg, conn, gh, lanes)
+    _run_blocking(cfg, conn, gh, lanes)
     disabled: set[str] = set()
     assert _reconcile(conn, gh, disabled) == 0
     assert disabled == {"dashpay/platform"} and gh.labels == []
@@ -1471,8 +1461,6 @@ def test_verdict_label_skips_repos_without_labels_and_dismissed_reviews(cfg, con
     assert not any("/labels" in " ".join(c) for c in gh.calls)
 
     # a review whose recorded event is a backfilled/dismissed state carries no label
-    from reviewsys import labels
-
     with tx(conn):
         conn.execute(
             "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at) VALUES (NULL,?,?,?,?,?,?)",
@@ -1494,20 +1482,7 @@ def test_verdict_label_skips_repos_without_labels_and_dismissed_reviews(cfg, con
 
 
 def test_verdict_label_transient_failure_holds_cursor(cfg, conn, gh, lanes):
-    from reviewsys.db import kv_get
-
-    lanes.reviewer["default"] = {
-        "summary": "x",
-        "findings": [_blocking()],
-        "out_of_scope_findings": [],
-    }
-    lanes.verifier["preliminary"] = _verifier([_blocking()])
-    with tx(conn):
-        conn.execute(
-            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
-            ("dashpay/platform", 1, HEAD, "open", "2026-01-01T00:00:00Z"),
-        )
-    _run(cfg, conn, gh, lanes)
+    _run_blocking(cfg, conn, gh, lanes)
     gh.fail_next = ["HTTP 502 Bad Gateway"]
     disabled: set[str] = set()
     assert _reconcile(conn, gh, disabled) == 0

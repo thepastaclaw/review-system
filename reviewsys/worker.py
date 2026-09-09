@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import github, publish
+from . import github, labels, publish
 from .config import Config, LaneModel
 from .contract import (
     Finding,
@@ -704,11 +704,7 @@ def _record_verdict(ctx: RunContext, phase: str, verified: VerifierOutput, new_e
     changes no transport state and gets no follow-up review, yet the verdict label reads
     `reviews.event` and must see it."""
     with tx(ctx.conn):
-        last = ctx.conn.execute(
-            "SELECT event FROM reviews WHERE repo=? AND number=? AND sha=? ORDER BY posted_at DESC, id DESC LIMIT 1",
-            (ctx.repo, ctx.number, ctx.sha),
-        ).fetchone()
-        prev = publish.canonical_event(str(last["event"])) if last else None
+        prev = labels.latest_verdict(ctx.conn, ctx.repo, ctx.number, ctx.sha)
         if prev == new_event:
             return
         ctx.conn.execute(
