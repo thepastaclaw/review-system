@@ -1343,8 +1343,8 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
     assert conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 2
 
 
-def _reconcile(conn, gh, disabled=None):
-    return labels.reconcile(conn, gh, disabled=set() if disabled is None else disabled)
+def _reconcile(conn, gh, repos=None):
+    return labels.reconcile(conn, gh, repos={} if repos is None else repos)
 
 
 def _run_blocking(cfg, conn, gh, lanes):
@@ -1444,9 +1444,11 @@ def test_verdict_label_follows_review_push_and_close(cfg, conn, gh, lanes):
 def test_verdict_label_skips_repos_without_labels_and_dismissed_reviews(cfg, conn, gh, lanes):
     gh.labels_defined = False
     _run_blocking(cfg, conn, gh, lanes)
-    disabled: set[str] = set()
-    assert _reconcile(conn, gh, disabled) == 0
-    assert disabled == {"dashpay/platform"} and gh.labels == []
+    repos: dict[str, bool] = {}
+    assert _reconcile(conn, gh, repos) == 0
+    assert repos == {"dashpay/platform": False} and gh.labels == []
+    # the repo was never written to: no add that would have auto-created the label
+    assert gh.label_calls == []
     assert (
         conn.execute("SELECT COUNT(*) FROM events WHERE kind='label.sync_failed'").fetchone()[0]
         == 1
@@ -1457,7 +1459,7 @@ def test_verdict_label_skips_repos_without_labels_and_dismissed_reviews(cfg, con
         enqueue_head(conn, cfg, "dashpay/platform", 1, "c" * 40, Trigger.MENTION)
         conn.execute("UPDATE prs SET head_sha=? WHERE number=1", ("c" * 40,))
     gh.calls.clear()
-    assert _reconcile(conn, gh, disabled) == 0
+    assert _reconcile(conn, gh, repos) == 0
     assert not any("/labels" in " ".join(c) for c in gh.calls)
 
     # a review whose recorded event is a backfilled/dismissed state carries no label
@@ -1484,15 +1486,16 @@ def test_verdict_label_skips_repos_without_labels_and_dismissed_reviews(cfg, con
 def test_verdict_label_transient_failure_holds_cursor(cfg, conn, gh, lanes):
     _run_blocking(cfg, conn, gh, lanes)
     gh.fail_next = ["HTTP 502 Bad Gateway"]
-    disabled: set[str] = set()
-    assert _reconcile(conn, gh, disabled) == 0
-    assert disabled == set() and kv_get(conn, "labels.reconciled_at") is None
+    repos: dict[str, bool] = {}
+    assert _reconcile(conn, gh, repos) == 0
+    assert repos == {} and kv_get(conn, "labels.reconciled_at") is None
     # backed off: the next pass inside the window does nothing at all
     gh.calls.clear()
-    assert _reconcile(conn, gh, disabled) == 0 and gh.calls == []
+    assert _reconcile(conn, gh, repos) == 0 and gh.calls == []
     with tx(conn):
         conn.execute("DELETE FROM kv WHERE key='labels.reconciled_at.retry_at'")
-    assert _reconcile(conn, gh, disabled) == 1 and gh.labels == ["pastaclaw:changes-requested"]
+    assert _reconcile(conn, gh, repos) == 1 and gh.labels == ["pastaclaw:changes-requested"]
+    assert repos == {"dashpay/platform": True}
     assert kv_get(conn, "labels.reconciled_at")
 
 

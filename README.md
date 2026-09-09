@@ -152,8 +152,9 @@ dismissed review (recorded as `DISMISSED`, no label). The canonical event is use
 bot-authored PR gets `approved` even though the review itself was submitted as COMMENT.
 
 Filter with `label:"pastaclaw:approved"` (PR list, saved searches, project boards).
-Repos without the labels are not opted in: the first failed add records
-`label.sync_failed` and disables the repo until the daemon restarts. Successful changes
+Repos opt in by creating all three labels; the daemon checks that before it ever writes
+to a repo (on write repos GitHub would otherwise create a missing label on add), and a
+repo without them is recorded once as `label.sync_failed` and skipped until restart. Successful changes
 are `label.synced` events; a canonical verdict recorded without a GitHub review (own PR)
 is `review.verdict_recorded`. The first pass after deploy backfills every open PR once;
 a transient GitHub failure holds the cursor and backs off five minutes.

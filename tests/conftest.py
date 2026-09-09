@@ -206,9 +206,7 @@ class FakeGh(Gh):
             self.labels = [n for n in self.labels if n != name]
             return {}
         if method == "POST":
-            if not self.labels_defined:
-                raise _GhFailure("HTTP 404: Not Found")
-            for name in (body or {})["labels"]:
+            for name in (body or {})["labels"]:  # GitHub auto-creates missing labels here
                 self.label_calls.append(("POST", name))
                 if name not in self.labels:
                     self.labels.append(name)
@@ -280,6 +278,10 @@ class FakeGh(Gh):
                 return self.routes[ep]
             if "/issues/" in ep and "/labels" in ep:
                 return self._labels(ep, method, body)
+            if "/labels/" in ep and method == "GET":  # repo label definition lookup
+                if not self.labels_defined:
+                    raise _GhFailure("HTTP 404: Not Found")
+                return {"name": urllib.parse.unquote(ep.rsplit("/labels/", 1)[1])}
             if ep.startswith("/notifications"):
                 return self.notifications
             if ep == "user":

@@ -14,9 +14,9 @@ run that published after being superseded, a run that died between posting and l
 bot-authored PR whose canonical verdict moved while GitHub's transport state could not)
 without each of them having to remember to touch the label.
 
-Repos that have not created the labels are opted out: their add fails (404 on write
-repos, "not permitted to create labels" on triage repos), the failure is recorded as
-`label.sync_failed` and the repo is skipped until the daemon restarts.
+Repos opt in by creating the three labels; that is checked before a repo is ever written
+to, because on write repos GitHub creates a missing label on add rather than failing. A
+repo without them is recorded once as `label.sync_failed` and skipped until restart.
 """
 
 from __future__ import annotations
@@ -97,17 +97,32 @@ def _dirty_prs(conn: sqlite3.Connection, since: str) -> list[tuple[str, int]]:
     return [(str(r["repo"]), int(r["number"])) for r in rows]
 
 
+def labels_defined(gh: Gh, repo: str) -> bool:
+    """Whether the repo has created every `pastaclaw:*` label. Checked before a repo is ever
+    written to: on repos where the bot has write access GitHub silently *creates* a missing
+    label on add (verified live), which would opt every repo in by accident."""
+    for name in VERDICT_LABELS.values():
+        try:
+            gh.api(f"repos/{repo}/labels/{quote(name, safe='')}")
+        except ReviewError as exc:
+            if exc.kind is FailKind.INFRA:
+                raise
+            return False
+    return True
+
+
 def reconcile(
     conn: sqlite3.Connection,
     gh: Gh,
     *,
-    disabled: set[str],
+    repos: dict[str, bool],
     since_key: str = "labels.reconciled_at",
 ) -> int:
     """Daemon task: bring the verdict label of every PR touched since the last pass in line
-    with `wanted()`. Returns the number of PRs whose labels changed. A repo whose label add
-    fails is added to `disabled` (it has not created the labels) and skipped from then on;
-    a transient GitHub failure holds the cursor and backs off before the pass is retried."""
+    with `wanted()`. Returns the number of PRs whose labels changed. `repos` caches, per
+    process, whether each repo has opted in by creating the labels (checked on first sight;
+    a repo without them is recorded once as `label.sync_failed` and skipped until restart).
+    A transient GitHub failure holds the cursor and backs off before the pass is retried."""
     start = now_dt()
     retry_at = kv_get(conn, since_key + ".retry_at")
     if retry_at and parse_ts(retry_at) > start:
@@ -116,10 +131,16 @@ def reconcile(
     changed = 0
     deferred = False
     for repo, number in _dirty_prs(conn, since):
-        if repo in disabled:
-            continue
-        want = wanted(conn, repo, number)
         try:
+            if repo not in repos:
+                repos[repo] = labels_defined(gh, repo)
+                if not repos[repo]:
+                    log.info("verdict labels not defined on %s; skipping until restart", repo)
+                    with tx(conn):
+                        event(conn, "label.sync_failed", repo=repo, detail="labels not defined")
+            if not repos[repo]:
+                continue
+            want = wanted(conn, repo, number)
             if sync(gh, repo, number, want):
                 changed += 1
                 with tx(conn):
@@ -131,7 +152,7 @@ def reconcile(
                 log.warning("verdict label sync for %s#%s deferred: %s", repo, number, exc)
                 deferred = True
                 continue
-            disabled.add(repo)
+            repos[repo] = False
             log.warning("verdict labels disabled for %s until restart: %s", repo, exc)
             with tx(conn):
                 event(conn, "label.sync_failed", repo=repo, number=number, detail=str(exc)[:300])

@@ -69,7 +69,7 @@ class Daemon:
         self.gh = gh or Gh(cfg.gh_bin)
         self.notifier = notifier or Notifier(cfg)
         self.spawn = spawn
-        self.labels_disabled: set[str] = set()  # repos without the pastaclaw:* labels
+        self.labels_repos: dict[str, bool] = {}  # repo -> has created the pastaclaw:* labels
         self.stop = False
         self.tasks = [
             Task("ingest", cfg.ingest_interval_seconds, self.t_ingest),
@@ -106,7 +106,7 @@ class Daemon:
         return update_queue_comments(self.conn, self.cfg, self.gh)
 
     def t_labels(self) -> object:
-        return labels.reconcile(self.conn, self.gh, disabled=self.labels_disabled)
+        return labels.reconcile(self.conn, self.gh, repos=self.labels_repos)
 
     def t_supersede(self) -> object:
         return apply_supersedes(self.conn, self.cfg)
