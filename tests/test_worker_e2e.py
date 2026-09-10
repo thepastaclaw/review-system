@@ -1729,3 +1729,14 @@ def test_policy_without_candidates_has_single_rung_and_no_choice_line(cfg, conn,
     _, status = _run_ladder(cfg, conn, gh, lanes, reader)
     assert status == RunStatus.DONE
     assert "- Phase 1 model:" not in gh.posted_reviews[0]["body"]
+
+
+def test_triage_prompt_makes_normal_the_default_and_critical_conjunctive():
+    from reviewsys.triage import _prompt
+
+    p = _prompt("dashpay/dash", "develop", "t", "b", [], ["trivial", "low", "normal", "critical"])
+    assert "`normal`: the default" in p
+    assert "BOTH large or intricate AND the diff itself changes a critical surface" in p
+    assert "Size alone never qualifies" in p
+    assert "When unsure between two tiers pick the lower one" in p
+    assert "pick the higher" not in p

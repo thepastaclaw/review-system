@@ -19,8 +19,8 @@ from .lane import LaneResult, LaneSpec, run_claude_lane
 TIER_GUIDE = {
     "trivial": "typo, comment, docs, rename, formatting or config-only change with no behaviour change; a second review round adds nothing",
     "low": "small, straightforward, well-contained change whose correctness is easy to confirm",
-    "normal": "an ordinary, reasonably contained change to logic, tests or tooling",
-    "critical": "large or complex, or touches consensus, funds, cryptography, signatures, networking, storage/migrations, security or anything where a bug or side effect would be a critical issue",
+    "normal": "the default: an ordinary change to logic, tests, tooling, UI or build, including large or cross-cutting ones, whenever it does not meet the bar for critical",
+    "critical": "BOTH large or intricate AND the diff itself changes a critical surface: consensus rules, funds movement or coin selection, cryptography, signatures or key handling, peer-facing network deserialization, or storage migrations. Size alone never qualifies; a small fix on a critical surface, a dependency bump, logging, metrics, tests, CI or build changes do not qualify. Name the file or function that meets the bar",
 }
 
 
@@ -48,7 +48,9 @@ def _prompt(
         f"PR title: {title}\n\nPR description:\n{body[:4000]}\n\n"
         f"Changed files ({len(files)}, +{adds} -{dels}):\n{changed}\n\n"
         f"Tiers:\n{listing}\n\n"
-        "Judge by what the change could break, not by how it is described. When unsure between two tiers pick the higher one. "
+        "Judge by what the diff itself changes, not by how it is described or by how sensitive the surrounding subsystem is. "
+        "`normal` is the default; move up only when the change clearly meets the bar for `critical`, and move down when the "
+        "change is small or contained. When unsure between two tiers pick the lower one. "
         f'Reply with exactly one JSON object: {{"tier": "<one of {", ".join(tiers)}>", "reasoning": "one sentence"}}. No prose, no fences.'
     )
 

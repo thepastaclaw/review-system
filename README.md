@@ -41,7 +41,13 @@ and the tier picks the `--effort` of the reviewer lanes; verifiers keep their fi
 level. Blockers always win: a Phase-1 blocker publishes the preliminary review
 regardless of tier. `trivial` with no blockers publishes a *final* review from
 Phase 1 only and says so in the provenance block. Triage failure falls back to
-`fallback_tier` and is recorded as a `triage.degraded` event.
+`fallback_tier` and is recorded as a `triage.degraded` event. `normal` is the
+default tier; `critical` requires both a large or intricate diff *and* a change to
+a critical surface (consensus, funds, cryptography, key handling, peer-facing
+deserialization, migrations), and the triage must name what meets the bar. Size
+alone never qualifies, and the tie-break is the lower tier. This replaced the
+"large *or* sensitive, when unsure go higher" wording on 2026-09-10 after 87 % of
+runs came out critical.
 
 | tier | Phase 1 (ladder rung, capped by the rung's `reasoning`) | Phase 2 (gpt-6-astra) |
 |---|---|---|
