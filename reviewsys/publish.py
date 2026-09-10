@@ -88,6 +88,51 @@ def line_in_diff(parsed: dict[str, list[dict[str, int]]], path: str, line: int) 
     return any(h["new_start"] <= line <= h["new_end"] for h in parsed.get(path, []))
 
 
+LEGACY_SOURCE_PHASE = {"codex": "phase1", "claude": "phase2"}  # verifier template slot names
+
+
+def attribute_sources(
+    verified: VerifierOutput,
+    reviewers: list[dict[str, Any]],
+    lane_findings: dict[str, list[Finding]],
+) -> None:
+    """Rewrite each verified finding's `source` from the verifier's legacy labels (`codex` =
+    Phase-1 lanes, `claude` = Phase-2 lanes, `coderabbit`) into the model ids and agents that
+    actually raised it. Within a phase the lanes whose own output carries the same
+    `finding_hash` are named; if the verifier retitled or merged, every lane of that phase is.
+    `reviewers` is the run's completed-lane provenance, `lane_findings` maps `"phase:role"` to
+    that lane's findings."""
+    lanes = [r for r in reviewers if r.get("status") == "completed"]
+    phases_run = {str(r["phase"]) for r in lanes}
+
+    def raised_by(phase: str, role: str, f: Finding) -> bool:
+        return any(lf.hash == f.hash for lf in lane_findings.get(f"{phase}:{role}", []))
+
+    for f in verified.findings:
+        labels = _source_labels(f.source)
+        phases = {LEGACY_SOURCE_PHASE[x] for x in labels if x in LEGACY_SOURCE_PHASE}
+        if not labels:  # verifier gave nothing usable: go by the hash, else name every lane
+            phases = {p for p in phases_run if any(raised_by(p, r["role"], f) for r in lanes)}
+            phases = phases or phases_run
+        parts: list[str] = []
+        for phase in sorted(phases & phases_run):
+            in_phase = [r for r in lanes if r["phase"] == phase]
+            named = [r for r in in_phase if raised_by(phase, r["role"], f)] or in_phase
+            groups: dict[tuple[str, str], list[str]] = {}
+            for r in named:
+                groups.setdefault((str(r["model"]), str(r["agent"])), []).append(str(r["role"]))
+            parts += [f"`{m}` ({a}: {', '.join(rs)})" for (m, a), rs in groups.items()]
+        parts += sorted(x for x in labels if x not in LEGACY_SOURCE_PHASE)
+        if parts:
+            f.source = "; ".join(parts)
+
+
+def _source_labels(raw: str) -> list[str]:
+    """`['claude', 'codex']`, `claude`, `unknown` → the labels the verifier meant."""
+    out = [x.strip().strip("'\"").lower() for x in raw.strip().strip("[]").split(",")]
+    return [x for x in out if x and x != "unknown"]
+
+
 def comment_body(f: Finding) -> str:
     marker = f"<!-- thepastaclaw-review v1 finding={f.hash} dedupe={f.dedupe_key}"
     root = normalize_root_id(f.root_id)

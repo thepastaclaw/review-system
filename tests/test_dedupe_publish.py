@@ -197,3 +197,74 @@ def test_render_final_no_findings_is_approve_when_requested():
     body = render(m)
     assert "## Final validation — Phase 1 + Phase 2" in body
     assert "\U0001f534" not in body and "1 blocking" not in body
+
+
+def _lane(phase, role, model, agent):
+    return {"phase": phase, "role": role, "model": model, "agent": agent, "status": "completed"}
+
+
+LANES = [
+    _lane("phase1", "general", "glm-5.3-flash", "phase1-reviewer"),
+    _lane("phase1", "security-auditor", "glm-5.3-flash", "phase1-reviewer"),
+    _lane("phase2", "general", "gpt-6-astra", "phase2-reviewer"),
+    _lane("phase2", "security-auditor", "gpt-6-astra", "phase2-reviewer"),
+]
+
+
+def _verified(*findings):
+    return VerifierOutput(
+        summary="s",
+        review_action="COMMENT",
+        findings=list(findings),
+        dropped=[],
+        out_of_scope=[],
+        coderabbit_reactions=[],
+        prerequisite_adjudications=[],
+        adjudication_complete=True,
+        review_phase="final",
+        raw={},
+    )
+
+
+def test_attribute_sources_names_the_lane_that_raised_the_finding():
+    from reviewsys.publish import attribute_sources
+
+    a = f("Race in flush", source="['claude']")
+    b = f("Missing bounds check", source="['claude', 'codex']")
+    c = f("Retitled by verifier", source="['codex']")
+    d = f("CodeRabbit agreed", source="['codex', 'coderabbit']")
+    e = f("No label at all", source="unknown")
+    lanes = {
+        "phase1:general": [f("Missing bounds check"), f("CodeRabbit agreed"), f("No label at all")],
+        "phase1:security-auditor": [f("Missing bounds check")],
+        "phase2:general": [f("Race in flush")],
+        "phase2:security-auditor": [f("Missing bounds check")],
+    }
+    attribute_sources(_verified(a, b, c, d, e), LANES, lanes)
+    assert a.source == "`gpt-6-astra` (phase2-reviewer: general)"
+    assert b.source == (
+        "`glm-5.3-flash` (phase1-reviewer: general, security-auditor); "
+        "`gpt-6-astra` (phase2-reviewer: security-auditor)"
+    )
+    # verifier retitled it: no hash match, so every lane of that phase is named
+    assert c.source == "`glm-5.3-flash` (phase1-reviewer: general, security-auditor)"
+    assert d.source == "`glm-5.3-flash` (phase1-reviewer: general); coderabbit"
+    # no usable label: attributed by hash alone
+    assert e.source == "`glm-5.3-flash` (phase1-reviewer: general)"
+
+
+def test_attribute_sources_ignores_phases_that_did_not_run():
+    from reviewsys.publish import attribute_sources
+
+    x = f("Only phase 2 ran", source="['codex']")
+    y = f("Nothing known", source="unknown")
+    p2 = [r for r in LANES if r["phase"] == "phase2"]
+    attribute_sources(_verified(x, y), p2, {"phase2:general": []})
+    # `codex` names Phase 1, which never ran (backlog mode): nothing to name, label kept
+    assert x.source == "['codex']"
+    # nothing at all: every lane that ran
+    assert y.source == "`gpt-6-astra` (phase2-reviewer: general, security-auditor)"
+    assert (
+        "<sub>source: `gpt-6-astra` (phase2-reviewer: general, security-auditor)</sub>"
+        in comment_body(y)
+    )

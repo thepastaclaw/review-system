@@ -123,6 +123,11 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
     review = gh.posted_reviews[0]
     assert review["event"] == "COMMENT" and review["commit_id"] == HEAD
     assert len(review["comments"]) == 1 and review["comments"][0]["line"] == 12
+    # the inline footer names the lanes that raised the finding, not the verifier's legacy labels
+    assert (
+        "<sub>source: `glm-5.3-flash` (phase1-reviewer: general, always-on, security-auditor); "
+        "`gpt-6-astra` (phase2-reviewer: general, always-on, security-auditor)</sub>"
+    ) in review["comments"][0]["body"]
     body = review["body"]
     assert "phase=final" in body and body.count("Source: ") == 1 and "model-authored" not in body
     assert "🟡 1 suggestion(s)" in body

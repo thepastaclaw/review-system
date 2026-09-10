@@ -110,6 +110,16 @@ the Muse contributor tier has no `max`, so `max` → `reasoning_effort: xhigh`;
 GLM honours `max`. The Antigravity quota endpoint answers 403 "no valid license"
 unless the request carries an Antigravity client `User-Agent`.
 
+### Finding attribution
+
+The verifier labels each finding's `source` with the legacy template slots
+(`codex` = Phase-1 lanes, `claude` = Phase-2 lanes, `coderabbit`). Before
+publishing, `publish.attribute_sources` rewrites that into the lanes that
+actually raised it: within each named phase, the lanes whose own output carries
+the same `finding_hash`, or every lane of the phase when the verifier retitled
+or merged. The inline footer then reads
+"source: gpt-6-astra (phase2-reviewer: general); coderabbit".
+
 ## Backlog mode: Phase 2 only
 
 `backlog_skip_phase1_above` in `config.toml` (default 10, `0` disables) trades depth

@@ -600,6 +600,15 @@ def _verifier_lane(
     out = parse_verifier_output(
         raw, expected_phase=expected_phase, expected_coderabbit_ids=ctx.coderabbit_ids
     )
+    publish.attribute_sources(
+        out,
+        ctx.reviewers,
+        {
+            f"{p}:{role}": o.findings
+            for p, outputs in (("phase1", ctx.phase1_outputs), ("phase2", ctx.phase2_outputs))
+            for role, o in outputs.items()
+        },
+    )
     _record_findings(ctx, phase, "verified", out.findings)
     return out
 
