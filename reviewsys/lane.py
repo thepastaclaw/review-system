@@ -17,6 +17,7 @@ from .contract import parse_json_object
 from .models import FailKind, ReviewError
 
 LaneRunner = Callable[["LaneSpec", Path, Path], "LaneResult"]
+LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is never starved
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,6 +90,8 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
         stderr=subprocess.PIPE,
         text=True,
         env=env,
+        # review lanes are batch work; the proxies they talk to must win the CPU
+        preexec_fn=lambda: os.nice(LANE_NICE),
     )
     timed_out = False
     try:

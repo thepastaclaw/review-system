@@ -25,20 +25,27 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sqlite3
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from .config import LaneModel, QuotaSource
+from .db import fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
 
 log = logging.getLogger(__name__)
 
 PROXY_URL = os.environ.get("REVIEWSYS_PROXY_URL", "http://127.0.0.1:8317")
 MANAGEMENT_KEY_PATH = Path.home() / ".cli-proxy-api" / "management-key"
-TIMEOUT_S = 10  # localhost proxy; upstream quota calls are small
+TIMEOUT_S = 30  # localhost proxy, but the box is shared with CI builds and stalls under load
+RETRIES = 2  # attempts per lookup before the cached reading is used
+CACHE_MAX_AGE = timedelta(
+    hours=1
+)  # a reading this fresh still gates a rung when the live one fails
 
 ANTIGRAVITY_QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
 # the endpoint answers 403 "no valid license" to anything but an Antigravity client UA
@@ -386,6 +393,51 @@ def choose(
     return Choice(
         candidates[-1], f"every rung short of quota; last rung used ({last.reason})", tuple(passed)
     )
+
+
+def cached_reader(conn: sqlite3.Connection, mgmt: Management | None = None) -> QuotaReader:
+    """A reader that retries a failed live lookup and then falls back to the last good reading
+    stored in `kv` (`quota.last:<provider>[:<group>]`), so a proxy that is merely slow under
+    CI load does not push a review onto the paid rung. Quota moves slowly; an hour-old reading
+    is a far better guess than "none"."""
+    live = mgmt or Management()
+
+    def reader(source: QuotaSource) -> QuotaStatus:
+        key = "quota.last:" + ":".join(
+            x for x in (source.provider, source.group, source.account) if x
+        )
+        last_exc: Exception | None = None
+        for _ in range(RETRIES):
+            try:
+                status = read(live, source)
+            except QuotaError as exc:
+                last_exc = exc
+                continue
+            with tx(conn):
+                kv_set(conn, key, json.dumps({"at": fmt_ts(now_dt()), "status": asdict(status)}))
+            return status
+        cached = kv_get(conn, key)
+        if cached:
+            try:
+                blob = json.loads(cached)
+                age = now_dt() - parse_ts(str(blob["at"]))
+                if age <= CACHE_MAX_AGE:
+                    st = blob["status"]
+                    windows = tuple(Window(**w) for w in st["windows"])
+                    log.warning(
+                        "quota lookup for %s failed (%s); using reading from %s ago",
+                        source.provider,
+                        last_exc,
+                        age,
+                    )
+                    return QuotaStatus(
+                        account=f"{st['account']} (cached {age.seconds // 60} min)", windows=windows
+                    )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                pass
+        raise QuotaError(f"{last_exc}; no reading under {CACHE_MAX_AGE} to fall back on")
+
+    return reader
 
 
 def _default_reader() -> QuotaReader:

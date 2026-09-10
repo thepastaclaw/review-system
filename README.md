@@ -116,6 +116,19 @@ the Muse contributor tier has no `max`, so `max` → `reasoning_effort: xhigh`;
 GLM honours `max`. The Antigravity quota endpoint answers 403 "no valid license"
 unless the request carries an Antigravity client `User-Agent`.
 
+### Sharing the box with CI
+
+The Mac Studio also hosts a GitHub Actions runner whose Rust builds drive the
+load average past 100. Under that load CLIProxyAPI's management API stalled
+past a 10 s timeout and one review fell to the paid Muse rung although Gemini
+had quota (dash#7107, 2026-09-10). Mitigations: `claude` lanes spawn at nice 10
+(`lane.LANE_NICE`), quota lookups use a 30 s timeout with one retry and then
+fall back to the last successful reading if it is under an hour old
+(`quota.cached_reader`, kv `quota.last:<provider>[:<group>]`); only with no
+usable reading is the rung skipped. On the box itself the proxies should run as
+`ProcessType Interactive` / `Nice -10` and the runner as `Background` / `Nice
+10` with `CARGO_BUILD_JOBS` capped; that needs sudo (`~claw/prioritize-proxies.sh`).
+
 ### Review body layout
 
 The body leads with what the developer needs: title, verifier summary, severity

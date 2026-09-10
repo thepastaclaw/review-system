@@ -368,3 +368,85 @@ def test_best_account_wins_when_several_credentials_exist():
 
     st = quota.read(Mgmt({}, {}), QuotaSource("antigravity", "Gemini Models"))
     assert st.account == "high@g" and st.remaining == pytest.approx(0.8)
+
+
+def _conn():
+    from reviewsys import db as db_mod
+
+    return db_mod.connect(":memory:")
+
+
+class _Flaky(quota.Management):
+    """First `fail_n` reads raise a QuotaError, later ones return `windows`."""
+
+    def __init__(self, fail_n: int, windows):
+        super().__init__()
+        self.fail_n, self.windows, self.calls = fail_n, windows, 0
+
+    def _call(self, method, path, data):
+        self.calls += 1
+        if self.calls <= self.fail_n:
+            raise quota.QuotaError("management GET auth-files: timed out")
+        if path == "auth-files":
+            return {
+                "files": [
+                    {
+                        "provider": "antigravity",
+                        "auth_index": "a",
+                        "project_id": "p",
+                        "email": "a@g",
+                    }
+                ]
+            }
+        body = {
+            "groups": [
+                {
+                    "displayName": "Gemini Models",
+                    "buckets": [{"window": "5h", "remainingFraction": w} for w in self.windows],
+                }
+            ]
+        }
+        return {"status_code": 200, "body": json.dumps(body)}
+
+
+def test_cached_reader_retries_then_uses_last_good_reading():
+    conn = _conn()
+    src = QuotaSource("antigravity", "Gemini Models")
+    # first run: one timeout, retry succeeds, reading is cached
+    ok = quota.cached_reader(conn, _Flaky(1, [0.8]))
+    st = ok(src)
+    assert st.remaining == pytest.approx(0.8) and st.account == "a@g"
+    # second run: the proxy is stalled for good; the cached reading stands in
+    down = quota.cached_reader(conn, _Flaky(99, [0.0]))
+    st2 = down(src)
+    assert st2.remaining == pytest.approx(0.8)
+    assert st2.account.startswith("a@g (cached")
+    # a fresh success replaces the cache
+    st3 = quota.cached_reader(conn, _Flaky(0, [0.3]))(src)
+    assert st3.remaining == pytest.approx(0.3)
+
+
+def test_cached_reader_ignores_stale_readings():
+    from reviewsys.db import kv_set, tx
+
+    conn = _conn()
+    src = QuotaSource("zai")
+    with tx(conn):
+        kv_set(
+            conn,
+            "quota.last:zai",
+            json.dumps(
+                {
+                    "at": "2026-01-01T00:00:00Z",
+                    "status": {
+                        "account": "old",
+                        "windows": [{"name": "5h", "remaining": 1.0, "reset_at": None}],
+                    },
+                }
+            ),
+        )
+    with pytest.raises(quota.QuotaError, match="no reading under"):
+        quota.cached_reader(conn, _Flaky(99, []))(src)
+    # and the ladder then skips the rung rather than crashing
+    c = quota.choose(LADDER, 0.15, quota.cached_reader(conn, _Flaky(99, [])))
+    assert c.model is MUSE and [s.model for s in c.skipped] == [GEMINI.model, GLM.model]
