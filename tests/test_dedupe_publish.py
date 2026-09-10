@@ -188,6 +188,51 @@ def test_render_preliminary_body_golden():
     assert "Out-of-scope follow-up suggestions (1)" in body
     for word in ("Codex", "Sonnet", "Opus"):
         assert word not in body
+    # what the developer needs comes first; provenance is collapsed below it
+    lines = body.splitlines()
+    assert lines.index("🔴 1 blocking") < lines.index("<summary>Review provenance</summary>")
+    prov = body.index("<summary>Review provenance</summary>")
+    assert body.index("Source: reviewer 1") > prov and body.index("- Phase 1 reviewers:") > prov
+
+
+def test_render_lists_unmapped_findings_in_full():
+    blocker = f(
+        "Recheck transition ownership",
+        severity="blocking",
+        file="App/Sync Monitor/Monitor.swift",
+        line_start=558,
+        line_end=562,
+        body="The `.idle` check only protects the decision to enqueue.",
+        suggestion="guard state.phase == .idle else { return }",
+        source="`gemini-3.8-flash-high` (phase1-reviewer: general)",
+    )
+    m = _model("preliminary", [])
+    m.skipped = [blocker]
+    body = render(m)
+    assert "### 1 finding(s) not shown inline (the lines are not part of this PR's diff)" in body
+    assert "**🔴 Blocking: Recheck transition ownership**" in body
+    assert "`App/Sync Monitor/Monitor.swift:558-562`" in body
+    assert "The `.idle` check only protects the decision to enqueue." in body
+    assert "```suggestion\nguard state.phase == .idle else { return }\n```" in body
+    assert "omitted" not in body
+    # the full finding precedes the collapsed provenance
+    assert body.index("Recheck transition ownership") < body.index(
+        "<summary>Review provenance</summary>"
+    )
+
+
+def test_parse_diff_strips_git_tab_after_paths_with_spaces():
+    diff = (
+        "diff --git a/App/Sync Monitor/Monitor.swift b/App/Sync Monitor/Monitor.swift\n"
+        "--- a/App/Sync Monitor/Monitor.swift\t\n"
+        "+++ b/App/Sync Monitor/Monitor.swift\t\n"
+        "@@ -533,9 +533,35 @@ extension Monitor {\n"
+    )
+    parsed = parse_diff(diff)
+    assert list(parsed) == ["App/Sync Monitor/Monitor.swift"]
+    assert map_comment(
+        f("T", file="App/Sync Monitor/Monitor.swift", line_start=558, line_end=562), parsed
+    )
 
 
 def test_render_final_no_findings_is_approve_when_requested():

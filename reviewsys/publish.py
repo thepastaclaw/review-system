@@ -58,11 +58,12 @@ def parse_diff(diff_text: str) -> dict[str, list[dict[str, int]]]:
             pending_from = None
             parts = line.split(" b/", 1)
             if len(parts) == 2:
-                current = parts[1]
+                current = parts[1].rstrip("\t")
                 files.setdefault(current, [])
             continue
         if line.startswith("+++ b/"):
-            current = line[len("+++ b/") :]
+            # git appends a tab after paths that contain spaces
+            current = line[len("+++ b/") :].rstrip("\t")
             files.setdefault(current, [])
             continue
         if binary or current is None:
@@ -286,7 +287,7 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
 
     p1 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase1"]
     p2 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase2"]
-    lines = ["### Review provenance"]
+    lines: list[str] = []
     if p.adhoc:
         lines.append(
             "- Ad hoc review: this repository has no PastaClaw review skill; reviewers used "
@@ -317,6 +318,20 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     return lines
 
 
+def _finding_block(f: Finding) -> str:
+    icon = SEVERITY_ICONS.get(f.severity, SEVERITY_ICONS["nitpick"])
+    lines = [
+        f"**{icon} {f.severity.capitalize()}: {f.title}**",
+        f"`{_location(f)}`",
+        "",
+        f.body or "_No details provided._",
+    ]
+    if f.suggestion:
+        lines += ["", "```suggestion", f.suggestion, "```"]
+    lines += ["", f"<sub>source: {f.source}</sub>", ""]
+    return "\n".join(lines)
+
+
 def render(m: ReviewModel) -> str:
     counts = {"blocking": 0, "suggestion": 0, "nitpick": 0}
     for f in m.skipped if m.body_only else m.kept:
@@ -342,8 +357,6 @@ def render(m: ReviewModel) -> str:
         "",
         summary,
         "",
-        _source_line(m.provenance),
-        "",
     ]
     if m.phase == "preliminary":
         parts += [
@@ -352,8 +365,6 @@ def render(m: ReviewModel) -> str:
         ]
     if m.superseded_note:
         parts += [m.superseded_note, ""]
-    parts += _provenance_lines(m.provenance, m.phase)
-    parts.append("")
     counts_line = " | ".join(
         f"{SEVERITY_ICONS[sev]} {counts[sev]} {label}"
         for sev, label in (
@@ -366,21 +377,33 @@ def render(m: ReviewModel) -> str:
     if counts_line:
         parts.append(counts_line)
     if m.skipped:
-        if m.body_only:
-            parts.append(
-                f"\n_{len(m.skipped)} finding(s) omitted from inline comments because GitHub refused the PR diff as too large; listed below._"
-            )
-            parts += ["", f"### {len(m.skipped)} unmapped finding(s)", ""]
-            for i, f in enumerate(m.skipped, 1):
-                parts.append(
-                    f"### {i}. [{f.severity}] {f.title}\n`{_location(f)}`\n\n{f.body or '_No details provided._'}"
-                )
-        else:
-            parts.append(f"\n_{len(m.skipped)} additional finding(s) omitted (not in diff)._")
+        # findings GitHub cannot take inline still have to reach the developer in full
+        why = (
+            "GitHub refused the PR diff as too large"
+            if m.body_only
+            else "the lines are not part of this PR's diff"
+        )
+        parts += [
+            "",
+            f"### {len(m.skipped)} finding(s) not shown inline ({why})",
+            "",
+        ]
+        parts += [_finding_block(f) for f in m.skipped]
     if m.suppressed:
         parts.append(
             f"\n_{len(m.suppressed)} carried-forward finding(s) already raised on this PR; not re-posting as new inline comments._"
         )
+    parts += [
+        "",
+        "<details>",
+        "<summary>Review provenance</summary>",
+        "",
+        _source_line(m.provenance),
+        "",
+        *_provenance_lines(m.provenance, m.phase),
+        "",
+        "</details>",
+    ]
     prompt = _ai_prompt(m.kept, m.suppressed)
     if prompt:
         fence = _fence(prompt)
@@ -773,9 +796,14 @@ def render_verdict_update(
         "_Same commit as the standing review; the inline threads above carry the per-finding "
         "outcome. This follow-up exists only to correct the verdict._",
         "",
+        "<details>",
+        "<summary>Review provenance</summary>",
+        "",
         _source_line(provenance),
         "",
         *_provenance_lines(provenance, phase),
+        "",
+        "</details>",
     ]
     return "\n".join(parts)
 

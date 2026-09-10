@@ -116,6 +116,17 @@ the Muse contributor tier has no `max`, so `max` → `reasoning_effort: xhigh`;
 GLM honours `max`. The Antigravity quota endpoint answers 403 "no valid license"
 unless the request carries an Antigravity client `User-Agent`.
 
+### Review body layout
+
+The body leads with what the developer needs: title, verifier summary, severity
+counts, then every finding that could not be posted inline (line outside the
+PR's diff, or GitHub refused the diff) rendered in full with its location,
+body and suggestion. Provenance (the Source line, triage, per-lane models and
+efforts, the Phase-1 ladder choice) follows inside a collapsed `<details>`
+block, as do the agent prompt and out-of-scope notes. `parse_diff` strips the
+tab git appends after paths containing spaces; without it every finding in
+such a file was reported as "not in diff" (dashwallet-ios#1118, 2026-09-10).
+
 ### Finding attribution
 
 The verifier labels each finding's `source` with the legacy template slots
