@@ -139,6 +139,7 @@ class Provenance:
     triage: dict[str, Any] | None = None  # {tier, model, effort, method, reasoning, error}
     phase2_skipped: str | None = None  # set when a final review was published from Phase 1 only
     phase1_skipped: str | None = None  # set when the run went straight to Phase 2 (queue backlog)
+    phase1_choice: dict[str, Any] | None = None  # {model, reason, skipped:[{model, reason}]}
     adhoc: bool = False  # repo has no skills entry: generic guidance, all specialists offered
 
 
@@ -225,6 +226,14 @@ def _triage_line(t: dict[str, Any]) -> str:
     return f"- Triage: `{t['tier']}` by {how}{why}"
 
 
+def _phase1_choice_line(c: dict[str, Any]) -> str:
+    line = f"- Phase 1 model: `{c['model']}` — {c['reason']}"
+    skipped = [f"`{s['model']}` ({s['reason']})" for s in c.get("skipped") or []]
+    if skipped:
+        line += "; passed over " + ", ".join(skipped)
+    return line
+
+
 def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     def fmt(r: dict[str, Any]) -> str:
         status = r["status"] + (f", effort {r['effort']}" if r.get("effort") else "")
@@ -244,8 +253,10 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
         p1_line = f"- Phase 1 reviewers: **not run ({p.phase1_skipped})**"
     else:
         p1_line = "- Phase 1 reviewers: " + (", ".join(p1) if p1 else "provenance missing")
+    lines.append(p1_line)
+    if p.phase1_choice and not p.phase1_skipped:
+        lines.append(_phase1_choice_line(p.phase1_choice))
     lines += [
-        p1_line,
         f"- Fresh verifier: `{p.verifier['model']}` — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]
     if phase == "preliminary":

@@ -17,12 +17,13 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import github, labels, publish
-from .config import Config, LaneModel
+from . import github, labels, publish, quota
+from .config import Config, LaneModel, min_effort
 from .contract import (
     Finding,
     ReviewerOutput,
@@ -71,6 +72,9 @@ class RunContext:
     phase1_skipped: str | None = (
         None  # reason when the backlog rule sent this run straight to Phase 2
     )
+    phase1_choice: quota.Choice | None = None  # which Phase-1 ladder rung ran, and why
+    phase1_effort: str | None = None  # the tier's Phase-1 effort, re-capped per rung
+    quota_reader: quota.QuotaReader | None = None  # test injection; None = proxy lookup
     evidence: dict[str, Any] = field(default_factory=dict)
     coderabbit: dict[str, Any] = field(default_factory=dict)
     coderabbit_ids: list[int] = field(default_factory=list)
@@ -525,6 +529,22 @@ def _repair(ctx: RunContext, raw: str, art: Path) -> dict[str, Any] | None:
         return None
 
 
+def _reviewer_lane(
+    ctx: RunContext, *, phase: str, role: str, lm: LaneModel, prompt: str
+) -> tuple[dict[str, Any], LaneModel]:
+    """One reviewer lane, retried down the Phase-1 ladder when its rung dies. Returns the
+    raw output and the model that produced it, so the remaining roles stay on that rung."""
+    while True:
+        try:
+            raw = _run_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt, is_verifier=False)
+            return raw, lm
+        except ReviewError as exc:
+            nxt = _phase1_fallback(ctx, lm, exc) if phase == "phase1" else None
+            if nxt is None:
+                raise
+            lm = nxt
+
+
 def _reviewer_lanes(
     ctx: RunContext, *, phase: str, lm: LaneModel, expected_phase: str
 ) -> dict[str, ReviewerOutput]:
@@ -546,7 +566,7 @@ def _reviewer_lanes(
             prior=ctx.prior,
             prior_sha=ctx.prior_sha,
         )
-        raw = _run_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt, is_verifier=False)
+        raw, lm = _reviewer_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt)
         outputs[role] = parse_reviewer_output(
             raw,
             expected_phase=expected_phase,
@@ -744,6 +764,7 @@ def _verdict_update(
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
         phase1_skipped=ctx.phase1_skipped,
+        phase1_choice=_phase1_choice_provenance(ctx),
         adhoc=ctx.adhoc,
     )
     state = publish.standing_verdict(
@@ -851,6 +872,7 @@ def _build_review(
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
         phase1_skipped=ctx.phase1_skipped,
+        phase1_choice=_phase1_choice_provenance(ctx),
         adhoc=ctx.adhoc,
     )
     note = None
@@ -871,6 +893,13 @@ def _build_review(
         dry_run=ctx.dry_run,
         superseded_note=note,
     )
+
+
+def _phase1_choice_provenance(ctx: RunContext) -> dict[str, Any] | None:
+    """Only worth a line when there was a ladder to choose from."""
+    if ctx.phase1_choice is None or not ctx.cfg.policy.has_phase1_ladder:
+        return None
+    return ctx.phase1_choice.as_dict()
 
 
 def _triage_provenance(ctx: RunContext) -> dict[str, Any] | None:
@@ -929,9 +958,16 @@ def _record_publication(
 
 
 def _reviewer_step(
-    ctx: RunContext, *, step: StepName, phase: str, lm: LaneModel, expected_phase: str
+    ctx: RunContext,
+    *,
+    step: StepName,
+    phase: str,
+    lm: LaneModel | Callable[[], LaneModel],
+    expected_phase: str,
 ) -> dict[str, ReviewerOutput]:
     _step_start(ctx, step)
+    if callable(lm):
+        lm = lm()  # Phase 1 picks its model inside the step, so a slow lookup shows there
     outputs = _reviewer_lanes(ctx, phase=phase, lm=lm, expected_phase=expected_phase)
     _step_end(ctx, step, "ok", {"roles": list(outputs)})
     return outputs
@@ -975,6 +1011,47 @@ def _publish_step(
 
 def _with_effort(lm: LaneModel, effort: str | None) -> LaneModel:
     return dataclasses.replace(lm, effort=effort) if effort else lm
+
+
+def _rung(ctx: RunContext, choice: quota.Choice, kind: str) -> LaneModel:
+    """Adopt `choice`: record it, and clamp the tier's Phase-1 effort to the rung's cap."""
+    ctx.phase1_choice = choice
+    if ctx.cfg.policy.has_phase1_ladder:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                kind,
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=choice.log_line(),
+            )
+    cap = choice.model.effort
+    return _with_effort(choice.model, min_effort(ctx.phase1_effort or cap, cap))
+
+
+def _choose_phase1(ctx: RunContext, effort: str) -> LaneModel:
+    """Pick the Phase-1 model from the policy's ladder by remaining subscription quota
+    (see `quota.py`); recorded on the run and disclosed in the review provenance."""
+    pol = ctx.cfg.policy
+    ctx.phase1_effort = effort
+    choice = quota.choose(pol.phase1_candidates, pol.quota_reserve, reader=ctx.quota_reader)
+    return _rung(ctx, choice, "phase1.model_selected")
+
+
+def _phase1_fallback(ctx: RunContext, failed: LaneModel, exc: ReviewError) -> LaneModel | None:
+    """A Phase-1 lane died on its rung (rate limit, dead upstream, malformed output twice):
+    move down the ladder for this and the remaining roles. None when there is nowhere to go."""
+    pol, choice = ctx.cfg.policy, ctx.phase1_choice
+    if choice is None:
+        return None
+    lower = choice.remaining(pol.phase1_candidates)
+    if not lower:
+        return None
+    log.warning("phase1 lane on %s failed (%s); falling down the ladder", failed.model, exc)
+    skipped = (*choice.skipped, quota.Skipped(failed.model, "lane failed", str(exc)[:600]))
+    nxt = quota.choose(lower, pol.quota_reserve, reader=ctx.quota_reader, skipped=skipped)
+    return _rung(ctx, nxt, "phase1.model_fallback")
 
 
 def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool:
@@ -1052,7 +1129,7 @@ def run(ctx: RunContext) -> RunStatus:
         ctx,
         step=StepName.PHASE1,
         phase="phase1",
-        lm=_with_effort(pol.phase1_reviewer, effort.phase1),
+        lm=lambda: _choose_phase1(ctx, effort.phase1),
         expected_phase="preliminary",
     )
     ctx.verify1 = _verify_step(
@@ -1116,6 +1193,7 @@ def main(
     lane_runner: LaneRunner | None = None,
     dry_run: bool = False,
     heartbeat: bool = True,
+    quota_reader: quota.QuotaReader | None = None,
 ) -> RunStatus:
     row = conn.execute(
         "SELECT r.*, h.repo, h.number, h.sha FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
@@ -1140,6 +1218,7 @@ def main(
     )
     if lane_runner:
         ctx.lane_runner = lane_runner
+    ctx.quota_reader = quota_reader
     with tx(conn):
         claimed = conn.execute(
             "UPDATE runs SET heartbeat_at=?, status='running' WHERE id=? AND token=? AND status IN ('spawned','running')",

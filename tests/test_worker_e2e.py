@@ -1504,3 +1504,223 @@ def test_daemon_runs_label_reconciliation_only_when_live(cfg, conn, gh, notifier
     assert "labels" not in shadow.tick(force=True)
     live = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=True)
     assert live.tick(force=True)["labels"] == 0
+
+
+LADDER = [
+    {
+        "model": "gemini-3.8-flash-high",
+        "reasoning": "high",
+        "quota": {"provider": "antigravity", "group": "Gemini Models"},
+    },
+    {"model": "glm-5.3-flash", "reasoning": "max", "quota": {"provider": "zai"}},
+    {"model": "muse-spark-1.3-contributor", "agent": "muse-reviewer", "reasoning": "xhigh"},
+]
+
+
+def _ladder_cfg(skills_dir, tmp_path):
+    from reviewsys import config as cfg_mod
+
+    raw = json.loads((skills_dir / "config.json").read_text())
+    raw["review_model_policy"]["phase1"]["candidates"] = LADDER
+    (skills_dir / "config.json").write_text(json.dumps(raw))
+    return cfg_mod.load(tmp_path / "config.toml")
+
+
+def _quota_reader(table):
+    from reviewsys import quota
+
+    def read(source):
+        v = table[source.provider]
+        if isinstance(v, Exception):
+            raise v
+        return quota.QuotaStatus("acct", (quota.Window("5h", v[0]), quota.Window("weekly", v[1])))
+
+    return read
+
+
+def _run_ladder(cfg, conn, gh, lanes, reader):
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    status = worker.main(
+        cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False, quota_reader=reader
+    )
+    return rid, status
+
+
+def test_phase1_ladder_uses_first_rung_with_quota(cfg, conn, gh, lanes, skills_dir, tmp_path):
+    cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    assert [c.model for c in cfg2.policy.phase1_candidates] == [c["model"] for c in LADDER]
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.triage = {"tier": "critical", "reasoning": "touches consensus"}
+    rid, status = _run_ladder(cfg2, conn, gh, lanes, _quota_reader({"antigravity": (0.9, 0.6)}))
+    assert status == RunStatus.DONE
+    p1 = [(s.model, s.agent, s.effort) for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"]
+    # the critical tier asks for max; the gemini rung caps at high
+    assert p1 == [("gemini-3.8-flash-high", "phase1-reviewer", "high")] * 3
+    body = gh.posted_reviews[0]["body"]
+    assert (
+        "- Phase 1 model: `gemini-3.8-flash-high` — antigravity quota: 5h 90% left, weekly 60% left"
+        in body
+    )
+    assert "passed over" not in body
+    rows = conn.execute(
+        "SELECT model, effort FROM lanes WHERE run_id=? AND phase='phase1'", (rid,)
+    ).fetchall()
+    assert {(r["model"], r["effort"]) for r in rows} == {("gemini-3.8-flash-high", "high")}
+    # adding a ladder must not move the tier table, which is seeded by phase1.reviewer
+    assert cfg2.policy.phase1_reviewer.model == "glm-5.3-flash"
+    assert (
+        cfg2.policy.tier_effort("normal").phase1 == cfg.policy.tier_effort("normal").phase1 == "max"
+    )
+    ev = conn.execute(
+        "SELECT detail FROM events WHERE kind='phase1.model_selected' AND run_id=?", (rid,)
+    ).fetchone()
+    assert ev["detail"] == "gemini-3.8-flash-high: antigravity quota: 5h 90% left, weekly 60% left"
+
+
+def test_phase1_ladder_falls_to_paid_rung_and_discloses_why(
+    cfg, conn, gh, lanes, skills_dir, tmp_path
+):
+    from reviewsys import quota
+
+    cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    reader = _quota_reader({"antigravity": (0.99, 0.05), "zai": quota.QuotaError("proxy down")})
+    _, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    p1 = {(s.model, s.agent, s.effort) for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"}
+    # the muse rung carries its own agent; the `normal` tier asks max, the rung caps at xhigh
+    assert p1 == {("muse-spark-1.3-contributor", "muse-reviewer", "xhigh")}
+    body = gh.posted_reviews[0]["body"]
+    assert (
+        "- Phase 1 model: `muse-spark-1.3-contributor` — not quota-gated; passed over "
+        "`gemini-3.8-flash-high` (antigravity below 15% reserve: 5h 99% left, weekly 5% left), "
+        "`glm-5.3-flash` (zai quota lookup failed)"
+    ) in body
+    assert "proxy down" not in body  # error text stays in the event, never in the review
+    assert "reviewer 1: `muse-spark-1.3-contributor` (agent: `muse-reviewer`" in body
+    ev = conn.execute("SELECT detail FROM events WHERE kind='phase1.model_selected'").fetchone()
+    assert "glm-5.3-flash (zai quota lookup failed: proxy down)" in ev["detail"]
+
+
+def test_phase1_lane_failure_falls_down_the_ladder(cfg, conn, gh, lanes, skills_dir, tmp_path):
+    cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.dead_models = {"gemini-3.8-flash-high"}
+    reader = _quota_reader({"antigravity": (0.9, 0.9), "zai": (0.9, 0.9)})
+    rid, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    p1 = [(s.role, s.model) for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"]
+    # general tried twice on gemini, then general + the specialists on glm
+    assert p1[:2] == [("general", "gemini-3.8-flash-high")] * 2
+    assert p1[2:] == [
+        ("general", "glm-5.3-flash"),
+        ("always-on", "glm-5.3-flash"),
+        ("security-auditor", "glm-5.3-flash"),
+    ]
+    body = gh.posted_reviews[0]["body"]
+    assert (
+        "- Phase 1 model: `glm-5.3-flash` — zai quota: 5h 90% left, weekly 90% left; "
+        "passed over `gemini-3.8-flash-high` (lane failed)"
+    ) in body
+    assert "429" not in body
+    kinds = [
+        r["kind"]
+        for r in conn.execute(
+            "SELECT kind FROM events WHERE run_id=? AND kind LIKE 'phase1.model%' ORDER BY id",
+            (rid,),
+        )
+    ]
+    assert kinds == ["phase1.model_selected", "phase1.model_fallback"]
+    rows = conn.execute(
+        "SELECT model, status FROM lanes WHERE run_id=? AND phase='phase1' ORDER BY id", (rid,)
+    ).fetchall()
+    assert [(r["model"], r["status"]) for r in rows][:2] == [
+        ("gemini-3.8-flash-high", "failed")
+    ] * 2
+
+
+def test_phase1_failure_on_last_rung_still_fails_the_run(
+    cfg, conn, gh, lanes, skills_dir, tmp_path
+):
+    cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.dead_models = {"muse-spark-1.3-contributor"}
+    reader = _quota_reader({"antigravity": (0.0, 0.0), "zai": (0.0, 0.0)})
+    _, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.FAILED
+    assert gh.posted_reviews == []
+
+
+def test_phase1_ladder_survives_a_reader_that_raises_anything(
+    cfg, conn, gh, lanes, skills_dir, tmp_path
+):
+    cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+
+    def reader(_):
+        raise TypeError("'NoneType' object is not iterable")
+
+    _, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    models = {s.model for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"}
+    assert models == {"muse-spark-1.3-contributor"}
+
+
+def test_ladder_config_validation(cfg, skills_dir, tmp_path):
+    from reviewsys import config as cfg_mod
+
+    pristine = (skills_dir / "config.json").read_text()
+
+    def load_with(**phase1_extra):
+        raw = json.loads(pristine)
+        raw["review_model_policy"]["phase1"].update(phase1_extra)
+        (skills_dir / "config.json").write_text(json.dumps(raw))
+        return cfg_mod.load(tmp_path / "config.toml")
+
+    with pytest.raises(ValueError, match="not the last rung"):
+        load_with(candidates=[{"model": "muse"}, {"model": "glm", "quota": {"provider": "zai"}}])
+    with pytest.raises(ValueError, match="quota provider"):
+        load_with(candidates=[{"model": "x", "quota": {"provider": "openai"}}])
+    with pytest.raises(ValueError, match="quota_reserve"):
+        load_with(quota_reserve=15)
+    with pytest.raises(ValueError, match="effort"):
+        load_with(candidates=[{"model": "x", "reasoning": "ultra"}])
+
+
+def test_phase1_ladder_is_silent_when_backlog_skips_phase1(
+    cfg, conn, gh, lanes, skills_dir, tmp_path
+):
+    cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    _queue_extra_heads(conn, cfg2, cfg2.backlog_skip_phase1_above + 1)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+
+    def reader(_):
+        raise AssertionError("quota must not be consulted when Phase 1 is skipped")
+
+    _, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    assert "- Phase 1 model:" not in gh.posted_reviews[0]["body"]
+    assert (
+        conn.execute("SELECT 1 FROM events WHERE kind='phase1.model_selected'").fetchone() is None
+    )
+
+
+def test_policy_without_candidates_has_single_rung_and_no_choice_line(cfg, conn, gh, lanes):
+    assert cfg.policy.phase1_candidates == (cfg.policy.phase1_reviewer,)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+
+    def reader(_):
+        raise AssertionError("single rung must not be quota-checked")
+
+    _, status = _run_ladder(cfg, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    assert "- Phase 1 model:" not in gh.posted_reviews[0]["body"]

@@ -18,14 +18,32 @@ DEFAULT_CONFIG_PATH = Path(
 ).expanduser()
 
 
+QUOTA_PROVIDERS = ("antigravity", "zai")
+
+
+@dataclass(frozen=True, slots=True)
+class QuotaSource:
+    """Which subscription's remaining quota gates a candidate model (read by `quota.py`)."""
+
+    provider: str  # one of QUOTA_PROVIDERS
+    group: str | None = None  # antigravity quota group, e.g. "Gemini Models"
+    account: str | None = None  # antigravity: credential email; zai: proxy provider name
+
+
 @dataclass(frozen=True, slots=True)
 class LaneModel:
     agent: str
     model: str
-    effort: str = "high"
+    effort: str = "high"  # for a Phase-1 ladder rung: the cap the tier effort is clamped to
+    quota: QuotaSource | None = None  # None: never gated (pay-per-token)
 
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
+
+
+def min_effort(a: str, b: str) -> str:
+    """The lower of two effort levels."""
+    return min(a, b, key=EFFORT_LEVELS.index)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,10 +65,19 @@ class ModelPolicy:
     repair_model: str
     selector_model: str
     phase2_enabled: bool = True
+    # ordered Phase-1 ladder: the first candidate with quota left runs; `phase1_reviewer`
+    # stays the declared default (its effort seeds the tier table). Never empty.
+    phase1_candidates: tuple[LaneModel, ...] = ()
+    quota_reserve: float = 0.15  # fraction of every quota window a candidate must have left
     # complexity triage: None = not configured, every PR is `fallback_tier`
     triage: LaneModel | None = None
     tiers: dict[str, TierEffort] = field(default_factory=dict)
     fallback_tier: str = "normal"
+
+    @property
+    def has_phase1_ladder(self) -> bool:
+        """More than one rung, so which one ran is worth recording and disclosing."""
+        return len(self.phase1_candidates) > 1
 
     def tier_effort(self, tier: str) -> TierEffort:
         default = TierEffort(phase1=self.phase1_reviewer.effort, phase2=self.phase2_reviewer.effort)
@@ -180,7 +207,7 @@ queue_comment_interval_seconds = 180
 tick_seconds = 20
 watchdog_minutes = 30
 comment_budget = 10
-# when more heads than this are queued, new runs skip the Phase-1 (GLM) reviewers and go
+# when more heads than this are queued, new runs skip the Phase-1 reviewers and go
 # straight to Phase 2; 0 disables. Disclosed in the review and the gate comment.
 backlog_skip_phase1_above = 10
 
@@ -204,6 +231,40 @@ def _lane(section: dict[str, Any], key: str) -> LaneModel:
         model=str(node["model"]),
         effort=str(node.get("reasoning", "high")),
     )
+
+
+def _candidate(node: dict[str, Any], base: LaneModel) -> LaneModel:
+    model = str(node.get("model") or "")
+    if not model:
+        raise ValueError("phase1 candidate without a model")
+    q = node.get("quota")
+    quota = None
+    if q:
+        provider = str(q.get("provider") or "")
+        if provider not in QUOTA_PROVIDERS:
+            raise ValueError(
+                f"phase1 candidate {model!r}: quota provider {provider!r} not in {QUOTA_PROVIDERS}"
+            )
+        quota = QuotaSource(provider=provider, group=q.get("group"), account=q.get("account"))
+    effort = str(node.get("reasoning", base.effort))
+    if effort not in EFFORT_LEVELS:
+        raise ValueError(f"phase1 candidate {model!r}: effort {effort!r} not in {EFFORT_LEVELS}")
+    return LaneModel(
+        agent=str(node.get("agent", base.agent)), model=model, effort=effort, quota=quota
+    )
+
+
+def _candidates(node: dict[str, Any], base: LaneModel) -> tuple[LaneModel, ...]:
+    """The Phase-1 ladder; without a `candidates` list it is the declared reviewer alone."""
+    out = tuple(_candidate(c, base) for c in node.get("candidates") or [])
+    if not out:
+        return (base,)
+    for c in out[:-1]:
+        if c.quota is None:
+            raise ValueError(
+                f"phase1 candidate {c.model!r} has no quota source but is not the last rung"
+            )
+    return out
 
 
 def load_skills_config(
@@ -232,7 +293,11 @@ def load_skills_config(
     )
     pol = raw["review_model_policy"]
     settings = raw.get("settings", {})
-    p1 = _lane(pol["phase1"], "reviewer")
+    p1_node = pol["phase1"]
+    p1 = _lane(p1_node, "reviewer")
+    reserve = float(p1_node.get("quota_reserve", 0.15))
+    if not 0.0 <= reserve < 1.0:
+        raise ValueError(f"phase1.quota_reserve {reserve!r} must be a fraction in [0, 1)")
     p2 = _lane(pol["phase2"], "reviewer")
     triage_node = pol.get("triage") or {}
     policy = ModelPolicy(
@@ -245,6 +310,8 @@ def load_skills_config(
         repair_model=str(settings.get("repair_model", "gpt-5.6-luna")),
         selector_model=str(settings.get("selector_model", "gpt-5.6-terra")),
         phase2_enabled=bool(pol.get("phase2_enabled", True)),
+        phase1_candidates=_candidates(p1_node, p1),
+        quota_reserve=reserve,
         triage=_lane(pol, "triage") if triage_node else None,
         tiers=_tiers(triage_node, p1.effort, p2.effort),
         fallback_tier=str(triage_node.get("fallback_tier", "normal")).lower(),

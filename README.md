@@ -19,6 +19,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no slot can be ghosted |
 | `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
 | `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
+| `quota.py` | Phase-1 model ladder: remaining Antigravity / Z.AI quota via the proxy's management `api-call`; first rung with quota runs |
 | `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage |
 | `prompts.py` | assembles prompts from the `thepastaclaw/skills` repo templates |
 | `contract.py` | reviewer/verifier JSON contracts; legacy-compatible `finding_hash` / `dedupe_key` |
@@ -27,7 +28,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
 | `status.py` | `reviewsys status --json` + watchdog predicate |
-| `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model |
+| `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model, quota per Phase-1 rung |
 
 State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps, lanes, findings, posted_findings, reviews, inbox, events, kv`.
 
@@ -42,7 +43,7 @@ regardless of tier. `trivial` with no blockers publishes a *final* review from
 Phase 1 only and says so in the provenance block. Triage failure falls back to
 `fallback_tier` and is recorded as a `triage.degraded` event.
 
-| tier | Phase 1 (glm-5.3-flash) | Phase 2 (gpt-6-astra) |
+| tier | Phase 1 (ladder rung, capped by the rung's `reasoning`) | Phase 2 (gpt-6-astra) |
 |---|---|---|
 | trivial | high | skipped |
 | low | high | medium |
@@ -57,6 +58,57 @@ policy behaves as a single `normal` tier at the configured reasoning levels.
 CLIProxyAPI clamps `--effort` to the `thinking.levels` declared per model in its
 config; the zai GLM entries must declare `[low, high, max]` or `max` reaches z.ai
 as `high` (fixed on the box 2026-09-08).
+
+### Phase-1 model ladder (spend included quota first)
+
+`review_model_policy.phase1.candidates` is an ordered list of Phase-1 reviewer
+models; each may name the subscription whose remaining quota gates it:
+
+```json
+"candidates": [
+  {"model": "gemini-3.8-flash-high", "reasoning": "high", "quota": {"provider": "antigravity", "group": "Gemini Models"}},
+  {"model": "glm-5.3-flash", "reasoning": "max", "quota": {"provider": "zai"}},
+  {"model": "muse-spark-1.3-contributor", "agent": "muse-reviewer", "reasoning": "xhigh"}
+],
+"quota_reserve": 0.15
+```
+
+At the start of Phase 1 the worker walks the ladder and runs every Phase-1 lane
+on the first rung whose subscription still has at least `quota_reserve` of
+*every* window (5-hour and weekly) left. A rung without `quota` is never gated,
+so the pay-per-token last rung always resolves. A failed lookup skips the rung
+rather than gambling on a lane that may die on 429 an hour in. A rung's
+`reasoning` is a *cap*: the lane runs at the lower of the tier's `phase1` effort
+and the rung's (Gemini through Antigravity tops out at `high`, the Muse
+contributor tier at `xhigh`). If a Phase-1 lane still fails on its rung (rate
+limit, dead upstream, malformed output twice) the run drops to the next rung
+for that role and the rest (`phase1.model_fallback`) instead of failing; only
+the last rung's failure fails the run. Only the last rung may be ungated; the
+`phase1.reviewer` node stays the declared default whose `reasoning` seeds the
+tier table. The choice is recorded
+as `phase1.model_selected`, stored per lane in `lanes.model` / `lanes.effort`,
+and disclosed in the review: "Phase 1 model: gemini-3.8-flash-high — antigravity quota: 5h 90% left,
+weekly 60% left; passed over …". Without a
+`candidates` list the policy is a single ungated rung (`phase1.reviewer`).
+
+Quota is read through CLIProxyAPI's management API (`~/.cli-proxy-api/management-key`),
+which has no quota endpoint of its own but relays a request signed with a stored
+credential (`POST /v0/management/api-call`, `$TOKEN$` placeholder), so keys never
+leave the proxy: Antigravity via `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary`
+(per quota group, `remainingFraction` per bucket), Z.AI via
+`api.z.ai/api/monitor/usage/quota/limit` (`CREDIT_LIMIT` percentage used). With
+several credentials the best one counts, since the proxy fails over between
+them; `account` in a rung's `quota` pins one credential (Antigravity email or
+zai provider name). `reviewsys doctor` prints each rung's account and windows and
+runs one real launcher lane per rung. Models whose
+upstream rejects `stop` (Gemini through Antigravity, Meta) pass the doctor probe
+on a stop-free request; Claude Code lanes never send one. New model aliases must
+also be allowed by the launcher's `resolve_model_alias` (`gemini-*`, `muse-*`).
+Effort clamping per rung, verified in the proxy request logs on 2026-09-10:
+Gemini through Antigravity tops out at `thinkingLevel: high` (`max` → `high`);
+the Muse contributor tier has no `max`, so `max` → `reasoning_effort: xhigh`;
+GLM honours `max`. The Antigravity quota endpoint answers 403 "no valid license"
+unless the request carries an Antigravity client `User-Agent`.
 
 ## Backlog mode: Phase 2 only
 
