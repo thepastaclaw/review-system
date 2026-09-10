@@ -127,7 +127,8 @@ fall back to the last successful reading if it is under an hour old
 (`quota.cached_reader`, kv `quota.last:<provider>[:<group>]`); only with no
 usable reading is the rung skipped. On the box itself the proxies should run as
 `ProcessType Interactive` / `Nice -10` and the runner as `Background` / `Nice
-10` with `CARGO_BUILD_JOBS` capped; that needs sudo (`~claw/prioritize-proxies.sh`).
+10`, priorities only so CI keeps full parallelism when the box is otherwise
+idle; that needs sudo (`~claw/prioritize-proxies.sh`).
 
 ### Review body layout
 
