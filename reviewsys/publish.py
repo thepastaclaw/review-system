@@ -727,10 +727,27 @@ def answer_replied_threads(
         stated = str((reconciliation.get(h) or {}).get("status") or "")
         if stated in {"WITHDRAWN", "FIXED", "OUTDATED"}:
             todo[h] = {**t, "latest_reply_id": None}
+    # A malformed/legacy thread index can contain the same GitHub thread under more than
+    # one finding identity (for example after a marker migration).  Replies are addressed to
+    # the thread root, so posting once for each mapping would create duplicate answers on the
+    # same commit.  Keep the first deterministic entry and report the aliases as suppressed.
+    seen_roots: set[tuple[str, str]] = set()
     for h, t in todo.items():
         cid = t.get("comment_id")
         if not cid:
             continue
+        root_key = (str(t.get("thread_id") or ""), str(cid))
+        if root_key in seen_roots:
+            done.append(
+                {
+                    "finding_hash": h,
+                    "status": "DUPLICATE_THREAD",
+                    "comment_id": cid,
+                    "action": "duplicate_thread_skipped",
+                }
+            )
+            continue
+        seen_roots.add(root_key)
         marker = THREAD_ANSWER_MARKER.format(
             sha=head_sha, reply=t.get("latest_reply_id"), finding=h
         )

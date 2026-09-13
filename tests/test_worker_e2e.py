@@ -802,6 +802,47 @@ def test_thread_answer_is_posted_once_per_reply(cfg, conn, gh, lanes):
     assert out[0]["action"] == "replied" and len(gh.replies) == 2
 
 
+def test_thread_answer_skips_duplicate_thread_alias(cfg, conn, gh, lanes):
+    """A legacy/migrated thread index may expose one root under two finding hashes.
+    Only one answer may be posted for that root and reviewed head."""
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    verified = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    threads = {
+        "first": {
+            "comment_id": 900,
+            "thread_id": "PRRT_1",
+            "latest_reply_id": 901,
+        },
+        # Same GitHub root, stale alias from the old marker format.
+        "stale-alias": {
+            "comment_id": 900,
+            "thread_id": "PRRT_1",
+            "latest_reply_id": 901,
+        },
+    }
+    recon = {
+        "first": {"status": "WITHDRAWN", "reason": "Not reproducible."},
+        "stale-alias": {"status": "WITHDRAWN", "reason": "Not reproducible."},
+    }
+    out = answer_replied_threads(
+        gh,
+        "dashpay/platform",
+        1,
+        HEAD,
+        threads=threads,
+        reconciliation=recon,
+        verified=verified,
+    )
+    assert len(gh.replies) == 1
+    assert [x["action"] for x in out] == ["replied", "duplicate_thread_skipped"]
+
+
 def test_defaulted_withdrawal_answers_but_never_resolves(cfg, conn, gh, lanes):
     """A verifier that drops the finding without any reviewer stating a status: the bot says the
     finding did not survive, but does not close the human's thread on a default."""
