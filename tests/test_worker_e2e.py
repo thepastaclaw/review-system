@@ -1273,6 +1273,43 @@ def test_second_withdrawn_finding_at_same_sha_still_gets_its_note(cfg, conn, gh,
     assert sum("resolveReviewThread" in " ".join(c) for c in gh.calls) == 2
 
 
+def test_open_thread_with_same_answer_is_not_replied_again_on_new_head(cfg, conn, gh, lanes):
+    """A failed or delayed resolve must not turn every new head into another status comment."""
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    verified = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    prior_answer = (
+        "<!-- thepastaclaw-thread-answer v1 sha=old reply=None finding=aaa -->\n"
+        "**Resolved** (re-reviewed at `old`): fixed"
+    )
+    out = answer_replied_threads(
+        gh,
+        "dashpay/platform",
+        1,
+        "b" * 40,
+        threads={},
+        open_threads={
+            "aaa": {
+                "comment_id": 900,
+                "thread_id": "T1",
+                "awaiting_answer": False,
+                "latest_reply_id": None,
+                "bot_answers": [{"id": 901, "body": prior_answer}],
+                "replies": [],
+            }
+        },
+        reconciliation={"aaa": {"finding_hash": "aaa", "status": "FIXED", "reason": "fixed"}},
+        verified=verified,
+    )
+    assert out == [{"finding_hash": "aaa", "status": "FIXED", "comment_id": 900, "action": "already_answered"}]
+    assert not gh.replies
+
+
 def test_same_sha_rereview_that_finds_a_blocker_updates_final_verdict(cfg, conn, gh, lanes):
     """The standing review is a clean FINAL; the re-review finds a blocker at Phase 1. Instead of
     stacking a full preliminary review on the same commit, the final verdict gets a follow-up."""
