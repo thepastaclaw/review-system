@@ -460,6 +460,21 @@ class PublishResult:
     skipped_reason: str | None = None
 
 
+THREAD_REUSE_MARKER = "<!-- thepastaclaw-thread-reuse v1 root={root} sha={sha} -->"
+
+
+def _thread_reuse_marker(root: ExistingComment, head_sha: str) -> str:
+    """Marker for the one reply used when reusing an already resolved finding thread."""
+    return THREAD_REUSE_MARKER.format(root=root.id, sha=head_sha)
+
+
+def _thread_has_marker(thread: dict[str, Any], marker: str) -> bool:
+    return any(
+        marker in str(c.get("body") or "")
+        for c in (thread.get("comments") or {}).get("nodes") or []
+    )
+
+
 def dedupe_against_github(
     gh: Gh,
     repo: str,
@@ -479,6 +494,10 @@ def dedupe_against_github(
         return list(findings), []
     kept: list[Finding] = []
     sup: list[Suppressed] = []
+    # Several verifier findings can fuzzy-match the same historical root.  A root can only
+    # receive one carry-forward reply for a reviewed head; otherwise aliases turn into
+    # duplicate GitHub comments even though each finding was considered once.
+    seen_matches: set[tuple[str, str]] = set()
     for f in findings:
         match, reason = find_duplicate(f, records)
         if not match:
@@ -486,17 +505,24 @@ def dedupe_against_github(
             continue
         thread = github.thread_for_comment(gh, match.node_id) or {}
         base = Suppressed(f, "", detail=reason or "", comment_id=match.id, html_url=match.html_url)
+        match_key = (match.node_id or match.id, head_sha)
+        if match_key in seen_matches:
+            base.action = "deduped_same_batch_existing_thread"
+            sup.append(base)
+            continue
+        seen_matches.add(match_key)
         if thread_has_resolution_reply(thread, bot_login):
             base.action = "deduped_maintainer_addressed"
         elif not thread.get("isResolved"):
             base.action = "deduped_existing_open_thread"
         else:
+            marker = _thread_reuse_marker(match, head_sha)
             already = any(
                 (c.get("author") or {}).get("login") == bot_login
                 and head_sha[:8] in (c.get("body") or "")
                 for c in (thread.get("comments") or {}).get("nodes") or []
             )
-            if already:
+            if already or _thread_has_marker(thread, marker):
                 base.action = "deduped_existing_resolved_thread"
             elif dry_run:
                 base.action = "would_reply_to_resolved_thread"
@@ -507,7 +533,7 @@ def dedupe_against_github(
                         repo,
                         number,
                         int(match.id),
-                        f"⚠️ Reusing this existing thread because the same finding still applies on `{head_sha[:8]}`. If it has already been addressed, please mark the thread resolved.",
+                        f"{marker}\n⚠️ Reusing this existing thread because the same finding still applies on `{head_sha[:8]}`. If it has already been addressed, please mark the thread resolved.",
                     )
                     base.action = "replied_to_resolved_thread"
                 except (ReviewError, ValueError):

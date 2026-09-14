@@ -66,6 +66,41 @@ def test_find_duplicate_by_hash_then_fuzzy():
     assert find_duplicate(z, [rec, rec2]) == (None, None)
 
 
+def test_dedupe_against_github_reuses_one_existing_root_per_head(monkeypatch):
+    """Fuzzy aliases in one verifier result must not create multiple replies."""
+    from reviewsys import publish as pub
+
+    head = "a" * 40
+    existing = {
+        "id": 100,
+        "node_id": "PRRC_root",
+        "path": "src/a.rs",
+        "line": 12,
+        "html_url": "https://github.example/comment/100",
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=old dedupe=old -->\n**🟡 Suggestion: Fee estimation omits drainage costs**\n\nold body",
+    }
+    thread = {"isResolved": True, "comments": {"nodes": []}}
+    replies = []
+    monkeypatch.setattr(pub.github, "inline_comments", lambda *args: [existing])
+    monkeypatch.setattr(pub.github, "thread_for_comment", lambda *args: thread)
+    monkeypatch.setattr(pub.github, "post_reply", lambda *args: replies.append(args[-1]))
+
+    first = f("Fee estimation omits drainage costs", body="body one")
+    second = f("Fee estimation omits drainage costs entirely", body="body two")
+    kept, suppressed = pub.dedupe_against_github(
+        None, "dashpay/dash", 1, head, [first, second], "thepastaclaw", dry_run=False
+    )
+
+    assert not kept
+    assert len(replies) == 1
+    assert "thread-reuse v1" in replies[0]
+    assert [s.action for s in suppressed] == [
+        "replied_to_resolved_thread",
+        "deduped_same_batch_existing_thread",
+    ]
+
+
 def test_resolution_reply_detection():
     t = {
         "comments": {
