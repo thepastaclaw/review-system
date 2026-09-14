@@ -76,7 +76,8 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     tokens_by_model = [
         dict(r)
         for r in conn.execute(
-            "SELECT model,COALESCE(SUM(tokens_in),0) tokens_in,COALESCE(SUM(tokens_out),0) tokens_out,COUNT(*) lanes FROM lanes GROUP BY model ORDER BY (tokens_in+tokens_out) DESC"
+            "SELECT model,COALESCE(SUM(tokens_in),0) tokens_in,COALESCE(SUM(tokens_out),0) tokens_out,COUNT(*) lanes,"
+            "ROUND(AVG(COALESCE(tokens_in,0)+COALESCE(tokens_out,0))) avg_tokens_per_lane FROM lanes GROUP BY model ORDER BY (tokens_in+tokens_out) DESC"
         )
     ]
     tokens_by_effort = [
@@ -127,6 +128,16 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
                 "tokens_in": token_totals["tokens_in"],
                 "tokens_out": token_totals["tokens_out"],
                 "tokens_total": token_totals["tokens_in"] + token_totals["tokens_out"],
+                "completed_reviews": conn.execute(
+                    "SELECT COUNT(*) FROM runs WHERE status='done'"
+                ).fetchone()[0],
+                "avg_tokens_per_completed_review": round(
+                    (token_totals["tokens_in"] + token_totals["tokens_out"])
+                    / max(
+                        1,
+                        conn.execute("SELECT COUNT(*) FROM runs WHERE status='done'").fetchone()[0],
+                    )
+                ),
             },
             "tokens_by_model": tokens_by_model,
             "tokens_by_effort": tokens_by_effort,
