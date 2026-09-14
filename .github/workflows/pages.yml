@@ -1,0 +1,26 @@
+name: deploy-pages
+on:
+  push:
+    branches: [main, observability-data]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: {name: github-pages}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main}
+      - name: Overlay current data
+        run: |
+          mkdir -p site/data
+          git fetch origin observability-data || true
+          git show origin/observability-data:status.json > site/data/status.json 2>/dev/null || echo '{"schema_version":1,"live":{"heads":{},"queued":[],"active":[]},"history":{"daily":[],"totals":{"findings":0,"reviews":0,"runs":0}}}' > site/data/status.json
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: site}
+      - id: deployment
+        uses: actions/deploy-pages@v4

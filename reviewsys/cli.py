@@ -13,6 +13,7 @@ from pathlib import Path
 from . import config as cfg_mod
 from . import db as db_mod
 from . import doctor as doctor_mod
+from . import exporter as exporter_mod
 from . import status as status_mod
 from . import worker as worker_mod
 from .daemon import Daemon
@@ -168,6 +169,14 @@ def cmd_gc(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_export_status(args: argparse.Namespace) -> int:
+    cfg = _cfg(args)
+    conn = db_mod.connect(cfg.db_path)
+    path = exporter_mod.write_export(conn, cfg, Path(args.output))
+    print(path)
+    return 0
+
+
 def cmd_init_config(args: argparse.Namespace) -> int:
     path = Path(args.config) if args.config else cfg_mod.DEFAULT_CONFIG_PATH
     if path.exists() and not args.force:
@@ -225,6 +234,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(fn=cmd_import_legacy)
     s = sub.add_parser("gc")
     s.set_defaults(fn=cmd_gc)
+    s = sub.add_parser("export-status", help="write a sanitized public observability snapshot")
+    s.add_argument("--output", required=True, help="directory receiving status.json")
+    s.set_defaults(fn=cmd_export_status)
     s = sub.add_parser("init-config")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_init_config)
