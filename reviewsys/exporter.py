@@ -97,6 +97,12 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "SELECT ts,kind,repo,number,run_id,detail FROM events ORDER BY id DESC LIMIT 40"
         )
     ]
+    live["capacity"] = {
+        "typical": cfg.max_concurrent,
+        "priority_overflow": cfg.priority_overflow,
+        "maximum": cfg.max_concurrent + cfg.priority_overflow,
+    }
+    live["priority_queued"] = sum(1 for q in queued if q["priority"])
     return {
         "schema_version": 1,
         "generated_at": now(),
