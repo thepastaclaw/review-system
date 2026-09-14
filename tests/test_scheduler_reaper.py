@@ -44,6 +44,17 @@ def test_slots_and_priority_overflow(cfg, conn):
     assert conn.execute("SELECT COUNT(*) FROM runs WHERE status='spawned'").fetchone()[0] == 3
 
 
+def test_backlog_lends_one_priority_slot_to_normal_work(cfg, conn):
+    queue(conn, cfg, 11)
+    started = schedule(conn, cfg, spawn=False)
+    assert len(started) == 3
+
+
+def test_small_backlog_keeps_priority_slot_reserved(cfg, conn):
+    queue(conn, cfg, 3)
+    assert len(schedule(conn, cfg, spawn=False)) == 2
+
+
 def test_debounce_blocks_until_eligible(cfg, conn):
     queue(conn, cfg, 1, ready=False)
     assert schedule(conn, cfg, spawn=False) == []
