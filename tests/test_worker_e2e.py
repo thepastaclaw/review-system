@@ -253,6 +253,7 @@ def test_head_moved_is_fatal(cfg, conn, gh, lanes):
         and "live head"
         in conn.execute("SELECT reason FROM runs WHERE id=?", (rid,)).fetchone()["reason"]
     )
+    assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "superseded"
 
 
 def test_cross_round_dedupe_suppresses_existing_thread(cfg, conn, gh, lanes):

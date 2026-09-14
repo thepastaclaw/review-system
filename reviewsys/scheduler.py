@@ -169,6 +169,22 @@ def _requeue_or_fail(
 ) -> None:
     head = conn.execute("SELECT * FROM heads WHERE id=?", (head_id,)).fetchone()
     attempts = int(head["attempts"])
+    # A push raced with the worker's initial metadata read.  The assigned SHA is obsolete;
+    # this is normal queue churn, not a review failure and must not page the operator.
+    if kind == FailKind.FATAL and reason.startswith("live head "):
+        ts = now()
+        conn.execute(
+            "UPDATE heads SET status='superseded', finished_at=?, reason=? WHERE id=?",
+            (ts, reason[:500], head_id),
+        )
+        event(
+            conn,
+            "head.superseded",
+            repo=head["repo"],
+            number=head["number"],
+            detail=f"obsolete assigned head {head['sha'][:8]}: {reason[:300]}",
+        )
+        return
     max_attempts = {FailKind.INFRA: cfg.max_attempts, FailKind.CONTRACT: 2, FailKind.FATAL: 0}[kind]
     ts = now()
     if attempts < max_attempts:

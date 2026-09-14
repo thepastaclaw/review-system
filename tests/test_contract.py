@@ -118,6 +118,10 @@ def test_finding_invalid_severity():
         Finding.from_dict({"file": "f", "title": "t", "severity": "critical"})
 
 
+def test_finding_priority_severity_alias():
+    assert Finding.from_dict({"file": "f", "title": "t", "severity": "p2"}).severity == "suggestion"
+
+
 def test_lane_argv_includes_budget_cap(tmp_path):
     from reviewsys.lane import LaneSpec, argv_for
 
