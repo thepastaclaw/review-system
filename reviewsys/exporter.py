@@ -79,6 +79,14 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "SELECT model,COALESCE(SUM(tokens_in),0) tokens_in,COALESCE(SUM(tokens_out),0) tokens_out,COUNT(*) lanes FROM lanes GROUP BY model ORDER BY (tokens_in+tokens_out) DESC"
         )
     ]
+    tokens_by_effort = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT COALESCE(effort,'unknown') effort,COALESCE(SUM(tokens_in),0) tokens_in,"
+            "COALESCE(SUM(tokens_out),0) tokens_out,COUNT(*) lanes FROM lanes "
+            "GROUP BY effort ORDER BY (tokens_in+tokens_out) DESC"
+        )
+    ]
     tokens_by_run = [
         dict(r)
         for r in conn.execute(
@@ -121,6 +129,7 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
                 "tokens_total": token_totals["tokens_in"] + token_totals["tokens_out"],
             },
             "tokens_by_model": tokens_by_model,
+            "tokens_by_effort": tokens_by_effort,
             "tokens_by_run": tokens_by_run,
         },
     }
