@@ -1307,7 +1307,9 @@ def test_open_thread_with_same_answer_is_not_replied_again_on_new_head(cfg, conn
         reconciliation={"aaa": {"finding_hash": "aaa", "status": "FIXED", "reason": "fixed"}},
         verified=verified,
     )
-    assert out == [{"finding_hash": "aaa", "status": "FIXED", "comment_id": 900, "action": "already_answered"}]
+    assert out == [
+        {"finding_hash": "aaa", "status": "FIXED", "comment_id": 900, "action": "already_answered"}
+    ]
     assert not gh.replies
 
 
