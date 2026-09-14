@@ -190,7 +190,7 @@ openclaw = "openclaw"
 
 [scheduling]
 max_concurrent = 2
-priority_overflow = 1
+priority_overflow = 2
 debounce_minutes = 30
 max_attempts = 3
 retry_backoff_minutes = [5, 15, 45]
@@ -354,7 +354,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         openclaw_bin=str(p["openclaw"]),
         max_concurrent=int(s.get("max_concurrent", settings.get("max_concurrent_reviews", 2))),
         priority_overflow=int(
-            s.get("priority_overflow", settings.get("priority_review_overflow_slots", 1))
+            s.get("priority_overflow", settings.get("priority_review_overflow_slots", 2))
         ),
         debounce_minutes=int(s.get("debounce_minutes", settings.get("debounce_minutes", 30))),
         max_attempts=int(s["max_attempts"]),
