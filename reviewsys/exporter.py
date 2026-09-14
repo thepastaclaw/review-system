@@ -25,6 +25,9 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         "SELECT h.*, p.title, p.author FROM heads h LEFT JOIN prs p ON p.repo=h.repo AND p.number=h.number "
         "WHERE h.status='queued' ORDER BY h.priority DESC, h.eligible_at, h.queued_at"
     ):
+        comment = conn.execute(
+            "SELECT value FROM kv WHERE key=?", (f"queue.comment_id:{row['repo']}#{row['number']}",)
+        ).fetchone()
         queued.append(
             {
                 "repo": row["repo"],
@@ -37,6 +40,14 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
                 "queued_at": row["queued_at"],
                 "eligible_at": row["eligible_at"],
                 "age_seconds": _age(row["queued_at"], at),
+                "eligible": row["eligible_at"] <= now(),
+                "reason": "waiting for debounce/backoff"
+                if row["eligible_at"] > now()
+                else "waiting for a review slot",
+                "pr_url": f"https://github.com/{row['repo']}/pull/{row['number']}",
+                "prioritize_url": f"https://github.com/{row['repo']}/issues/{row['number']}#issuecomment-{comment[0]}"
+                if comment
+                else f"https://github.com/{row['repo']}/pull/{row['number']}#issuecomment-new",
             }
         )
     runs = []
@@ -57,6 +68,21 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "SELECT substr(finished_at,1,10) day, COUNT(*) reviews, "
             "AVG((julianday(finished_at)-julianday(started_at))*86400) avg_seconds "
             "FROM runs WHERE status='done' AND finished_at IS NOT NULL GROUP BY day ORDER BY day DESC LIMIT 180"
+        )
+    ]
+    token_totals = conn.execute(
+        "SELECT COALESCE(SUM(tokens_in),0) tokens_in, COALESCE(SUM(tokens_out),0) tokens_out FROM lanes"
+    ).fetchone()
+    tokens_by_model = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT model,COALESCE(SUM(tokens_in),0) tokens_in,COALESCE(SUM(tokens_out),0) tokens_out,COUNT(*) lanes FROM lanes GROUP BY model ORDER BY (tokens_in+tokens_out) DESC"
+        )
+    ]
+    tokens_by_run = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT run_id,COALESCE(SUM(tokens_in),0) tokens_in,COALESCE(SUM(tokens_out),0) tokens_out FROM lanes GROUP BY run_id ORDER BY run_id DESC LIMIT 100"
         )
     ]
     findings = [
@@ -84,7 +110,12 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
                 "findings": conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0],
                 "reviews": conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
                 "runs": conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0],
+                "tokens_in": token_totals["tokens_in"],
+                "tokens_out": token_totals["tokens_out"],
+                "tokens_total": token_totals["tokens_in"] + token_totals["tokens_out"],
             },
+            "tokens_by_model": tokens_by_model,
+            "tokens_by_run": tokens_by_run,
         },
     }
 
