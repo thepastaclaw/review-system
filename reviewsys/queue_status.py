@@ -216,6 +216,10 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
             if stats["written"] < MAX_WRITES_PER_PASS:
                 _write(conn, gh, p["repo"], p["number"], c, rendered)
                 stats["written"] += 1
+                # The same head may also be present in `rows`; refresh the shared comment
+                # cache so the queue renderer updates this comment instead of creating a second.
+                if p["id"]:
+                    comments[p["id"]] = _read_comment(conn, gh, cfg, p["repo"], p["number"])
         except Exception as exc:
             log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
     active = conn.execute(
