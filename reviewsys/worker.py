@@ -363,12 +363,15 @@ def step_context(ctx: RunContext) -> None:
     # Any earlier published review means this head is an iterative pass.  Once the
     # historical findings have been reconciled, the run must earn approval through
     # a fresh Phase-2 final audit of the complete current diff.
-    ctx.has_prior_review = bool(
-        ctx.conn.execute(
-            "SELECT 1 FROM reviews WHERE repo=? AND number=? LIMIT 1",
-            (ctx.repo, ctx.number),
-        ).fetchone()
+    local_prior = ctx.conn.execute(
+        "SELECT 1 FROM reviews WHERE repo=? AND number=? LIMIT 1", (ctx.repo, ctx.number)
+    ).fetchone()
+    github_prior = any(
+        (r.get("user") or {}).get("login", "").lower() == ctx.cfg.bot_login.lower()
+        and github.REVIEW_MARKER in str(r.get("body") or "")
+        for r in github.reviews(ctx.gh, ctx.repo, ctx.number)
     )
+    ctx.has_prior_review = bool(local_prior or github_prior)
     # prior findings: last posted set for this PR from our DB, plus any human replies on
     # their inline threads (the reviewer must engage with pushback, not re-raise past it)
     ctx.open_threads = github.finding_threads(threads, ctx.cfg.bot_login)
@@ -737,20 +740,38 @@ def step_publish(
         update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
         if update is not None:
             return update
-        return publish.PublishResult(
-            posted=False,
-            event="COMMENT",
-            transport_event="COMMENT",
-            body="",
-            review_id=int(existing.get("id") or 0) or None,
-            review_url=str(existing.get("html_url") or "") or None,
-            skipped_reason="already_published_for_sha",
+        model = _build_review(
+            ctx,
+            phase=phase,
+            verified=verified,
+            verifier_lm=verifier_lm,
+            phase2_skipped=phase2_skipped,
+            rereview=True,
         )
+        result = publish.publish(
+            ctx.gh,
+            model,
+            bot_login=ctx.cfg.bot_login,
+            dry_run=ctx.dry_run,
+            force_comment=True,
+        )
+        _record_publication(ctx, phase, model, result, verified)
+        return result
     model = _build_review(
-        ctx, phase=phase, verified=verified, verifier_lm=verifier_lm, phase2_skipped=phase2_skipped
+        ctx,
+        phase=phase,
+        verified=verified,
+        verifier_lm=verifier_lm,
+        phase2_skipped=phase2_skipped,
+        rereview=ctx.has_prior_review,
     )
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
-    result = publish.publish(ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run)
+    result = publish.publish(
+        ctx.gh,
+        model,
+        bot_login=ctx.cfg.bot_login,
+        dry_run=ctx.dry_run,
+    )
     _record_publication(ctx, phase, model, result, verified)
     if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
         publish.post_coderabbit_reactions(
@@ -927,6 +948,7 @@ def _build_review(
     verified: VerifierOutput,
     verifier_lm: LaneModel,
     phase2_skipped: str | None = None,
+    rereview: bool = False,
 ) -> publish.ReviewModel:
     diff = github.pr_diff(ctx.gh, ctx.repo, ctx.number)
     prov = publish.Provenance(
@@ -961,6 +983,7 @@ def _build_review(
         diff_text=diff,
         dry_run=ctx.dry_run,
         superseded_note=note,
+        rereview=rereview,
     )
 
 

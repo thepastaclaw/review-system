@@ -214,6 +214,7 @@ class ReviewModel:
     body_only: bool = False
     superseded_note: str | None = None
     extra_lines: list[str] = field(default_factory=list)
+    rereview: bool = False
 
     @property
     def canonical_event(self) -> str:
@@ -346,12 +347,26 @@ def _finding_block(f: Finding) -> str:
     return "\n".join(lines)
 
 
-def render(m: ReviewModel) -> str:
+def _counts_line(
+    findings: list[Finding], *, include_zero: bool = False, blocker_count: int | None = None
+) -> str:
     counts = {"blocking": 0, "suggestion": 0, "nitpick": 0}
-    for f in m.skipped if m.body_only else m.kept:
+    for f in findings:
         counts[f.severity if f.severity in counts else "nitpick"] += 1
-    if m.phase == "preliminary":
-        counts["blocking"] = m.verified.blocker_count
+    if blocker_count is not None:
+        counts["blocking"] = blocker_count
+    return " | ".join(
+        f"{SEVERITY_ICONS[severity]} {counts[severity]} {label}"
+        for severity, label in (
+            ("blocking", "blocking"),
+            ("suggestion", "suggestion(s)"),
+            ("nitpick", "nitpick(s)"),
+        )
+        if counts[severity] or include_zero
+    )
+
+
+def render(m: ReviewModel) -> str:
     if m.phase == "preliminary":
         title = "Preliminary review — Phase 1 blocker gate"
     elif m.provenance.phase2_skipped:
@@ -364,6 +379,8 @@ def render(m: ReviewModel) -> str:
     summary = "\n".join(
         line for line in m.verified.summary.splitlines() if not _SUMMARY_SOURCE_LINE_RE.match(line)
     ).strip()
+    if m.rereview:
+        title = f"Re-review — {title}"
     parts = [
         github.REVIEW_MARKER,
         f"<!-- thepastaclaw-review-phase v1 phase={m.phase} sha={m.head_sha} policy={m.provenance.policy_fingerprint[:16]} -->",
@@ -379,16 +396,13 @@ def render(m: ReviewModel) -> str:
         ]
     if m.superseded_note:
         parts += [m.superseded_note, ""]
-    counts_line = " | ".join(
-        f"{SEVERITY_ICONS[sev]} {counts[sev]} {label}"
-        for sev, label in (
-            ("blocking", "blocking"),
-            ("suggestion", "suggestion(s)"),
-            ("nitpick", "nitpick(s)"),
-        )
-        if counts[sev]
+    counts_line = _counts_line(
+        m.verified.findings,
+        blocker_count=m.verified.blocker_count if m.phase == "preliminary" else None,
     )
-    if counts_line:
+    if counts_line or m.rereview:
+        if not counts_line:
+            counts_line = "🔴 0 blocking | 🟡 0 suggestion(s) | 💬 0 nitpick(s)"
         parts.append(counts_line)
     if m.skipped:
         # findings GitHub cannot take inline still have to reach the developer in full
@@ -419,6 +433,12 @@ def render(m: ReviewModel) -> str:
         "</details>",
     ]
     prompt = _ai_prompt(m.kept, m.suppressed)
+    if m.rereview and not prompt:
+        prompt = (
+            "These findings are from an automated code review. Verify the current code and "
+            "confirm that no unresolved issues remain.\n\nNo unresolved findings remain from "
+            "the prior review on this head."
+        )
     if prompt:
         fence = _fence(prompt)
         parts += [
@@ -569,6 +589,7 @@ def build(
     diff_text: str | None,
     dry_run: bool,
     superseded_note: str | None = None,
+    rereview: bool = False,
 ) -> ReviewModel:
     findings, collapsed = collapse_same_root(list(verified.findings))
     kept, sup = dedupe_against_github(
@@ -605,33 +626,28 @@ def build(
         comments=comments,
         body_only=body_only,
         superseded_note=superseded_note,
+        rereview=rereview,
     )
 
 
-def publish(gh: Gh, m: ReviewModel, *, bot_login: str, dry_run: bool) -> PublishResult:
+def publish(
+    gh: Gh,
+    m: ReviewModel,
+    *,
+    bot_login: str,
+    dry_run: bool,
+    force_comment: bool = False,
+) -> PublishResult:
     body = render(m)
     event = m.canonical_event
-    if (
-        m.verified.findings
-        and not m.kept
-        and not m.skipped
-        and event != "APPROVE"
-        and m.phase != "preliminary"
-    ):
-        return PublishResult(
-            posted=False,
-            event=event,
-            transport_event=event,
-            body=body,
-            suppressed=m.suppressed,
-            skipped_reason="already_reviewed",
-        )
-    transport = event
-    if event in {"APPROVE", "REQUEST_CHANGES"}:
+    transport = "COMMENT" if force_comment else event
+    if not force_comment and event in {"APPROVE", "REQUEST_CHANGES"}:
         author = github.pr_meta(gh, m.repo, m.number).author
         if author.lower() == bot_login.lower():
             transport = "COMMENT"
             body += f"\n\n_Canonical verifier result: `{event}`. GitHub does not allow authors to approve or request changes on their own pull requests, so this review was submitted using `COMMENT` transport. The findings and blocker status above are unchanged._"
+    elif force_comment and event != "COMMENT":
+        body += f"\n\n_Canonical verifier result: `{event}`; this re-review summary is informational and does not change the standing review state._"
     payload = {"commit_id": m.head_sha, "body": body, "event": transport, "comments": m.comments}
     if dry_run:
         return PublishResult(
@@ -870,6 +886,7 @@ def render_verdict_update(
         + ("no blocking findings remain." if not n else f"{n} blocking finding(s) now stand."),
         "",
     ]
+    parts += [_counts_line(list(verified.findings), include_zero=True), ""]
     if withdrawn_blockers:
         parts += ["Withdrawn blocking finding(s):", *(f"- {t}" for t in withdrawn_blockers), ""]
     if summary:
@@ -887,6 +904,19 @@ def render_verdict_update(
         "",
         "</details>",
     ]
+    prompt = _ai_prompt(list(verified.findings), [])
+    if prompt:
+        fence = _fence(prompt)
+        parts += [
+            "",
+            "<details>",
+            "<summary>🤖 Prompt for all review comments with AI agents</summary>",
+            "",
+            fence,
+            prompt,
+            fence,
+            "</details>",
+        ]
     return "\n".join(parts)
 
 

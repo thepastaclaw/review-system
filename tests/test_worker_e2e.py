@@ -324,7 +324,7 @@ def test_head_moves_before_publish_and_never_receives_verdict(cfg, conn, gh, lan
     assert not gh.posted_reviews
 
 
-def test_cross_round_dedupe_suppresses_existing_thread(cfg, conn, gh, lanes):
+def test_cross_round_dedupe_posts_visible_summary(cfg, conn, gh, lanes):
     s = _sugg()
     from reviewsys.contract import Finding
 
@@ -345,20 +345,27 @@ def test_cross_round_dedupe_suppresses_existing_thread(cfg, conn, gh, lanes):
     lanes.verifier["final"] = _verifier([s])
     _rid, status = _run(cfg, conn, gh, lanes)
     assert status == RunStatus.DONE
-    # every finding was a duplicate -> no new review round
-    assert not gh.posted_reviews
+    # every finding was a duplicate, but the review summary is still posted
+    assert len(gh.posted_reviews) == 1
+    assert "Review provenance" in gh.posted_reviews[0]["body"]
+    assert "🟡 1 suggestion(s)" in gh.posted_reviews[0]["body"]
+    assert "Prompt for all review comments with AI agents" in gh.posted_reviews[0]["body"]
 
 
-def test_already_published_for_sha_is_skipped(cfg, conn, gh, lanes):
+def test_already_published_for_sha_posts_rereview_summary(cfg, conn, gh, lanes):
     gh.posted_reviews.append(
         {"id": 1, "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->"}
     )
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier([])
     rid, status = _run(cfg, conn, gh, lanes)
-    assert status == RunStatus.DONE and len(gh.posted_reviews) == 1
+    assert status == RunStatus.DONE and len(gh.posted_reviews) == 2
+    assert "## Re-review" in gh.posted_reviews[1]["body"]
+    assert "Review provenance" in gh.posted_reviews[1]["body"]
+    assert "🔴 0 blocking" in gh.posted_reviews[1]["body"]
+    assert "Prompt for all review comments with AI agents" in gh.posted_reviews[1]["body"]
     assert (
-        "already_published_for_sha"
+        '"posted": true'
         in conn.execute(
             "SELECT detail FROM steps WHERE run_id=? AND name='publish'", (rid,)
         ).fetchone()["detail"]
@@ -805,7 +812,8 @@ def test_still_valid_reply_is_answered_without_resolving(cfg, conn, gh, lanes):
         ],
     }
     lanes.verifier["default"] = _verifier([carried])
-    # the existing inline comment makes the carried finding a cross-round duplicate (no new review)
+    # the existing inline comment makes the carried finding a cross-round duplicate; the
+    # re-review summary remains visible even though no new inline finding is needed.
     gh.inline = [
         {
             "id": 900,
@@ -819,7 +827,8 @@ def test_still_valid_reply_is_answered_without_resolving(cfg, conn, gh, lanes):
     ]
     _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
     assert status == RunStatus.DONE
-    assert not gh.posted_reviews  # every finding was a duplicate: no new review round
+    assert len(gh.posted_reviews) == 1
+    assert "Review provenance" in gh.posted_reviews[0]["body"]
     # ...but the human asked a question on the thread, and the answer is the only thing
     # that reaches them, so it is posted there, and the thread stays open
     assert len(gh.replies) == 1
@@ -1068,7 +1077,7 @@ def test_reply_rerun_on_reviewed_commit_answers_thread_without_new_review(cfg, c
     (rid,) = schedule(conn, cfg, spawn=False)
     status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
     assert status == RunStatus.DONE
-    assert len(gh.posted_reviews) == 1, "same commit: no second review"
+    assert len(gh.posted_reviews) == 2, "same commit: re-review summary is posted"
     assert len(gh.replies) == 1 and "**Withdrawn**" in gh.replies[0]["body"]
     assert any("resolveReviewThread" in " ".join(c) for c in gh.calls)
 
@@ -1216,7 +1225,8 @@ def test_same_sha_rereview_with_unchanged_verdict_posts_no_update(cfg, conn, gh,
         enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
-    assert len(gh.posted_reviews) == 1 and len(gh.replies) == 1
+    assert len(gh.posted_reviews) == 2 and len(gh.replies) == 1
+    assert "## Re-review" in gh.posted_reviews[1]["body"]
     assert (
         conn.execute("SELECT COUNT(*) FROM events WHERE kind='review.verdict_updated'").fetchone()[
             0
@@ -1468,8 +1478,9 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
         enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
-    # blockers found, but on an own PR the transport is COMMENT == standing COMMENTED: no update
-    assert len(gh.posted_reviews) == 1
+    # blockers found, but on an own PR the transport is COMMENT == standing COMMENTED;
+    # a separate re-review summary is still posted for visible provenance.
+    assert len(gh.posted_reviews) == 2
     assert (
         conn.execute("SELECT COUNT(*) FROM events WHERE kind='review.verdict_updated'").fetchone()[
             0
@@ -1479,7 +1490,7 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
     # ... yet our own record (and so the verdict label) carries the canonical REQUEST_CHANGES
     _open_pr(conn)
     rows = [r["event"] for r in conn.execute("SELECT event FROM reviews ORDER BY id")]
-    assert rows == ["COMMENTED", "REQUEST_CHANGES"]
+    assert rows == ["COMMENTED", "REQUEST_CHANGES", "REQUEST_CHANGES"]
     assert labels.wanted(conn, "dashpay/platform", 1) == "pastaclaw:changes-requested"
     ev = conn.execute("SELECT detail FROM events WHERE kind='review.verdict_recorded'").fetchone()
     assert ev and "COMMENT -> REQUEST_CHANGES" in ev["detail"]
@@ -1494,7 +1505,7 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
         expected_coderabbit_ids=[],
     )
     worker._record_verdict(ctx, "final", out, "REQUEST_CHANGES")
-    assert conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == 3
 
 
 def _reconcile(conn, gh, repos=None):
