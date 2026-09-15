@@ -101,27 +101,36 @@ def attribute_sources(
     Phase-1 lanes, `claude` = Phase-2 lanes, `coderabbit`) into the model ids and agents that
     actually raised it. Within a phase the lanes whose own output carries the same
     `finding_hash` are named; if the verifier retitled or merged, every lane of that phase is.
-    `reviewers` is the run's completed-lane provenance, `lane_findings` maps `"phase:role"` to
-    that lane's findings."""
+    `reviewers` is the run's completed-lane provenance, `lane_findings` maps `"phase:role"`
+    (or `"phase:fresh:role"`) to that lane's findings."""
     lanes = [r for r in reviewers if r.get("status") == "completed"]
     phases_run = {str(r["phase"]) for r in lanes}
 
-    def raised_by(phase: str, role: str, f: Finding) -> bool:
-        return any(lf.hash == f.hash for lf in lane_findings.get(f"{phase}:{role}", []))
+    def raised_by(reviewer: dict[str, Any], f: Finding) -> bool:
+        phase = str(reviewer["phase"])
+        role = str(reviewer["role"])
+        prefix = "fresh:" if reviewer.get("fresh") else ""
+        return any(lf.hash == f.hash for lf in lane_findings.get(f"{phase}:{prefix}{role}", []))
 
     for f in verified.findings:
         labels = _source_labels(f.source)
         phases = {LEGACY_SOURCE_PHASE[x] for x in labels if x in LEGACY_SOURCE_PHASE}
         if not labels:  # verifier gave nothing usable: go by the hash, else name every lane
-            phases = {p for p in phases_run if any(raised_by(p, r["role"], f) for r in lanes)}
+            phases = {
+                p
+                for p in phases_run
+                if any(str(r["phase"]) == p and raised_by(r, f) for r in lanes)
+            }
             phases = phases or phases_run
         parts: list[str] = []
         for phase in sorted(phases & phases_run):
             in_phase = [r for r in lanes if r["phase"] == phase]
-            named = [r for r in in_phase if raised_by(phase, r["role"], f)] or in_phase
+            named = [r for r in in_phase if raised_by(r, f)] or in_phase
             groups: dict[tuple[str, str], list[str]] = {}
             for r in named:
-                groups.setdefault((str(r["model"]), str(r["agent"])), []).append(str(r["role"]))
+                roles = groups.setdefault((str(r["model"]), str(r["agent"])), [])
+                if str(r["role"]) not in roles:
+                    roles.append(str(r["role"]))
             parts += [f"`{m}` ({a}: {', '.join(rs)})" for (m, a), rs in groups.items()]
         parts += sorted(x for x in labels if x not in LEGACY_SOURCE_PHASE)
         if parts:
@@ -187,6 +196,7 @@ class Provenance:
     phase1_skipped: str | None = None  # set when the run went straight to Phase 2 (queue backlog)
     phase1_choice: dict[str, Any] | None = None  # {model, reason, skipped:[{model, reason}]}
     adhoc: bool = False  # repo has no skills entry: generic guidance, all specialists offered
+    fresh_final: bool = False  # an independent Phase-2 gate ran after iterative reconciliation
 
 
 @dataclass(slots=True)
@@ -302,6 +312,10 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     lines.append(p1_line)
     if p.phase1_choice and not p.phase1_skipped:
         lines.append(_phase1_choice_line(p.phase1_choice))
+    if p.fresh_final:
+        lines.append(
+            "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"
+        )
     lines += [
         f"- Fresh verifier: `{p.verifier['model']}` — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]

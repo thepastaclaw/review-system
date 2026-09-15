@@ -162,6 +162,52 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
         GOLDEN.write_text(body)
 
 
+def test_incremental_review_requires_fresh_final_phase2_gate(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+
+    first_rid, first_status = _run(cfg, conn, gh, lanes)
+    assert first_status == RunStatus.DONE
+    first_call_count = len(lanes.calls)
+
+    # Re-open the same reviewed head as a manual/reply-triggered iterative pass.
+    with tx(conn):
+        assert enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL) == "requeued"
+    (second_rid,) = schedule(conn, cfg, spawn=False)
+    assert (
+        worker.main(cfg, conn, second_rid, gh=gh, lane_runner=lanes, heartbeat=False)
+        == RunStatus.DONE
+    )
+
+    second_steps = {
+        row["name"]: row["status"]
+        for row in conn.execute("SELECT name, status FROM steps WHERE run_id=?", (second_rid,))
+    }
+    assert second_steps["fresh_phase2"] == "ok"
+    assert second_steps["fresh_verify2"] == "ok"
+    fresh_calls = lanes.calls[first_call_count:]
+    assert sum(1 for call in fresh_calls if call.role == "verifier") == 3
+    fresh_prompts = [
+        call.prompt
+        for call in fresh_calls
+        if call.role == "general" and "fresh final review" in call.prompt
+    ]
+    assert fresh_prompts
+    assert "Prior findings requiring cumulative adjudication" not in fresh_prompts[0]
+    assert any(
+        call.role == "verifier" and "This is the fresh final gate" in call.prompt
+        for call in fresh_calls
+    )
+    assert (
+        conn.execute("SELECT COUNT(*) FROM reviews WHERE run_id=?", (first_rid,)).fetchone()[0] == 1
+    )
+
+
 def test_blocker_gate_publishes_preliminary_request_changes(cfg, conn, gh, lanes):
     lanes.reviewer["default"] = {
         "summary": "ok",
@@ -254,6 +300,28 @@ def test_head_moved_is_fatal(cfg, conn, gh, lanes):
         in conn.execute("SELECT reason FROM runs WHERE id=?", (rid,)).fetchone()["reason"]
     )
     assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "superseded"
+
+
+def test_head_moves_before_publish_and_never_receives_verdict(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+
+    def racing_lane(spec, artifact_dir, worktree):
+        result = lanes(spec, artifact_dir, worktree)
+        if spec.role == "verifier" and "must be `final`" in spec.prompt:
+            gh.pr = {**gh.pr, "head": {"sha": "c" * 40}}
+        return result
+
+    rid, status = _run(cfg, conn, gh, racing_lane)
+    assert status == RunStatus.FAILED
+    assert "live head" in conn.execute("SELECT reason FROM runs WHERE id=?", (rid,)).fetchone()[0]
+    assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "superseded"
+    assert not gh.posted_reviews
 
 
 def test_cross_round_dedupe_suppresses_existing_thread(cfg, conn, gh, lanes):
