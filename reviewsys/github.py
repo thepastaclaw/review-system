@@ -49,12 +49,14 @@ class PrMeta:
     is_draft: bool
     url: str
     merged: bool
+    base_sha: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "title": self.title,
             "body": self.body,
             "baseRefName": self.base_ref,
+            "baseRefOid": self.base_sha,
             "headRefOid": self.head_sha,
             "author": self.author,
             "state": self.state,
@@ -71,6 +73,7 @@ def pr_meta(gh: Gh, repo: str, number: int) -> PrMeta:
         title=str(d.get("title") or ""),
         body=str(d.get("body") or ""),
         base_ref=str((d.get("base") or {}).get("ref") or ""),
+        base_sha=str((d.get("base") or {}).get("sha") or ""),
         head_sha=str((d.get("head") or {}).get("sha") or ""),
         author=str((d.get("user") or {}).get("login") or ""),
         state=str(d.get("state") or ""),

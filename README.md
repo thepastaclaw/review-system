@@ -166,6 +166,21 @@ by the final verifier still publish REQUEST_CHANGES. The rule never applies to a
 2026-09-08: GLM Phase-1 lanes took 65–140 min each, sequentially; astra Phase-2 lanes
 3–11 min.
 
+## Final approval after an iterative review
+
+An incremental review is a reconciliation pass, not by itself a new approval gate. It
+first checks the prior findings, discussion, and replies and stops if any blocker remains.
+When that pass is clear, the worker starts a fresh Phase-2 review of the complete current
+merge-base range. Those reviewer lanes receive the full diff and evidence without the old
+finding checklist, which reduces anchoring on the previous conclusion. The fresh verifier
+receives all PR context—including prior findings, discussion, CodeRabbit evidence, and both
+sets of reviewer outputs—as historical evidence to reconcile before deciding the verdict.
+
+Approval is tied to the exact reviewed head. The worker checks the live PR head immediately
+before publishing, so a push or base update during review invalidates the run and queues the
+new head instead of approving an obsolete commit. The published provenance identifies when
+the fresh final gate ran.
+
 ## Replies to findings
 
 A human reply under one of the bot's inline finding comments is the highest-value

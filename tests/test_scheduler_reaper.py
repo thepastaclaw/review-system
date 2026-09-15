@@ -107,6 +107,23 @@ def test_fatal_never_retries(cfg, conn):
     assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "failed"
 
 
+def test_live_base_move_requeues_same_head(cfg, conn):
+    (hid,) = queue(conn, cfg, 1)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    finish_run(
+        conn,
+        cfg,
+        rid,
+        RunStatus.FAILED,
+        reason="live base deadbeef != assigned cafebabe",
+        fail_kind=FailKind.FATAL,
+    )
+    head = conn.execute("SELECT * FROM heads WHERE id=?", (hid,)).fetchone()
+    assert head["status"] == "queued"
+    assert head["sha"] == "0000000000000000000000000000000000000000"
+    assert conn.execute("SELECT kind FROM events WHERE kind='head.requeued'").fetchone()
+
+
 def test_reaper_kills_stale_and_no_heartbeat(cfg, conn):
     queue(conn, cfg, 2)
     r1, r2 = schedule(conn, cfg, spawn=False)

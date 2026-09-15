@@ -65,6 +65,7 @@ class RunContext:
     worktree: Path | None = None
     mirror: Path | None = None
     meta: github.PrMeta | None = None
+    base_sha: str = ""
     selection: list[str] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
     triage: Triage | None = None
@@ -80,6 +81,8 @@ class RunContext:
     coderabbit_ids: list[int] = field(default_factory=list)
     prior: list[dict[str, Any]] = field(default_factory=list)
     prior_sha: str | None = None
+    has_prior_review: bool = False
+    fresh_final: bool = False
     # finding_hash -> {comment_id, thread_id, replies} for prior findings with human replies
     prior_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     # finding_hash -> thread facts for every unresolved bot finding thread on the PR
@@ -265,6 +268,7 @@ def step_worktree(ctx: RunContext) -> None:
             FailKind.FATAL, f"live head {meta.head_sha[:8]} != assigned {ctx.sha[:8]}"
         )
     ctx.meta = meta
+    ctx.base_sha = meta.base_sha
     ctx.mirror = wt.ensure_mirror(ctx.cfg.mirrors_dir, ctx.repo)
     wt.fetch_head(ctx.mirror, ctx.number, ctx.sha)
     ctx.worktree = wt.create_worktree(
@@ -356,6 +360,15 @@ def step_context(ctx: RunContext) -> None:
     ctx.coderabbit_ids = [
         int(f["comment_id"]) for f in ctx.coderabbit["findings"] if f.get("comment_id")
     ]
+    # Any earlier published review means this head is an iterative pass.  Once the
+    # historical findings have been reconciled, the run must earn approval through
+    # a fresh Phase-2 final audit of the complete current diff.
+    ctx.has_prior_review = bool(
+        ctx.conn.execute(
+            "SELECT 1 FROM reviews WHERE repo=? AND number=? LIMIT 1",
+            (ctx.repo, ctx.number),
+        ).fetchone()
+    )
     # prior findings: last posted set for this PR from our DB, plus any human replies on
     # their inline threads (the reviewer must engage with pushback, not re-raise past it)
     ctx.open_threads = github.finding_threads(threads, ctx.cfg.bot_login)
@@ -419,6 +432,7 @@ def _run_lane(
     lm: LaneModel,
     prompt: str,
     is_verifier: bool,
+    fresh: bool = False,
 ) -> dict[str, Any]:
     """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output."""
     assert ctx.worktree
@@ -496,6 +510,7 @@ def _run_lane(
                     "effort": lm.effort,
                     "status": "completed",
                     "phase": phase,
+                    "fresh": fresh,
                     "attempt_id": attempt_id,
                 }
             )
@@ -530,13 +545,15 @@ def _repair(ctx: RunContext, raw: str, art: Path) -> dict[str, Any] | None:
 
 
 def _reviewer_lane(
-    ctx: RunContext, *, phase: str, role: str, lm: LaneModel, prompt: str
+    ctx: RunContext, *, phase: str, role: str, lm: LaneModel, prompt: str, fresh: bool = False
 ) -> tuple[dict[str, Any], LaneModel]:
     """One reviewer lane, retried down the Phase-1 ladder when its rung dies. Returns the
     raw output and the model that produced it, so the remaining roles stay on that rung."""
     while True:
         try:
-            raw = _run_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt, is_verifier=False)
+            raw = _run_lane(
+                ctx, phase=phase, role=role, lm=lm, prompt=prompt, is_verifier=False, fresh=fresh
+            )
             return raw, lm
         except ReviewError as exc:
             nxt = _phase1_fallback(ctx, lm, exc) if phase == "phase1" else None
@@ -546,12 +563,19 @@ def _reviewer_lane(
 
 
 def _reviewer_lanes(
-    ctx: RunContext, *, phase: str, lm: LaneModel, expected_phase: str
+    ctx: RunContext,
+    *,
+    phase: str,
+    lm: LaneModel,
+    expected_phase: str,
+    fresh: bool = False,
 ) -> dict[str, ReviewerOutput]:
     assert ctx.meta
     roles = ["general", *ctx.selection]
     outputs: dict[str, ReviewerOutput] = {}
-    prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
+    review_prior = [] if fresh else ctx.prior
+    review_prior_sha = None if fresh else ctx.prior_sha
+    prior_hashes = {str(p["finding_hash"]) for p in review_prior}
     for role in roles:
         prompt = reviewer_prompt(
             ctx.cfg,
@@ -563,10 +587,11 @@ def _reviewer_lanes(
             meta=ctx.meta.as_dict(),
             coverage_from=ctx.coverage_from,
             evidence=ctx.evidence,
-            prior=ctx.prior,
-            prior_sha=ctx.prior_sha,
+            prior=review_prior,
+            prior_sha=review_prior_sha,
+            fresh=fresh,
         )
-        raw, lm = _reviewer_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt)
+        raw, lm = _reviewer_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt, fresh=fresh)
         outputs[role] = parse_reviewer_output(
             raw,
             expected_phase=expected_phase,
@@ -579,8 +604,15 @@ def _reviewer_lanes(
 
 
 def _verifier_lane(
-    ctx: RunContext, *, phase: str, lm: LaneModel, expected_phase: str
+    ctx: RunContext,
+    *,
+    phase: str,
+    lm: LaneModel,
+    expected_phase: str,
+    phase2_outputs: dict[str, ReviewerOutput] | None = None,
+    fresh_final: bool = False,
 ) -> VerifierOutput:
+    all_phase2 = phase2_outputs if phase2_outputs is not None else ctx.phase2_outputs
     prompt = verifier_prompt(
         ctx.cfg,
         repo=ctx.repo,
@@ -588,26 +620,36 @@ def _verifier_lane(
         head_sha=ctx.sha,
         phase=expected_phase,
         phase1_outputs={r: o.raw for r, o in ctx.phase1_outputs.items()},
-        phase2_outputs={r: o.raw for r, o in ctx.phase2_outputs.items()},
+        phase2_outputs={r: o.raw for r, o in all_phase2.items()},
         coderabbit=ctx.coderabbit,
         coderabbit_ids=ctx.coderabbit_ids,
         evidence=ctx.evidence,
         prior=ctx.prior,
         prior_sha=ctx.prior_sha,
         phase1_skipped=ctx.phase1_skipped,
+        fresh_final=fresh_final,
     )
     raw = _run_lane(ctx, phase=phase, role="verifier", lm=lm, prompt=prompt, is_verifier=True)
     out = parse_verifier_output(
         raw, expected_phase=expected_phase, expected_coderabbit_ids=ctx.coderabbit_ids
     )
+    lane_findings = {
+        f"{p}:{role}": o.findings
+        for p, outputs in (("phase1", ctx.phase1_outputs), ("phase2", ctx.phase2_outputs))
+        for role, o in outputs.items()
+    }
+    if phase2_outputs is not None:
+        lane_findings.update(
+            {
+                f"phase2:fresh:{role.removeprefix('fresh:')}": o.findings
+                for role, o in phase2_outputs.items()
+                if role.startswith("fresh:")
+            }
+        )
     publish.attribute_sources(
         out,
         ctx.reviewers,
-        {
-            f"{p}:{role}": o.findings
-            for p, outputs in (("phase1", ctx.phase1_outputs), ("phase2", ctx.phase2_outputs))
-            for role, o in outputs.items()
-        },
+        lane_findings,
     )
     _record_findings(ctx, phase, "verified", out.findings)
     return out
@@ -657,6 +699,22 @@ def step_publish(
     verifier_lm: LaneModel,
     phase2_skipped: str | None = None,
 ) -> publish.PublishResult:
+    # The review may have taken long enough for a push to land after the initial
+    # worktree check. Never publish an approval (or any verdict) against an
+    # obsolete head; the scheduler will supersede this run and ingest will queue
+    # the live commit.
+    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
+    if live.state != "open" or live.merged:
+        raise ReviewError(FailKind.FATAL, f"PR is {live.state}{' (merged)' if live.merged else ''}")
+    if live.head_sha != ctx.sha:
+        raise ReviewError(
+            FailKind.FATAL, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
+        )
+    if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
+        raise ReviewError(
+            FailKind.FATAL,
+            f"live base {live.base_sha[:8]} != assigned {ctx.base_sha[:8]}",
+        )
     existing = github.existing_review_for_sha(
         ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
     )
@@ -775,6 +833,7 @@ def _verdict_update(
         phase1_skipped=ctx.phase1_skipped,
         phase1_choice=_phase1_choice_provenance(ctx),
         adhoc=ctx.adhoc,
+        fresh_final=ctx.fresh_final,
     )
     state = publish.standing_verdict(
         github.reviews(ctx.gh, ctx.repo, ctx.number), ctx.sha, phase, ctx.cfg.bot_login
@@ -883,6 +942,7 @@ def _build_review(
         phase1_skipped=ctx.phase1_skipped,
         phase1_choice=_phase1_choice_provenance(ctx),
         adhoc=ctx.adhoc,
+        fresh_final=ctx.fresh_final,
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -973,20 +1033,35 @@ def _reviewer_step(
     phase: str,
     lm: LaneModel | Callable[[], LaneModel],
     expected_phase: str,
+    fresh: bool = False,
 ) -> dict[str, ReviewerOutput]:
     _step_start(ctx, step)
     if callable(lm):
         lm = lm()  # Phase 1 picks its model inside the step, so a slow lookup shows there
-    outputs = _reviewer_lanes(ctx, phase=phase, lm=lm, expected_phase=expected_phase)
+    outputs = _reviewer_lanes(ctx, phase=phase, lm=lm, expected_phase=expected_phase, fresh=fresh)
     _step_end(ctx, step, "ok", {"roles": list(outputs)})
     return outputs
 
 
 def _verify_step(
-    ctx: RunContext, *, step: StepName, phase: str, lm: LaneModel, expected_phase: str
+    ctx: RunContext,
+    *,
+    step: StepName,
+    phase: str,
+    lm: LaneModel,
+    expected_phase: str,
+    phase2_outputs: dict[str, ReviewerOutput] | None = None,
+    fresh_final: bool = False,
 ) -> VerifierOutput:
     _step_start(ctx, step)
-    out = _verifier_lane(ctx, phase=phase, lm=lm, expected_phase=expected_phase)
+    out = _verifier_lane(
+        ctx,
+        phase=phase,
+        lm=lm,
+        expected_phase=expected_phase,
+        phase2_outputs=phase2_outputs,
+        fresh_final=fresh_final,
+    )
     _step_end(ctx, step, "ok", {"blockers": out.blocker_count, "findings": len(out.findings)})
     return out
 
@@ -1015,6 +1090,44 @@ def _publish_step(
         phase=phase,
         blocker_count=verified.blocker_count,
         phase2_skipped=phase2_skipped,
+    )
+
+
+def _fresh_final_if_needed(
+    ctx: RunContext, *, verified: VerifierOutput, effort: Any
+) -> VerifierOutput:
+    """Run the independent final gate after an iterative review has cleared blockers.
+
+    Prior findings and discussion remain available to the verifier, while the fresh
+    Phase-2 reviewer lanes receive no prior-finding checklist and inspect the complete
+    current merge-base range independently.
+    """
+    if (
+        not ctx.has_prior_review
+        or verified.blocker_count
+        or not ctx.cfg.policy.phase2_enabled
+        or effort.phase2 is None
+    ):
+        return verified
+    ctx.fresh_final = True
+    fresh_outputs = _reviewer_step(
+        ctx,
+        step=StepName.FRESH_PHASE2,
+        phase="phase2",
+        lm=_with_effort(ctx.cfg.policy.phase2_reviewer, effort.phase2),
+        expected_phase="final",
+        fresh=True,
+    )
+    combined = dict(ctx.phase2_outputs)
+    combined.update({f"fresh:{role}": output for role, output in fresh_outputs.items()})
+    return _verify_step(
+        ctx,
+        step=StepName.FRESH_VERIFY2,
+        phase="verify2",
+        lm=ctx.cfg.policy.phase2_verifier,
+        expected_phase="final",
+        phase2_outputs=combined,
+        fresh_final=True,
     )
 
 
@@ -1134,6 +1247,7 @@ def run(ctx: RunContext) -> RunStatus:
             lm=pol.phase2_verifier,
             expected_phase="final",
         )
+        ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
         _publish_step(ctx, phase="final", verified=ctx.verify2, verifier_lm=pol.phase2_verifier)
         return RunStatus.DONE
     ctx.phase1_outputs = _reviewer_step(
@@ -1185,6 +1299,7 @@ def run(ctx: RunContext) -> RunStatus:
     ctx.verify2 = _verify_step(
         ctx, step=StepName.VERIFY2, phase="verify2", lm=pol.phase2_verifier, expected_phase="final"
     )
+    ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
     _publish_step(ctx, phase="final", verified=ctx.verify2, verifier_lm=pol.phase2_verifier)
     return RunStatus.DONE
 

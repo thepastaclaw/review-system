@@ -79,6 +79,8 @@ class StepName(StrEnum):
     GATE = "gate"
     PHASE2 = "phase2"
     VERIFY2 = "verify2"
+    FRESH_PHASE2 = "fresh_phase2"
+    FRESH_VERIFY2 = "fresh_verify2"
     PUBLISH = "publish"
 
 
