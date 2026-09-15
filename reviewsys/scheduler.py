@@ -171,6 +171,20 @@ def _requeue_or_fail(
     attempts = int(head["attempts"])
     # A push raced with the worker's initial metadata read.  The assigned SHA is obsolete;
     # this is normal queue churn, not a review failure and must not page the operator.
+    if kind == FailKind.FATAL and reason.startswith("live base "):
+        ts = now()
+        conn.execute(
+            "UPDATE heads SET status='queued', eligible_at=?, reason=? WHERE id=?",
+            (ts, reason[:500], head_id),
+        )
+        event(
+            conn,
+            "head.requeued",
+            repo=head["repo"],
+            number=head["number"],
+            detail=f"base moved while reviewing {head['sha'][:8]}: {reason[:300]}",
+        )
+        return
     if kind == FailKind.FATAL and reason.startswith("live head "):
         ts = now()
         conn.execute(
