@@ -117,10 +117,12 @@ def test_already_published_backfills_bookkeeping(cfg, conn, gh, lanes, monkeypat
     (rid,) = schedule(conn, cfg, spawn=False)
     status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
     assert status == RunStatus.DONE
-    assert len(gh.posted_reviews) == 1, "no duplicate post"
+    assert len(gh.posted_reviews) == 2, "re-review summary is always posted"
+    assert "## Re-review" in gh.posted_reviews[1]["body"]
+    assert "Review provenance" in gh.posted_reviews[1]["body"]
     assert conn.execute("SELECT github_review_id FROM reviews").fetchone()[0] == 4242
     assert conn.execute("SELECT COUNT(*) FROM posted_findings").fetchone()[0] == 1
-    assert conn.execute("SELECT review_id FROM runs WHERE id=?", (rid,)).fetchone()[0] == 4242
+    assert conn.execute("SELECT review_id FROM runs WHERE id=?", (rid,)).fetchone()[0] == 5001
 
 
 def test_gate_to_preliminary_publish_honours_cancel(cfg, conn, gh, lanes, monkeypatch):
