@@ -12,7 +12,6 @@ set -euo pipefail
 
 REF="${1:-main}"
 if [ $# -gt 0 ]; then shift; fi
-shift
 FORCE=""; SHADOW=""
 for a in "$@"; do case "$a" in --force) FORCE=1;; --shadow) SHADOW=1;; esac; done
 REPO="thepastaclaw/review-system"
