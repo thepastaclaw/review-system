@@ -253,6 +253,7 @@ def test_head_moved_is_fatal(cfg, conn, gh, lanes):
         and "live head"
         in conn.execute("SELECT reason FROM runs WHERE id=?", (rid,)).fetchone()["reason"]
     )
+    assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "superseded"
 
 
 def test_cross_round_dedupe_suppresses_existing_thread(cfg, conn, gh, lanes):
@@ -1271,6 +1272,45 @@ def test_second_withdrawn_finding_at_same_sha_still_gets_its_note(cfg, conn, gh,
         "bbb": "replied",
     }
     assert sum("resolveReviewThread" in " ".join(c) for c in gh.calls) == 2
+
+
+def test_open_thread_with_same_answer_is_not_replied_again_on_new_head(cfg, conn, gh, lanes):
+    """A failed or delayed resolve must not turn every new head into another status comment."""
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    verified = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    prior_answer = (
+        "<!-- thepastaclaw-thread-answer v1 sha=old reply=None finding=aaa -->\n"
+        "**Resolved** (re-reviewed at `old`): fixed"
+    )
+    out = answer_replied_threads(
+        gh,
+        "dashpay/platform",
+        1,
+        "b" * 40,
+        threads={},
+        open_threads={
+            "aaa": {
+                "comment_id": 900,
+                "thread_id": "T1",
+                "awaiting_answer": False,
+                "latest_reply_id": None,
+                "bot_answers": [{"id": 901, "body": prior_answer}],
+                "replies": [],
+            }
+        },
+        reconciliation={"aaa": {"finding_hash": "aaa", "status": "FIXED", "reason": "fixed"}},
+        verified=verified,
+    )
+    assert out == [
+        {"finding_hash": "aaa", "status": "FIXED", "comment_id": 900, "action": "already_answered"}
+    ]
+    assert not gh.replies
 
 
 def test_same_sha_rereview_that_finds_a_blocker_updates_final_verdict(cfg, conn, gh, lanes):

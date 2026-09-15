@@ -16,6 +16,10 @@ from typing import Any
 from .models import FailKind, ReviewError
 
 SEVERITIES = ("blocking", "suggestion", "nitpick")
+# Review models sometimes use CodeRabbit/GitHub-style priority labels.  Accept only the
+# conventional P0-P3 aliases and map them to our three published severity levels; unknown
+# labels remain contract errors so malformed output is still caught.
+SEVERITY_ALIASES = {"p0": "blocking", "p1": "blocking", "p2": "suggestion", "p3": "nitpick"}
 CATEGORIES = (
     "bug",
     "security",
@@ -113,6 +117,7 @@ class Finding:
         if not title:
             raise ReviewError(FailKind.CONTRACT, "finding has no title")
         sev = str(raw.get("severity") or "nitpick").strip().lower()
+        sev = SEVERITY_ALIASES.get(sev, sev)
         if sev not in SEVERITIES:
             raise ReviewError(FailKind.CONTRACT, f"finding {title!r} has invalid severity {sev!r}")
         cat = str(raw.get("category") or "general").strip().lower() or "general"

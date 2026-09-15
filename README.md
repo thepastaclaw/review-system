@@ -296,11 +296,14 @@ review body for the reference two-phase run.
 
 ## Deploy
 
-    deploy/deploy.sh v0.3.0            # live
-    deploy/deploy.sh v0.3.0 --shadow   # ingest + route only, never starts reviews or wakes the agent
+    deploy/deploy.sh                   # live, latest green main commit
+    deploy/deploy.sh main --shadow     # ingest + route only, latest green main commit
+    deploy/deploy.sh v0.14.0           # optional immutable tag/ref rollback
 
-Deploys only a lightweight tag whose CI `check` run is green, into
+Deploys a ref (by default `main`) only when its CI `check` run is green, into
 `~/.reviewsys` on the Mac Studio (`claw@100.81.48.28`), and restarts the daemon.
+The resolved commit is checked out detached, so each deployment remains
+reproducible and can be rolled back to a tag or commit ref.
 `claw` has no GUI session so launchd never supervises it; the daemon runs
 detached (`deploy/start-daemon.sh`) and a one-line cron watchdog
 (`deploy/reviewsys-watchdog.sh`, installed by `deploy.sh`) restarts it within a

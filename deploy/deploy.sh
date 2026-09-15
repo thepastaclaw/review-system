@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
 # Deploy reviewsys to the Mac Studio as user `claw`.
 #
-# Refuses to deploy anything that is not a tagged commit with a green CI run,
-# so the OpenClaw agent (which may edit this repo) cannot push untested code
-# into production by editing files on the box.
+# Refuses to deploy a ref without a green CI run, so the OpenClaw agent (which
+# may edit this repo) cannot push untested code into production by editing
+# files on the box. The resolved commit is still checked out detached for a
+# reproducible deployment and recorded in deployed.log.
 #
-# Usage:  deploy/deploy.sh <tag>            (run from anywhere with gh + ssh access)
-#         deploy/deploy.sh <tag> --force    (skip CI check; emergencies only)
+# Usage:  deploy/deploy.sh [ref]            (default: main)
+#         deploy/deploy.sh <ref> --force    (skip CI check; emergencies only)
 set -euo pipefail
 
-TAG="${1:?usage: deploy.sh <tag> [--force] [--shadow]}"
+REF="${1:-main}"
+if [ $# -gt 0 ]; then shift; fi
 shift
 FORCE=""; SHADOW=""
 for a in "$@"; do case "$a" in --force) FORCE=1;; --shadow) SHADOW=1;; esac; done
@@ -17,19 +19,19 @@ REPO="thepastaclaw/review-system"
 HOST="${REVIEWSYS_HOST:-claw@100.81.48.28}"
 LABEL="ai.thepastaclaw.reviewsys"
 
-SHA=$(gh api "repos/$REPO/git/ref/tags/$TAG" --jq .object.sha)
+SHA=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
 if [ -z "$FORCE" ]; then
   STATE=$(gh api "repos/$REPO/commits/$SHA/check-runs" --jq '[.check_runs[] | select(.name=="check")][0].conclusion // "none"')
   if [ "$STATE" != "success" ]; then
-    echo "refusing to deploy $TAG ($SHA): CI conclusion is '$STATE' (need success). Use --force to override." >&2
+    echo "refusing to deploy $REF ($SHA): CI conclusion is '$STATE' (need success). Use --force to override." >&2
     exit 1
   fi
 fi
 
-echo "deploying $TAG ($SHA) to $HOST"
-ssh -o BatchMode=yes "$HOST" bash -s -- "$TAG" "$SHA" "$LABEL" "$SHADOW" <<'REMOTE'
+echo "deploying $REF ($SHA) to $HOST"
+ssh -o BatchMode=yes "$HOST" bash -s -- "$REF" "$SHA" "$LABEL" "$SHADOW" <<'REMOTE'
 set -euo pipefail
-TAG="$1"; SHA="$2"; LABEL="$3"; SHADOW="${4:-}"
+REF="$1"; SHA="$2"; LABEL="$3"; SHADOW="${4:-}"
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin
 BASE=$HOME/.reviewsys
 SRC=$BASE/src
@@ -53,7 +55,7 @@ else
   echo live > "$BASE/mode"; echo "mode: LIVE"
 fi
 plutil -lint "$PLIST" >/dev/null
-echo "$TAG $SHA $(date -u +%FT%TZ)" >> "$BASE/deployed.log"
+echo "$REF $SHA $(date -u +%FT%TZ)" >> "$BASE/deployed.log"
 # watchdog cron line (idempotent): launchd never supervises this user, cron does
 WD="* * * * * $BASE/src/deploy/reviewsys-watchdog.sh >/dev/null 2>&1"
 { crontab -l 2>/dev/null | grep -v reviewsys-watchdog || true; echo "$WD"; } | crontab -

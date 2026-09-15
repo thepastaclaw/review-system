@@ -723,6 +723,23 @@ def _answer_outcome(
     return status, reason, explicit
 
 
+def _has_answer_for_status(thread: dict[str, Any], status: str) -> bool:
+    """Whether this finding already has a bot answer with the same outcome.
+
+    Open-thread reconciliation runs on every new head.  The answer marker is intentionally
+    head-specific for human replies, but an open thread with no newer human reply must not get
+    the same status comment on every head merely because GitHub failed to show it as resolved.
+    """
+    lead = _ANSWER_LEAD.get(status, status)
+    for answer in thread.get("bot_answers") or []:
+        body = str(answer.get("body") or "")
+        if "<!-- thepastaclaw-thread-answer v1" not in body:
+            continue
+        if re.search(rf"\*\*{re.escape(lead)}\*\*", body):
+            return True
+    return False
+
+
 def answer_replied_threads(
     gh: Gh,
     repo: str,
@@ -779,6 +796,14 @@ def answer_replied_threads(
         )
         status, reason, explicit = _answer_outcome(h, reconciliation.get(h) or {}, kept_hashes)
         item: dict[str, Any] = {"finding_hash": h, "status": status, "comment_id": cid}
+        # For an open thread with no newer human reply, a prior answer with the same outcome is
+        # already sufficient.  Do not retry the resolve mutation either: GitHub may leave the
+        # thread open when the mutation is rejected or races, and repeating it on every head is
+        # noisy and does not change the review state.
+        if not t.get("awaiting_answer") and _has_answer_for_status(t, status):
+            item["action"] = "already_answered"
+            done.append(item)
+            continue
         if any(marker in b for b in posted):
             item["action"] = "already_answered"
             done.append(item)

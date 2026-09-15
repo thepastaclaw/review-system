@@ -226,6 +226,19 @@ def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, 
             "thread_id": t.get("thread_id"),
             "awaiting_answer": awaiting,
             "latest_reply_id": replies[-1].get("id") if replies else None,
+            # Keep the bot's own answers so publishing can make open-thread reconciliation
+            # idempotent across new heads.  A thread can remain open when the resolve mutation
+            # races with a reply; that must not cause the same status note to be posted again.
+            "bot_answers": [
+                {
+                    "id": c.get("id"),
+                    "body": str(c.get("body") or "")[:4000],
+                    "created_at": c.get("created_at"),
+                }
+                for c in cs[1:]
+                if _is_bot(c, bot_login)
+                and "<!-- thepastaclaw-thread-answer v1" in str(c.get("body") or "")
+            ],
             "path": t.get("path"),
             "line": t.get("line"),
             "severity": severity,
