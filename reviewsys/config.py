@@ -146,7 +146,12 @@ class Config:
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
-        return tuple(r.repo for r in self.repos if r.enabled)
+        configured = tuple(r.repo for r in self.repos if r.enabled)
+        # Small automation-owned forks (for example backportsys' publication fork) can be
+        # reviewed without a skills entry. Keep these in runtime TOML so adding one does not
+        # require mutating the shared skills repository.
+        extra = tuple(str(x) for x in self.extra.get("additional_repos", []) if str(x))
+        return tuple(dict.fromkeys((*configured, *extra)))
 
     def repo(self, repo: str) -> RepoConfig | None:
         for r in self.repos:
@@ -189,6 +194,8 @@ gh = "gh"
 openclaw = "openclaw"
 
 [scheduling]
+# Additional automation-owned forks to poll and review (without a skills entry).
+additional_repos = []
 max_concurrent = 2
 priority_overflow = 2
 debounce_minutes = 30
@@ -383,5 +390,5 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         repos=repos,
         specialists=specialists,
         policy=policy,
-        extra=settings,
+        extra={**settings, "additional_repos": s.get("additional_repos", [])},
     )
