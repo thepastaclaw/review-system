@@ -24,7 +24,11 @@ from .status import median_run_minutes
 
 log = logging.getLogger(__name__)
 
-PRIORITY_BOX = "- [ ] **Request priority review** — tick this box and the review moves to the front of the queue."
+PRIORITY_BOX = (
+    "- [ ] **Request priority review** — click to move this review to the front of the queue."
+)
+NORMAL_BOX = "- [ ] **Request normal review** — click when the PR is ready for review."
+DEFERRED_MARKER = "<!-- thepastaclaw-review-deferred v1 -->"
 PRIORITY_CHECKED_RE = re.compile(
     r"^\s*-\s*\[[xX]\]\s*\*\*Request priority review\*\*", re.MULTILINE
 )
@@ -80,6 +84,32 @@ def _comment_key(repo: str, number: int) -> str:
 
 def priority_requested(comment_body: str) -> bool:
     return bool(PRIORITY_CHECKED_RE.search(comment_body))
+
+
+def normal_requested(comment_body: str) -> bool:
+    return bool(
+        re.search(r"^\s*-\s*\[[xX]\]\s*\*\*Request normal review\*\*", comment_body, re.MULTILINE)
+    )
+
+
+def deferred_body(sha: str, *, draft: bool, debounce_minutes: int) -> str:
+    reason = (
+        "this PR is a draft"
+        if draft
+        else f"the new head is waiting for the {debounce_minutes}-minute push debounce"
+    )
+    return "\n".join(
+        [
+            github.GATE_MARKER,
+            DEFERRED_MARKER,
+            f"🕓 Review not started yet because {reason}.",
+            "",
+            NORMAL_BOX,
+            PRIORITY_BOX,
+            "",
+            f"_Commit {sha[:8]}. Normal review starts when eligible; priority review starts as soon as a slot is available._",
+        ]
+    )
 
 
 def _promote(conn: sqlite3.Connection, head: sqlite3.Row, actor: str) -> bool:
@@ -160,6 +190,34 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
             stats["promoted"] += 1
     if stats["promoted"]:
         rows = queued_order(conn, ts=ts)
+
+    # Drafts and heads in push debounce need an actionable explanation too. A checked box is
+    # an explicit request and is converted into a normal or priority queue entry.
+    deferred = conn.execute(
+        "SELECT p.repo,p.number,p.head_sha,p.is_draft,h.id,h.priority,h.status FROM prs p LEFT JOIN heads h ON h.repo=p.repo AND h.number=p.number AND h.sha=p.head_sha WHERE p.state='open' AND (p.is_draft=1 OR (h.status='queued' AND h.eligible_at>?))",
+        (ts,),
+    ).fetchall()
+    for p in deferred:
+        try:
+            c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
+            body = str(c.get("body") or "") if c else ""
+            if normal_requested(body) or priority_requested(body):
+                trigger = Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.MANUAL
+                from .ingest import enqueue_head
+
+                with tx(conn):
+                    enqueue_head(conn, cfg, p["repo"], p["number"], p["head_sha"], trigger, ts=ts)
+                continue
+            rendered = deferred_body(
+                p["head_sha"], draft=bool(p["is_draft"]), debounce_minutes=cfg.debounce_minutes
+            )
+            if c and github.GATE_MARKER in body and body == rendered:
+                continue
+            if stats["written"] < MAX_WRITES_PER_PASS:
+                _write(conn, gh, p["repo"], p["number"], c, rendered)
+                stats["written"] += 1
+        except Exception as exc:
+            log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
     active = conn.execute(
         "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
     ).fetchone()["n"]
