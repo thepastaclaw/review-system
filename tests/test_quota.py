@@ -117,6 +117,10 @@ def test_rung_with_use_up_to_is_skipped_above_its_ceiling():
     # a fallback below a failed rung honours the ceiling too
     c = quota.choose((glm, MUSE), 0.15, reader, effort="max", skipped=(quota.Skipped("g", "x"),))
     assert c.model is MUSE and [s.model for s in c.skipped] == ["g", GLM.model]
+    # the ceiling is judged on the effort the rung would run at, not the raw tier effort: a
+    # rung whose own cap is at its ceiling can never exceed it
+    gem = LaneModel(GEMINI.agent, GEMINI.model, "high", GEMINI.quota, use_up_to="high")
+    assert quota.choose((gem, MUSE), 0.15, lambda s: _status(1.0), effort="max").model is gem
 
 
 def test_single_rung_never_consults_quota():

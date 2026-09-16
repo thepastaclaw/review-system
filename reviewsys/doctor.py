@@ -120,20 +120,19 @@ def report_quota(cfg: Config, mgmt: quota.Management | None = None) -> bool:
     reserve = cfg.policy.quota_reserve
     for lm in cfg.policy.phase1_candidates:
         label = f"quota {lm.model}"
+        ceiling = f"; used only up to {lm.use_up_to} effort" if lm.use_up_to else ""
         if lm.quota is None:
-            _ok(label, True, "not gated (pay per token)")
+            _ok(label, True, "not gated (pay per token)" + ceiling)
             continue
         try:
             st = quota.read(mgmt, lm.quota)
         except quota.QuotaError as exc:
-            ok &= _ok(label, False, str(exc))
+            ok &= _ok(label, False, str(exc) + ceiling)
             continue
         detail = f"{st.account}: {st.describe()}"
         if st.remaining < reserve:
             detail += f" (below the {round(reserve * 100)}% reserve; rung skipped)"
-        if lm.use_up_to:
-            detail += f"; used only up to {lm.use_up_to} effort"
-        _ok(label, True, detail)
+        _ok(label, True, detail + ceiling)
     return ok
 
 

@@ -34,7 +34,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from .config import EFFORT_LEVELS, LaneModel, QuotaSource
+from .config import EFFORT_LEVELS, LaneModel, QuotaSource, min_effort
 from .db import fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
 
 log = logging.getLogger(__name__)
@@ -354,12 +354,12 @@ QuotaReader = Callable[[QuotaSource], QuotaStatus]
 
 
 def _too_slow_for(lm: LaneModel, effort: str | None) -> bool:
-    """A rung with `use_up_to` is passed over when the tier asks for more effort than that."""
-    return (
-        effort is not None
-        and lm.use_up_to is not None
-        and EFFORT_LEVELS.index(effort) > EFFORT_LEVELS.index(lm.use_up_to)
-    )
+    """A rung with `use_up_to` is passed over when it would actually run above that effort:
+    the tier's effort clamped to the rung's own cap, exactly as `worker._rung` will run it."""
+    if effort is None or lm.use_up_to is None:
+        return False
+    would_run_at = min_effort(effort, lm.effort)
+    return EFFORT_LEVELS.index(would_run_at) > EFFORT_LEVELS.index(lm.use_up_to)
 
 
 def choose(

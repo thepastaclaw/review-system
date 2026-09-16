@@ -36,9 +36,11 @@ class LaneModel:
     model: str
     effort: str = "high"  # for a Phase-1 ladder rung: the cap the tier effort is clamped to
     quota: QuotaSource | None = None  # None: never gated (pay-per-token)
-    # for a Phase-1 ladder rung: only eligible when the tier asks for at most this effort.
-    # Differs from `effort` (which clamps): a rung above its ceiling is passed over entirely,
-    # for models that are fine at moderate effort but far too slow at the top of the scale.
+    # for a Phase-1 ladder rung: only eligible when the effort it would run at (the tier's
+    # effort clamped to `effort`) is at most this. Differs from `effort` (which clamps): a rung
+    # above its ceiling is passed over entirely, for models that are fine at moderate effort
+    # but far too slow at the top of the scale. Never allowed on the last rung, which must
+    # always be able to run Phase 1.
     use_up_to: str | None = None
 
 
@@ -293,6 +295,11 @@ def _candidates(node: dict[str, Any], base: LaneModel) -> tuple[LaneModel, ...]:
             raise ValueError(
                 f"phase1 candidate {c.model!r} has no quota source but is not the last rung"
             )
+    if out[-1].use_up_to is not None:
+        raise ValueError(
+            f"phase1 candidate {out[-1].model!r} is the last rung and cannot have use_up_to: "
+            "Phase 1 must always be able to run"
+        )
     return out
 
 

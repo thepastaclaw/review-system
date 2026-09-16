@@ -2268,6 +2268,30 @@ def test_phase1_lane_failure_falls_down_the_ladder(cfg, conn, gh, lanes, skills_
     ] * 2
 
 
+def test_fallback_below_a_dead_rung_honours_the_ceiling(cfg, conn, gh, lanes, skills_dir, tmp_path):
+    """Gemini (cap high) dies at tier max; the fallback must judge GLM against the tier's
+    effort (max), not the clamped effort the dead rung ran at (high), and skip it."""
+    from reviewsys import config as cfg_mod
+
+    raw = json.loads((skills_dir / "config.json").read_text())
+    ladder = json.loads(json.dumps(LADDER))
+    ladder[1]["use_up_to"] = "high"
+    raw["review_model_policy"]["phase1"]["candidates"] = ladder
+    (skills_dir / "config.json").write_text(json.dumps(raw))
+    cfg2 = cfg_mod.load(tmp_path / "config.toml")
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.dead_models = {"gemini-3.8-flash-high"}
+    reader = _quota_reader({"antigravity": (0.9, 0.9), "zai": (0.9, 0.9)})
+    _, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    models = [s.model for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"]
+    assert models[:2] == ["gemini-3.8-flash-high"] * 2
+    assert set(models[2:]) == {"muse-spark-1.3-contributor"}
+    body = gh.posted_reviews[0]["body"]
+    assert "`glm-5.3-flash` (not used above high effort; tier asks max)" in body
+
+
 def test_phase1_failure_on_last_rung_still_fails_the_run(
     cfg, conn, gh, lanes, skills_dir, tmp_path
 ):
@@ -2317,9 +2341,21 @@ def test_ladder_config_validation(cfg, skills_dir, tmp_path):
     with pytest.raises(ValueError, match="effort"):
         load_with(candidates=[{"model": "x", "reasoning": "ultra"}])
     with pytest.raises(ValueError, match="use_up_to"):
-        load_with(candidates=[{"model": "x", "use_up_to": "ultra"}])
-    assert (
+        load_with(
+            candidates=[
+                {"model": "x", "use_up_to": "ultra", "quota": {"provider": "zai"}},
+                {"model": "y"},
+            ]
+        )
+    with pytest.raises(ValueError, match="last rung"):
         load_with(candidates=[{"model": "x", "use_up_to": "high"}])
+    assert (
+        load_with(
+            candidates=[
+                {"model": "x", "use_up_to": "high", "quota": {"provider": "zai"}},
+                {"model": "y"},
+            ]
+        )
         .policy.phase1_candidates[0]
         .use_up_to
         == "high"
