@@ -36,6 +36,10 @@ class LaneModel:
     model: str
     effort: str = "high"  # for a Phase-1 ladder rung: the cap the tier effort is clamped to
     quota: QuotaSource | None = None  # None: never gated (pay-per-token)
+    # for a Phase-1 ladder rung: only eligible when the tier asks for at most this effort.
+    # Differs from `effort` (which clamps): a rung above its ceiling is passed over entirely,
+    # for models that are fine at moderate effort but far too slow at the top of the scale.
+    use_up_to: str | None = None
 
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
@@ -265,8 +269,17 @@ def _candidate(node: dict[str, Any], base: LaneModel) -> LaneModel:
     effort = str(node.get("reasoning", base.effort))
     if effort not in EFFORT_LEVELS:
         raise ValueError(f"phase1 candidate {model!r}: effort {effort!r} not in {EFFORT_LEVELS}")
+    use_up_to = node.get("use_up_to")
+    if use_up_to is not None and str(use_up_to) not in EFFORT_LEVELS:
+        raise ValueError(
+            f"phase1 candidate {model!r}: use_up_to {use_up_to!r} not in {EFFORT_LEVELS}"
+        )
     return LaneModel(
-        agent=str(node.get("agent", base.agent)), model=model, effort=effort, quota=quota
+        agent=str(node.get("agent", base.agent)),
+        model=model,
+        effort=effort,
+        quota=quota,
+        use_up_to=str(use_up_to) if use_up_to is not None else None,
     )
 
 

@@ -73,7 +73,7 @@ models; each may name the subscription whose remaining quota gates it:
 ```json
 "candidates": [
   {"model": "gemini-3.8-flash-high", "reasoning": "high", "quota": {"provider": "antigravity", "group": "Gemini Models"}},
-  {"model": "glm-5.3-flash", "reasoning": "max", "quota": {"provider": "zai"}},
+  {"model": "glm-5.3-flash", "reasoning": "max", "use_up_to": "high", "quota": {"provider": "zai"}},
   {"model": "muse-spark-1.3-contributor", "agent": "muse-reviewer", "reasoning": "xhigh"}
 ],
 "quota_reserve": 0.15
@@ -89,7 +89,15 @@ and the rung's (Gemini through Antigravity tops out at `high`, the Muse
 contributor tier at `xhigh`). If a Phase-1 lane still fails on its rung (rate
 limit, dead upstream, malformed output twice) the run drops to the next rung
 for that role and the rest (`phase1.model_fallback`) instead of failing; only
-the last rung's failure fails the run. Only the last rung may be ungated; the
+the last rung's failure fails the run. A rung may also carry `use_up_to`, an
+effort ceiling: when the tier asks for more than that the rung is passed over
+without a quota lookup ("not used above high effort; tier asks max"), and the
+fallback below a failed rung honours it too. This exists for GLM, which is a
+good reviewer up to `high` but at `max` thinks for 50–150 min per lane
+(measured 2026-09-09..16 over 118 lanes: median 51 min, p90 136; Gemini at
+`high` median 12, Muse at `xhigh` median 5), so `normal` and `critical` tiers
+go to Gemini or Muse and only `trivial`/`low` still use GLM. Phase 1 always
+runs; the ceiling only changes which rung runs it. Only the last rung may be ungated; the
 `phase1.reviewer` node stays the declared default whose `reasoning` seeds the
 tier table. The choice is recorded
 as `phase1.model_selected`, stored per lane in `lanes.model` / `lanes.effort`,

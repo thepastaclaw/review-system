@@ -2316,6 +2316,55 @@ def test_ladder_config_validation(cfg, skills_dir, tmp_path):
         load_with(quota_reserve=15)
     with pytest.raises(ValueError, match="effort"):
         load_with(candidates=[{"model": "x", "reasoning": "ultra"}])
+    with pytest.raises(ValueError, match="use_up_to"):
+        load_with(candidates=[{"model": "x", "use_up_to": "ultra"}])
+    assert (
+        load_with(candidates=[{"model": "x", "use_up_to": "high"}])
+        .policy.phase1_candidates[0]
+        .use_up_to
+        == "high"
+    )
+
+
+def test_glm_rung_is_passed_over_when_the_tier_asks_max(cfg, conn, gh, lanes, skills_dir, tmp_path):
+    """The live policy shape: Gemini out of quota, GLM capped by `use_up_to: high`, a normal
+    tier asking max. Phase 1 still runs (on Muse at xhigh); the skip is disclosed."""
+    from reviewsys import config as cfg_mod
+
+    raw = json.loads((skills_dir / "config.json").read_text())
+    ladder = json.loads(json.dumps(LADDER))
+    ladder[1]["use_up_to"] = "high"
+    raw["review_model_policy"]["phase1"]["candidates"] = ladder
+    (skills_dir / "config.json").write_text(json.dumps(raw))
+    cfg2 = cfg_mod.load(tmp_path / "config.toml")
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    zai_calls: list[str] = []
+
+    def reader(source):
+        zai_calls.append(source.provider)
+        return _quota_reader({"antigravity": (0.99, 0.05), "zai": (1.0, 1.0)})(source)
+
+    _, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    assert "zai" not in zai_calls  # never even looked at GLM's quota
+    p1 = {(s.model, s.effort) for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"}
+    assert p1 == {("muse-spark-1.3-contributor", "xhigh")}
+    body = gh.posted_reviews[0]["body"]
+    assert "`glm-5.3-flash` (not used above high effort; tier asks max)" in body
+    # a low tier asks high: GLM is back in play (second PR, same repo)
+    lanes.calls.clear()
+    lanes.triage = {"tier": "low", "reasoning": "small"}
+    gh.posted_reviews.clear()
+    with tx(conn):
+        enqueue_head(conn, cfg2, "dashpay/platform", 2, HEAD, Trigger.MENTION)
+    (rid,) = schedule(conn, cfg2, spawn=False)
+    status = worker.main(
+        cfg2, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False, quota_reader=reader
+    )
+    assert status == RunStatus.DONE
+    p1 = {(s.model, s.effort) for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"}
+    assert p1 == {("glm-5.3-flash", "high")}
 
 
 def test_phase1_ladder_is_silent_when_backlog_skips_phase1(

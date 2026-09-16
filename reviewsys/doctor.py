@@ -131,6 +131,8 @@ def report_quota(cfg: Config, mgmt: quota.Management | None = None) -> bool:
         detail = f"{st.account}: {st.describe()}"
         if st.remaining < reserve:
             detail += f" (below the {round(reserve * 100)}% reserve; rung skipped)"
+        if lm.use_up_to:
+            detail += f"; used only up to {lm.use_up_to} effort"
         _ok(label, True, detail)
     return ok
 
