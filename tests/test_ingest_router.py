@@ -407,6 +407,34 @@ def test_review_reply_under_bot_finding_queues_priority_head(cfg, conn, gh, noti
     )
 
 
+def test_review_reply_from_another_bot_never_queues_a_run(cfg, conn, gh, notifier):
+    """CodeRabbit is trusted for mentions, but its reply under one of our findings is not a
+    human waiting on an answer: ignored at the router, no head, no worktree."""
+    reply = {**_reply_comment(2, 1), "user": {"login": "coderabbitai[bot]"}}
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "reply:2",
+                "review_reply",
+                "dashpay/platform",
+                7,
+                "coderabbitai[bot]",
+                reply["url"],
+                reply["created_at"],
+                reply["created_at"],
+            ),
+        )
+    gh.routes["repos/dashpay/platform/pulls/comments/2"] = reply
+    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc -->",
+    }
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["review_reply"] == 0 and stats["ignored"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM heads").fetchone()[0] == 0
+
+
 def test_review_reply_under_someone_elses_thread_is_ignored(cfg, conn, gh, notifier):
     reply = _reply_comment(2, 1)
     with tx(conn):

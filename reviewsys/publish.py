@@ -197,6 +197,7 @@ class Provenance:
     phase1_choice: dict[str, Any] | None = None  # {model, reason, skipped:[{model, reason}]}
     adhoc: bool = False  # repo has no skills entry: generic guidance, all specialists offered
     fresh_final: bool = False  # an independent Phase-2 gate ran after iterative reconciliation
+    conversation: bool = False  # no reviewer lanes ran: a discussion outcome moved the verdict
 
 
 @dataclass(slots=True)
@@ -264,6 +265,11 @@ def _fence(content: str) -> str:
 
 
 def _source_line(p: Provenance) -> str:
+    if p.conversation:
+        return (
+            f"Source: conversation lane `{p.verifier['model']}` (agent: `{p.verifier['agent']}`); "
+            "no reviewer or verifier lanes ran for this follow-up"
+        )
     parts = [
         f"reviewer {i}: `{r['model']}` (agent: `{r['agent']}`, role: `{r['role']}`)"
         for i, r in enumerate(p.reviewers, 1)
@@ -292,6 +298,12 @@ def _phase1_choice_line(c: dict[str, Any]) -> str:
 
 
 def _provenance_lines(p: Provenance, phase: str) -> list[str]:
+    if p.conversation:
+        return [
+            "- Verdict moved because every blocking finding on this commit was withdrawn, "
+            "resolved or deferred in the inline discussion; the code was not re-reviewed"
+        ]
+
     def fmt(r: dict[str, Any]) -> str:
         status = r["status"] + (f", effort {r['effort']}" if r.get("effort") else "")
         return f"`{r['model']}` — {r['role']} ({status}); agent `{r['agent']}`"
@@ -719,6 +731,129 @@ _ANSWER_LEAD = {
     "INTENTIONALLY_DEFERRED": "Deferred",
     "STILL_VALID": "Still applies",
 }
+_RESOLVING = {"WITHDRAWN", "FIXED", "OUTDATED"}
+# status -> the quiet trailing note render_conversation_answer appends (absent: no note)
+_CONVERSATION_NOTE = {
+    "FIXED": "\n\n_Marking this resolved._",
+    "WITHDRAWN": "\n\n_Withdrawing this finding._",
+    "INTENTIONALLY_DEFERRED": (
+        "\n\n_Noted as intentionally deferred; I will not press it further here._"
+    ),
+}
+
+
+def scrub_reply(text: str, limit: int) -> str:
+    """Bound and defuse model-written text before it reaches GitHub: no CodeRabbit retriggers,
+    no echoed bot markers (they would corrupt the once-per-reply bookkeeping), no live
+    @-mentions (a bot must never page people). Truncation happens before defusing so a
+    mention is never cut in half, and a code fence left open by the cut is closed."""
+    low = text.lower()
+    if "@coderabbitai" in low or "<!-- thepastaclaw" in low:
+        return ""
+    text = text[:limit].rstrip()
+    if text.count("```") % 2:
+        text += "\n```"
+    return text.replace("@", "@\u200b")
+
+
+def render_thread_answer(*, marker: str, status: str, head_sha: str, reply: str) -> str:
+    lead = _ANSWER_LEAD.get(status, status)
+    return f"{marker}\n**{lead}** (re-reviewed at `{head_sha[:8]}`): {reply}"
+
+
+def render_conversation_answer(*, marker: str, status: str, reply: str) -> str:
+    """A conversational answer: the model's prose, with the status as a quiet trailing note
+    rather than a bold lead, so the thread reads like a discussion, not a verdict log."""
+    return f"{marker}\n{reply}{_CONVERSATION_NOTE.get(status, '')}"
+
+
+def _deliver_answer(
+    gh: Gh,
+    repo: str,
+    number: int,
+    *,
+    comment_id: Any,
+    body: str,
+    thread_id: Any,
+    resolve: bool,
+    item: dict[str, Any],
+) -> None:
+    """Post one answer on a finding thread and, when the outcome retires the finding, resolve
+    the thread. Records what happened on `item` (`action`, and `resolved` when we tried)."""
+    try:
+        github.post_reply(gh, repo, number, int(comment_id), body)
+        item["action"] = "replied"
+    except (ReviewError, ValueError) as exc:
+        item["action"] = f"reply_failed: {exc}"
+        return
+    if resolve and thread_id:
+        try:
+            github.resolve_thread(gh, str(thread_id))
+            item["resolved"] = True
+        except ReviewError as exc:
+            item["resolved"] = f"failed: {exc}"
+
+
+def answer_conversation(
+    gh: Gh,
+    repo: str,
+    number: int,
+    head_sha: str,
+    *,
+    threads: dict[str, dict[str, Any]],
+    outcomes: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Post the conversation lane's replies: one per replied thread with something to say,
+    exactly once per (human reply, head), resolving threads the model conceded or confirmed
+    fixed. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done."""
+    posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
+    done: list[dict[str, Any]] = []
+    seen_roots: set[tuple[str, str]] = set()  # same alias guard as answer_replied_threads
+    for h, t in threads.items():
+        cid = t.get("comment_id")
+        o = outcomes.get(h)
+        if not cid or o is None:
+            continue
+        item: dict[str, Any] = {
+            "finding_hash": h,
+            "status": o.status,
+            "comment_id": cid,
+            "mode": "conversation",
+        }
+        root_key = (str(t.get("thread_id") or ""), str(cid))
+        if root_key in seen_roots:
+            item.update(status="DUPLICATE_THREAD", action="duplicate_thread_skipped")
+            done.append(item)
+            continue
+        seen_roots.add(root_key)
+        marker = THREAD_ANSWER_MARKER.format(
+            sha=head_sha, reply=t.get("latest_reply_id"), finding=h
+        )
+        if any(marker in b for b in posted):
+            item["action"] = "already_answered"
+            done.append(item)
+            continue
+        if o.status == "NO_REPLY":
+            item["action"] = "no_reply"
+            done.append(item)
+            continue
+        reply = scrub_reply(o.reply, 2500)
+        if not reply:
+            item["action"] = "suppressed_reply"
+            done.append(item)
+            continue
+        _deliver_answer(
+            gh,
+            repo,
+            number,
+            comment_id=cid,
+            body=render_conversation_answer(marker=marker, status=o.status, reply=reply),
+            thread_id=t.get("thread_id"),
+            resolve=o.status in _RESOLVING,
+            item=item,
+        )
+        done.append(item)
+    return done
 
 
 def _answer_outcome(
@@ -742,10 +877,7 @@ def _answer_outcome(
         status, explicit = "WITHDRAWN", False
     reason = ""
     if stated == status:
-        reason = str(row.get("reason") or "").strip()
-        if "@coderabbitai" in reason.lower():
-            reason = ""
-        reason = reason.replace("@", "@\u200b")[:_REASON_MAX]
+        reason = scrub_reply(str(row.get("reason") or "").strip(), _REASON_MAX)
     if not reason and status == "STILL_VALID":
         reason = "The verifier kept this finding on the current head; see the updated review."
     elif not reason:
@@ -838,23 +970,18 @@ def answer_replied_threads(
             item["action"] = "already_answered"
             done.append(item)
             continue
-        body = (
-            f"{marker}\n"
-            f"**{_ANSWER_LEAD.get(status, status)}** (re-reviewed at `{head_sha[:8]}`): {reason}"
+        _deliver_answer(
+            gh,
+            repo,
+            number,
+            comment_id=cid,
+            body=render_thread_answer(
+                marker=marker, status=status, head_sha=head_sha, reply=reason
+            ),
+            thread_id=t.get("thread_id"),
+            resolve=explicit and status in _RESOLVING,
+            item=item,
         )
-        try:
-            github.post_reply(gh, repo, number, int(cid), body)
-            item["action"] = "replied"
-        except (ReviewError, ValueError) as exc:
-            item["action"] = f"reply_failed: {exc}"
-            done.append(item)
-            continue
-        if explicit and status in {"WITHDRAWN", "FIXED", "OUTDATED"} and t.get("thread_id"):
-            try:
-                github.resolve_thread(gh, str(t["thread_id"]))
-                item["resolved"] = True
-            except ReviewError as exc:
-                item["resolved"] = f"failed: {exc}"
         done.append(item)
     return done
 

@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import github, labels, publish, quota
+from . import converse, github, labels, publish, quota
 from .config import Config, LaneModel, min_effort
 from .contract import (
     Finding,
@@ -32,12 +32,12 @@ from .contract import (
     parse_reviewer_output,
     parse_verifier_output,
 )
-from .db import event, now, tx
+from .db import event, kv_get, kv_set, now, tx
 from .gate import admit_phase2
 from .gh import Gh
 from .lane import LaneResult, LaneRunner, LaneSpec, lane_output, prompt_sha, run_claude_lane
-from .models import FailKind, ReviewError, RunStatus, StepName
-from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, verifier_prompt
+from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
+from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, skill_texts, verifier_prompt
 from .scheduler import finish_run
 from .select import select, write_selection
 from .steps import worktree as wt
@@ -62,6 +62,7 @@ class RunContext:
     sha: str
     token: str
     run_dir: Path
+    trigger: str = ""  # heads.trigger: what queued this head
     worktree: Path | None = None
     mirror: Path | None = None
     meta: github.PrMeta | None = None
@@ -397,7 +398,7 @@ def step_context(ctx: RunContext) -> None:
                 category=r["category"] or "general",
                 line_start=r["line_start"],
                 line_end=r["line_end"],
-                extra={"thread_replies": thread["replies"]} if thread else {},
+                extra={"thread_replies": thread["transcript"]} if thread else {},
             )
         )
     for h, t in replied.items():
@@ -415,7 +416,7 @@ def step_context(ctx: RunContext) -> None:
                 line_start=t.get("line"),
                 line_end=t.get("line"),
                 prior_hash=h,
-                extra={"thread_replies": t["replies"]},
+                extra={"thread_replies": t["transcript"]},
             )
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
@@ -1233,10 +1234,315 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     return True
 
 
+# ---- conversation mode: answer replies on an already-reviewed commit ----
+
+LINKED_COMMIT_LIMIT = 5
+
+
+def _standing_review(ctx: RunContext) -> dict[str, Any] | None:
+    """The bot's FINAL review of this exact commit, or None. A preliminary review (blockers
+    found, Phase 2 deferred) does not qualify: a reply that talks a blocker down there must
+    re-run the pipeline so Phase 2 and the final verdict still happen."""
+    r = github.existing_review_for_sha(
+        ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
+    )
+    return {**r, "phase": "final"} if r else None
+
+
+def _fetch_linked_commits(
+    ctx: RunContext, threads: dict[str, dict[str, Any]]
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """(fetched, unfetched) commits humans linked in the replied threads. Only commits from a
+    fork of this repository are fetched (the delta against the mirror is small); anything else
+    is reported to the model as unavailable with the reason. Fetched ones land in the shared
+    object store, so `git show <sha>` works inside the run's worktree."""
+    fetched: list[dict[str, str]] = []
+    unfetched: list[dict[str, str]] = []
+    if not ctx.mirror:
+        return fetched, unfetched
+    own_name = ctx.repo.split("/", 1)[1].lower()
+    for i, c in enumerate(converse.linked_commits(threads)):
+        if i >= LINKED_COMMIT_LIMIT:
+            unfetched.append({**c, "reason": f"more than {LINKED_COMMIT_LIMIT} commits linked"})
+        elif c["repo"].lower() != own_name:
+            unfetched.append({**c, "reason": "not a fork of this repository"})
+        elif wt.fetch_commit(ctx.mirror, c["url"], c["sha"]):
+            fetched.append(c)
+        else:
+            unfetched.append({**c, "reason": "fetch failed; private or deleted fork?"})
+    return fetched, unfetched
+
+
+def _silent_key(ctx: RunContext, h: str) -> str:
+    return f"converse.silent:{ctx.repo}#{ctx.number}:{h}"
+
+
+def _threads_to_answer(ctx: RunContext) -> dict[str, dict[str, Any]]:
+    """Threads with a human reply newer than our last answer, minus those where we already
+    considered that exact reply and chose silence (recorded in kv per finding)."""
+    out: dict[str, dict[str, Any]] = {}
+    for h, t in ctx.open_threads.items():
+        if not t.get("awaiting_answer"):
+            continue
+        if kv_get(ctx.conn, _silent_key(ctx, h)) == str(t.get("latest_reply_id")):
+            continue
+        out[h] = t
+    return out
+
+
+def _run_conversation_lane(
+    ctx: RunContext, lm: LaneModel, threads: dict[str, dict[str, Any]], **prompt_kw: Any
+) -> converse.ConversationOutput:
+    """Two semantic attempts (each `_run_lane` already retries transport/JSON failures once);
+    the second attempt is told what was wrong with the first."""
+    last = ""
+    for _ in range(2):
+        prompt = converse.prompt(threads=threads, previous_error=last, **prompt_kw)
+        raw = _run_lane(
+            ctx, phase="converse", role="conversation", lm=lm, prompt=prompt, is_verifier=True
+        )
+        try:
+            return converse.parse(raw, expected=set(threads))
+        except ReviewError as exc:
+            last = exc.message
+    raise ReviewError(FailKind.CONTRACT, f"conversation lane output invalid twice: {last}")
+
+
+def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
+    assert ctx.meta and ctx.worktree
+    phase = str(standing["phase"])
+    threads = _threads_to_answer(ctx)
+    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    if not threads:
+        # the reply came from another bot, landed on a resolved thread, or was already
+        # considered: nothing to say, restore the gate comment we overwrote at run start
+        remaining = _open_blockers(ctx, phase)
+        _gate_comment(ctx, "done", phase=phase, blocker_count=remaining)
+        return {"answered": 0, "reason": "no thread awaiting an answer"}
+    fetched, unfetched = _fetch_linked_commits(ctx, threads)
+    project_skill, review_skill = skill_texts(ctx.cfg, ctx.repo)
+    lm = ctx.cfg.policy.conversation_lane
+    out = _run_conversation_lane(
+        ctx,
+        lm,
+        threads,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        meta=ctx.meta.as_dict(),
+        project_skill=project_skill,
+        review_skill=review_skill,
+        fetched_commits=fetched,
+        unfetched_commits=unfetched,
+        standing_verdict=publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login),
+        evidence=ctx.evidence,
+    )
+    (ctx.run_dir / "conversation.json").write_text(
+        json.dumps({h: dataclasses.asdict(o) for h, o in out.outcomes.items()}, indent=1)
+    )
+    # same guard as step_publish: a push may have landed while the lane ran, and a verdict
+    # follow-up must never be posted against an obsolete commit (the scheduler supersedes
+    # this head and ingest queues the live one)
+    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
+    if live.head_sha != ctx.sha:
+        raise ReviewError(
+            FailKind.FATAL, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
+        )
+    answered: list[dict[str, Any]] = []
+    if not ctx.dry_run:
+        answered = publish.answer_conversation(
+            ctx.gh, ctx.repo, ctx.number, ctx.sha, threads=threads, outcomes=out.outcomes
+        )
+    # Posting happens before the bookkeeping below is committed. If the worker dies in
+    # between, the reply is public but no `conceded` row exists, and the requeued run will not
+    # revisit the thread (our own comment is now its newest). That blocker then keeps counting
+    # until a fresh review of a new push resets the standing set; accepted rather than risking
+    # the reverse (a recorded concession that never reached the thread).
+    posted_ok = {a["finding_hash"] for a in answered if a.get("action") == "replied"}
+    considered = {a["finding_hash"] for a in answered}
+    # only an outcome that actually reached the thread lifts a blocker or counts as silence
+    lifted = {h for h in posted_ok if out.outcomes[h].status in {"WITHDRAWN", "FIXED"}}
+    silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
+    with tx(ctx.conn):
+        for a in answered:
+            event(
+                ctx.conn,
+                "thread.answered",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=json.dumps(a),
+            )
+        for h in silent:
+            kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
+        _record_conceded(ctx, phase, lifted)
+    remaining = _open_blockers(ctx, phase, lifted=lifted)
+    update = None
+    if not ctx.dry_run:
+        update = _conversation_verdict_update(
+            ctx, phase, lm, reviews, remaining=remaining, lifted=lifted
+        )
+    _gate_comment(ctx, "done", phase=phase, blocker_count=remaining)
+    return {
+        "answered": len(posted_ok),
+        "outcomes": {h: o.status for h, o in out.outcomes.items()},
+        "linked_commits": {
+            "fetched": [c["sha"] for c in fetched],
+            "unfetched": [c["sha"] for c in unfetched],
+        },
+        "blockers_remaining": remaining,
+        "verdict_updated": bool(update and update.posted),
+    }
+
+
+def _record_conceded(ctx: RunContext, phase: str, lifted: set[str]) -> None:
+    """A finding the conversation withdrew or confirmed fixed gets a `conceded` findings row
+    for this run (and so this sha), which `_open_blockers` honours on every later run. Caller
+    holds the write transaction."""
+    if not lifted:
+        return
+    rows = []
+    for h in lifted:
+        t = ctx.open_threads.get(h) or {}
+        rows.append(
+            (
+                ctx.run_id,
+                phase,
+                "conceded",
+                h,
+                t.get("path") or "",
+                t.get("line"),
+                t.get("line"),
+                t.get("severity") or "nitpick",
+                None,
+                "general",
+                t.get("title") or h,
+                "",
+            )
+        )
+    ctx.conn.executemany(_FINDINGS_INSERT, rows)
+
+
+def _open_blockers(ctx: RunContext, phase: str, *, lifted: set[str] | None = None) -> int:
+    """Blocking findings on this commit's `phase` publication that still stand.
+
+    Standing set: the blockers in the most recent `phase` publication for this sha (the latest
+    run's `posted`-stage rows, which a same-sha re-review refreshes to the verifier's kept
+    set), plus unresolved blocking threads on GitHub this database has no row for (legacy
+    findings). Minus: findings a conversation on this sha already conceded (`conceded` rows),
+    and those lifted by the current run. A blocking thread a maintainer resolved by hand,
+    without the bot conceding, still counts: only an explicit outcome or a fresh review lifts
+    a verdict. Scoped to the phase whose verdict is being moved, so a preliminary publication
+    stacked on the same sha by a manual re-review never leaks into the final accounting.
+    """
+    rows = ctx.conn.execute(
+        "SELECT f.run_id, f.hash, f.severity, f.stage FROM findings f JOIN runs r ON r.id=f.run_id "
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? "
+        "AND f.stage IN ('posted','conceded')",
+        (ctx.repo, ctx.number, ctx.sha, phase),
+    ).fetchall()
+    known = {str(r["hash"]) for r in rows}
+    conceded = {str(r["hash"]) for r in rows if r["stage"] == "conceded"}
+    posted = [r for r in rows if r["stage"] == "posted"]
+    latest_posted_run = max((int(r["run_id"]) for r in posted), default=None)
+    standing = {
+        str(r["hash"])
+        for r in posted
+        if int(r["run_id"]) == latest_posted_run and r["severity"] == "blocking"
+    }
+    standing |= {
+        h for h, t in ctx.open_threads.items() if t.get("severity") == "blocking" and h not in known
+    }
+    return len(standing - conceded - (lifted or set()))
+
+
+def _conversation_verdict_update(
+    ctx: RunContext,
+    phase: str,
+    lm: LaneModel,
+    reviews: list[dict[str, Any]],
+    *,
+    remaining: int,
+    lifted: set[str],
+) -> publish.PublishResult | None:
+    """When the discussion withdrew or resolved every blocking finding on this commit, the
+    standing REQUEST_CHANGES is stale: post the same short follow-up review a re-review
+    would, disclosing that no code was re-reviewed. A conversation never approves and never
+    adds blockers, so this is the only direction it can move a verdict."""
+    if remaining or not lifted:
+        return None
+    state = publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login)
+    if state != "CHANGES_REQUESTED":
+        return None
+    prov = publish.Provenance(
+        reviewers=[],
+        verifier={"model": lm.model, "agent": lm.agent, "role": "conversation"},
+        policy_fingerprint=ctx.cfg.policy.fingerprint,
+        adhoc=ctx.adhoc,
+        conversation=True,
+    )
+    verified = VerifierOutput(
+        summary="",
+        review_action="COMMENT",
+        findings=[],
+        dropped=[],
+        out_of_scope=[],
+        coderabbit_reactions=[],
+        prerequisite_adjudications=[],
+        adjudication_complete=True,
+        review_phase=phase,
+        raw={},
+    )
+    titles = [
+        t["title"]
+        for h, t in ctx.open_threads.items()
+        if h in lifted and t.get("severity") == "blocking" and t.get("title")
+    ]
+    result = publish.publish_verdict_update(
+        ctx.gh,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        phase=phase,
+        verified=verified,
+        provenance=prov,
+        previous_event=state,
+        withdrawn_blockers=titles,
+        bot_login=ctx.cfg.bot_login,
+    )
+    with tx(ctx.conn):
+        ctx.conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                ctx.run_id,
+                ctx.repo,
+                ctx.number,
+                ctx.sha,
+                phase,
+                result.review_id,
+                result.event,
+                now(),
+            ),
+        )
+        _set_run_review(
+            ctx, blocker_count=0, review_id=result.review_id, review_url=result.review_url
+        )
+        event(
+            ctx.conn,
+            "review.verdict_updated",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{state} -> {result.event} on {ctx.sha[:8]} (conversation: every blocker withdrawn or resolved)",
+        )
+    return result
+
+
 def run(ctx: RunContext) -> RunStatus:
     pol = ctx.cfg.policy
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
     _gate_comment(ctx, "in_progress")
+    standing = _standing_review(ctx) if ctx.trigger == Trigger.REVIEW_REPLY else None
     for name, fn in (
         (StepName.WORKTREE, step_worktree),
         (StepName.SELECT, step_select),
@@ -1245,6 +1551,8 @@ def run(ctx: RunContext) -> RunStatus:
     ):
         if name == StepName.TRIAGE and pol.triage is None:
             continue
+        if standing and name in (StepName.SELECT, StepName.TRIAGE):
+            continue  # a conversation needs no specialist selection or effort triage
         ctx.check_cancel()
         _step_start(ctx, name)
         fn(ctx)
@@ -1254,6 +1562,13 @@ def run(ctx: RunContext) -> RunStatus:
         elif name == StepName.TRIAGE and ctx.triage:
             detail = dataclasses.asdict(ctx.triage)
         _step_end(ctx, name, "ok", detail)
+    if standing:
+        # a human replied on a commit we already reviewed: the code did not change, the
+        # discussion did. Answer the threads; never re-run the review pipeline for that.
+        _step_start(ctx, StepName.CONVERSE)
+        detail = step_converse(ctx, standing)
+        _step_end(ctx, StepName.CONVERSE, "ok", detail)
+        return RunStatus.DONE
     effort = pol.tier_effort(ctx.tier)
     if _backlog_skips_phase1(ctx, phase2_effort=effort.phase2):
         ctx.phase2_outputs = _reviewer_step(
@@ -1345,7 +1660,7 @@ def main(
     quota_reader: quota.QuotaReader | None = None,
 ) -> RunStatus:
     row = conn.execute(
-        "SELECT r.*, h.repo, h.number, h.sha FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
+        "SELECT r.*, h.repo, h.number, h.sha, h.trigger FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
         (run_id,),
     ).fetchone()
     if row is None:
@@ -1363,6 +1678,7 @@ def main(
         sha=str(row["sha"]),
         token=str(row["token"]),
         run_dir=cfg.runs_dir / f"run-{run_id}",
+        trigger=str(row["trigger"] or ""),
         dry_run=dry_run,
     )
     if lane_runner:

@@ -348,6 +348,7 @@ class FakeLanes:
         self.verifier: dict[str, Any] = {}
         self.selector: Any = {"selected": ["security-auditor"], "reasoning": "rust crypto"}
         self.triage: Any = {"tier": "normal", "reasoning": "ordinary change"}
+        self.conversation: Any = {"threads": []}
         self.broken_once: set[str] = set()
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
@@ -365,6 +366,8 @@ class FakeLanes:
             out = self.selector
         elif spec.role == "triage":
             out = self.triage
+        elif spec.role == "conversation":
+            out = self.conversation
         elif spec.role == "repair":
             # the broken payload is the original JSON with its closing brace removed
             out = json.loads(spec.prompt.split("Do not add fences.\n\n", 1)[1] + "}")

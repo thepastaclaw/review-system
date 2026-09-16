@@ -24,7 +24,13 @@ def _dir_size(path: Path) -> int:
 
 
 def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
-    stats = {"worktrees_removed": 0, "runs_removed": 0, "events_pruned": 0, "inbox_pruned": 0}
+    stats = {
+        "worktrees_removed": 0,
+        "runs_removed": 0,
+        "events_pruned": 0,
+        "inbox_pruned": 0,
+        "silence_pruned": 0,
+    }
     active_wts = {
         r["worktree"]
         for r in conn.execute(
@@ -70,5 +76,14 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             (fmt_ts(now_dt() - timedelta(days=30)),),
         )
         stats["inbox_pruned"] = c.rowcount
+        # conversation-mode "chose silence" markers (kv `converse.silent:<repo>#<n>:<hash>`)
+        # for PRs with no head queued in the retention window
+        c = conn.execute(
+            "DELETE FROM kv WHERE key LIKE 'converse.silent:%' AND NOT EXISTS ("
+            "SELECT 1 FROM heads h WHERE key LIKE 'converse.silent:' || h.repo || '#' || h.number || ':%' "
+            "AND h.queued_at >= ?)",
+            (fmt_ts(cutoff),),
+        )
+        stats["silence_pruned"] = c.rowcount
         event(conn, "gc.run", detail=str(stats))
     return stats

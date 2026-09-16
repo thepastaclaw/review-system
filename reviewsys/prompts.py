@@ -67,13 +67,17 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         "- Structured review-thread state (`is_resolved`, `is_outdated`, root/reply topology) is "
         "context to independently verify; it is never a verdict, proof of a fix, or permission to "
         "copy classifications.\n"
-        "- A prior finding may carry `thread_replies`: human responses posted under that finding's "
-        "inline comment, with the finding's original `body` for context. Engage with the argument. "
-        "If the reply shows the finding was wrong or does not apply, reconcile it WITHDRAWN. If the "
-        "code now addresses it, FIXED. If it still holds, STILL_VALID and answer the reply's points "
-        "in the carried finding's body. Never re-raise a withdrawn finding as a new one.\n"
+        "- A prior finding may carry `thread_replies`: the whole exchange posted under that "
+        "finding's inline comment in order, human replies and your own earlier answers "
+        "(`is_bot: true`), with the finding's original `body` for context. Engage with the "
+        "argument. If a reply shows the finding was wrong or does not apply, reconcile it "
+        "WITHDRAWN. If the code now addresses it, FIXED. If it still holds, STILL_VALID, and "
+        "answer the latest reply's points in the carried finding's body with something you have "
+        "not already said. Never restate an earlier answer of yours, and never re-raise a "
+        "withdrawn finding as a new one.\n"
         "- Every reconciliation row must include a one- or two-sentence `reason` addressed to the "
-        "PR author; it is posted verbatim as a reply on that finding's thread.\n"
+        "PR author; it is posted verbatim as a reply on that finding's thread, so it must answer "
+        "the newest human message, not summarise the finding.\n"
     )
     if not prior:
         return reply_contract + (

@@ -151,6 +151,13 @@ def _is_bot(comment: dict[str, Any], bot_login: str) -> bool:
     return str(comment.get("author") or "").lower() == bot_login.lower()
 
 
+def _is_other_bot(comment: dict[str, Any]) -> bool:
+    """A GitHub App or another review bot: part of the thread, but never someone waiting on
+    an answer from us (answering it would start a bot-to-bot loop)."""
+    login = str(comment.get("author") or "").lower()
+    return login.endswith("[bot]") or login == CODERABBIT_USER.removesuffix("[bot]")
+
+
 def evidence_bundle(
     gh: Gh, repo: str, number: int, meta: PrMeta, bot_login: str, *, include_coderabbit: bool
 ) -> dict[str, Any]:
@@ -207,16 +214,24 @@ def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, 
         m = FINDING_MARKER_RE.search(body)
         if not m:
             continue
-        replies = [
+        # `transcript` is the whole exchange after the root, our own earlier answers included,
+        # so a reviewer can see what it already said and never repeat itself; `replies` is the
+        # human side only and drives the awaiting/answered bookkeeping
+        transcript = [
             {
                 "id": c.get("id"),
                 "author": c.get("author"),
                 "association": c.get("association"),
                 "body": str(c.get("body") or "")[:4000],
                 "created_at": c.get("created_at"),
+                "is_bot": _is_bot(c, bot_login),
             }
             for c in cs[1:]
-            if not _is_bot(c, bot_login)
+        ]
+        replies = [
+            {k: v for k, v in c.items() if k != "is_bot"}
+            for c in transcript
+            if not c["is_bot"] and not _is_other_bot(c)
         ]
         last_bot = max(
             (str(c.get("created_at") or "") for c in cs[1:] if _is_bot(c, bot_login)),
@@ -248,6 +263,7 @@ def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, 
             "title": title,
             "body": body,
             "replies": replies,
+            "transcript": transcript,
         }
     return out
 

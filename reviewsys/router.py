@@ -150,7 +150,9 @@ def _route_row(
         return "mention"
 
     if kind == "review_reply" and comment and is_open and head and not own_pr:
-        if not _trusted(cfg, comment, actor):
+        # another bot (CodeRabbit, a GitHub App) is trusted for mentions but is never someone
+        # waiting on an answer from us; queuing a run for it would only ever find nothing to say
+        if not _trusted(cfg, comment, actor) or actor.lower().endswith("[bot]"):
             with tx(conn):
                 _handled(conn, row["id"], "ignored", ts)
             return "ignored"

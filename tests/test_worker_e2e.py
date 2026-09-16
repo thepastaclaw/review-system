@@ -33,6 +33,7 @@ def fake_git(monkeypatch, tmp_path):
     monkeypatch.setattr(wt, "create_worktree", create)
     monkeypatch.setattr(wt, "remove_worktree", lambda mirror, path: None)
     monkeypatch.setattr(wt, "merge_base", lambda worktree, base, sha: "b" * 40)
+    monkeypatch.setattr(wt, "fetch_commit", lambda mirror, url, sha: not sha.startswith("dead"))
 
 
 def _blocking(title="Fee estimation omits drainage costs"):
@@ -714,15 +715,22 @@ def _seed_prior(conn, finding, *, body="old body"):
                 ("dashpay/platform", 1, "b" * 40, "new_pr", 0, "done", "2026-09-07", "2026-09-07"),
             ).lastrowid
         )
-        rid = conn.execute(
-            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,1,'done','t','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z')",
-            (hid,),
-        ).lastrowid
+        # one run per seeded head: every prior finding belongs to the same publication,
+        # as it would in a real review round
+        run_row = conn.execute("SELECT id FROM runs WHERE head_id=?", (hid,)).fetchone()
+        rid = (
+            run_row["id"]
+            if run_row
+            else conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,1,'done','t','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z')",
+                (hid,),
+            ).lastrowid
+        )
         conn.execute(
             "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
                 rid,
-                "verify2",
+                "final",  # what a real publication records (see _record_publication)
                 "posted",
                 f.hash,
                 f.file,
@@ -986,7 +994,7 @@ def test_reason_is_scrubbed_of_mentions_and_retriggers(cfg, conn, gh, lanes):
     status, reason, _ = _answer_outcome(
         "h", {"status": "WITHDRAWN", "reason": "Agreed with @knst here. " + "x" * 5000}, set()
     )
-    assert "@\u200bknst" in reason and len(reason) <= 1200
+    assert "@\u200bknst" in reason and len(reason.replace("\u200b", "")) <= 1200
 
 
 def test_resolved_and_already_answered_threads_are_left_alone(cfg, conn, gh, lanes):
@@ -1036,7 +1044,472 @@ def test_resolved_and_already_answered_threads_are_left_alone(cfg, conn, gh, lan
     ]
 
 
-def test_reply_rerun_on_reviewed_commit_answers_thread_without_new_review(cfg, conn, gh, lanes):
+def test_reply_on_reviewed_commit_runs_conversation_lane_not_a_review(cfg, conn, gh, lanes):
+    """A reply on a commit we already reviewed is a conversation, not a re-review: no reviewer
+    or verifier lane runs, the conversation lane sees the whole thread and any linked commit,
+    and its prose is what gets posted."""
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    earlier_answer = {
+        "id": 902,
+        "author": "thepastaclaw",
+        "body": "<!-- thepastaclaw-thread-answer v1 sha=x reply=901 finding="
+        + fh
+        + " -->\n**Still applies** (re-reviewed at `x`): The queue is FIFO.",
+        "created_at": "2026-09-08T21:00:00Z",
+        "association": "NONE",
+    }
+    gh.threads = [
+        _prior_thread(
+            fh,
+            replies=[
+                {
+                    "id": 901,
+                    "author": "knst",
+                    "body": "wrong",
+                    "created_at": "2026-09-08T20:00:00Z",
+                    "association": "COLLABORATOR",
+                },
+                earlier_answer,
+                {
+                    "id": 903,
+                    "author": "UdjinM6",
+                    "body": "How about https://github.com/UdjinM6/platform/commit/7c19184c849c382d6c72d31baeced0bd4631c616 ?",
+                    "created_at": "2026-09-08T22:00:00Z",
+                    "association": "NONE",
+                },
+            ],
+        )
+    ]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [
+            {
+                "finding_hash": fh,
+                "status": "FIXED",
+                "reply": "Yes, 7c19184c does it: pausing the worker under the lock makes the batch deterministic, which was the whole concern. Thanks @UdjinM6.",
+                "reasoning": "the linked commit adds the synchronisation point",
+            }
+        ]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        assert (
+            enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY) == "requeued"
+        )
+    (rid,) = schedule(conn, cfg, spawn=False)
+    status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+    assert status == RunStatus.DONE
+    roles = [c.role for c in lanes.calls]
+    assert roles == ["conversation"], roles  # no selector, triage, reviewer or verifier lanes
+    prompt = lanes.calls[0].prompt
+    # the whole exchange, our own earlier answer included, and the linked commit
+    assert "you (PastaClaw)" in prompt and "The queue is FIFO." in prompt
+    assert "7c19184c849c382d6c72d31baeced0bd4631c616" in prompt and "git show" in prompt
+    assert len(gh.posted_reviews) == 1, "same commit: no second review"
+    assert len(gh.replies) == 1
+    body = gh.replies[0]["body"]
+    assert body.startswith(
+        f"<!-- thepastaclaw-thread-answer v1 sha={HEAD} reply=903 finding={fh} -->"
+    )
+    assert "Yes, 7c19184c does it" in body and "_Marking this resolved._" in body
+    assert (
+        "**Still applies**" not in body and "**Resolved**" not in body
+    )  # prose, not a verdict log
+    assert "@\u200bUdjinM6" in body  # mentions defused
+    assert any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    ev = conn.execute("SELECT detail FROM events WHERE kind='thread.answered'").fetchone()
+    assert '"status": "FIXED"' in ev["detail"] and '"mode": "conversation"' in ev["detail"]
+    steps = [
+        r["name"]
+        for r in conn.execute("SELECT name FROM steps WHERE run_id=? ORDER BY rowid", (rid,))
+    ]
+    assert steps == ["worktree", "context", "converse"]
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete")
+    assert (Path(cfg.runs_dir) / f"run-{rid}" / "conversation.json").exists()
+
+
+def test_conversation_stays_silent_when_it_has_nothing_to_add(cfg, conn, gh, lanes):
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    gh.threads = [
+        _prior_thread(
+            fh,
+            replies=[
+                {
+                    "id": 901,
+                    "author": "PastaPastaPasta",
+                    "body": "@UdjinM6 can you break the tie?",
+                    "created_at": "x",
+                    "association": "MEMBER",
+                }
+            ],
+        )
+    ]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [
+            {
+                "finding_hash": fh,
+                "status": "NO_REPLY",
+                "reply": "",
+                "reasoning": "asked someone else",
+            }
+        ]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert gh.replies == [] and len(gh.posted_reviews) == 1
+    ev = conn.execute("SELECT detail FROM events WHERE kind='thread.answered'").fetchone()
+    assert '"action": "no_reply"' in ev["detail"]
+    # silence is remembered per (finding, reply): a later conversation on this PR does not
+    # re-ask about the same human message, so no late second opinion can ever post
+    assert kv_get(conn, f"converse.silent:dashpay/platform#1:{fh}") == "901"
+    lanes.conversation = {
+        "threads": [{"finding_hash": fh, "status": "STILL_VALID", "reply": "late"}]
+    }
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid2,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid2, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert gh.replies == [] and [c.role for c in lanes.calls] == ["conversation"]
+    # ...until someone speaks again on that thread
+    gh.threads[0]["comments"]["nodes"].append(
+        _gql_comment(
+            {
+                "id": 905,
+                "author": "UdjinM6",
+                "body": "here is my take",
+                "created_at": "y",
+                "association": "NONE",
+            }
+        )
+    )
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid3,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid3, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.replies) == 1 and "reply=905" in gh.replies[0]["body"]
+
+
+def test_conversation_conceding_every_blocker_lifts_request_changes(cfg, conn, gh, lanes):
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "this is latency, not correctness; see the bench in the description",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    t = _prior_thread(bh, replies=[human])
+    t["comments"]["nodes"][0]["body"] = (
+        f"<!-- thepastaclaw-review v1 finding={bh} dedupe=x -->\n**🔴 Blocking: {blocker['title']}**\n\nblocker body"
+    )
+    gh.threads = [t]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [
+            {
+                "finding_hash": bh,
+                "status": "WITHDRAWN",
+                "reply": "You are right, I misread the bench: the estimate is an upper bound, so this is latency only. Withdrawing.",
+            }
+        ]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert "_Withdrawing this finding._" in gh.replies[0]["body"]
+    assert len(gh.posted_reviews) == 2
+    upd = gh.posted_reviews[1]
+    assert upd["event"] == "COMMENT" and upd["comments"] == []
+    assert "Standing review was `CHANGES_REQUESTED`; this re-review is `COMMENT`" in upd["body"]
+    assert f"- {blocker['title']}" in upd["body"]
+    assert "conversation lane" in upd["body"] and "the code was not re-reviewed" in upd["body"]
+    ev = conn.execute("SELECT detail FROM events WHERE kind='review.verdict_updated'").fetchone()
+    assert "CHANGES_REQUESTED -> COMMENT" in ev["detail"] and "conversation" in ev["detail"]
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
+
+
+def test_conversation_concession_is_remembered_across_runs(cfg, conn, gh, lanes):
+    """Two blockers, conceded in two separate conversations: the second run must see the first
+    concession (a `conceded` findings row) or the verdict could never be lifted."""
+    b1, b2 = _blocking("First blocker"), _blocking("Second blocker")
+    h1 = _seed_prior(conn, b1, body="one")
+    h2 = _seed_prior(conn, b2, body="two")
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "no",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+
+    def thread(h, title, root_id, replies):
+        t = _prior_thread(h, replies=replies)
+        t["id"] = f"PRRT_{root_id}"
+        t["comments"]["nodes"][0]["databaseId"] = root_id
+        t["comments"]["nodes"][0]["body"] = (
+            f"<!-- thepastaclaw-review v1 finding={h} dedupe=x -->\n**🔴 Blocking: {title}**\n\nbody"
+        )
+        return t
+
+    gh.threads = [thread(h1, "First blocker", 800, [human]), thread(h2, "Second blocker", 810, [])]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [{"finding_hash": h1, "status": "WITHDRAWN", "reply": "fair, withdrawn"}]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.posted_reviews) == 1  # one blocker still stands
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+    assert conn.execute(
+        "SELECT stage FROM findings WHERE hash=? AND stage='conceded'", (h1,)
+    ).fetchone()
+    # the first thread is now resolved on GitHub (gone from open threads); the second gets a reply
+    gh.threads = [thread(h2, "Second blocker", 810, [{**human, "id": 902}])]
+    lanes.conversation = {
+        "threads": [{"finding_hash": h2, "status": "FIXED", "reply": "right, the guard covers it"}]
+    }
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid2,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid2, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.posted_reviews) == 2
+    upd = gh.posted_reviews[1]
+    assert (
+        upd["event"] == "COMMENT"
+        and "- Second blocker" in upd["body"]
+        and "- First blocker" not in upd["body"]
+    )
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
+
+
+def test_conversation_never_lifts_a_verdict_on_a_hand_resolved_blocker(cfg, conn, gh, lanes):
+    """A maintainer resolved the blocker thread themselves; the bot never conceded it. A reply
+    on some other thread must not turn that into a lifted REQUEST_CHANGES."""
+    blocker, sugg = _blocking(), _sugg()
+    _seed_prior(conn, blocker, body="blocker body")
+    sh = _seed_prior(conn, sugg)
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "?",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    gh.threads = [_prior_thread(sh, replies=[human])]  # blocker thread resolved: not listed
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [{"finding_hash": sh, "status": "WITHDRAWN", "reply": "ok, dropping this"}]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.posted_reviews) == 1
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
+def test_reply_on_preliminary_review_still_runs_the_pipeline(cfg, conn, gh, lanes):
+    """Blockers found, Phase 2 deferred, then a maintainer argues the blocker down: the
+    pipeline must run so Phase 2 and a final review can still happen; a conversation would
+    strand the PR without one."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "not a bug",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    gh.threads = [_prior_thread(bh, replies=[human])]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=preliminary sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": bh, "status": "WITHDRAWN", "reason": "Agreed."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([])
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    roles = [c.role for c in lanes.calls]
+    assert "conversation" not in roles and "verifier" in roles
+    assert len(gh.posted_reviews) == 2  # the final review got published
+    assert any("**Withdrawn**" in r["body"] for r in gh.replies)
+
+
+def test_other_bots_replies_never_await_an_answer(cfg, conn, gh, lanes):
+    from reviewsys.github import finding_threads
+
+    root = {
+        "id": 900,
+        "author": "thepastaclaw",
+        "body": "<!-- thepastaclaw-review v1 finding=abc -->\n**🟡 Suggestion: T**",
+        "created_at": "x",
+        "association": "NONE",
+    }
+    cr = {
+        "id": 901,
+        "author": "coderabbitai[bot]",
+        "body": "I agree",
+        "created_at": "y",
+        "association": "NONE",
+    }
+    parsed = {
+        "thread_id": "t",
+        "is_resolved": False,
+        "is_outdated": False,
+        "path": "f",
+        "line": 1,
+        "comments": [root, cr],
+    }
+    out = finding_threads([parsed], "thepastaclaw")
+    assert out["abc"]["awaiting_answer"] is False and out["abc"]["replies"] == []
+    assert [c["author"] for c in out["abc"]["transcript"]] == ["coderabbitai[bot]"]
+
+
+def test_conversation_keeping_a_blocker_leaves_the_verdict_alone(cfg, conn, gh, lanes):
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "no",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    t = _prior_thread(bh, replies=[human])
+    t["comments"]["nodes"][0]["body"] = (
+        f"<!-- thepastaclaw-review v1 finding={bh} dedupe=x -->\n**🔴 Blocking: {blocker['title']}**\n\nblocker body"
+    )
+    gh.threads = [t]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [
+            {
+                "finding_hash": bh,
+                "status": "STILL_VALID",
+                "reply": "Concretely: with `n=0` the estimate at line 11 is below the actual fee, so the transaction is rejected, not delayed.",
+            }
+        ]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.posted_reviews) == 1 and len(gh.replies) == 1
+    assert gh.replies[0]["body"].endswith("not delayed.")  # no status suffix for STILL_VALID
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
+def test_conversation_lane_bad_output_fails_the_run_after_two_tries(cfg, conn, gh, lanes):
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    gh.threads = [
+        _prior_thread(
+            fh,
+            replies=[
+                {
+                    "id": 901,
+                    "author": "knst",
+                    "body": "?",
+                    "created_at": "x",
+                    "association": "COLLABORATOR",
+                }
+            ],
+        )
+    ]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [{"finding_hash": "nope", "status": "STILL_VALID", "reply": "x"}]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert (
+        worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.FAILED
+    )
+    assert [c.role for c in lanes.calls] == ["conversation", "conversation"]
+    assert gh.replies == []
+
+
+def test_reply_on_unreviewed_commit_still_runs_a_full_review(cfg, conn, gh, lanes):
+    """No standing review for this commit (a push landed since the last review): a reply is a
+    normal priority review with the thread in context, exactly as before."""
     s = _sugg()
     fh = _seed_prior(conn, s)
     gh.threads = [
@@ -1053,33 +1526,19 @@ def test_reply_rerun_on_reviewed_commit_answers_thread_without_new_review(cfg, c
             ],
         )
     ]
-    gh.posted_reviews.append(
-        {
-            "id": 4242,
-            "html_url": "https://gh/r/4242",
-            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
-        }
-    )
     lanes.reviewer["default"] = {
         "summary": "ok",
         "findings": [],
         "out_of_scope_findings": [],
         "prior_finding_reconciliation": [
-            {"finding_hash": fh, "status": "WITHDRAWN", "reason": "Agreed, the guard covers it."}
+            {"finding_hash": fh, "status": "WITHDRAWN", "reason": "Agreed."}
         ],
     }
     lanes.verifier["default"] = _verifier([])
-    with tx(conn):
-        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
-        assert (
-            enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY) == "requeued"
-        )
-    (rid,) = schedule(conn, cfg, spawn=False)
-    status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
     assert status == RunStatus.DONE
-    assert len(gh.posted_reviews) == 2, "same commit: re-review summary is posted"
-    assert len(gh.replies) == 1 and "**Withdrawn**" in gh.replies[0]["body"]
-    assert any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    assert "conversation" not in [c.role for c in lanes.calls]
+    assert len(gh.posted_reviews) == 1 and "**Withdrawn**" in gh.replies[0]["body"]
 
 
 def test_reply_on_legacy_finding_without_db_row_is_adjudicated(cfg, conn, gh, lanes):
@@ -1222,7 +1681,7 @@ def test_same_sha_rereview_with_unchanged_verdict_posts_no_update(cfg, conn, gh,
     lanes.verifier["default"] = _verifier([carried])
     with tx(conn):
         conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
-        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL)
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
     assert len(gh.posted_reviews) == 2 and len(gh.replies) == 1
@@ -1424,7 +1883,7 @@ def test_same_sha_rereview_that_finds_a_blocker_updates_final_verdict(cfg, conn,
     lanes.verifier["default"] = _verifier([b])
     with tx(conn):
         conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
-        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL)
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
     assert len(gh.posted_reviews) == 2
@@ -1475,7 +1934,7 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
     lanes.verifier["default"] = _verifier([b])
     with tx(conn):
         conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
-        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL)
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
     # blockers found, but on an own PR the transport is COMMENT == standing COMMENTED;

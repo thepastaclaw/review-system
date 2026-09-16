@@ -73,11 +73,20 @@ class ModelPolicy:
     triage: LaneModel | None = None
     tiers: dict[str, TierEffort] = field(default_factory=dict)
     fallback_tier: str = "normal"
+    # answers human replies on an already-reviewed commit (see converse.py); None = the
+    # Phase-2 reviewer model at high effort under the agent name `conversation`
+    conversation: LaneModel | None = None
 
     @property
     def has_phase1_ladder(self) -> bool:
         """More than one rung, so which one ran is worth recording and disclosing."""
         return len(self.phase1_candidates) > 1
+
+    @property
+    def conversation_lane(self) -> LaneModel:
+        return self.conversation or LaneModel(
+            agent="conversation", model=self.phase2_reviewer.model, effort="high"
+        )
 
     def tier_effort(self, tier: str) -> TierEffort:
         default = TierEffort(phase1=self.phase1_reviewer.effort, phase2=self.phase2_reviewer.effort)
@@ -322,6 +331,7 @@ def load_skills_config(
         triage=_lane(pol, "triage") if triage_node else None,
         tiers=_tiers(triage_node, p1.effort, p2.effort),
         fallback_tier=str(triage_node.get("fallback_tier", "normal")).lower(),
+        conversation=_lane(pol, "conversation") if pol.get("conversation") else None,
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
