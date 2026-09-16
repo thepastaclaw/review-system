@@ -169,3 +169,38 @@ def test_gate_to_preliminary_publish_honours_cancel(cfg, conn, gh, lanes, monkey
     assert not gh.posted_reviews
     assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "queued"
     assert now()  # keep import used
+
+
+def test_gc_prunes_silence_markers_for_prs_out_of_retention(cfg, conn):
+    from reviewsys import gc
+    from reviewsys.db import kv_get, kv_set
+
+    with tx(conn):
+        # an old PR (head queued long ago) and a live one
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "dashpay/platform",
+                1,
+                "a" * 40,
+                "new_pr",
+                0,
+                "done",
+                "2020-01-01T00:00:00Z",
+                "2020-01-01T00:00:00Z",
+            ),
+        )
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
+            ("dashpay/platform", 2, "b" * 40, "new_pr", 0, "done", now(), now()),
+        )
+        kv_set(conn, "converse.silent:dashpay/platform#1:abc", "901")
+        kv_set(conn, "converse.silent:dashpay/platform#2:def", "902")
+        kv_set(conn, "converse.silent:dashpay/dash#3:ghi", "903")  # no head at all
+        kv_set(conn, "labels.reconciled_at", "x")
+    stats = gc.run(conn, cfg)
+    assert stats["silence_pruned"] == 2
+    assert kv_get(conn, "converse.silent:dashpay/platform#1:abc") is None
+    assert kv_get(conn, "converse.silent:dashpay/dash#3:ghi") is None
+    assert kv_get(conn, "converse.silent:dashpay/platform#2:def") == "902"
+    assert kv_get(conn, "labels.reconciled_at") == "x"

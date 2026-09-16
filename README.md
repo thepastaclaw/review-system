@@ -226,6 +226,69 @@ a clean final review corrects that final verdict instead of stacking a prelimina
 review. `reviewsys enqueue` on an already-reviewed head re-opens it the same way. Every
 answer is an event `thread.answered`.
 
+### Replies on an already-reviewed commit: the conversation lane
+
+The paragraph above describes what happens when the reply arrives on a commit that has
+*not* been reviewed yet (a push landed since): a normal review with the thread in context.
+When the commit **already has a standing review** (the common case: someone answers a
+finding on the reviewed head), re-running the pipeline is the wrong tool. It re-derives
+the finding from scratch, never sees what it already said, and answers every reply with
+the same "Still applies" paragraph; on dashpay/dash#7675 that produced five near-identical
+restatements, no engagement with the maintainers' arguments, and no answer to a proposed
+patch. So a `review_reply` head whose sha has a standing review runs **conversation mode**
+instead (`reviewsys/converse.py`, step `converse`; no selector, triage, reviewer or
+verifier lanes):
+
+- One lane (`review_model_policy.conversation`, default: the Phase-2 model at high
+  effort, agent `conversation`) gets every thread awaiting an answer with the **whole
+  exchange in order, our own earlier answers included**, the finding body, the PR
+  discussion, and any commits humans linked in the thread (`github.com/.../commit/<sha>`
+  or `/pull/<n>/commits/<sha>`, up to 5, forks of this repository only; fetched into the
+  mirror so `git show <sha>` works in the worktree; a commit that cannot be fetched is
+  disclosed to the model with the reason and never fails the run).
+- It answers per thread with `STILL_VALID | FIXED | WITHDRAWN | INTENTIONALLY_DEFERRED |
+  NO_REPLY` and free prose. The rules it is given: verify claims against the code, never
+  repeat a point already made, evaluate a proposed change on its merits and say whether it
+  resolves the concern, concede when wrong, stay silent (`NO_REPLY`) when a reply is
+  addressed to someone else or there is nothing new to add. Severity cannot change in a
+  reply.
+- Posting: the prose is the comment (marker `thepastaclaw-thread-answer v1`, once per
+  human reply and head, `@` defused, CodeRabbit retriggers discarded), with a quiet
+  trailing note for FIXED / WITHDRAWN / INTENTIONALLY_DEFERRED instead of a bold verdict
+  lead; FIXED and WITHDRAWN threads are resolved (where the bot may). `NO_REPLY` posts
+  nothing, is recorded as `thread.answered` with `action: no_reply`, and the decision is
+  remembered per (finding, reply) in `kv` (`converse.silent:<repo>#<n>:<hash>`), so a later
+  conversation on the same PR never posts a late second opinion to that message; the
+  thread is re-considered only when someone speaks on it again; markers for PRs with no
+  head queued inside the artifact retention window are pruned by `gc`. Replies from other
+  bots (`*[bot]` logins, CodeRabbit) are part of the transcript but never count as a human
+  waiting for an answer, and the router does not queue a `review_reply` head for them at
+  all, so no bot-to-bot loop can start.
+- Verdict: a conversation never adds blockers and never approves. When every blocking
+  finding on the commit has been withdrawn or resolved and the standing review is
+  `CHANGES_REQUESTED`, the same short "Re-review after discussion" follow-up moves it to
+  COMMENT, with provenance stating that no code was re-reviewed. A concession is
+  persisted as a `conceded`-stage `findings` row for the sha, so blockers conceded in
+  earlier conversations stay lifted; the standing set is the latest *final* publication's
+  blockers for the sha plus unresolved blocking threads this database has no row for
+  (legacy findings). A blocking thread a maintainer resolved by hand, without the bot
+  conceding it, still counts. Known gap: if the worker dies between posting a concession
+  and recording it, that blocker keeps counting until the next push is reviewed.
+- A conversation posts no "Re-review" summary review and never runs the fresh final
+  gate: nothing about the code was re-reviewed, so there is nothing to summarise. The
+  live head is re-checked before anything is posted, exactly as before publishing.
+- Only a **final** standing review qualifies. A reply on a commit whose standing review
+  is *preliminary* (blockers found, Phase 2 deferred) runs the full pipeline, because
+  talking a blocker down there must still admit Phase 2 and produce a final review.
+- Artifacts: `conversation.json` in the run dir (outcomes and private reasoning);
+  invalid lane output is retried once with the rejection reason in the prompt, then
+  fails the run (`contract`).
+
+A reply on a commit with **no** standing review still runs the full review with the
+thread in context, and `reviewsys enqueue` / a manual trigger on a reviewed commit still
+forces a full re-review (with the reconciliation-based thread answers above), so the old
+path remains available for "look at this again from scratch".
+
 ## Ad hoc reviews (repos without a skill)
 
 `@thepastaclaw review` on a PR in a repo that has no entry in the skills `config.json`

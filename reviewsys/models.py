@@ -74,6 +74,7 @@ class StepName(StrEnum):
     SELECT = "select"
     TRIAGE = "triage"
     CONTEXT = "context"
+    CONVERSE = "converse"  # reply-driven re-review of an already-reviewed commit
     PHASE1 = "phase1"
     VERIFY1 = "verify1"
     GATE = "gate"

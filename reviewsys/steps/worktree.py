@@ -81,6 +81,23 @@ def fetch_head(mirror: Path, number: int, sha: str) -> None:
         _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
 
 
+def fetch_commit(mirror: Path, repo_url: str, sha: str) -> bool:
+    """Make `sha` available in the mirror, fetching it from `repo_url` (a fork, usually) when the
+    mirror does not already have it. False when the commit cannot be obtained; never raises for a
+    missing or private fork so a bad link in a comment cannot fail a run."""
+    try:
+        _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
+        return True
+    except ReviewError:
+        pass
+    try:
+        _git("fetch", "--no-tags", repo_url, sha, cwd=mirror, timeout=300)
+        _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
+        return True
+    except ReviewError:
+        return False
+
+
 def create_worktree(mirror: Path, worktrees_dir: Path, name: str, sha: str) -> Path:
     path = worktrees_dir / name
     if path.exists():
