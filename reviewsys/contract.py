@@ -181,6 +181,9 @@ class VerifierOutput:
     adjudication_complete: bool
     review_phase: str
     raw: dict[str, Any]
+    # the verifier's own `prior_finding_reconciliation` rows: it is the canonical source of
+    # truth, so its status and reason for a prior finding outrank any reviewer lane's
+    prior_reconciliation: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def blocker_count(self) -> int:
@@ -329,4 +332,9 @@ def parse_verifier_output(
         adjudication_complete=True,
         review_phase=phase,
         raw=raw,
+        prior_reconciliation=[
+            r
+            for r in (raw.get("prior_finding_reconciliation") or [])
+            if isinstance(r, dict) and r.get("finding_hash") and r.get("status")
+        ],
     )
