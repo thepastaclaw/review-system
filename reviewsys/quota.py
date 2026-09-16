@@ -34,7 +34,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from .config import LaneModel, QuotaSource
+from .config import EFFORT_LEVELS, LaneModel, QuotaSource, min_effort
 from .db import fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
 
 log = logging.getLogger(__name__)
@@ -353,17 +353,29 @@ class Choice:
 QuotaReader = Callable[[QuotaSource], QuotaStatus]
 
 
+def _too_slow_for(lm: LaneModel, effort: str | None) -> bool:
+    """A rung with `use_up_to` is passed over when it would actually run above that effort:
+    the tier's effort clamped to the rung's own cap, exactly as `worker._rung` will run it."""
+    if effort is None or lm.use_up_to is None:
+        return False
+    would_run_at = min_effort(effort, lm.effort)
+    return EFFORT_LEVELS.index(would_run_at) > EFFORT_LEVELS.index(lm.use_up_to)
+
+
 def choose(
     candidates: tuple[LaneModel, ...],
     reserve: float,
     reader: QuotaReader | None = None,
     *,
     skipped: tuple[Skipped, ...] = (),
+    effort: str | None = None,
 ) -> Choice:
-    """First rung with at least `reserve` of every quota window left. Rungs without a quota
-    source are always usable, so a ladder whose last rung is pay-per-token always resolves;
-    a fully gated ladder falls through to its last rung with the shortfall recorded. A
-    lookup that fails for any reason skips the rung; nothing here can raise on bad data."""
+    """First rung eligible for the requested `effort` with at least `reserve` of every quota
+    window left. A rung whose `use_up_to` ceiling is below `effort` is passed over without a
+    quota lookup (the model is too slow at that effort to be worth its quota). Rungs without a
+    quota source are always usable, so a ladder whose last rung is pay-per-token always
+    resolves; a fully gated ladder falls through to its last rung with the shortfall recorded.
+    A lookup that fails for any reason skips the rung; nothing here can raise on bad data."""
     if not candidates:
         raise ValueError("no Phase-1 candidates")
     if len(candidates) == 1 and not skipped:
@@ -371,6 +383,11 @@ def choose(
     reader = reader or _default_reader()
     passed = list(skipped)
     for lm in candidates:
+        if _too_slow_for(lm, effort):
+            passed.append(
+                Skipped(lm.model, f"not used above {lm.use_up_to} effort; tier asks {effort}")
+            )
+            continue
         if lm.quota is None:
             return Choice(lm, "not quota-gated", tuple(passed))
         try:

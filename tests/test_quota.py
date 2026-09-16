@@ -98,6 +98,31 @@ def test_fully_gated_ladder_falls_through_to_last_rung():
     assert c.skipped == (quota.Skipped(GEMINI.model, "antigravity below 15% reserve: w0 1% left"),)
 
 
+def test_rung_with_use_up_to_is_skipped_above_its_ceiling():
+    """GLM at max effort thinks for an hour or more; at max it is passed over without even a
+    quota lookup, while lower efforts still use it."""
+    glm = LaneModel("phase1-reviewer", GLM.model, "max", QuotaSource("zai"), use_up_to="high")
+    ladder = (GEMINI, glm, MUSE)
+    calls: list[str] = []
+
+    def reader(source: QuotaSource) -> quota.QuotaStatus:
+        calls.append(source.provider)
+        return _status(0.01) if source.provider == "antigravity" else _status(1.0)
+
+    c = quota.choose(ladder, 0.15, reader, effort="max")
+    assert c.model is MUSE and calls == ["antigravity"]
+    assert c.skipped[1] == quota.Skipped(GLM.model, "not used above high effort; tier asks max")
+    assert quota.choose(ladder, 0.15, reader, effort="high").model is glm
+    assert quota.choose(ladder, 0.15, reader).model is glm  # no effort given: no ceiling
+    # a fallback below a failed rung honours the ceiling too
+    c = quota.choose((glm, MUSE), 0.15, reader, effort="max", skipped=(quota.Skipped("g", "x"),))
+    assert c.model is MUSE and [s.model for s in c.skipped] == ["g", GLM.model]
+    # the ceiling is judged on the effort the rung would run at, not the raw tier effort: a
+    # rung whose own cap is at its ceiling can never exceed it
+    gem = LaneModel(GEMINI.agent, GEMINI.model, "high", GEMINI.quota, use_up_to="high")
+    assert quota.choose((gem, MUSE), 0.15, lambda s: _status(1.0), effort="max").model is gem
+
+
 def test_single_rung_never_consults_quota():
     def reader(_: QuotaSource) -> quota.QuotaStatus:
         raise AssertionError("must not be called")

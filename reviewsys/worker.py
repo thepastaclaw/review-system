@@ -1182,7 +1182,7 @@ def _choose_phase1(ctx: RunContext, effort: str) -> LaneModel:
     pol = ctx.cfg.policy
     ctx.phase1_effort = effort
     reader = ctx.quota_reader or quota.cached_reader(ctx.conn)
-    choice = quota.choose(pol.phase1_candidates, pol.quota_reserve, reader=reader)
+    choice = quota.choose(pol.phase1_candidates, pol.quota_reserve, reader=reader, effort=effort)
     return _rung(ctx, choice, "phase1.model_selected")
 
 
@@ -1198,7 +1198,9 @@ def _phase1_fallback(ctx: RunContext, failed: LaneModel, exc: ReviewError) -> La
     log.warning("phase1 lane on %s failed (%s); falling down the ladder", failed.model, exc)
     skipped = (*choice.skipped, quota.Skipped(failed.model, "lane failed", str(exc)[:600]))
     reader = ctx.quota_reader or quota.cached_reader(ctx.conn)
-    nxt = quota.choose(lower, pol.quota_reserve, reader=reader, skipped=skipped)
+    nxt = quota.choose(
+        lower, pol.quota_reserve, reader=reader, skipped=skipped, effort=ctx.phase1_effort
+    )
     return _rung(ctx, nxt, "phase1.model_fallback")
 
 
