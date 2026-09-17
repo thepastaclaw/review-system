@@ -365,6 +365,12 @@ whose heartbeat is older than 5 min, whose deadline passed, or whose process is
 gone, and requeues the head with backoff (`infra` up to 3 attempts, `contract`
 twice, `fatal` never). Slot counts are recomputed from the DB every tick.
 
+Two reviews run at once normally, plus one overflow slot a priority head may
+claim: `max_concurrent + priority_overflow` is a hard ceiling no head of any kind
+crosses. A backlog (>10 queued) lends an overflow slot to normal work only while
+one remains free for priority, so with the default single overflow slot the
+priority lane stays reserved however long the queue gets.
+
 ## Alerts (Slack via `openclaw message send`)
 
 Only: a head failed after all retries, watchdog (eligible work + free slot +
@@ -372,6 +378,12 @@ nothing started for 30 min, or ingest stale/erroring), daemon start/stop.
 Everything else is in `events` and `reviewsys status`.
 
 ## Development
+
+Reviewsys runs Claude Code in plan mode with the per-invocation setting
+`permissions.disableAutoMode="disable"`. This disables Claude Code's separate
+LLM permission-classifier requests for review lanes and doctor probes while
+retaining plan mode and ordinary permission rules. Shared Claude settings and
+other applications are unaffected.
 
     make sync    # uv sync --group dev
     make check   # ruff + mypy --strict + pytest

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import quota
 from .config import Config
+from .lane import CLAUDE_SETTINGS
 
 PROXY_URL = os.environ.get("REVIEWSYS_PROXY_URL", "http://127.0.0.1:8317")
 LANE_PROBE_TIMEOUT_S = 180
@@ -83,6 +84,8 @@ def probe_lane(model: str, claude_bin: str) -> tuple[bool, str]:
     argv = [
         claude_bin,
         "--bare",
+        "--settings",
+        CLAUDE_SETTINGS,
         "--permission-mode",
         "plan",
         "--model",

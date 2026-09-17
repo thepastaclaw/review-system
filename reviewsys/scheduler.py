@@ -46,18 +46,18 @@ def schedule(conn: sqlite3.Connection, cfg: Config, *, spawn: bool = True) -> li
     active_prs = {(r["repo"], r["number"]) for r in active}
     normal_used = sum(1 for r in active if not r["priority"])
     priority_used = sum(1 for r in active if r["priority"])
-    # Under backlog pressure, temporarily lend one priority overflow slot to normal work.
-    # Priority heads still retain access to the full overflow capacity.
+    # Under backlog pressure, temporarily lend a priority overflow slot to normal work -- but
+    # never the last one, so a priority head always has somewhere to land.
     queued_count = conn.execute("SELECT COUNT(*) FROM heads WHERE status='queued'").fetchone()[0]
-    normal_capacity = cfg.max_concurrent + (1 if queued_count > 10 else 0)
+    lent = 1 if queued_count > 10 and cfg.priority_overflow > 1 else 0
+    normal_capacity = cfg.max_concurrent + lent
     for head in eligible_heads(conn, ts=ts):
+        # Hard ceiling for every kind of head; nothing else can start once it is reached.
+        if normal_used + priority_used >= cfg.max_concurrent + cfg.priority_overflow:
+            break
         if (head["repo"], head["number"]) in active_prs:
             continue  # single-flight per PR
-        total_active = normal_used + priority_used
-        if head["priority"]:
-            if total_active >= cfg.max_concurrent + cfg.priority_overflow:
-                continue
-        elif normal_used >= normal_capacity:
+        if not head["priority"] and normal_used >= normal_capacity:
             continue
         run_id = _start_run(conn, cfg, head, ts=ts, spawn=spawn)
         if run_id is None:

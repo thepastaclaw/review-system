@@ -44,15 +44,31 @@ def test_slots_and_priority_overflow(cfg, conn):
     assert conn.execute("SELECT COUNT(*) FROM runs WHERE status='spawned'").fetchone()[0] == 3
 
 
-def test_backlog_lends_one_priority_slot_to_normal_work(cfg, conn):
+def test_backlog_never_lends_the_last_priority_slot(cfg, conn):
+    """With a single overflow slot the backlog may not borrow it: priority work must fit."""
     queue(conn, cfg, 11)
-    started = schedule(conn, cfg, spawn=False)
-    assert len(started) == 3
+    assert len(schedule(conn, cfg, spawn=False)) == 2
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 200, "e" * 40, Trigger.REVIEW_REQUESTED)
+    assert len(schedule(conn, cfg, spawn=False)) == 1
 
 
 def test_small_backlog_keeps_priority_slot_reserved(cfg, conn):
     queue(conn, cfg, 3)
     assert len(schedule(conn, cfg, spawn=False)) == 2
+
+
+def test_total_never_exceeds_max_plus_overflow(cfg, conn):
+    """Normal work starting after priority work must still respect the global ceiling."""
+    ceiling = cfg.max_concurrent + cfg.priority_overflow
+    with tx(conn):
+        for i in range(3):
+            enqueue_head(conn, cfg, "dashpay/platform", 300 + i, f"{i}" * 40, Trigger.MENTION)
+    schedule(conn, cfg, spawn=False)  # priority heads claim their slots first
+    queue(conn, cfg, 12)  # a backlog of normal work arrives behind them
+    schedule(conn, cfg, spawn=False)
+    active = conn.execute("SELECT COUNT(*) FROM runs WHERE status='spawned'").fetchone()[0]
+    assert active == ceiling == 3
 
 
 def test_debounce_blocks_until_eligible(cfg, conn):
