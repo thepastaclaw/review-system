@@ -373,6 +373,12 @@ Everything else is in `events` and `reviewsys status`.
 
 ## Development
 
+Reviewsys runs Claude Code in plan mode with the per-invocation setting
+`permissions.disableAutoMode="disable"`. This disables Claude Code's separate
+LLM permission-classifier requests for review lanes and doctor probes while
+retaining plan mode and ordinary permission rules. Shared Claude settings and
+other applications are unaffected.
+
     make sync    # uv sync --group dev
     make check   # ruff + mypy --strict + pytest
 

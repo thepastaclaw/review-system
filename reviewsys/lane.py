@@ -18,6 +18,9 @@ from .models import FailKind, ReviewError
 
 LaneRunner = Callable[["LaneSpec", Path, Path], "LaneResult"]
 LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is never starved
+# Plan mode otherwise enables Claude Code's separate LLM permission classifier.
+# Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
+CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +60,8 @@ def argv_for(spec: LaneSpec) -> list[str]:
     argv = [
         spec.claude_bin,
         "--bare",
+        "--settings",
+        CLAUDE_SETTINGS,
         "--permission-mode",
         "plan",
         "--model",
