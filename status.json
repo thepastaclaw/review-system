@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-17T08:39:00Z",
-  "generated_at": "2026-09-17T08:39:00Z",
+  "data_as_of": "2026-09-17T08:40:00Z",
+  "generated_at": "2026-09-17T08:40:00Z",
   "history": {
     "daily": [
       {
@@ -69,6 +69,30 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "after 3 attempt(s): phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "head.failed",
+        "number": 4793,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-09-17T08:39:50Z"
+      },
+      {
+        "detail": "phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "run.failed",
+        "number": 4793,
+        "repo": "dashpay/platform",
+        "run_id": 856,
+        "ts": "2026-09-17T08:39:50Z"
+      },
+      {
+        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
+        "kind": "select.degraded",
+        "number": 994,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 858,
+        "ts": "2026-09-17T08:39:32Z"
+      },
       {
         "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
         "kind": "select.degraded",
@@ -364,30 +388,6 @@
         "repo": "dashpay/dash-evo-tool",
         "run_id": 851,
         "ts": "2026-09-17T08:12:30Z"
-      },
-      {
-        "detail": "tier=normal method=fallback error=exit 1 timed_out=False",
-        "kind": "triage.degraded",
-        "number": 994,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 851,
-        "ts": "2026-09-17T08:12:27Z"
-      },
-      {
-        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
-        "kind": "select.degraded",
-        "number": 4784,
-        "repo": "dashpay/platform",
-        "run_id": 852,
-        "ts": "2026-09-17T08:11:36Z"
-      },
-      {
-        "detail": "skipped for throughput: 11 PRs queued, above the 10 limit",
-        "kind": "phase1.skipped_backlog",
-        "number": 4790,
-        "repo": "dashpay/platform",
-        "run_id": 849,
-        "ts": "2026-09-17T08:10:51Z"
       }
     ],
     "tokens_by_effort": [
@@ -417,7 +417,7 @@
       },
       {
         "effort": "high",
-        "lanes": 1362,
+        "lanes": 1363,
         "tokens_in": 906662039,
         "tokens_out": 6021526
       }
@@ -452,8 +452,8 @@
         "tokens_out": 2415100
       },
       {
-        "avg_tokens_per_lane": 838855.0,
-        "lanes": 2638,
+        "avg_tokens_per_lane": 838537.0,
+        "lanes": 2639,
         "model": "gpt-6-astra",
         "tokens_in": 2202465995,
         "tokens_out": 10433588
@@ -977,9 +977,9 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-17T12:52:35Z",
-        "elapsed_seconds": 6385,
+        "elapsed_seconds": 6445,
         "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-09-17T08:38:53Z",
+        "heartbeat_at": "2026-09-17T08:39:53Z",
         "id": 842,
         "number": 4432,
         "phase": "phase1",
@@ -990,24 +990,10 @@
       },
       {
         "attempt": 3,
-        "deadline_at": "2026-09-17T14:23:30Z",
-        "elapsed_seconds": 930,
-        "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-09-17T08:38:46Z",
-        "id": 856,
-        "number": 4793,
-        "phase": "phase2",
-        "repo": "dashpay/platform",
-        "sha": "38efcbdb90844763ef0a698a3a55046d49359fb2",
-        "started_at": "2026-09-17T08:23:30Z",
-        "status": "running"
-      },
-      {
-        "attempt": 3,
         "deadline_at": "2026-09-17T14:33:20Z",
-        "elapsed_seconds": 340,
+        "elapsed_seconds": 400,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-09-17T08:38:50Z",
+        "heartbeat_at": "2026-09-17T08:39:50Z",
         "id": 857,
         "number": 7689,
         "phase": "triage",
@@ -1019,12 +1005,12 @@
       {
         "attempt": 2,
         "deadline_at": "2026-09-17T14:35:28Z",
-        "elapsed_seconds": 212,
+        "elapsed_seconds": 272,
         "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-09-17T08:38:58Z",
+        "heartbeat_at": "2026-09-17T08:39:58Z",
         "id": 858,
         "number": 994,
-        "phase": "select",
+        "phase": "triage",
         "repo": "dashpay/dash-evo-tool",
         "sha": "095f8c8a1723c4c5280cd5a2b67fd2441de2ad4e",
         "started_at": "2026-09-17T08:35:28Z",
@@ -1036,13 +1022,13 @@
       "priority_overflow": 2,
       "typical": 2
     },
-    "failed_heads_24h": 5,
+    "failed_heads_24h": 6,
     "heads": {
       "closed": 275,
       "done": 2843,
-      "failed": 28,
+      "failed": 29,
       "queued": 12,
-      "running": 4,
+      "running": 3,
       "superseded": 772
     },
     "ingest_error_streak": 0,
@@ -1050,12 +1036,12 @@
     "last_run_done_at": "2026-09-17T07:12:05Z",
     "last_run_started_at": "2026-09-17T08:35:28Z",
     "median_run_minutes": 92.25,
-    "notify_last_at": "2026-09-17T08:37:28Z",
+    "notify_last_at": "2026-09-17T08:39:38Z",
     "oldest_queued_at": "2026-09-17T05:48:21Z",
     "priority_queued": 6,
     "queued": [
       {
-        "age_seconds": 6177,
+        "age_seconds": 6237,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T06:56:10Z",
@@ -1071,7 +1057,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 3889,
+        "age_seconds": 3949,
         "author": "romchornyi",
         "eligible": true,
         "eligible_at": "2026-09-17T07:34:11Z",
@@ -1087,7 +1073,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 6858,
+        "age_seconds": 6918,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T08:00:56Z",
@@ -1103,7 +1089,7 @@
         "trigger": "priority_request"
       },
       {
-        "age_seconds": 1958,
+        "age_seconds": 2018,
         "author": "shumkov",
         "eligible": true,
         "eligible_at": "2026-09-17T08:22:24Z",
@@ -1119,7 +1105,7 @@
         "trigger": "priority_request"
       },
       {
-        "age_seconds": 10239,
+        "age_seconds": 10299,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T08:31:58Z",
@@ -1135,7 +1121,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 6858,
+        "age_seconds": 6918,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-09-17T08:40:29Z",
@@ -1151,7 +1137,7 @@
         "trigger": "priority_request"
       },
       {
-        "age_seconds": 5195,
+        "age_seconds": 5255,
         "author": "Claudius-Maginificent",
         "eligible": true,
         "eligible_at": "2026-09-17T07:42:25Z",
@@ -1167,7 +1153,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 4060,
+        "age_seconds": 4120,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T08:01:20Z",
@@ -1183,7 +1169,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 3351,
+        "age_seconds": 3411,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T08:13:09Z",
@@ -1199,7 +1185,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 5706,
+        "age_seconds": 5766,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T08:38:00Z",
@@ -1215,7 +1201,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 6408,
+        "age_seconds": 6468,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T08:38:28Z",
@@ -1231,7 +1217,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 5394,
+        "age_seconds": 5454,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-09-17T08:40:21Z",
@@ -1247,11 +1233,11 @@
         "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-17T08:39:00Z",
+    "ts": "2026-09-17T08:40:00Z",
     "watchdog": {
-      "active": 4,
+      "active": 3,
       "eligible": 10,
-      "idle_minutes": 3.533333333333333,
+      "idle_minutes": 4.533333333333333,
       "ingest_stale": false,
       "stuck": false
     }
