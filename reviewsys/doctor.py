@@ -161,6 +161,12 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
     )
     ok &= _ok("claude launcher", Path(cfg.claude_bin).exists(), cfg.claude_bin)
     ok &= _ok("skills config", (cfg.skills_dir / "config.json").exists(), str(cfg.skills_dir))
+    _ok(
+        "review slots",
+        True,
+        f"{cfg.max_concurrent} normal + {cfg.priority_overflow} priority "
+        f"(ceiling {cfg.max_concurrent + cfg.priority_overflow}, from config.toml)",
+    )
     for rel in ("prompts/review-agent.md", "prompts/verifier-agent.md"):
         ok &= _ok(f"template {rel}", (cfg.skills_dir / rel).exists())
     for rc in cfg.repos:

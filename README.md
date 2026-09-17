@@ -433,6 +433,12 @@ not real spend, so keep it well above a normal $3–10 lane).
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
+`config.toml` wins over the skills repo's `config.json` for any key it defines, so a
+slot change made only in the skills repo has no effect on the box. `doctor` prints the
+effective `review slots` line for exactly this reason. Do not run `reviewsys tick` while
+the daemon is live -- it refuses, because two schedulers would each admit up to the
+ceiling; `tick --no-spawn` never schedules and is safe any time.
+
 ### Notes after the legacy cutover (2026-09)
 
 - Legacy reviews were imported with `import-legacy`, so a later push on a PR
