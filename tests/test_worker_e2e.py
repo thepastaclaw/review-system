@@ -844,6 +844,58 @@ def test_still_valid_reply_is_answered_without_resolving(cfg, conn, gh, lanes):
     assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
 
 
+def test_verifier_overruling_a_reviewer_posts_the_verifier_reason(cfg, conn, gh, lanes):
+    """The general lane keeps insisting STILL_VALID; the verifier, having read the author's
+    'fixed in <sha>' reply against the code, says FIXED with a reason. The thread must get the
+    verifier's reason, not the blank 'did not survive verification' (dash#7107 run 811)."""
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    gh.threads = [
+        _prior_thread(
+            fh,
+            replies=[
+                {
+                    "id": 901,
+                    "author": "PastaPastaPasta",
+                    "body": "Fixed in 5885d7ba12: the cache is now keyed by the owning manager.",
+                    "created_at": "x",
+                    "association": "MEMBER",
+                }
+            ],
+        )
+    ]
+    carried = {**s, "finding_hash": fh}
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [carried],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {
+                "finding_hash": fh,
+                "status": "STILL_VALID",
+                "reason": "A new manager can reuse the address.",
+            }
+        ],
+    }
+    lanes.verifier["default"] = {
+        **_verifier([]),
+        "prior_finding_reconciliation": [
+            {
+                "finding_hash": fh,
+                "status": "FIXED",
+                "reason": "5885d7ba12 keys the snapshot cache by manager and tip, so a destroyed chainstate's snapshot cannot be reused.",
+            }
+        ],
+    }
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    assert len(gh.replies) == 1
+    body = gh.replies[0]["body"]
+    assert "**Resolved** (re-reviewed at `aaaaaaaa`): 5885d7ba12 keys the snapshot cache" in body
+    assert "did not survive verification" not in body
+    assert any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+
+
 def test_thread_answer_is_posted_once_per_reply(cfg, conn, gh, lanes):
     from reviewsys.contract import parse_verifier_output
     from reviewsys.publish import answer_replied_threads

@@ -792,7 +792,7 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
         ctx.sha,
         threads=ctx.prior_threads,
         open_threads=ctx.open_threads,
-        reconciliation=_reconciliation(ctx, phase),
+        reconciliation=_reconciliation(ctx, phase, verified),
         verified=verified,
     )
     with tx(ctx.conn):
@@ -872,7 +872,7 @@ def _verdict_update(
         return None
     withdrawn = [
         str(r.get("finding_hash"))
-        for r in _reconciliation(ctx, phase).values()
+        for r in _reconciliation(ctx, phase, verified).values()
         if r.get("status") in {"WITHDRAWN", "FIXED", "OUTDATED"}
     ]
     titles = [
@@ -923,15 +923,23 @@ def _verdict_update(
     return result
 
 
-def _reconciliation(ctx: RunContext, phase: str) -> dict[str, dict[str, Any]]:
-    """Merge every reviewer lane's `prior_finding_reconciliation` for the phase being published.
+def _reconciliation(
+    ctx: RunContext, phase: str, verified: VerifierOutput | None = None
+) -> dict[str, dict[str, Any]]:
+    """The `prior_finding_reconciliation` rows for the phase being published, one per hash.
 
-    Lanes may disagree; the verifier's kept set decides STILL_VALID (handled by the caller), so
-    here the first row with a reason wins per hash, preferring rows that explain themselves.
+    The verifier is the canonical source of truth, so its rows win outright: it is the lane
+    that actually read the human's reply against the code and decided FIXED / WITHDRAWN, and
+    its reason is the one that belongs on the thread. Reviewer lanes fill in only the hashes
+    the verifier did not reconcile; among those, the first row with a reason wins. (Before
+    this, the verifier's rows were ignored and a reviewer's STILL_VALID reason was silently
+    replaced by "did not survive verification" whenever the verifier overruled it.)
     """
+    merged: dict[str, dict[str, Any]] = {}
+    for row in verified.prior_reconciliation if verified else []:
+        merged.setdefault(str(row["finding_hash"]), row)
     outputs = ctx.phase1_outputs if phase == "preliminary" else ctx.phase2_outputs
     outputs = outputs or ctx.phase1_outputs or ctx.phase2_outputs
-    merged: dict[str, dict[str, Any]] = {}
     for out in outputs.values():
         for row in out.prior_reconciliation:
             h = str(row.get("finding_hash") or "")
