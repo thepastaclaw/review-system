@@ -16,7 +16,7 @@ from . import doctor as doctor_mod
 from . import exporter as exporter_mod
 from . import status as status_mod
 from . import worker as worker_mod
-from .daemon import Daemon
+from .daemon import Daemon, acquire_singleton_lock
 from .gh import Gh
 from .ingest import enqueue_head
 from .models import Trigger
@@ -40,6 +40,11 @@ def cmd_daemon(args: argparse.Namespace) -> int:
 def cmd_tick(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     conn = db_mod.connect(cfg.db_path)
+    if not args.no_spawn:
+        # A scheduling tick alongside the live daemon would be a second scheduler with its own
+        # in-memory slot accounting, so the two together could start twice the slot ceiling.
+        # `--no-spawn` builds a Daemon without the schedule task and is safe to run any time.
+        acquire_singleton_lock(cfg.db_path.with_suffix(".daemon.lock"))
     res = Daemon(
         cfg, conn, spawn=not args.no_spawn, notifier=Notifier(cfg, wake_enabled=not args.no_wake)
     ).tick(force=True)

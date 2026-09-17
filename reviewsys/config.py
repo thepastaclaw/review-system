@@ -389,9 +389,12 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         claude_bin=str(Path(p["claude"]).expanduser()),
         gh_bin=str(p["gh"]),
         openclaw_bin=str(p["openclaw"]),
-        max_concurrent=int(s.get("max_concurrent", settings.get("max_concurrent_reviews", 2))),
-        priority_overflow=int(
-            s.get("priority_overflow", settings.get("priority_review_overflow_slots", 1))
+        # clamped, not rejected: a bad edit must not put the daemon into a restart loop
+        max_concurrent=max(
+            1, int(s.get("max_concurrent", settings.get("max_concurrent_reviews", 2)))
+        ),
+        priority_overflow=max(
+            0, int(s.get("priority_overflow", settings.get("priority_review_overflow_slots", 1)))
         ),
         debounce_minutes=int(s.get("debounce_minutes", settings.get("debounce_minutes", 30))),
         max_attempts=int(s["max_attempts"]),

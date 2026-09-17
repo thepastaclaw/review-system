@@ -58,6 +58,15 @@ def test_small_backlog_keeps_priority_slot_reserved(cfg, conn):
     assert len(schedule(conn, cfg, spawn=False)) == 2
 
 
+def test_backlog_behind_a_priority_run_fills_only_the_normal_slots(cfg, conn):
+    """The live incident's shape: priority work active, a long normal queue behind it."""
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 200, "e" * 40, Trigger.REVIEW_REQUESTED)
+    assert len(schedule(conn, cfg, spawn=False)) == 1
+    queue(conn, cfg, 12)
+    assert len(schedule(conn, cfg, spawn=False)) == 2  # not 3: the backlog may not lend
+
+
 def test_total_never_exceeds_max_plus_overflow(cfg, conn):
     """Normal work starting after priority work must still respect the global ceiling."""
     ceiling = cfg.max_concurrent + cfg.priority_overflow
