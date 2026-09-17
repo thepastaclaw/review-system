@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-17T07:55:01Z",
-  "generated_at": "2026-09-17T07:55:01Z",
+  "data_as_of": "2026-09-17T07:56:01Z",
+  "generated_at": "2026-09-17T07:56:01Z",
   "history": {
     "daily": [
       {
@@ -69,6 +69,22 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "attempt 1 failed (infra); retry in 5m",
+        "kind": "head.requeued",
+        "number": 1478,
+        "repo": "dashpay/tenderdash",
+        "run_id": null,
+        "ts": "2026-09-17T07:55:56Z"
+      },
+      {
+        "detail": "phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "run.failed",
+        "number": 1478,
+        "repo": "dashpay/tenderdash",
+        "run_id": 845,
+        "ts": "2026-09-17T07:55:56Z"
+      },
       {
         "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
         "kind": "select.degraded",
@@ -372,22 +388,6 @@
         "repo": "dashpay/dash-evo-tool",
         "run_id": null,
         "ts": "2026-09-17T07:09:06Z"
-      },
-      {
-        "detail": "head 4049 superseded by d3e83ed6",
-        "kind": "head.superseded",
-        "number": 996,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": null,
-        "ts": "2026-09-17T07:09:06Z"
-      },
-      {
-        "detail": "{'worktrees_removed': 17, 'runs_removed': 0, 'events_pruned': 0, 'inbox_pruned': 0, 'silence_pruned': 0}",
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-09-17T07:08:43Z"
       }
     ],
     "tokens_by_effort": [
@@ -405,9 +405,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 1268,
-        "tokens_in": 2420980714,
-        "tokens_out": 22541950
+        "lanes": 1269,
+        "tokens_in": 2425575475,
+        "tokens_out": 22650370
       },
       {
         "effort": "medium",
@@ -417,18 +417,18 @@
       },
       {
         "effort": "high",
-        "lanes": 1341,
+        "lanes": 1342,
         "tokens_in": 905124131,
         "tokens_out": 5964468
       }
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 1664592.0,
-        "lanes": 337,
+        "avg_tokens_per_lane": 1673582.0,
+        "lanes": 338,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 546410137,
-        "tokens_out": 14557269
+        "tokens_in": 551004898,
+        "tokens_out": 14665689
       },
       {
         "avg_tokens_per_lane": 9677534.0,
@@ -452,8 +452,8 @@
         "tokens_out": 2415100
       },
       {
-        "avg_tokens_per_lane": 845910.0,
-        "lanes": 2616,
+        "avg_tokens_per_lane": 845586.0,
+        "lanes": 2617,
         "model": "gpt-6-astra",
         "tokens_in": 2202465995,
         "tokens_out": 10433588
@@ -467,8 +467,8 @@
       },
       {
         "run_id": 844,
-        "tokens_in": 3654788,
-        "tokens_out": 105997
+        "tokens_in": 8249549,
+        "tokens_out": 214417
       },
       {
         "run_id": 843,
@@ -962,14 +962,14 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 8442694,
+      "avg_tokens_per_completed_review": 8450112,
       "completed_reviews": 634,
       "findings": 3977,
       "reviews": 2861,
       "runs": 848,
-      "tokens_in": 5303911959,
-      "tokens_out": 48755972,
-      "tokens_total": 5352667931
+      "tokens_in": 5308506720,
+      "tokens_out": 48864392,
+      "tokens_total": 5357371112
     }
   },
   "live": {
@@ -977,9 +977,9 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-17T12:52:35Z",
-        "elapsed_seconds": 3746,
+        "elapsed_seconds": 3806,
         "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-09-17T07:54:52Z",
+        "heartbeat_at": "2026-09-17T07:55:52Z",
         "id": 842,
         "number": 4432,
         "phase": "phase1",
@@ -991,12 +991,12 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-17T13:22:18Z",
-        "elapsed_seconds": 1963,
+        "elapsed_seconds": 2023,
         "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-09-17T07:54:49Z",
+        "heartbeat_at": "2026-09-17T07:55:49Z",
         "id": 844,
         "number": 4784,
-        "phase": "phase1",
+        "phase": "verify1",
         "repo": "dashpay/platform",
         "sha": "d6b1541ff24688316c98dc9082b55c57ea32e228",
         "started_at": "2026-09-17T07:22:18Z",
@@ -1004,24 +1004,10 @@
       },
       {
         "attempt": 1,
-        "deadline_at": "2026-09-17T13:39:52Z",
-        "elapsed_seconds": 909,
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-09-17T07:54:53Z",
-        "id": 845,
-        "number": 1478,
-        "phase": "phase2",
-        "repo": "dashpay/tenderdash",
-        "sha": "f946fa830ae8e3af32cbdf1b3c3ddef906065e2a",
-        "started_at": "2026-09-17T07:39:52Z",
-        "status": "running"
-      },
-      {
-        "attempt": 1,
         "deadline_at": "2026-09-17T13:44:17Z",
-        "elapsed_seconds": 644,
+        "elapsed_seconds": 704,
         "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-09-17T07:54:47Z",
+        "heartbeat_at": "2026-09-17T07:55:47Z",
         "id": 847,
         "number": 4652,
         "phase": "phase2",
@@ -1033,9 +1019,9 @@
       {
         "attempt": 2,
         "deadline_at": "2026-09-17T13:50:52Z",
-        "elapsed_seconds": 249,
-        "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-09-17T07:54:52Z",
+        "elapsed_seconds": 309,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-09-17T07:55:53Z",
         "id": 848,
         "number": 4793,
         "phase": "triage",
@@ -1055,8 +1041,8 @@
       "closed": 275,
       "done": 2843,
       "failed": 28,
-      "queued": 11,
-      "running": 5,
+      "queued": 12,
+      "running": 4,
       "superseded": 771
     },
     "ingest_error_streak": 0,
@@ -1066,10 +1052,10 @@
     "median_run_minutes": 92.25,
     "notify_last_at": "2026-09-17T07:54:41Z",
     "oldest_queued_at": "2026-09-17T05:48:21Z",
-    "priority_queued": 4,
+    "priority_queued": 5,
     "queued": [
       {
-        "age_seconds": 4219,
+        "age_seconds": 4279,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T06:47:39Z",
@@ -1085,7 +1071,7 @@
         "trigger": "priority_request"
       },
       {
-        "age_seconds": 3538,
+        "age_seconds": 3598,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T06:56:10Z",
@@ -1101,7 +1087,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 1250,
+        "age_seconds": 1310,
         "author": "romchornyi",
         "eligible": true,
         "eligible_at": "2026-09-17T07:34:11Z",
@@ -1117,7 +1103,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 7600,
+        "age_seconds": 7660,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T07:44:36Z",
@@ -1133,7 +1119,23 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 3067,
+        "age_seconds": 4279,
+        "author": "lklimek",
+        "eligible": false,
+        "eligible_at": "2026-09-17T08:00:56Z",
+        "number": 1478,
+        "pr_url": "https://github.com/dashpay/tenderdash/pull/1478",
+        "prioritize_url": "https://github.com/dashpay/tenderdash/issues/1478#issuecomment-5694761501",
+        "priority": true,
+        "queued_at": "2026-09-17T06:44:42Z",
+        "reason": "waiting for debounce/backoff",
+        "repo": "dashpay/tenderdash",
+        "sha": "f946fa830ae8e3af32cbdf1b3c3ddef906065e2a",
+        "title": "fix(rpc): bound asynchronous transaction broadcasts",
+        "trigger": "priority_request"
+      },
+      {
+        "age_seconds": 3127,
         "author": "Claudius-Maginificent",
         "eligible": true,
         "eligible_at": "2026-09-17T07:33:54Z",
@@ -1149,7 +1151,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 3067,
+        "age_seconds": 3127,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T07:33:54Z",
@@ -1165,7 +1167,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 2755,
+        "age_seconds": 2815,
         "author": "Claudius-Maginificent",
         "eligible": true,
         "eligible_at": "2026-09-17T07:39:06Z",
@@ -1181,7 +1183,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 2556,
+        "age_seconds": 2616,
         "author": "Claudius-Maginificent",
         "eligible": true,
         "eligible_at": "2026-09-17T07:42:25Z",
@@ -1197,23 +1199,23 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 7377,
+        "age_seconds": 7437,
         "author": "PastaPastaPasta",
-        "eligible": false,
+        "eligible": true,
         "eligible_at": "2026-09-17T07:55:24Z",
         "number": 7689,
         "pr_url": "https://github.com/dashpay/dash/pull/7689",
         "prioritize_url": "https://github.com/dashpay/dash/issues/7689#issuecomment-5709633065",
         "priority": false,
         "queued_at": "2026-09-17T05:52:04Z",
-        "reason": "waiting for debounce/backoff",
+        "reason": "waiting for a review slot",
         "repo": "dashpay/dash",
         "sha": "a7768c364f3c1e5baf29c14dd5c147d59e6cfee2",
         "title": "build: skip the FORTIFY security check when _FORTIFY_SOURCE is not in use",
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1421,
+        "age_seconds": 1481,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-09-17T08:01:20Z",
@@ -1229,7 +1231,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 712,
+        "age_seconds": 772,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-09-17T08:13:09Z",
@@ -1245,11 +1247,11 @@
         "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-17T07:55:01Z",
+    "ts": "2026-09-17T07:56:01Z",
     "watchdog": {
-      "active": 5,
-      "eligible": 8,
-      "idle_minutes": 4.15,
+      "active": 4,
+      "eligible": 9,
+      "idle_minutes": 5.15,
       "ingest_stale": false,
       "stuck": false
     }
