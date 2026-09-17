@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-17T23:31:00Z",
-  "generated_at": "2026-09-17T23:31:00Z",
+  "data_as_of": "2026-09-17T23:32:01Z",
+  "generated_at": "2026-09-17T23:32:01Z",
   "history": {
     "daily": [
       {
@@ -69,6 +69,46 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
+        "kind": "select.degraded",
+        "number": 4800,
+        "repo": "dashpay/platform",
+        "run_id": 941,
+        "ts": "2026-09-17T23:31:40Z"
+      },
+      {
+        "detail": "attempt 3 sha=958f475b",
+        "kind": "run.spawned",
+        "number": 4790,
+        "repo": "dashpay/platform",
+        "run_id": 942,
+        "ts": "2026-09-17T23:31:38Z"
+      },
+      {
+        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
+        "kind": "select.degraded",
+        "number": 1484,
+        "repo": "dashpay/tenderdash",
+        "run_id": 940,
+        "ts": "2026-09-17T23:31:38Z"
+      },
+      {
+        "detail": "attempt 2 failed (infra); retry in 15m",
+        "kind": "head.requeued",
+        "number": 983,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": null,
+        "ts": "2026-09-17T23:31:30Z"
+      },
+      {
+        "detail": "phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "run.failed",
+        "number": 983,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 939,
+        "ts": "2026-09-17T23:31:30Z"
+      },
       {
         "detail": "attempt 2 sha=337cf7b0",
         "kind": "run.spawned",
@@ -348,46 +388,6 @@
         "repo": "dashpay/platform",
         "run_id": 936,
         "ts": "2026-09-17T22:58:58Z"
-      },
-      {
-        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
-        "kind": "select.degraded",
-        "number": 4800,
-        "repo": "dashpay/platform",
-        "run_id": 934,
-        "ts": "2026-09-17T22:57:50Z"
-      },
-      {
-        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
-        "kind": "select.degraded",
-        "number": 901,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 935,
-        "ts": "2026-09-17T22:57:49Z"
-      },
-      {
-        "detail": "attempt 1 sha=c0074617",
-        "kind": "run.spawned",
-        "number": 901,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 935,
-        "ts": "2026-09-17T22:53:40Z"
-      },
-      {
-        "detail": "attempt 1 sha=337cf7b0",
-        "kind": "run.spawned",
-        "number": 4800,
-        "repo": "dashpay/platform",
-        "run_id": 934,
-        "ts": "2026-09-17T22:53:40Z"
-      },
-      {
-        "detail": "attempt 1 failed (infra); retry in 5m",
-        "kind": "head.requeued",
-        "number": 4790,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-09-17T22:53:25Z"
       }
     ],
     "tokens_by_effort": [
@@ -417,7 +417,7 @@
       },
       {
         "effort": "high",
-        "lanes": 1460,
+        "lanes": 1461,
         "tokens_in": 1016712290,
         "tokens_out": 6942745
       }
@@ -452,8 +452,8 @@
         "tokens_out": 2957455
       },
       {
-        "avg_tokens_per_lane": 864501.0,
-        "lanes": 2909,
+        "avg_tokens_per_lane": 864204.0,
+        "lanes": 2910,
         "model": "gpt-6-astra",
         "tokens_in": 2503219448,
         "tokens_out": 11614493
@@ -966,7 +966,7 @@
       "completed_reviews": 657,
       "findings": 4252,
       "reviews": 2884,
-      "runs": 941,
+      "runs": 942,
       "tokens_in": 5869346331,
       "tokens_out": 56697481,
       "tokens_total": 5926043812
@@ -975,28 +975,14 @@
   "live": {
     "active": [
       {
-        "attempt": 2,
-        "deadline_at": "2026-09-18T05:15:21Z",
-        "elapsed_seconds": 939,
-        "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-09-17T23:30:51Z",
-        "id": 939,
-        "number": 983,
-        "phase": "phase2",
-        "repo": "dashpay/dash-evo-tool",
-        "sha": "3c0679ce9a36b6ec0f074c362705c3183e221388",
-        "started_at": "2026-09-17T23:15:21Z",
-        "status": "running"
-      },
-      {
         "attempt": 1,
         "deadline_at": "2026-09-18T05:27:35Z",
-        "elapsed_seconds": 205,
-        "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-09-17T23:30:50Z",
+        "elapsed_seconds": 266,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-09-17T23:31:50Z",
         "id": 940,
         "number": 1484,
-        "phase": "select",
+        "phase": "triage",
         "repo": "dashpay/tenderdash",
         "sha": "28f85449d98188642fed3d6923ec2c2b6f6b6fc2",
         "started_at": "2026-09-17T23:27:35Z",
@@ -1005,15 +991,29 @@
       {
         "attempt": 2,
         "deadline_at": "2026-09-18T05:27:35Z",
-        "elapsed_seconds": 205,
-        "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-09-17T23:30:50Z",
+        "elapsed_seconds": 266,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-09-17T23:31:50Z",
         "id": 941,
         "number": 4800,
-        "phase": "select",
+        "phase": "triage",
         "repo": "dashpay/platform",
         "sha": "337cf7b055a837914dc773fea6d5e14395b9af5f",
         "started_at": "2026-09-17T23:27:35Z",
+        "status": "running"
+      },
+      {
+        "attempt": 3,
+        "deadline_at": "2026-09-18T05:31:38Z",
+        "elapsed_seconds": 23,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-09-17T23:31:53Z",
+        "id": 942,
+        "number": 4790,
+        "phase": "select",
+        "repo": "dashpay/platform",
+        "sha": "958f475b77b25895ceae105669188d2952dee9e6",
+        "started_at": "2026-09-17T23:31:38Z",
         "status": "running"
       }
     ],
@@ -1032,32 +1032,16 @@
       "superseded": 805
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-09-17T23:27:11Z",
+    "ingest_last_at": "2026-09-17T23:31:18Z",
     "last_run_done_at": "2026-09-17T22:44:55Z",
-    "last_run_started_at": "2026-09-17T23:27:35Z",
+    "last_run_started_at": "2026-09-17T23:31:38Z",
     "median_run_minutes": 49.05,
-    "notify_last_at": "2026-09-17T23:29:37Z",
+    "notify_last_at": "2026-09-17T23:31:59Z",
     "oldest_queued_at": "2026-09-17T09:43:28Z",
-    "priority_queued": 2,
+    "priority_queued": 1,
     "queued": [
       {
-        "age_seconds": 3242,
-        "author": "DCG-Claude",
-        "eligible": true,
-        "eligible_at": "2026-09-17T23:30:13Z",
-        "number": 4790,
-        "pr_url": "https://github.com/dashpay/platform/pull/4790",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/4790#issuecomment-5704046348",
-        "priority": true,
-        "queued_at": "2026-09-17T22:36:58Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "958f475b77b25895ceae105669188d2952dee9e6",
-        "title": "feat(drive)!: keep per-issuer token supply rollups and a destroyed-issuer ledger",
-        "trigger": "review_reply"
-      },
-      {
-        "age_seconds": 1753,
+        "age_seconds": 1814,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-09-17T23:32:20Z",
@@ -1073,7 +1057,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 27772,
+        "age_seconds": 27833,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T16:18:08Z",
@@ -1089,7 +1073,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 25957,
+        "age_seconds": 26018,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T16:48:23Z",
@@ -1105,7 +1089,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 23879,
+        "age_seconds": 23940,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T17:23:01Z",
@@ -1121,7 +1105,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 21484,
+        "age_seconds": 21545,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T18:02:56Z",
@@ -1137,7 +1121,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 15289,
+        "age_seconds": 15350,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T19:46:11Z",
@@ -1153,7 +1137,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 14337,
+        "age_seconds": 14398,
         "author": "QuantumExplorer",
         "eligible": true,
         "eligible_at": "2026-09-17T20:02:03Z",
@@ -1169,7 +1153,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 12902,
+        "age_seconds": 12963,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T20:25:58Z",
@@ -1185,7 +1169,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 12674,
+        "age_seconds": 12735,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T20:29:46Z",
@@ -1201,7 +1185,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 9147,
+        "age_seconds": 9208,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1217,7 +1201,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 9147,
+        "age_seconds": 9208,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1233,7 +1217,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 6765,
+        "age_seconds": 6826,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T22:08:15Z",
@@ -1249,7 +1233,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 6523,
+        "age_seconds": 6584,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T22:12:17Z",
@@ -1265,7 +1249,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 4092,
+        "age_seconds": 4153,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T22:52:48Z",
@@ -1281,7 +1265,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 4092,
+        "age_seconds": 4153,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T22:52:48Z",
@@ -1297,7 +1281,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 3142,
+        "age_seconds": 3203,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T23:08:38Z",
@@ -1313,7 +1297,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 30591,
+        "age_seconds": 30652,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T23:14:58Z",
@@ -1329,7 +1313,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 2348,
+        "age_seconds": 2409,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T23:21:52Z",
@@ -1345,7 +1329,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 49652,
+        "age_seconds": 49713,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-09-17T23:42:19Z",
@@ -1359,13 +1343,29 @@
         "sha": "eb446d78677e8a93ccfb6e0bdc4ee5c6a62d5a37",
         "title": "fix(masternodes): keep the Add-voting-key prompt through unrelated task results",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 33751,
+        "author": "Claudius-Maginificent",
+        "eligible": false,
+        "eligible_at": "2026-09-17T23:46:30Z",
+        "number": 983,
+        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/983",
+        "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/983#issuecomment-5631462288",
+        "priority": false,
+        "queued_at": "2026-09-17T14:09:30Z",
+        "reason": "waiting for debounce/backoff",
+        "repo": "dashpay/dash-evo-tool",
+        "sha": "3c0679ce9a36b6ec0f074c362705c3183e221388",
+        "title": "test(migration): add cross-version migration test matrix",
+        "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-17T23:31:00Z",
+    "ts": "2026-09-17T23:32:01Z",
     "watchdog": {
       "active": 3,
-      "eligible": 18,
-      "idle_minutes": 3.4166666666666665,
+      "eligible": 17,
+      "idle_minutes": 0.38333333333333336,
       "ingest_stale": false,
       "stuck": false
     }
