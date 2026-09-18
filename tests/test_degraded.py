@@ -140,7 +140,7 @@ def _http_error(code, body):
 
 
 def test_probe_only_treats_quota_errors_as_exhausted(monkeypatch):
-    monkeypatch.setattr(degraded, "_client_key", lambda: "k")
+    monkeypatch.setattr(degraded, "client_key", lambda: "k")
     calls = {}
 
     def urlopen(req, timeout):
@@ -174,7 +174,7 @@ def test_probe_only_treats_quota_errors_as_exhausted(monkeypatch):
     calls["raise"] = urllib.error.URLError("connection refused")
     exhausted, reason = degraded.probe("gpt-6-astra")
     assert not exhausted and "not treated as exhausted" in reason
-    monkeypatch.setattr(degraded, "_client_key", lambda: None)
+    monkeypatch.setattr(degraded, "client_key", lambda: None)
     assert degraded.probe("gpt-6-astra") == (False, "no proxy client key to probe with")
 
 
@@ -187,6 +187,23 @@ def test_quota_failure_classifier():
     )
     assert not degraded.looks_like_quota_failure("lane timed out")
     assert not degraded.looks_like_quota_failure("model output is not a JSON object")
+    # a reviewer *talking about* quota or 429s in the PR under review is not an outage
+    assert not degraded.looks_like_quota_failure(
+        "I reviewed the quota ladder; the 429 path is fine"
+    )
+    assert not degraded.looks_like_quota_failure("The PR adds insufficient quota checks")
+    assert not degraded.looks_like_quota_failure("returns HTTP 4290 for oversize")
+
+
+def test_publishable_reason_strips_accounts_paths_and_urls():
+    r = degraded.publishable_reason(
+        "gpt-6-astra",
+        "API Error: 429 for pasta@dashboost.org via http://127.0.0.1:8317/v1/messages at /Users/claw/.reviewsys/x",
+    )
+    assert r.startswith("`gpt-6-astra` unavailable: 429 for <account> via <url> at <path>")
+    assert "@" not in r and "127.0.0.1" not in r and "/Users/" not in r
+    assert degraded.publishable_reason("m", "") == "`m` unavailable"
+    assert len(degraded.publishable_reason("m", "x" * 500)) < 150
 
 
 # ---- detection, cache, override, hold ----
@@ -280,11 +297,9 @@ def test_degraded_run_swaps_every_primary_lane_and_discloses_it(
         "- Triage: `normal` by `muse-spark-1.3-contributor` (standing in for `gpt-6-astra`) (effort low)"
         in body
     )
-    assert "⚠️ DEGRADED (stand-in models" in gh.gate_bodies[-1]
-    assert (
-        gh.gate_bodies[-1].startswith("<!--")
-        and "✅ ⚠️ DEGRADED — Final review complete" in gh.gate_bodies[-1]
-    )
+    assert "stand-in models (primary models out of quota)" in gh.gate_bodies[-1]
+    assert gh.gate_bodies[-1].startswith("<!--")
+    assert "\n⚠️ DEGRADED — Final review complete — no blockers" in gh.gate_bodies[-1]
 
 
 def test_normal_run_is_untouched_when_the_sentinel_answers(conn, gh, lanes, skills_dir, tmp_path):
@@ -323,7 +338,14 @@ def test_quota_failure_mid_run_switches_the_rest_of_the_run(conn, gh, lanes, ski
     assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 1
     body = gh.posted_reviews[0]["body"]
     assert DEGRADED_BADGE in body and "(detected by lane" in body
-    assert "triage lane failed on quota" in body
+    assert (
+        "`gpt-6-astra` unavailable: Request rejected (429) · All credentials for model gpt-6-astra are cooling down"
+        in body
+    )
+    detail = conn.execute(
+        "SELECT detail FROM events WHERE run_id=? AND kind='degraded.entered_midrun'", (rid,)
+    ).fetchone()["detail"]
+    assert detail.startswith("triage lane: exit 1")
     # the failure is remembered with a hold: the next run starts degraded without a probe
     blob = json.loads(kv_get(conn, degraded.KV_PROBE))
     assert blob["quota_exhausted"] and blob["hold_until"]
@@ -360,12 +382,15 @@ def test_reviewer_lane_quota_failure_switches_mid_run(conn, gh, lanes, skills_di
     # Phase 1 had already run at the tier's `max` before the flip; that is disclosed as-is
     assert [s.effort for s in _reviewer_calls(lanes) if s.model == "glm-5.3-flash"] == ["max"] * 3
     body = gh.posted_reviews[0]["body"]
-    assert "`gpt-5.6-sol` lane failed on quota" in body
+    assert (
+        "`gpt-5.6-sol` unavailable: Request rejected (429) · The usage limit has been reached"
+        in body
+    )
 
 
 def test_non_quota_failure_does_not_degrade(conn, gh, lanes, skills_dir, tmp_path):
     c = _cfg_with(skills_dir, tmp_path)
-    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scape_findings": []}
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier()
     lanes.dead_models = {"gpt-5.6-sol"}
     lanes.dead_stderr = "segfault in the launcher"
@@ -433,7 +458,7 @@ def test_degraded_preliminary_review_still_requests_changes(conn, gh, lanes, ski
     review = gh.posted_reviews[0]
     assert review["event"] == "REQUEST_CHANGES"
     assert f"## {DEGRADED_BADGE} — Preliminary review — Phase 1 blocker gate" in review["body"]
-    assert "⛔ ⚠️ DEGRADED — Blockers found" in gh.gate_bodies[-1]
+    assert "\n⚠️ DEGRADED — Blockers found — Phase 2 deferred" in gh.gate_bodies[-1]
 
 
 # ---- daemon, status, comments ----
@@ -492,13 +517,129 @@ def test_status_snapshot_and_cli_show_the_mode(conn, gh, skills_dir, tmp_path, c
 
 def test_comment_renderers_carry_the_tag():
     assert "DEGRADED" not in gate_body("in_progress", HEAD)
-    assert "🔍 ⚠️ DEGRADED — Review in progress" in gate_body("in_progress", HEAD, degraded=True)
-    assert "⚠️ ⚠️ DEGRADED — Automated review could not complete" in gate_body(
+    assert "\n⚠️ DEGRADED — Review in progress" in gate_body("in_progress", HEAD, degraded=True)
+    assert "🔍" not in gate_body("in_progress", HEAD, degraded=True), "one icon, not two"
+    assert "\n⚠️ DEGRADED — Automated review could not complete" in gate_body(
         "failed", HEAD, degraded=True, reason="x"
     )
     plain = queue_body(HEAD, position=1, eta_minutes=10, run_minutes=30, priority=False)
     tagged = queue_body(
         HEAD, position=1, eta_minutes=10, run_minutes=30, priority=False, degraded=True
     )
-    assert "DEGRADED" not in plain and "🕓 ⚠️ DEGRADED — Queued" in tagged
+    assert "DEGRADED" not in plain and "\n⚠️ DEGRADED — Queued" in tagged and "🕓" not in tagged
     assert "stand-in models and be marked as degraded" in tagged
+
+
+# ---- review-round findings ----
+
+
+def test_degraded_rereview_never_retracts_a_full_strength_approval(
+    conn, gh, lanes, skills_dir, tmp_path
+):
+    """A standing APPROVED review on this sha (posted while the primary models were up);
+    a manual re-review lands while degraded. The stand-in finds nothing: the approval must
+    stand, with no 'Standing review was APPROVED; this re-review is COMMENT' follow-up."""
+    c = _cfg_with(skills_dir, tmp_path)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier("APPROVE")
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "APPROVE",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review v1 -->\n<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    rid, status = _run(c, conn, gh, lanes, prober=EXHAUSTED)
+    assert status == RunStatus.DONE
+    # the usual same-sha re-review summary is posted (as COMMENT, which does not touch the
+    # standing approval on GitHub), but no verdict correction retracting the APPROVE
+    assert [r["event"] for r in gh.posted_reviews] == ["APPROVE", "COMMENT"]
+    assert "Re-review after discussion" not in gh.posted_reviews[-1]["body"]
+    assert f"## {DEGRADED_BADGE} — Re-review — Final validation" in gh.posted_reviews[-1]["body"]
+    kinds = [r["kind"] for r in conn.execute("SELECT kind FROM events WHERE run_id=?", (rid,))]
+    assert "review.verdict_kept" in kinds and "review.verdict_updated" not in kinds
+    # a degraded re-review that DOES find a blocker still corrects the verdict
+    blocker = {
+        "file": "f.rs",
+        "line_start": 11,
+        "line_end": 12,
+        "severity": "blocking",
+        "confidence": 0.9,
+        "category": "logic",
+        "title": "Overflow",
+        "body": "x",
+    }
+    lanes.reviewer["default"] = {
+        "summary": "bad",
+        "findings": [blocker],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = {**_verifier(), "findings": [blocker]}
+    lanes.calls.clear()
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done'")
+        enqueue_head(conn, c, "dashpay/platform", 1, HEAD, Trigger.MANUAL)
+    (rid2,) = schedule(conn, c, spawn=False)
+    assert (
+        worker.main(c, conn, rid2, gh=gh, lane_runner=lanes, heartbeat=False, prober=EXHAUSTED)
+        == RunStatus.DONE
+    )
+    follow = gh.posted_reviews[-1]
+    assert follow["event"] == "REQUEST_CHANGES"
+    assert f"## {DEGRADED_BADGE} — Re-review after discussion" in follow["body"]
+    kinds2 = [r["kind"] for r in conn.execute("SELECT kind FROM events WHERE run_id=?", (rid2,))]
+    assert "review.verdict_updated" in kinds2
+
+
+def test_production_shape_substitutes_keep_two_selector_attempts(
+    conn, gh, lanes, skills_dir, tmp_path
+):
+    """The shipped policy maps terra, luna, sol and astra all onto muse; the selector must
+    still get its two attempts (both on muse) rather than collapsing to one."""
+    block = {
+        "sentinel": "gpt-6-astra",
+        "phase1_effort_cap": "high",
+        "substitutes": {
+            m: MUSE for m in ("gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna")
+        },
+    }
+    c = _cfg_with(skills_dir, tmp_path, block=block)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier()
+    lanes.broken_once = {"selector"}  # first selector attempt returns unparseable JSON
+    _rid, status = _run(c, conn, gh, lanes, prober=EXHAUSTED)
+    assert status == RunStatus.DONE
+    selector = [s.model for s in lanes.calls if s.role == "selector"]
+    assert selector == [MUSE, MUSE]
+    sel = json.loads((c.runs_dir / "run-1" / "selector.json").read_text())
+    assert sel["method"] == f"llm:{MUSE}" and sel["selected"] == ["always-on", "security-auditor"]
+    assert {s.model for s in lanes.calls} == {"glm-5.3-flash", MUSE}
+
+
+def test_snapshot_tolerates_a_probe_older_than_the_worker_cache(conn, skills_dir, tmp_path):
+    """Queue comments and status read `snapshot`; between two daemon re-probes (120 s) the
+    stored probe is routinely older than the worker's 2-min cache, and the view must not
+    flap to "normal" in the middle of an outage."""
+    from datetime import timedelta
+
+    from reviewsys.db import fmt_ts, now_dt
+
+    c = _cfg_with(skills_dir, tmp_path)
+    degraded.record_probe(conn, quota_exhausted=True, reason="cooling down")
+    blob = json.loads(kv_get(conn, degraded.KV_PROBE))
+    blob["at"] = fmt_ts(now_dt() - timedelta(minutes=5))
+    with tx(conn):
+        from reviewsys.db import kv_set
+
+        kv_set(conn, degraded.KV_PROBE, json.dumps(blob))
+    assert degraded.snapshot(conn, c)["active"] is True
+    # ...but a worker would re-probe rather than trust a 5-minute-old reading
+    probes = []
+    degraded.detect(conn, c, prober=lambda m: (probes.append(m), (False, "ok"))[1])
+    assert probes == ["gpt-6-astra"]
+    # and a reading older than the snapshot window is not "active" either
+    blob["at"] = fmt_ts(now_dt() - timedelta(hours=1))
+    with tx(conn):
+        kv_set(conn, degraded.KV_PROBE, json.dumps(blob))
+    assert degraded.snapshot(conn, c)["active"] is False

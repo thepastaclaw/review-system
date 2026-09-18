@@ -202,7 +202,10 @@ and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
   the spot, gets its attempts again on the stand-in, and records a 20-minute hold so
   the following runs start degraded even if a tiny probe happens to get through.
   The daemon re-probes every 2 minutes so the mode clears by itself once quota is
-  back, and sends one Slack alert per transition (`degraded.transition` event).
+  back (a lane-observed hold keeps it on for its 20 minutes first), and sends one
+  Slack alert per transition (`degraded.transition` event). Only a lane's *stderr*
+  is classified, never model output: a reviewer discussing rate limits in the PR
+  under review must not flip the system.
 - **What changes.** Every lane whose model has a substitute runs on it, with the
   lane's effort clamped to the substitute's `effort_cap`. Phase 1 stays on its own
   ladder but the tier effort is capped at `phase1_effort_cap` (`high`), so the GLM
@@ -210,7 +213,8 @@ and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
   landing on the paid Muse rung too. Both phases always run: the backlog shortcut is
   disabled in degraded mode because it would put the whole review on one stand-in
   with no cross-model check. A degraded review never APPROVEs (it stops at COMMENT);
-  blockers still REQUEST_CHANGES.
+  blockers still REQUEST_CHANGES; and a same-sha re-review in degraded mode never
+  retracts a standing full-strength approval (`review.verdict_kept`).
 - **Disclosure.** Review title `⚠️ DEGRADED — …`, a warning block under the title
   naming the reason and the stand-ins, `- **Degraded mode**: …` and
   "`muse…` (standing in for `gpt-6-astra`)" in the provenance, the gate comment and

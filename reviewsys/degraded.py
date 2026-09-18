@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import urllib.error
 import urllib.request
@@ -39,8 +40,12 @@ log = logging.getLogger(__name__)
 
 PROXY_URL = os.environ.get("REVIEWSYS_PROXY_URL", "http://127.0.0.1:8317")
 CLIENT_KEYS_PATH = Path.home() / ".cli-proxy-api" / "client-keys.json"
-PROBE_TIMEOUT_S = 45
-PROBE_CACHE = timedelta(seconds=120)  # a probe this fresh is reused instead of re-sent
+PROBE_TIMEOUT_S = 15  # a 1-token request; the daemon's tick loop blocks on it
+PROBE_CACHE = timedelta(seconds=120)  # a worker reuses a probe this fresh instead of re-sending
+# status views (snapshot, queue comments, export) never probe; they show the last reading as
+# long as it is plausibly current. The daemon re-probes every 2 min, so in a real outage this
+# is never exceeded; it only lapses when the daemon itself is down.
+SNAPSHOT_MAX_AGE = timedelta(minutes=15)
 # a lane that died on quota is stronger evidence than a 1-token probe succeeding (the proxy
 # may admit a tiny request while every real lane is refused), so hold the mode this long
 LANE_HOLD = timedelta(minutes=20)
@@ -48,26 +53,49 @@ KV_FORCE = "degraded.force"  # on | off | absent (auto)
 KV_PROBE = "degraded.probe"  # last probe: {"at", "quota_exhausted", "reason"}
 KV_STATE = "degraded.state"  # last state the daemon alerted on: {"active", "reason", "since"}
 
-# fragments of a lane/probe error that mean "no quota", as opposed to a dead proxy
-QUOTA_MARKERS = (
-    "cooling down",
-    "usage limit",
-    "usage_limit",
-    "rate_limit_error",
-    "model_cooldown",
-    "insufficient_quota",
-    "quota",
-    "(429)",
-    "http 429",
-    "status 429",
-    "429 ",
+# patterns in an upstream/proxy error that mean "no quota", as opposed to a dead proxy.
+# Deliberately specific: these are only ever matched against a lane's stderr or an HTTP
+# error body, never against model output, and a bare "quota"/"429" would also match a
+# reviewer talking about quota handling in the PR under review.
+QUOTA_PATTERNS = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"cooling down",
+        r"usage limit has been reached",
+        r"usage_limit",
+        r"rate_limit_error",
+        r"model_cooldown",
+        r"insufficient_quota",
+        r"quota[ _]exceeded",
+        r"request rejected \(429\)",
+        r"api error:? 429\b",
+        r"\b(?:http|status|error) 429\b",
+    )
 )
 
 
 def looks_like_quota_failure(text: str) -> bool:
-    """A lane or probe failure caused by exhausted quota / cooldown on the upstream."""
-    lowered = text.lower()
-    return any(m in lowered for m in QUOTA_MARKERS)
+    """An infrastructure error text (lane stderr, HTTP error body) that says the upstream is
+    out of quota or cooling down. Callers must not pass model output: a review of code that
+    mentions rate limits is not an outage."""
+    return any(p.search(text) for p in QUOTA_PATTERNS)
+
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_PATH_RE = re.compile(r"(?:/[\w.-]+){2,}")
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def publishable_reason(model: str, text: str) -> str:
+    """A reason that is safe in a public review body: the upstream's short message with
+    account emails, filesystem paths and URLs removed, capped. Full text stays in events."""
+    msg = _URL_RE.sub("<url>", text)
+    msg = _EMAIL_RE.sub("<account>", msg)
+    msg = _PATH_RE.sub("<path>", msg)
+    msg = " ".join(msg.split())
+    for lead in ("API Error: ", "[infra] ", "lane exit 1: "):
+        msg = msg.replace(lead, "")
+    return f"`{model}` unavailable: {msg[:120]}" if msg else f"`{model}` unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,7 +117,8 @@ class State:
 # ---- probe ----
 
 
-def _client_key() -> str | None:
+def client_key() -> str | None:
+    """The proxy client key the lanes use (`~/.cli-proxy-api/client-keys.json`)."""
     try:
         d = json.loads(CLIENT_KEYS_PATH.read_text())
     except (OSError, json.JSONDecodeError):
@@ -103,7 +132,7 @@ def probe(model: str, *, key: str | None = None, base_url: str = PROXY_URL) -> t
     """(quota_exhausted, reason). One 1-token request through the proxy's Claude-protocol
     endpoint, exactly what a lane sends. Only a quota-shaped failure counts as exhausted: a
     dead proxy, a timeout or a 5xx is not a reason to swap models (nothing would work)."""
-    key = key or _client_key()
+    key = key or client_key()
     if not key:
         return False, "no proxy client key to probe with"
     payload = {"model": model, "max_tokens": 1, "messages": [{"role": "user", "content": "hi"}]}
@@ -130,22 +159,23 @@ def probe(model: str, *, key: str | None = None, base_url: str = PROXY_URL) -> t
 
 
 def _publishable(model: str, code: int, body: str) -> str:
-    """A reason safe for a public review body: the upstream's message, no account names."""
+    """A reason safe for a public review body: the upstream's message, sanitised."""
     try:
         obj = json.loads(body)
         msg = str((obj.get("error") or {}).get("message") or obj.get("message") or "")
     except (json.JSONDecodeError, AttributeError):
         msg = ""
-    msg = msg.strip() or f"HTTP {code}"
-    return f"`{model}` unavailable: {msg[:120]}"
+    return publishable_reason(model, msg.strip() or f"HTTP {code}")
 
 
 # ---- state ----
 
 
-def _cached_probe(conn: sqlite3.Connection, *, ignore_age: bool = False) -> dict[str, Any] | None:
-    """The stored probe when it is still fresh, or while a lane-observed hold is in force.
-    `ignore_age` (the daemon's periodic re-probe) still honours the hold."""
+def _cached_probe(
+    conn: sqlite3.Connection, *, max_age: timedelta | None = PROBE_CACHE
+) -> dict[str, Any] | None:
+    """The stored probe when it is younger than `max_age`, or while a lane-observed hold is
+    in force. `max_age=None` (the daemon's periodic re-probe) only honours the hold."""
     raw = kv_get(conn, KV_PROBE)
     if not raw:
         return None
@@ -157,7 +187,7 @@ def _cached_probe(conn: sqlite3.Connection, *, ignore_age: bool = False) -> dict
         hold = blob.get("hold_until")
         if hold and at <= parse_ts(str(hold)):
             return dict(blob)
-        if not ignore_age and at - parse_ts(str(blob["at"])) <= PROBE_CACHE:
+        if max_age is not None and at - parse_ts(str(blob["at"])) <= max_age:
             return dict(blob)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         pass
@@ -215,7 +245,7 @@ def detect(
         return State(True, "forced on by operator", "forced", since)
     if override == "off":
         return State(False, "forced off by operator", "off")
-    blob = _cached_probe(conn, ignore_age=refresh)
+    blob = _cached_probe(conn, max_age=None if refresh else PROBE_CACHE)
     if blob is None:
         exhausted, reason = prober(pol.sentinel)
         record_probe(conn, quota_exhausted=exhausted, reason=reason)
@@ -238,8 +268,9 @@ def _since(conn: sqlite3.Connection) -> str | None:
 
 def transition(conn: sqlite3.Connection, state: State) -> str | None:
     """Persist `state` as the last-known mode; returns an alert text when the mode flipped
-    since the previous call (None when unchanged). Called by the daemon on a timer and by
-    a worker that flips mid-run, so the operator hears about it once either way."""
+    since the previous call (None when unchanged). Called by the daemon on its timer only;
+    a worker that flips mid-run records a hold, which the daemon's next probe picks up, so
+    the operator hears about every flip exactly once, within one daemon interval."""
     raw = kv_get(conn, KV_STATE)
     prev: dict[str, Any] = {}
     if raw:
@@ -263,13 +294,14 @@ def transition(conn: sqlite3.Connection, state: State) -> str | None:
 
 
 def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
-    """For `status`, the export and doctor: the current mode without sending a probe when a
-    cached one exists (status must never block on the proxy)."""
+    """For `status`, the export, the queue comments and doctor: the current mode from the
+    last probe, never sending one (status must not block on the proxy). Tolerates a probe up
+    to `SNAPSHOT_MAX_AGE` old so the view cannot flap between two daemon re-probes."""
     pol = cfg.policy.degraded
     if pol is None:
         return {"configured": False, "active": False}
     override = forced(conn)
-    blob = _cached_probe(conn)
+    blob = _cached_probe(conn, max_age=SNAPSHOT_MAX_AGE)
     active = (
         override == "on"
         if override in {"on", "off"}

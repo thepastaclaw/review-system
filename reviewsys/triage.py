@@ -89,9 +89,9 @@ def triage(
         try:
             res: LaneResult = runner(spec, run_dir / "triage" / f"attempt-{attempt}", worktree)
             if not res.ok:
-                said = (res.stderr or res.result_text).strip().splitlines()
+                said = [ln for ln in res.stderr.splitlines() if ln.strip()]  # never model output
                 error = f"exit {res.exit_code} timed_out={res.timed_out}" + (
-                    f": {said[0][:200]}" if said else ""
+                    f": {said[0].strip()[:200]}" if said else ""
                 )
                 continue
             obj = parse_json_object(res.result_text)

@@ -96,17 +96,17 @@ def select(
         claude_bin=cfg.claude_bin,
     )
     error: str | None = None
-    candidates = dict.fromkeys(
-        model_for(m) for m in (cfg.policy.selector_model, cfg.policy.phase2_reviewer.model)
-    )
-    for attempt, model in enumerate(candidates, 1):
+    # two attempts, the second on the Phase-2 model; in degraded mode both may resolve to
+    # the same stand-in, which still gets both attempts
+    models = [model_for(m) for m in (cfg.policy.selector_model, cfg.policy.phase2_reviewer.model)]
+    for attempt, model in enumerate(models, 1):
         spec = dataclasses.replace(spec, model=model)
         try:
             res: LaneResult = runner(spec, run_dir / "selector" / f"attempt-{attempt}", worktree)
             if not res.ok:
-                said = (res.stderr or res.result_text).strip().splitlines()
+                said = [ln for ln in res.stderr.splitlines() if ln.strip()]  # never model output
                 error = f"{model}: exit {res.exit_code} timed_out={res.timed_out}" + (
-                    f": {said[0][:200]}" if said else ""
+                    f": {said[0].strip()[:200]}" if said else ""
                 )
                 continue
             obj = parse_json_object(res.result_text)

@@ -321,7 +321,9 @@ def step_select(ctx: RunContext) -> None:
         runner=ctx.lane_runner,
     )
     sel = select(ctx.cfg, model_for=ctx.model_name, **kw)
-    if sel.error and _degrade_on_side_lane_failure(ctx, "select", sel.error):
+    if sel.error and _degrade_on_side_lane_failure(
+        ctx, "select", ctx.cfg.policy.selector_model, sel.error
+    ):
         sel = select(ctx.cfg, model_for=ctx.model_name, **kw)  # once more, on the stand-ins
     write_selection(ctx.run_dir, sel)
     ctx.selection = sel.selected
@@ -353,7 +355,9 @@ def step_triage(ctx: RunContext) -> None:
         runner=ctx.lane_runner,
     )
     t = triage(ctx.cfg, lane=ctx.lane_model(ctx.cfg.policy.triage), **kw)
-    if t.error and _degrade_on_side_lane_failure(ctx, "triage", t.error):
+    if t.error and _degrade_on_side_lane_failure(
+        ctx, "triage", ctx.cfg.policy.triage.model, t.error
+    ):
         t = triage(ctx.cfg, lane=ctx.lane_model(ctx.cfg.policy.triage), **kw)
     write_triage(ctx.run_dir, t)
     ctx.triage = t
@@ -520,7 +524,7 @@ def _run_lane(
                 reason=str(exc),
             )
             last = str(exc)
-            switched = _degrade_on_quota_failure(ctx, lm, exc)
+            switched = _degrade_on_quota_failure(ctx, lm, exc, res)
             if switched is not None:
                 lm, budget = switched, attempt + 2
             continue
@@ -553,7 +557,7 @@ def _run_lane(
         return out
     raise ReviewError(
         FailKind.INFRA if "timed out" in last or "exit" in last else FailKind.CONTRACT,
-        f"{phase}/{role} lane failed twice: {last}",
+        f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}",
     )
 
 
@@ -908,6 +912,19 @@ def _verdict_update(
     if publish.EVENT_STATE[publish.transport_event(new_event, own_pr=own)] == state:
         _record_verdict(ctx, phase, verified, new_event)
         return None
+    if prov.degraded and state == "APPROVED" and not verified.blocker_count:
+        # a stand-in model found nothing new; that is not grounds to retract a full-strength
+        # approval, and the downgrade to COMMENT is only our own degraded-mode caution
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "review.verdict_kept",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"APPROVED stands on {ctx.sha[:8]}: degraded re-review found no blockers",
+            )
+        return None
     withdrawn = [
         str(r.get("finding_hash"))
         for r in _reconciliation(ctx, phase, verified).values()
@@ -1058,46 +1075,68 @@ def _enter_degraded(ctx: RunContext, state: degraded.State, kind: str, detail: s
         event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
 
 
-def _degrade_on_quota_failure(ctx: RunContext, lm: LaneModel, exc: ReviewError) -> LaneModel | None:
+def _degrade_on_quota_failure(
+    ctx: RunContext, lm: LaneModel, exc: ReviewError, res: LaneResult
+) -> LaneModel | None:
     """A lane on a primary model just died on a quota/cooldown error and the policy has a
     stand-in for it: switch this run into degraded mode (recorded with a hold so the next
-    runs start degraded too) and return the lane on its stand-in. None otherwise."""
+    runs start degraded too) and return the lane on its stand-in. None otherwise.
+
+    Only an infrastructure failure whose *stderr* says quota counts. A contract failure is
+    the model's own output and may legitimately talk about rate limits (a PR touching quota
+    code), so it must never flip the whole system."""
     pol = ctx.cfg.policy.degraded
     if (
         pol is None
         or lm.substitute_for is not None
         or lm.model not in pol.substitutes
-        or not degraded.looks_like_quota_failure(str(exc))
+        or exc.kind != FailKind.INFRA
+        or not degraded.looks_like_quota_failure(res.stderr or "")
     ):
         return None
-    reason = f"`{lm.model}` lane failed on quota: {exc.message[:120]}"
+    _flip_to_degraded(ctx, lm.model, f"{lm.model} lane: {exc.message}", _first_line(res.stderr))
+    return pol.resolve(lm)
+
+
+def _flip_to_degraded(ctx: RunContext, model: str, detail: str, upstream: str) -> None:
+    """Record a lane-observed quota failure (with a hold), enter the mode for this run and
+    log it. The published reason is a sanitised version of the upstream message; the full
+    detail only reaches the events table."""
+    reason = degraded.publishable_reason(model, upstream)
     degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
     if not ctx.is_degraded:
         _enter_degraded(
             ctx,
             degraded.State(True, reason, "lane", since=now()),
             "degraded.entered_midrun",
-            reason,
+            detail[:1000],
         )
-    log.warning("lane on %s hit a quota failure; switching to stand-in models", lm.model)
-    return pol.resolve(lm)
+    log.warning("lane on %s hit a quota failure; switching to stand-in models", model)
 
 
-def _degrade_on_side_lane_failure(ctx: RunContext, step: str, error: str) -> bool:
+def _first_line(text: str) -> str:
+    for line in (text or "").splitlines():
+        if line.strip():
+            return line.strip()
+    return ""
+
+
+def _degrade_on_side_lane_failure(ctx: RunContext, step: str, model: str, error: str) -> bool:
     """The selector/triage lanes fall back on their own (heuristic / fallback tier), which
     hides the earliest sign that the primary pool is dry. A quota-shaped failure there flips
     the run into degraded mode (with the same hold as a reviewer lane) so the caller can
     try once more on the stand-in and the rest of the run does not walk into the same 429.
+    `error` is the lane's exit status plus its first stderr line (never model output).
     False when already degraded, when no stand-in applies, or when the error is not quota."""
     pol = ctx.cfg.policy.degraded
-    if pol is None or ctx.is_degraded or not degraded.looks_like_quota_failure(error):
+    if (
+        pol is None
+        or ctx.is_degraded
+        or model not in pol.substitutes
+        or not degraded.looks_like_quota_failure(error)
+    ):
         return False
-    reason = f"{step} lane failed on quota: {error[:120]}"
-    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
-    _enter_degraded(
-        ctx, degraded.State(True, reason, "lane", since=now()), "degraded.entered_midrun", reason
-    )
-    log.warning("%s lane hit a quota failure; switching to stand-in models", step)
+    _flip_to_degraded(ctx, model, f"{step} lane: {error}", error.split(": ", 1)[-1])
     return True
 
 

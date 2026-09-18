@@ -29,12 +29,7 @@ def _first_line(r: subprocess.CompletedProcess[str]) -> str:
 
 
 def _proxy_key() -> str | None:
-    p = Path.home() / ".cli-proxy-api" / "client-keys.json"
-    try:
-        d = json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    return d.get("claude-code") or d.get("openclaw") or (next(iter(d.values())) if d else None)
+    return degraded.client_key()
 
 
 def _messages(model: str, key: str, *, stop: bool) -> tuple[int, bytes]:
@@ -171,13 +166,16 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
     if dp is None:
         _ok("degraded mode", True, "not configured: a primary-model outage fails runs")
     else:
-        exhausted, reason = degraded.probe(dp.sentinel)
         subs = ", ".join(f"{k}->{v.model}" for k, v in dp.substitutes.items())
+        if probe_models:
+            exhausted, reason = degraded.probe(dp.sentinel)
+            state = f"{'ACTIVE' if exhausted else 'inactive'} ({reason})"
+        else:
+            state = f"sentinel {dp.sentinel} not probed (--no-models)"
         _ok(
             "degraded mode",
             True,
-            f"{'ACTIVE' if exhausted else 'inactive'} ({reason}); stand-ins {subs}; "
-            f"phase1 effort cap {dp.phase1_effort_cap or 'none'}",
+            f"{state}; stand-ins {subs}; phase1 effort cap {dp.phase1_effort_cap or 'none'}",
         )
     for rel in ("prompts/review-agent.md", "prompts/verifier-agent.md"):
         ok &= _ok(f"template {rel}", (cfg.skills_dir / rel).exists())
