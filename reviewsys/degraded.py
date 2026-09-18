@@ -28,6 +28,7 @@ import re
 import sqlite3
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -126,6 +127,9 @@ def client_key() -> str | None:
     if not isinstance(d, dict):
         return None
     return d.get("claude-code") or d.get("openclaw") or (next(iter(d.values())) if d else None)
+
+
+Prober = Callable[[str], tuple[bool, str]]  # a `probe`-shaped callable (tests inject one)
 
 
 def probe(model: str, *, key: str | None = None, base_url: str = PROXY_URL) -> tuple[bool, str]:
@@ -230,7 +234,7 @@ def detect(
     conn: sqlite3.Connection,
     cfg: Config,
     *,
-    prober: Any = probe,
+    prober: Prober = probe,
     refresh: bool = False,
 ) -> State:
     """Current mode. Order: no policy -> off; operator override -> as forced; a fresh cached
@@ -302,11 +306,10 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         return {"configured": False, "active": False}
     override = forced(conn)
     blob = _cached_probe(conn, max_age=SNAPSHOT_MAX_AGE)
-    active = (
-        override == "on"
-        if override in {"on", "off"}
-        else bool(blob and blob.get("quota_exhausted"))
-    )
+    if override in {"on", "off"}:
+        active = override == "on"
+    else:
+        active = bool(blob and blob.get("quota_exhausted"))
     return {
         "configured": True,
         "active": active,

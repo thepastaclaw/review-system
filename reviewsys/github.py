@@ -12,6 +12,8 @@ from .models import FailKind, ReviewError
 
 GATE_MARKER = "<!-- thepastaclaw-gate v1 -->"
 REVIEW_MARKER = "<!-- thepastaclaw-review v1 -->"
+# stand-in models were in use; prefixes gate comments, queue comments and review titles
+DEGRADED_BADGE = "⚠️ DEGRADED"
 CODERABBIT_USER = "coderabbitai[bot]"
 
 NON_ACTIONABLE_CR = (
@@ -376,26 +378,24 @@ def gate_body(
         t += " · ad hoc (no repo skill)"
     if degraded:
         t += " · stand-in models (primary models out of quota)"
-
-    def icon(normal: str) -> str:
-        # the degraded badge replaces the status icon so the line reads as one warning
-        return "⚠️ DEGRADED —" if degraded else normal
-
+    # the degraded badge replaces the status icon so the line reads as one warning
+    warn = f"{DEGRADED_BADGE} —" if degraded else ""
     if status == "queued":
         q = "next in queue" if not queue_ahead else f"{queue_ahead} ahead in queue"
-        return f"{GATE_MARKER}\n{icon('🕓')} Ready for review — {q} (commit {s})"
+        return f"{GATE_MARKER}\n{warn or '🕓'} Ready for review — {q} (commit {s})"
     if status == "in_progress":
-        return f"{GATE_MARKER}\n{icon('🔍')} Review in progress — actively reviewing now (commit {s}){t}"
+        return f"{GATE_MARKER}\n{warn or '🔍'} Review in progress — actively reviewing now (commit {s}){t}"
     if status == "done":
         if phase == "preliminary":
-            return f"{GATE_MARKER}\n{icon('⛔')} Blockers found — Phase 2 deferred (commit {s}){t}\n_Canonical validated blockers: {blocker_count or 0}_"
+            return f"{GATE_MARKER}\n{warn or '⛔'} Blockers found — Phase 2 deferred (commit {s}){t}\n_Canonical validated blockers: {blocker_count or 0}_"
         n = blocker_count or 0
-        head = icon("⛔" if n else "✅")
+        head = warn or ("⛔" if n else "✅")
         scope = " — Phase 1 only" if phase2_skipped else ""
         return f"{GATE_MARKER}\n{head} Final review complete{scope} — {'no blockers' if not n else f'{n} blocking finding(s)'} (commit {s}){t}"
     if status == "failed":
-        return f"{GATE_MARKER}\n{icon('⚠️')} Automated review could not complete (commit {s})\n_Reason: {reason or 'unknown'}_"
-    return f"{GATE_MARKER}\n{(icon('') + ' ').lstrip()}{status} (commit {s})"
+        return f"{GATE_MARKER}\n{warn or '⚠️'} Automated review could not complete (commit {s})\n_Reason: {reason or 'unknown'}_"
+    head = f"{warn} " if warn else ""
+    return f"{GATE_MARKER}\n{head}{status} (commit {s})"
 
 
 def post_reply(gh: Gh, repo: str, number: int, comment_id: int, body: str) -> None:

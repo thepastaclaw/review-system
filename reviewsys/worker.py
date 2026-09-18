@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from . import converse, degraded, github, labels, publish, quota
-from .config import Config, LaneModel, min_effort
+from .config import Config, DegradedPolicy, LaneModel, min_effort
 from .contract import (
     Finding,
     ReviewerOutput,
@@ -33,13 +33,14 @@ from .contract import (
     parse_verifier_output,
 )
 from .db import event, kv_get, kv_set, now, tx
+from .degraded import Prober
 from .gate import admit_phase2
 from .gh import Gh
 from .lane import LaneResult, LaneRunner, LaneSpec, lane_output, prompt_sha, run_claude_lane
 from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
 from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, skill_texts, verifier_prompt
 from .scheduler import finish_run
-from .select import select, write_selection
+from .select import Selection, select, write_selection
 from .steps import worktree as wt
 from .triage import Triage, triage, write_triage
 
@@ -78,7 +79,7 @@ class RunContext:
     phase1_effort: str | None = None  # the tier's Phase-1 effort, re-capped per rung
     quota_reader: quota.QuotaReader | None = None  # test injection; None = proxy lookup
     degraded: degraded.State | None = None  # stand-in models in use (see degraded.py)
-    prober: Any = None  # test injection; None = probe the proxy
+    prober: Prober | None = None  # test injection; None = probe the proxy
     evidence: dict[str, Any] = field(default_factory=dict)
     coderabbit: dict[str, Any] = field(default_factory=dict)
     coderabbit_ids: list[int] = field(default_factory=list)
@@ -110,17 +111,25 @@ class RunContext:
         return self.cfg.repo(self.repo) is None
 
     @property
+    def degraded_policy(self) -> DegradedPolicy | None:
+        """The degraded policy while this run is actually running on stand-ins, else None."""
+        pol = self.cfg.policy.degraded
+        return pol if pol and self.degraded and self.degraded.active else None
+
+    @property
     def is_degraded(self) -> bool:
-        return bool(self.degraded and self.degraded.active and self.cfg.policy.degraded)
+        return self.degraded_policy is not None
 
     def lane_model(self, lm: LaneModel) -> LaneModel:
         """`lm`, or its degraded-mode stand-in while the primary models are unavailable."""
-        pol = self.cfg.policy.degraded
-        return pol.resolve(lm) if pol and self.is_degraded else lm
+        pol = self.degraded_policy
+        return pol.resolve(lm) if pol else lm
 
     def model_name(self, model: str) -> str:
-        pol = self.cfg.policy.degraded
-        return pol.substitute_model(model) if pol and self.is_degraded else model
+        """Same, for a lane built from a bare model name (selector, repair)."""
+        pol = self.degraded_policy
+        sub = pol.substitutes.get(model) if pol else None
+        return sub.model if sub else model
 
 
 # ---- heartbeat ----
@@ -311,20 +320,26 @@ def step_select(ctx: RunContext) -> None:
     )
     ctx.files = [f for f in files_raw if isinstance(f, dict)]
     files = [str(f.get("filename")) for f in ctx.files]
-    kw: dict[str, Any] = dict(
-        repo=ctx.repo,
-        title=ctx.meta.title,
-        body=ctx.meta.body,
-        files=files,
-        run_dir=ctx.run_dir,
-        worktree=ctx.worktree,
-        runner=ctx.lane_runner,
-    )
-    sel = select(ctx.cfg, model_for=ctx.model_name, **kw)
+    meta, worktree = ctx.meta, ctx.worktree
+
+    def attempt() -> Selection:
+        return select(
+            ctx.cfg,
+            repo=ctx.repo,
+            title=meta.title,
+            body=meta.body,
+            files=files,
+            run_dir=ctx.run_dir,
+            worktree=worktree,
+            runner=ctx.lane_runner,
+            model_for=ctx.model_name,
+        )
+
+    sel = attempt()
     if sel.error and _degrade_on_side_lane_failure(
         ctx, "select", ctx.cfg.policy.selector_model, sel.error
     ):
-        sel = select(ctx.cfg, model_for=ctx.model_name, **kw)  # once more, on the stand-ins
+        sel = attempt()  # once more, on the stand-ins
     write_selection(ctx.run_dir, sel)
     ctx.selection = sel.selected
     if sel.error:
@@ -342,23 +357,28 @@ def step_select(ctx: RunContext) -> None:
 def step_triage(ctx: RunContext) -> None:
     """Rate the PR so reviewer effort can scale; no-op unless the policy configures triage."""
     assert ctx.meta and ctx.worktree
-    if ctx.cfg.policy.triage is None:
+    lane = ctx.cfg.policy.triage
+    if lane is None:
         return
-    kw: dict[str, Any] = dict(
-        repo=ctx.repo,
-        base_ref=ctx.meta.base_ref,
-        title=ctx.meta.title,
-        body=ctx.meta.body,
-        files=ctx.files,
-        run_dir=ctx.run_dir,
-        worktree=ctx.worktree,
-        runner=ctx.lane_runner,
-    )
-    t = triage(ctx.cfg, lane=ctx.lane_model(ctx.cfg.policy.triage), **kw)
-    if t.error and _degrade_on_side_lane_failure(
-        ctx, "triage", ctx.cfg.policy.triage.model, t.error
-    ):
-        t = triage(ctx.cfg, lane=ctx.lane_model(ctx.cfg.policy.triage), **kw)
+    meta, worktree = ctx.meta, ctx.worktree
+
+    def attempt() -> Triage:
+        return triage(
+            ctx.cfg,
+            repo=ctx.repo,
+            base_ref=meta.base_ref,
+            title=meta.title,
+            body=meta.body,
+            files=ctx.files,
+            run_dir=ctx.run_dir,
+            worktree=worktree,
+            runner=ctx.lane_runner,
+            lane=ctx.lane_model(lane),
+        )
+
+    t = attempt()
+    if t.error and _degrade_on_side_lane_failure(ctx, "triage", lane.model, t.error):
+        t = attempt()  # once more, on the stand-in
     write_triage(ctx.run_dir, t)
     ctx.triage = t
     ctx.tier = t.tier
@@ -884,12 +904,7 @@ def _verdict_update(
         return None
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
-        verifier={
-            "model": verifier_lm.model,
-            "agent": verifier_lm.agent,
-            "role": "final-verifier",
-            "substitute_for": verifier_lm.substitute_for,
-        },
+        verifier=_lane_provenance(verifier_lm, "final-verifier"),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
@@ -1017,12 +1032,9 @@ def _build_review(
     diff = github.pr_diff(ctx.gh, ctx.repo, ctx.number)
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
-        verifier={
-            "model": verifier_lm.model,
-            "agent": verifier_lm.agent,
-            "role": "verifier" if phase == "preliminary" else "final-verifier",
-            "substitute_for": verifier_lm.substitute_for,
-        },
+        verifier=_lane_provenance(
+            verifier_lm, "verifier" if phase == "preliminary" else "final-verifier"
+        ),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
@@ -1053,10 +1065,20 @@ def _build_review(
     )
 
 
+def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
+    """How a verifier/conversation lane is disclosed in the published provenance."""
+    return {
+        "model": lm.model,
+        "agent": lm.agent,
+        "role": role,
+        "substitute_for": lm.substitute_for,
+    }
+
+
 def _degraded_provenance(ctx: RunContext) -> dict[str, Any] | None:
     """Disclosed on every publication made while stand-in models were in use."""
-    pol = ctx.cfg.policy.degraded
-    if not ctx.is_degraded or pol is None or ctx.degraded is None:
+    pol = ctx.degraded_policy
+    if pol is None or ctx.degraded is None:
         return None
     return {
         "reason": ctx.degraded.reason,
@@ -1075,59 +1097,16 @@ def _enter_degraded(ctx: RunContext, state: degraded.State, kind: str, detail: s
         event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
 
 
-def _degrade_on_quota_failure(
-    ctx: RunContext, lm: LaneModel, exc: ReviewError, res: LaneResult
-) -> LaneModel | None:
-    """A lane on a primary model just died on a quota/cooldown error and the policy has a
-    stand-in for it: switch this run into degraded mode (recorded with a hold so the next
-    runs start degraded too) and return the lane on its stand-in. None otherwise.
+def _flip_to_degraded(
+    ctx: RunContext, model: str, *, error: str, upstream: str, detail: str
+) -> bool:
+    """`model` just failed with `error` (a lane's stderr, never model output): when that says
+    the pool is out of quota and the policy has a stand-in, switch this run into degraded
+    mode and record the failure with a hold, so the next runs start degraded too. False when
+    the mode is already on, no stand-in applies, or the error is not about quota.
 
-    Only an infrastructure failure whose *stderr* says quota counts. A contract failure is
-    the model's own output and may legitimately talk about rate limits (a PR touching quota
-    code), so it must never flip the whole system."""
-    pol = ctx.cfg.policy.degraded
-    if (
-        pol is None
-        or lm.substitute_for is not None
-        or lm.model not in pol.substitutes
-        or exc.kind != FailKind.INFRA
-        or not degraded.looks_like_quota_failure(res.stderr or "")
-    ):
-        return None
-    _flip_to_degraded(ctx, lm.model, f"{lm.model} lane: {exc.message}", _first_line(res.stderr))
-    return pol.resolve(lm)
-
-
-def _flip_to_degraded(ctx: RunContext, model: str, detail: str, upstream: str) -> None:
-    """Record a lane-observed quota failure (with a hold), enter the mode for this run and
-    log it. The published reason is a sanitised version of the upstream message; the full
-    detail only reaches the events table."""
-    reason = degraded.publishable_reason(model, upstream)
-    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
-    if not ctx.is_degraded:
-        _enter_degraded(
-            ctx,
-            degraded.State(True, reason, "lane", since=now()),
-            "degraded.entered_midrun",
-            detail[:1000],
-        )
-    log.warning("lane on %s hit a quota failure; switching to stand-in models", model)
-
-
-def _first_line(text: str) -> str:
-    for line in (text or "").splitlines():
-        if line.strip():
-            return line.strip()
-    return ""
-
-
-def _degrade_on_side_lane_failure(ctx: RunContext, step: str, model: str, error: str) -> bool:
-    """The selector/triage lanes fall back on their own (heuristic / fallback tier), which
-    hides the earliest sign that the primary pool is dry. A quota-shaped failure there flips
-    the run into degraded mode (with the same hold as a reviewer lane) so the caller can
-    try once more on the stand-in and the rest of the run does not walk into the same 429.
-    `error` is the lane's exit status plus its first stderr line (never model output).
-    False when already degraded, when no stand-in applies, or when the error is not quota."""
+    The published reason is a sanitised version of `upstream`; the full `detail` only reaches
+    the events table."""
     pol = ctx.cfg.policy.degraded
     if (
         pol is None
@@ -1136,8 +1115,55 @@ def _degrade_on_side_lane_failure(ctx: RunContext, step: str, model: str, error:
         or not degraded.looks_like_quota_failure(error)
     ):
         return False
-    _flip_to_degraded(ctx, model, f"{step} lane: {error}", error.split(": ", 1)[-1])
+    reason = degraded.publishable_reason(model, upstream)
+    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
+    _enter_degraded(
+        ctx,
+        degraded.State(True, reason, "lane", since=now()),
+        "degraded.entered_midrun",
+        detail[:1000],
+    )
+    log.warning("lane on %s hit a quota failure; switching to stand-in models", model)
     return True
+
+
+def _degrade_on_quota_failure(
+    ctx: RunContext, lm: LaneModel, exc: ReviewError, res: LaneResult
+) -> LaneModel | None:
+    """A reviewer/verifier lane died: when it was on a primary model and the failure is a
+    quota/cooldown one, flip the run into degraded mode and return the lane on its stand-in.
+    None otherwise.
+
+    Only an infrastructure failure whose *stderr* says quota counts. A contract failure is
+    the model's own output and may legitimately talk about rate limits (a PR touching quota
+    code), so it must never flip the whole system."""
+    pol = ctx.cfg.policy.degraded
+    if pol is None or lm.substitute_for is not None or exc.kind != FailKind.INFRA:
+        return None
+    if not _flip_to_degraded(
+        ctx,
+        lm.model,
+        error=res.stderr or "",
+        upstream=res.first_stderr_line,
+        detail=f"{lm.model} lane: {exc.message}",
+    ):
+        return None
+    return pol.resolve(lm)
+
+
+def _degrade_on_side_lane_failure(ctx: RunContext, step: str, model: str, error: str) -> bool:
+    """The selector/triage lanes fall back on their own (heuristic / fallback tier), which
+    hides the earliest sign that the primary pool is dry. A quota-shaped failure there flips
+    the run into degraded mode (with the same hold as a reviewer lane) so the caller can try
+    once more on the stand-in and the rest of the run does not walk into the same 429.
+    `error` is the lane's exit status plus its first stderr line (never model output)."""
+    return _flip_to_degraded(
+        ctx,
+        model,
+        error=error,
+        upstream=error.split(": ", 1)[-1],
+        detail=f"{step} lane: {error}",
+    )
 
 
 def _detect_degraded(ctx: RunContext) -> None:
@@ -1345,10 +1371,11 @@ def _choose_phase1(ctx: RunContext, effort: str) -> LaneModel:
     """Pick the Phase-1 model from the policy's ladder by remaining subscription quota
     (see `quota.py`); recorded on the run and disclosed in the review provenance."""
     pol = ctx.cfg.policy
-    if ctx.is_degraded and pol.degraded:
+    dp = ctx.degraded_policy
+    if dp is not None:
         # keep the included-quota rungs eligible (GLM is passed over above `high`) rather
         # than sending every Phase 1 to the paid last rung while Phase 2 is already there
-        effort = pol.degraded.phase1_effort(effort)
+        effort = dp.phase1_effort(effort)
     ctx.phase1_effort = effort
     reader = ctx.quota_reader or quota.cached_reader(ctx.conn)
     choice = quota.choose(pol.phase1_candidates, pol.quota_reserve, reader=reader, effort=effort)
@@ -1383,11 +1410,8 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     limit = ctx.cfg.backlog_skip_phase1_above
     if limit <= 0 or not ctx.cfg.policy.phase2_enabled or phase2_effort is None:
         return False
-    if (
-        ctx.is_degraded
-        and ctx.cfg.policy.degraded
-        and not ctx.cfg.policy.degraded.backlog_skip_phase1
-    ):
+    dp = ctx.degraded_policy
+    if dp is not None and not dp.backlog_skip_phase1:
         # skipping Phase 1 would put the whole review on one stand-in model; degraded mode
         # keeps both phases so the cross-model check survives
         return False
@@ -1655,12 +1679,7 @@ def _conversation_verdict_update(
         return None
     prov = publish.Provenance(
         reviewers=[],
-        verifier={
-            "model": lm.model,
-            "agent": lm.agent,
-            "role": "conversation",
-            "substitute_for": lm.substitute_for,
-        },
+        verifier=_lane_provenance(lm, "conversation"),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         adhoc=ctx.adhoc,
         conversation=True,
@@ -1854,7 +1873,7 @@ def main(
     dry_run: bool = False,
     heartbeat: bool = True,
     quota_reader: quota.QuotaReader | None = None,
-    prober: Any = None,
+    prober: Prober | None = None,
 ) -> RunStatus:
     row = conn.execute(
         "SELECT r.*, h.repo, h.number, h.sha, h.trigger FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",

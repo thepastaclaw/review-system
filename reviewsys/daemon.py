@@ -64,7 +64,7 @@ class Daemon:
         gh: Gh | None = None,
         notifier: Notifier | None = None,
         spawn: bool = True,
-        prober: object = None,
+        prober: degraded.Prober | None = None,
     ) -> None:
         self.cfg, self.conn = cfg, conn
         self.gh = gh or Gh(cfg.gh_bin)

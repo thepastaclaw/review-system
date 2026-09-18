@@ -28,10 +28,6 @@ def _first_line(r: subprocess.CompletedProcess[str]) -> str:
     return said.splitlines()[0] if said else ""
 
 
-def _proxy_key() -> str | None:
-    return degraded.client_key()
-
-
 def _messages(model: str, key: str, *, stop: bool) -> tuple[int, bytes]:
     payload: dict[str, object] = {
         "model": model,
@@ -193,7 +189,7 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
         except OSError as exc:
             ok &= _ok(f"writable {d}", False, str(exc))
     if probe_models:
-        key = _proxy_key()
+        key = degraded.client_key()
         if not key:
             ok &= _ok("proxy client key", False, "~/.cli-proxy-api/client-keys.json unreadable")
         else:

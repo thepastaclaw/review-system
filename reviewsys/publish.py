@@ -262,35 +262,42 @@ def _fence(content: str) -> str:
     return "`" * max(3, longest + 1)
 
 
-def _model_label(model: str, substitute_for: str | None) -> str:
-    return f"`{model}` (standing in for `{substitute_for}`)" if substitute_for else f"`{model}`"
+def _model_label(lane: dict[str, Any]) -> str:
+    """A lane's model, naming the primary it stood in for when it was a degraded-mode swap."""
+    sub = lane.get("substitute_for")
+    return f"`{lane['model']}` (standing in for `{sub}`)" if sub else f"`{lane['model']}`"
 
 
 def _source_line(p: Provenance) -> str:
     if p.conversation:
         return (
-            f"Source: conversation lane {_model_label(p.verifier['model'], p.verifier.get('substitute_for'))} "
+            f"Source: conversation lane {_model_label(p.verifier)} "
             f"(agent: `{p.verifier['agent']}`); no reviewer or verifier lanes ran for this follow-up"
         )
     parts = [
-        f"reviewer {i}: {_model_label(r['model'], r.get('substitute_for'))} (agent: `{r['agent']}`, role: `{r['role']}`)"
+        f"reviewer {i}: {_model_label(r)} (agent: `{r['agent']}`, role: `{r['role']}`)"
         for i, r in enumerate(p.reviewers, 1)
     ]
     parts.append(
-        f"final verifier: {_model_label(p.verifier['model'], p.verifier.get('substitute_for'))} "
+        f"final verifier: {_model_label(p.verifier)} "
         f"(agent: `{p.verifier['agent']}`, role: `{p.verifier['role']}`)"
     )
     return "Source: " + "; ".join(parts)
 
 
-DEGRADED_BADGE = "⚠️ DEGRADED"
+DEGRADED_BADGE = github.DEGRADED_BADGE  # one badge for reviews, gate and queue comments
+
+
+def _substitutions(d: dict[str, Any]) -> str:
+    """`primary → stand-in` pairs from a degraded disclosure; "" when it carries none."""
+    return ", ".join(f"`{k}` → `{v}`" for k, v in sorted((d.get("substitutes") or {}).items()))
 
 
 def degraded_banner(d: dict[str, Any]) -> str:
     """The visible warning at the top of anything published while stand-ins were in use."""
-    subs = ", ".join(f"`{k}` → `{v}`" for k, v in sorted((d.get("substitutes") or {}).items()))
+    subs = _substitutions(d)
     cap = d.get("phase1_effort_cap")
-    parts = [
+    return (
         f"> **{DEGRADED_BADGE} review.** The primary review models were unavailable "
         f"({d.get('reason') or 'quota exhausted'}), so this review ran on stand-in models"
         + (f": {subs}" if subs else "")
@@ -298,12 +305,11 @@ def degraded_banner(d: dict[str, Any]) -> str:
         + (f", with Phase 1 capped at `{cap}` effort" if cap else "")
         + ". Treat the verdict as provisional; a full-strength re-review will run on the next "
         "push once the primary models are back."
-    ]
-    return "\n".join(parts)
+    )
 
 
 def _degraded_line(d: dict[str, Any]) -> str:
-    subs = ", ".join(f"`{k}` → `{v}`" for k, v in sorted((d.get("substitutes") or {}).items()))
+    subs = _substitutions(d)
     line = f"- **Degraded mode**: {d.get('reason') or 'primary models unavailable'} (detected by {d.get('source') or 'probe'}"
     if d.get("since"):
         line += f", since {d['since']}"
@@ -317,7 +323,7 @@ def _degraded_line(d: dict[str, Any]) -> str:
 
 def _triage_line(t: dict[str, Any]) -> str:
     if str(t.get("method", "")).startswith("llm:"):
-        how = f"{_model_label(t['model'], t.get('substitute_for'))} (effort {t['effort']})"
+        how = f"{_model_label(t)} (effort {t['effort']})"
     else:
         how = f"fallback after triage failure ({t.get('error') or 'unknown'})"
     why = f" — {t['reasoning']}" if t.get("reasoning") else ""
@@ -341,7 +347,7 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
 
     def fmt(r: dict[str, Any]) -> str:
         status = r["status"] + (f", effort {r['effort']}" if r.get("effort") else "")
-        return f"{_model_label(r['model'], r.get('substitute_for'))} — {r['role']} ({status}); agent `{r['agent']}`"
+        return f"{_model_label(r)} — {r['role']} ({status}); agent `{r['agent']}`"
 
     p1 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase1"]
     p2 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase2"]
@@ -367,7 +373,7 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
             "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"
         )
     lines += [
-        f"- Fresh verifier: {_model_label(p.verifier['model'], p.verifier.get('substitute_for'))} — {p.verifier['role']}; agent `{p.verifier['agent']}`",
+        f"- Fresh verifier: {_model_label(p.verifier)} — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]
     if phase == "preliminary":
         lines.append("- Phase 2 reviewers: **not run (deferred by blocker gate)**")

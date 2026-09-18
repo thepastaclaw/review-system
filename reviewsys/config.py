@@ -87,10 +87,6 @@ class DegradedPolicy:
     backlog_skip_phase1: bool = False  # the backlog rule stays off: both phases must run
     label: str = "degraded"
 
-    def substitute_model(self, model: str) -> str:
-        sub = self.substitutes.get(model)
-        return sub.model if sub else model
-
     def resolve(self, lm: LaneModel) -> LaneModel:
         """`lm` on its stand-in (effort capped), or unchanged when it has none."""
         sub = self.substitutes.get(lm.model)

@@ -55,10 +55,11 @@ def queue_body(
 ) -> str:
     """Rendered queue comment. Deliberately omits the queue total so a PR's body only changes
     when its own position or ETA changes (or the system enters/leaves degraded mode)."""
+    warn = f"{github.DEGRADED_BADGE} —" if degraded else ""
     if priority:
-        head = f"{'⚠️ DEGRADED —' if degraded else '⚡'} Priority review — {_ordinal(position)} in line, starts as soon as a slot frees"
+        head = f"{warn or '⚡'} Priority review — {_ordinal(position)} in line, starts as soon as a slot frees"
     else:
-        head = f"{'⚠️ DEGRADED —' if degraded else '🕓'} Queued for automated review — {_ordinal(position)} in line, estimated start in {_fmt_minutes(eta_minutes)}"
+        head = f"{warn or '🕓'} Queued for automated review — {_ordinal(position)} in line, estimated start in {_fmt_minutes(eta_minutes)}"
     lines = [
         github.GATE_MARKER,
         f"{head} (commit {sha[:8]})",

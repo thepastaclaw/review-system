@@ -107,10 +107,7 @@ def cmd_degraded(args: argparse.Namespace) -> int:
             )
         print(f"degraded mode set to {args.mode}: now {state.describe()}")
         return 0
-    if args.probe:
-        state = degraded_mod.detect(conn, cfg, refresh=True)
-    else:
-        state = degraded_mod.detect(conn, cfg)
+    state = degraded_mod.detect(conn, cfg, refresh=bool(args.probe))
     print(json.dumps({**state.as_dict(), **degraded_mod.snapshot(conn, cfg)}, indent=1))
     return 0
 
