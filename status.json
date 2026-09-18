@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-18T04:06:01Z",
-  "generated_at": "2026-09-18T04:06:01Z",
+  "data_as_of": "2026-09-18T04:07:01Z",
+  "generated_at": "2026-09-18T04:07:01Z",
   "history": {
     "daily": [
       {
@@ -74,6 +74,30 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
+        "kind": "select.degraded",
+        "number": 4807,
+        "repo": "dashpay/platform",
+        "run_id": 993,
+        "ts": "2026-09-18T04:06:58Z"
+      },
+      {
+        "detail": "attempt 2 failed (infra); retry in 15m",
+        "kind": "head.requeued",
+        "number": 1568,
+        "repo": "dashpay/dash-wallet",
+        "run_id": null,
+        "ts": "2026-09-18T04:06:55Z"
+      },
+      {
+        "detail": "phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "run.failed",
+        "number": 1568,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 992,
+        "ts": "2026-09-18T04:06:55Z"
+      },
       {
         "detail": "attempt 2 sha=e435fd70",
         "kind": "run.spawned",
@@ -369,30 +393,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 987,
         "ts": "2026-09-18T03:27:16Z"
-      },
-      {
-        "detail": "tier=normal method=fallback error=exit 1 timed_out=False",
-        "kind": "triage.degraded",
-        "number": 1568,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 987,
-        "ts": "2026-09-18T03:27:13Z"
-      },
-      {
-        "detail": "skipped for throughput: 16 PRs queued, above the 10 limit",
-        "kind": "phase1.skipped_backlog",
-        "number": 7684,
-        "repo": "dashpay/dash",
-        "run_id": 986,
-        "ts": "2026-09-18T03:25:58Z"
-      },
-      {
-        "detail": "tier=normal method=fallback error=exit 143 timed_out=True",
-        "kind": "triage.degraded",
-        "number": 7684,
-        "repo": "dashpay/dash",
-        "run_id": 986,
-        "ts": "2026-09-18T03:25:55Z"
       }
     ],
     "tokens_by_effort": [
@@ -422,7 +422,7 @@
       },
       {
         "effort": "high",
-        "lanes": 1562,
+        "lanes": 1563,
         "tokens_in": 1016712290,
         "tokens_out": 6942745
       }
@@ -457,8 +457,8 @@
         "tokens_out": 2957455
       },
       {
-        "avg_tokens_per_lane": 835216.0,
-        "lanes": 3011,
+        "avg_tokens_per_lane": 834938.0,
+        "lanes": 3012,
         "model": "gpt-6-astra",
         "tokens_in": 2503219448,
         "tokens_out": 11614493
@@ -980,28 +980,14 @@
   "live": {
     "active": [
       {
-        "attempt": 2,
-        "deadline_at": "2026-09-18T09:50:32Z",
-        "elapsed_seconds": 929,
-        "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-09-18T04:05:47Z",
-        "id": 992,
-        "number": 1568,
-        "phase": "phase2",
-        "repo": "dashpay/dash-wallet",
-        "sha": "586ee13d29ce4c1c10db5d467af4a10fc4502641",
-        "started_at": "2026-09-18T03:50:32Z",
-        "status": "running"
-      },
-      {
         "attempt": 3,
         "deadline_at": "2026-09-18T10:02:52Z",
-        "elapsed_seconds": 189,
+        "elapsed_seconds": 249,
         "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-09-18T04:05:52Z",
+        "heartbeat_at": "2026-09-18T04:06:52Z",
         "id": 993,
         "number": 4807,
-        "phase": "select",
+        "phase": "triage",
         "repo": "dashpay/platform",
         "sha": "41e733e025526f496a4f92acfb62b23c139d1539",
         "started_at": "2026-09-18T04:02:52Z",
@@ -1010,12 +996,12 @@
       {
         "attempt": 2,
         "deadline_at": "2026-09-18T10:05:57Z",
-        "elapsed_seconds": 4,
+        "elapsed_seconds": 64,
         "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-09-18T04:05:57Z",
+        "heartbeat_at": "2026-09-18T04:06:57Z",
         "id": 994,
         "number": 7693,
-        "phase": "worktree",
+        "phase": "select",
         "repo": "dashpay/dash",
         "sha": "e435fd70cab7ca0851a78e58d75a12047a5b7506",
         "started_at": "2026-09-18T04:05:57Z",
@@ -1032,8 +1018,8 @@
       "closed": 293,
       "done": 2865,
       "failed": 49,
-      "queued": 13,
-      "running": 3,
+      "queued": 14,
+      "running": 2,
       "superseded": 808
     },
     "ingest_error_streak": 0,
@@ -1042,11 +1028,11 @@
     "last_run_started_at": "2026-09-18T04:05:57Z",
     "median_run_minutes": 49.05,
     "notify_last_at": "2026-09-18T04:05:53Z",
-    "oldest_queued_at": "2026-09-17T20:58:33Z",
+    "oldest_queued_at": "2026-09-17T19:55:58Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 25648,
+        "age_seconds": 25708,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1062,7 +1048,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 25648,
+        "age_seconds": 25708,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1078,7 +1064,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 19643,
+        "age_seconds": 19703,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T23:08:38Z",
@@ -1094,7 +1080,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 18849,
+        "age_seconds": 18909,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T23:21:52Z",
@@ -1110,7 +1096,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 15390,
+        "age_seconds": 15450,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:19:31Z",
@@ -1126,7 +1112,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 15189,
+        "age_seconds": 15249,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1142,7 +1128,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 15189,
+        "age_seconds": 15249,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1158,7 +1144,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 15189,
+        "age_seconds": 15249,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1174,7 +1160,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 14991,
+        "age_seconds": 15051,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:26:10Z",
@@ -1190,7 +1176,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 12454,
+        "age_seconds": 12514,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T01:08:27Z",
@@ -1206,7 +1192,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 11454,
+        "age_seconds": 11514,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T01:25:07Z",
@@ -1222,7 +1208,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 7812,
+        "age_seconds": 7872,
         "author": "QuantumExplorer",
         "eligible": true,
         "eligible_at": "2026-09-18T02:25:49Z",
@@ -1238,7 +1224,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1001,
+        "age_seconds": 1061,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T04:19:20Z",
@@ -1252,13 +1238,29 @@
         "sha": "e7cbaa86b047aee3517c9387c3ff221e6a30778c",
         "title": "feat: non-social contracts on the Platform 4.2 grammar (storefront v2, blog v2, DM v4, pollr v4, key exchange v3, tips on YAPP)",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 29463,
+        "author": "HashEngineering",
+        "eligible": false,
+        "eligible_at": "2026-09-18T04:21:55Z",
+        "number": 1568,
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1568",
+        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1568#issuecomment-5719119270",
+        "priority": false,
+        "queued_at": "2026-09-17T19:55:58Z",
+        "reason": "waiting for debounce/backoff",
+        "repo": "dashpay/dash-wallet",
+        "sha": "586ee13d29ce4c1c10db5d467af4a10fc4502641",
+        "title": "fix(upgrade): v12 cutover and sync lifecycle, plus a measured account of what still loses money",
+        "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-18T04:06:01Z",
+    "ts": "2026-09-18T04:07:01Z",
     "watchdog": {
-      "active": 3,
+      "active": 2,
       "eligible": 12,
-      "idle_minutes": 0.06666666666666667,
+      "idle_minutes": 1.0666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
