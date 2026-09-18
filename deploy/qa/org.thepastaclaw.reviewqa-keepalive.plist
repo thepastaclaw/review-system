@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!--
+    Keeps the `reviewqa` virtual GUI session alive on the Mac Studio.
+
+    macOS only creates (and keeps) a second, concurrent WindowServer session for a
+    non-console user while an Apple Screen Sharing client is connected to it. This
+    LaunchAgent runs in the console user's (dcg) GUI session and holds that client
+    open against the local machine, so reviewqa's display, screencapture, simctl and
+    native Qt/egui windows keep working with nobody watching.
+
+    Install as dcg (inside dcg's own login session, e.g. over Screen Sharing or a
+    terminal opened there — NOT plain ssh, which has no keychain/GUI context):
+      cp org.thepastaclaw.reviewqa-keepalive.plist ~/Library/LaunchAgents/
+      launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/org.thepastaclaw.reviewqa-keepalive.plist
+
+    First launch: Screen Sharing.app prompts for reviewqa's password once; tick
+    "Remember this password in my keychain" and choose "Log in as yourself" (the
+    virtual-display option). After that the agent reconnects unattended.
+
+    Uninstall:
+      launchctl bootout gui/$(id -u)/org.thepastaclaw.reviewqa-keepalive
+  -->
+  <key>Label</key>
+  <string>org.thepastaclaw.reviewqa-keepalive</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/System/Applications/Utilities/Screen Sharing.app/Contents/MacOS/Screen Sharing</string>
+    <string>vnc://reviewqa@127.0.0.1</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>ProcessType</key>
+  <string>Background</string>
+  <key>LimitLoadToSessionType</key>
+  <string>Aqua</string>
+  <key>StandardOutPath</key>
+  <string>/tmp/reviewqa-keepalive.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/reviewqa-keepalive.log</string>
+</dict>
+</plist>
