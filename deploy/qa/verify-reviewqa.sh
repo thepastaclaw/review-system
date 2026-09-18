@@ -6,7 +6,7 @@
 set -euo pipefail
 host="${1:-localhost}"
 target="reviewqa@${host}"
-ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10)
+ssh_opts=(-n -o BatchMode=yes -o ConnectTimeout=10)  # -n: never eat stdin (script may be piped via bash -s)
 
 echo "== ssh as reviewqa"
 ssh "${ssh_opts[@]}" "$target" 'id -un; who | grep -c "^reviewqa.*console" || true'
