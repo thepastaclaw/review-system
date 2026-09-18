@@ -31,7 +31,15 @@ echo "caffeinate pid $!"
 echo "== gui domain"
 launchctl print "gui/$(id -u)" | sed -n '1,3p'
 
+echo "== window-list helper (proves rendering; screencapture alone cannot)"
+mkdir -p ~/bin
+[ -x ~/bin/winlist ] || swiftc -O -o ~/bin/winlist "$(dirname "$0")/winlist.swift"
+~/bin/winlist | tail -1
+
 echo "== screen capture"
+echo "NOTE: Terminal's Screen Recording grant does not cover ssh. For lanes (which arrive over"
+echo "      ssh) also add /usr/libexec/sshd-keygen-wrapper under Privacy & Security >"
+echo "      Screen & System Audio Recording (use Cmd-Shift-G in the file picker)."
 out="${TMPDIR:-/tmp}/reviewqa-probe.png"
 rm -f "$out"
 if screencapture -x "$out" && [ -s "$out" ]; then

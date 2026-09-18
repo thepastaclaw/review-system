@@ -25,9 +25,17 @@
   -->
   <key>Label</key>
   <string>org.thepastaclaw.reviewqa-keepalive</string>
+  <!-- Must go through `open`: launching the bundle's Mach-O directly gets the process
+       killed by launchd with OS_REASON_CODESIGNING (observed 2026-09-17). `-W` waits for
+       the app to exit so KeepAlive restarts it when the client closes; `-n` forces a new
+       instance rather than raising an existing one that may be stuck on a dialog. -->
   <key>ProgramArguments</key>
   <array>
-    <string>/System/Applications/Utilities/Screen Sharing.app/Contents/MacOS/Screen Sharing</string>
+    <string>/usr/bin/open</string>
+    <string>-W</string>
+    <string>-n</string>
+    <string>-a</string>
+    <string>Screen Sharing</string>
     <string>vnc://reviewqa@127.0.0.1</string>
   </array>
   <key>RunAtLoad</key>
