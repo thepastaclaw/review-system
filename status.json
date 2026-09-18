@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-18T02:44:01Z",
-  "generated_at": "2026-09-18T02:44:01Z",
+  "data_as_of": "2026-09-18T02:45:01Z",
+  "generated_at": "2026-09-18T02:45:01Z",
   "history": {
     "daily": [
       {
@@ -74,6 +74,30 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=ed09b596",
+        "kind": "run.spawned",
+        "number": 7684,
+        "repo": "dashpay/dash",
+        "run_id": 982,
+        "ts": "2026-09-18T02:44:38Z"
+      },
+      {
+        "detail": "attempt 1 failed (infra); retry in 5m",
+        "kind": "head.requeued",
+        "number": 7691,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-09-18T02:44:38Z"
+      },
+      {
+        "detail": "phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "run.failed",
+        "number": 7691,
+        "repo": "dashpay/dash",
+        "run_id": 979,
+        "ts": "2026-09-18T02:44:38Z"
+      },
       {
         "detail": "attempt 3 sha=3f46c072",
         "kind": "run.spawned",
@@ -369,30 +393,6 @@
         "repo": "dashpay/platform",
         "run_id": 975,
         "ts": "2026-09-18T02:09:47Z"
-      },
-      {
-        "detail": "after 3 attempt(s): phase2/general lane failed twice: [infra] lane exit 1: API Error: 503 auth_unavailable: no auth available (providers=codex, model=gpt-6-astra). This is a server-side issue, usually temporary \u2014 try again in a moment. If it persists, check your inference ga",
-        "kind": "head.failed",
-        "number": 901,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": null,
-        "ts": "2026-09-18T02:09:41Z"
-      },
-      {
-        "detail": "phase2/general lane failed twice: [infra] lane exit 1: API Error: 503 auth_unavailable: no auth available (providers=codex, model=gpt-6-astra). This is a server-side issue, usually temporary \u2014 try again in a moment. If it persists, check your inference ga",
-        "kind": "run.failed",
-        "number": 901,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 972,
-        "ts": "2026-09-18T02:09:41Z"
-      },
-      {
-        "detail": "attempt 3 sha=19e0b600",
-        "kind": "run.spawned",
-        "number": 4623,
-        "repo": "dashpay/platform",
-        "run_id": 974,
-        "ts": "2026-09-18T02:09:07Z"
       }
     ],
     "tokens_by_effort": [
@@ -422,7 +422,7 @@
       },
       {
         "effort": "high",
-        "lanes": 1536,
+        "lanes": 1537,
         "tokens_in": 1016712290,
         "tokens_out": 6942745
       }
@@ -457,8 +457,8 @@
         "tokens_out": 2957455
       },
       {
-        "avg_tokens_per_lane": 842490.0,
-        "lanes": 2985,
+        "avg_tokens_per_lane": 842208.0,
+        "lanes": 2986,
         "model": "gpt-6-astra",
         "tokens_in": 2503219448,
         "tokens_out": 11614493
@@ -971,7 +971,7 @@
       "completed_reviews": 658,
       "findings": 4252,
       "reviews": 2884,
-      "runs": 981,
+      "runs": 982,
       "tokens_in": 5869346331,
       "tokens_out": 56697481,
       "tokens_total": 5926043812
@@ -980,25 +980,11 @@
   "live": {
     "active": [
       {
-        "attempt": 1,
-        "deadline_at": "2026-09-18T08:28:06Z",
-        "elapsed_seconds": 955,
-        "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-09-18T02:43:51Z",
-        "id": 979,
-        "number": 7691,
-        "phase": "phase2",
-        "repo": "dashpay/dash",
-        "sha": "4f7e792e0e9793d9010373d3d4b8d248594db0cb",
-        "started_at": "2026-09-18T02:28:06Z",
-        "status": "running"
-      },
-      {
         "attempt": 3,
         "deadline_at": "2026-09-18T08:42:19Z",
-        "elapsed_seconds": 102,
+        "elapsed_seconds": 162,
         "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-09-18T02:43:49Z",
+        "heartbeat_at": "2026-09-18T02:44:49Z",
         "id": 980,
         "number": 4776,
         "phase": "select",
@@ -1010,15 +996,29 @@
       {
         "attempt": 3,
         "deadline_at": "2026-09-18T08:43:28Z",
-        "elapsed_seconds": 33,
+        "elapsed_seconds": 93,
         "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-09-18T02:43:58Z",
+        "heartbeat_at": "2026-09-18T02:44:58Z",
         "id": 981,
         "number": 7690,
         "phase": "select",
         "repo": "dashpay/dash",
         "sha": "3f46c07247b5f05c9fd02feeb6fb05cf493c0140",
         "started_at": "2026-09-18T02:43:28Z",
+        "status": "running"
+      },
+      {
+        "attempt": 1,
+        "deadline_at": "2026-09-18T08:44:38Z",
+        "elapsed_seconds": 23,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-09-18T02:44:53Z",
+        "id": 982,
+        "number": 7684,
+        "phase": "select",
+        "repo": "dashpay/dash",
+        "sha": "ed09b596a0602ae505134c7285b8637f6e73514a",
+        "started_at": "2026-09-18T02:44:38Z",
         "status": "running"
       }
     ],
@@ -1039,14 +1039,14 @@
     "ingest_error_streak": 0,
     "ingest_last_at": "2026-09-18T02:43:24Z",
     "last_run_done_at": "2026-09-18T00:13:16Z",
-    "last_run_started_at": "2026-09-18T02:43:28Z",
+    "last_run_started_at": "2026-09-18T02:44:38Z",
     "median_run_minutes": 49.05,
     "notify_last_at": "2026-09-18T02:43:24Z",
-    "oldest_queued_at": "2026-09-17T19:16:11Z",
+    "oldest_queued_at": "2026-09-17T17:32:56Z",
     "priority_queued": 1,
     "queued": [
       {
-        "age_seconds": 3218,
+        "age_seconds": 3278,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-09-18T02:57:02Z",
@@ -1062,23 +1062,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 26870,
-        "author": "knst",
-        "eligible": true,
-        "eligible_at": "2026-09-17T19:46:11Z",
-        "number": 7684,
-        "pr_url": "https://github.com/dashpay/dash/pull/7684",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/7684#issuecomment-5688272696",
-        "priority": false,
-        "queued_at": "2026-09-17T19:16:11Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash",
-        "sha": "ed09b596a0602ae505134c7285b8637f6e73514a",
-        "title": "backport: bitcoin#26186, #26251, #26471, #26631, #26646, #26877, #26884, #26886, #26887, #26905, #26991",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 25918,
+        "age_seconds": 25978,
         "author": "QuantumExplorer",
         "eligible": true,
         "eligible_at": "2026-09-17T20:02:03Z",
@@ -1094,7 +1078,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 24483,
+        "age_seconds": 24543,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T20:25:58Z",
@@ -1110,7 +1094,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 24255,
+        "age_seconds": 24315,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T20:29:46Z",
@@ -1126,7 +1110,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 20728,
+        "age_seconds": 20788,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1142,7 +1126,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 20728,
+        "age_seconds": 20788,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1158,7 +1142,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 14723,
+        "age_seconds": 14783,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T23:08:38Z",
@@ -1174,7 +1158,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 13929,
+        "age_seconds": 13989,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T23:21:52Z",
@@ -1190,7 +1174,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 10470,
+        "age_seconds": 10530,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:19:31Z",
@@ -1206,7 +1190,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 10269,
+        "age_seconds": 10329,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1222,7 +1206,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 10269,
+        "age_seconds": 10329,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1238,7 +1222,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 10269,
+        "age_seconds": 10329,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1254,7 +1238,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 10071,
+        "age_seconds": 10131,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:26:10Z",
@@ -1270,7 +1254,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 7534,
+        "age_seconds": 7594,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T01:08:27Z",
@@ -1286,7 +1270,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 6534,
+        "age_seconds": 6594,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T01:25:07Z",
@@ -1302,7 +1286,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 2892,
+        "age_seconds": 2952,
         "author": "QuantumExplorer",
         "eligible": true,
         "eligible_at": "2026-09-18T02:25:49Z",
@@ -1316,13 +1300,29 @@
         "sha": "e305b85f88245237aab6655c055fc31a36b8bf01",
         "title": "feat(platform)!: token shielded pools",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 33125,
+        "author": "knst",
+        "eligible": false,
+        "eligible_at": "2026-09-18T02:49:38Z",
+        "number": 7691,
+        "pr_url": "https://github.com/dashpay/dash/pull/7691",
+        "prioritize_url": "https://github.com/dashpay/dash/issues/7691#issuecomment-5718654091",
+        "priority": false,
+        "queued_at": "2026-09-17T17:32:56Z",
+        "reason": "waiting for debounce/backoff",
+        "repo": "dashpay/dash",
+        "sha": "4f7e792e0e9793d9010373d3d4b8d248594db0cb",
+        "title": "chore: add better guidance for writing tests for agents",
+        "trigger": "new_pr"
       }
     ],
-    "ts": "2026-09-18T02:44:01Z",
+    "ts": "2026-09-18T02:45:01Z",
     "watchdog": {
       "active": 3,
-      "eligible": 16,
-      "idle_minutes": 0.55,
+      "eligible": 15,
+      "idle_minutes": 0.38333333333333336,
       "ingest_stale": false,
       "stuck": false
     }
