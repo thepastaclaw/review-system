@@ -13,8 +13,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from . import degraded, labels
 from . import gc as gc_mod
-from . import labels
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
@@ -64,11 +64,13 @@ class Daemon:
         gh: Gh | None = None,
         notifier: Notifier | None = None,
         spawn: bool = True,
+        prober: object = None,
     ) -> None:
         self.cfg, self.conn = cfg, conn
         self.gh = gh or Gh(cfg.gh_bin)
         self.notifier = notifier or Notifier(cfg)
         self.spawn = spawn
+        self.prober = prober or degraded.probe
         self.labels_repos: dict[str, bool] = {}  # repo -> has created the pastaclaw:* labels
         self.stop = False
         self.tasks = [
@@ -86,6 +88,8 @@ class Daemon:
                 Task("queue_comments", cfg.queue_comment_interval_seconds, self.t_queue_comments),
                 Task("labels", 60, self.t_labels),
             ]
+        if cfg.policy.degraded is not None:
+            self.tasks.append(Task("degraded", 120, self.t_degraded))
         self.tasks += [Task("watchdog", 300, self.t_watchdog), Task("gc", 3600, self.t_gc)]
 
     # ---- tasks ----
@@ -149,6 +153,17 @@ class Daemon:
 
     def t_gc(self) -> object:
         return gc_mod.run(self.conn, self.cfg)
+
+    def t_degraded(self) -> object:
+        """Re-probe the sentinel so the mode flips back on its own once quota returns, and
+        tell the operator once on every transition (workers flipping mid-run count too)."""
+        state = degraded.detect(self.conn, self.cfg, prober=self.prober, refresh=True)
+        alert = degraded.transition(self.conn, state)
+        if alert:
+            with tx(self.conn):
+                event(self.conn, "degraded.transition", detail=state.describe())
+            self.notifier.alert(alert)
+        return state.as_dict()
 
     # ---- loop ----
     def tick(self, *, force: bool = False) -> dict[str, object]:

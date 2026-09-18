@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import converse, github, labels, publish, quota
+from . import converse, degraded, github, labels, publish, quota
 from .config import Config, LaneModel, min_effort
 from .contract import (
     Finding,
@@ -77,6 +77,8 @@ class RunContext:
     phase1_choice: quota.Choice | None = None  # which Phase-1 ladder rung ran, and why
     phase1_effort: str | None = None  # the tier's Phase-1 effort, re-capped per rung
     quota_reader: quota.QuotaReader | None = None  # test injection; None = proxy lookup
+    degraded: degraded.State | None = None  # stand-in models in use (see degraded.py)
+    prober: Any = None  # test injection; None = probe the proxy
     evidence: dict[str, Any] = field(default_factory=dict)
     coderabbit: dict[str, Any] = field(default_factory=dict)
     coderabbit_ids: list[int] = field(default_factory=list)
@@ -106,6 +108,19 @@ class RunContext:
     def adhoc(self) -> bool:
         """This repo has no skills entry, so it is reviewed on generic guidance alone."""
         return self.cfg.repo(self.repo) is None
+
+    @property
+    def is_degraded(self) -> bool:
+        return bool(self.degraded and self.degraded.active and self.cfg.policy.degraded)
+
+    def lane_model(self, lm: LaneModel) -> LaneModel:
+        """`lm`, or its degraded-mode stand-in while the primary models are unavailable."""
+        pol = self.cfg.policy.degraded
+        return pol.resolve(lm) if pol and self.is_degraded else lm
+
+    def model_name(self, model: str) -> str:
+        pol = self.cfg.policy.degraded
+        return pol.substitute_model(model) if pol and self.is_degraded else model
 
 
 # ---- heartbeat ----
@@ -249,6 +264,8 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
         kw.setdefault("phase1_skipped", ctx.phase1_skipped)
     if ctx.adhoc:
         kw.setdefault("adhoc", True)
+    if ctx.is_degraded:
+        kw.setdefault("degraded", True)
     try:
         github.upsert_gate_comment(
             ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, github.gate_body(status, ctx.sha, **kw)
@@ -294,8 +311,7 @@ def step_select(ctx: RunContext) -> None:
     )
     ctx.files = [f for f in files_raw if isinstance(f, dict)]
     files = [str(f.get("filename")) for f in ctx.files]
-    sel = select(
-        ctx.cfg,
+    kw: dict[str, Any] = dict(
         repo=ctx.repo,
         title=ctx.meta.title,
         body=ctx.meta.body,
@@ -304,6 +320,9 @@ def step_select(ctx: RunContext) -> None:
         worktree=ctx.worktree,
         runner=ctx.lane_runner,
     )
+    sel = select(ctx.cfg, model_for=ctx.model_name, **kw)
+    if sel.error and _degrade_on_side_lane_failure(ctx, "select", sel.error):
+        sel = select(ctx.cfg, model_for=ctx.model_name, **kw)  # once more, on the stand-ins
     write_selection(ctx.run_dir, sel)
     ctx.selection = sel.selected
     if sel.error:
@@ -323,8 +342,7 @@ def step_triage(ctx: RunContext) -> None:
     assert ctx.meta and ctx.worktree
     if ctx.cfg.policy.triage is None:
         return
-    t = triage(
-        ctx.cfg,
+    kw: dict[str, Any] = dict(
         repo=ctx.repo,
         base_ref=ctx.meta.base_ref,
         title=ctx.meta.title,
@@ -334,6 +352,9 @@ def step_triage(ctx: RunContext) -> None:
         worktree=ctx.worktree,
         runner=ctx.lane_runner,
     )
+    t = triage(ctx.cfg, lane=ctx.lane_model(ctx.cfg.policy.triage), **kw)
+    if t.error and _degrade_on_side_lane_failure(ctx, "triage", t.error):
+        t = triage(ctx.cfg, lane=ctx.lane_model(ctx.cfg.policy.triage), **kw)
     write_triage(ctx.run_dir, t)
     ctx.triage = t
     ctx.tier = t.tier
@@ -438,10 +459,17 @@ def _run_lane(
     is_verifier: bool,
     fresh: bool = False,
 ) -> dict[str, Any]:
-    """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output."""
+    """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output.
+
+    A lane on a primary model that dies on a quota failure flips the run into degraded mode
+    (when the policy has a stand-in for that model) and gets its two attempts again on the
+    stand-in, so one exhausted pool does not fail the review."""
     assert ctx.worktree
+    lm = ctx.lane_model(lm)
     last: str = ""
-    for attempt in (1, 2):
+    attempt, budget = 0, 2
+    while attempt < budget:
+        attempt += 1
         ctx.check_cancel()
         attempt_id = uuid.uuid4().hex[:12]
         art = ctx.run_dir / "attempts" / f"{phase}-{role}-{attempt_id}"
@@ -492,6 +520,9 @@ def _run_lane(
                 reason=str(exc),
             )
             last = str(exc)
+            switched = _degrade_on_quota_failure(ctx, lm, exc)
+            if switched is not None:
+                lm, budget = switched, attempt + 2
             continue
         _lane_row(
             ctx,
@@ -516,6 +547,7 @@ def _run_lane(
                     "phase": phase,
                     "fresh": fresh,
                     "attempt_id": attempt_id,
+                    "substitute_for": lm.substitute_for,
                 }
             )
         return out
@@ -531,7 +563,7 @@ def _repair(ctx: RunContext, raw: str, art: Path) -> dict[str, Any] | None:
     spec = LaneSpec(
         role="repair",
         agent="repair",
-        model=ctx.cfg.policy.repair_model,
+        model=ctx.model_name(ctx.cfg.policy.repair_model),
         effort="low",
         prompt=REPAIR_PROMPT.format(raw=raw),
         cwd=ctx.worktree,
@@ -848,7 +880,12 @@ def _verdict_update(
         return None
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
-        verifier={"model": verifier_lm.model, "agent": verifier_lm.agent, "role": "final-verifier"},
+        verifier={
+            "model": verifier_lm.model,
+            "agent": verifier_lm.agent,
+            "role": "final-verifier",
+            "substitute_for": verifier_lm.substitute_for,
+        },
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
@@ -856,6 +893,7 @@ def _verdict_update(
         phase1_choice=_phase1_choice_provenance(ctx),
         adhoc=ctx.adhoc,
         fresh_final=ctx.fresh_final,
+        degraded=_degraded_provenance(ctx),
     )
     state = publish.standing_verdict(
         github.reviews(ctx.gh, ctx.repo, ctx.number), ctx.sha, phase, ctx.cfg.bot_login
@@ -966,6 +1004,7 @@ def _build_review(
             "model": verifier_lm.model,
             "agent": verifier_lm.agent,
             "role": "verifier" if phase == "preliminary" else "final-verifier",
+            "substitute_for": verifier_lm.substitute_for,
         },
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
@@ -974,6 +1013,7 @@ def _build_review(
         phase1_choice=_phase1_choice_provenance(ctx),
         adhoc=ctx.adhoc,
         fresh_final=ctx.fresh_final,
+        degraded=_degraded_provenance(ctx),
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -996,6 +1036,82 @@ def _build_review(
     )
 
 
+def _degraded_provenance(ctx: RunContext) -> dict[str, Any] | None:
+    """Disclosed on every publication made while stand-in models were in use."""
+    pol = ctx.cfg.policy.degraded
+    if not ctx.is_degraded or pol is None or ctx.degraded is None:
+        return None
+    return {
+        "reason": ctx.degraded.reason,
+        "source": ctx.degraded.source,
+        "since": ctx.degraded.since,
+        "label": pol.label,
+        "substitutes": {k: v.model for k, v in pol.substitutes.items()},
+        "phase1_effort_cap": pol.phase1_effort_cap,
+    }
+
+
+def _enter_degraded(ctx: RunContext, state: degraded.State, kind: str, detail: str) -> None:
+    ctx.degraded = state
+    with tx(ctx.conn):
+        ctx.conn.execute("UPDATE runs SET degraded=1 WHERE id=?", (ctx.run_id,))
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
+
+
+def _degrade_on_quota_failure(ctx: RunContext, lm: LaneModel, exc: ReviewError) -> LaneModel | None:
+    """A lane on a primary model just died on a quota/cooldown error and the policy has a
+    stand-in for it: switch this run into degraded mode (recorded with a hold so the next
+    runs start degraded too) and return the lane on its stand-in. None otherwise."""
+    pol = ctx.cfg.policy.degraded
+    if (
+        pol is None
+        or lm.substitute_for is not None
+        or lm.model not in pol.substitutes
+        or not degraded.looks_like_quota_failure(str(exc))
+    ):
+        return None
+    reason = f"`{lm.model}` lane failed on quota: {exc.message[:120]}"
+    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
+    if not ctx.is_degraded:
+        _enter_degraded(
+            ctx,
+            degraded.State(True, reason, "lane", since=now()),
+            "degraded.entered_midrun",
+            reason,
+        )
+    log.warning("lane on %s hit a quota failure; switching to stand-in models", lm.model)
+    return pol.resolve(lm)
+
+
+def _degrade_on_side_lane_failure(ctx: RunContext, step: str, error: str) -> bool:
+    """The selector/triage lanes fall back on their own (heuristic / fallback tier), which
+    hides the earliest sign that the primary pool is dry. A quota-shaped failure there flips
+    the run into degraded mode (with the same hold as a reviewer lane) so the caller can
+    try once more on the stand-in and the rest of the run does not walk into the same 429.
+    False when already degraded, when no stand-in applies, or when the error is not quota."""
+    pol = ctx.cfg.policy.degraded
+    if pol is None or ctx.is_degraded or not degraded.looks_like_quota_failure(error):
+        return False
+    reason = f"{step} lane failed on quota: {error[:120]}"
+    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
+    _enter_degraded(
+        ctx, degraded.State(True, reason, "lane", since=now()), "degraded.entered_midrun", reason
+    )
+    log.warning("%s lane hit a quota failure; switching to stand-in models", step)
+    return True
+
+
+def _detect_degraded(ctx: RunContext) -> None:
+    """Decide the run's mode up front (probe cached across runs) and record it."""
+    if ctx.cfg.policy.degraded is None:
+        return
+    state = degraded.detect(ctx.conn, ctx.cfg, prober=ctx.prober or degraded.probe)
+    if state.active:
+        _enter_degraded(ctx, state, "degraded.run", f"{state.reason} ({state.source})")
+    else:
+        ctx.degraded = state
+
+
 def _phase1_choice_provenance(ctx: RunContext) -> dict[str, Any] | None:
     """Only worth a line when there was a ladder to choose from."""
     if ctx.phase1_choice is None or not ctx.cfg.policy.has_phase1_ladder:
@@ -1007,10 +1123,12 @@ def _triage_provenance(ctx: RunContext) -> dict[str, Any] | None:
     t, lm = ctx.triage, ctx.cfg.policy.triage
     if t is None or lm is None:
         return None
+    ran = ctx.lane_model(lm)
     return {
         "tier": t.tier,
-        "model": lm.model,
-        "effort": lm.effort,
+        "model": ran.model,
+        "effort": ran.effort,
+        "substitute_for": ran.substitute_for,
         "method": t.method,
         "reasoning": t.reasoning,
         "error": t.error,
@@ -1146,7 +1264,7 @@ def _fresh_final_if_needed(
         ctx,
         step=StepName.FRESH_PHASE2,
         phase="phase2",
-        lm=_with_effort(ctx.cfg.policy.phase2_reviewer, effort.phase2),
+        lm=ctx.lane_model(_with_effort(ctx.cfg.policy.phase2_reviewer, effort.phase2)),
         expected_phase="final",
         fresh=True,
     )
@@ -1156,7 +1274,7 @@ def _fresh_final_if_needed(
         ctx,
         step=StepName.FRESH_VERIFY2,
         phase="verify2",
-        lm=ctx.cfg.policy.phase2_verifier,
+        lm=ctx.lane_model(ctx.cfg.policy.phase2_verifier),
         expected_phase="final",
         phase2_outputs=combined,
         fresh_final=True,
@@ -1181,13 +1299,17 @@ def _rung(ctx: RunContext, choice: quota.Choice, kind: str) -> LaneModel:
                 detail=choice.log_line(),
             )
     cap = choice.model.effort
-    return _with_effort(choice.model, min_effort(ctx.phase1_effort or cap, cap))
+    return ctx.lane_model(_with_effort(choice.model, min_effort(ctx.phase1_effort or cap, cap)))
 
 
 def _choose_phase1(ctx: RunContext, effort: str) -> LaneModel:
     """Pick the Phase-1 model from the policy's ladder by remaining subscription quota
     (see `quota.py`); recorded on the run and disclosed in the review provenance."""
     pol = ctx.cfg.policy
+    if ctx.is_degraded and pol.degraded:
+        # keep the included-quota rungs eligible (GLM is passed over above `high`) rather
+        # than sending every Phase 1 to the paid last rung while Phase 2 is already there
+        effort = pol.degraded.phase1_effort(effort)
     ctx.phase1_effort = effort
     reader = ctx.quota_reader or quota.cached_reader(ctx.conn)
     choice = quota.choose(pol.phase1_candidates, pol.quota_reserve, reader=reader, effort=effort)
@@ -1221,6 +1343,14 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     """
     limit = ctx.cfg.backlog_skip_phase1_above
     if limit <= 0 or not ctx.cfg.policy.phase2_enabled or phase2_effort is None:
+        return False
+    if (
+        ctx.is_degraded
+        and ctx.cfg.policy.degraded
+        and not ctx.cfg.policy.degraded.backlog_skip_phase1
+    ):
+        # skipping Phase 1 would put the whole review on one stand-in model; degraded mode
+        # keeps both phases so the cross-model check survives
         return False
     queued = ctx.conn.execute("SELECT COUNT(*) AS n FROM heads WHERE status='queued'").fetchone()[
         "n"
@@ -1331,7 +1461,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         return {"answered": 0, "reason": "no thread awaiting an answer"}
     fetched, unfetched = _fetch_linked_commits(ctx, threads)
     project_skill, review_skill = skill_texts(ctx.cfg, ctx.repo)
-    lm = ctx.cfg.policy.conversation_lane
+    lm = ctx.lane_model(ctx.cfg.policy.conversation_lane)
     out = _run_conversation_lane(
         ctx,
         lm,
@@ -1486,10 +1616,16 @@ def _conversation_verdict_update(
         return None
     prov = publish.Provenance(
         reviewers=[],
-        verifier={"model": lm.model, "agent": lm.agent, "role": "conversation"},
+        verifier={
+            "model": lm.model,
+            "agent": lm.agent,
+            "role": "conversation",
+            "substitute_for": lm.substitute_for,
+        },
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         adhoc=ctx.adhoc,
         conversation=True,
+        degraded=_degraded_provenance(ctx),
     )
     verified = VerifierOutput(
         summary="",
@@ -1551,6 +1687,7 @@ def _conversation_verdict_update(
 def run(ctx: RunContext) -> RunStatus:
     pol = ctx.cfg.policy
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
+    _detect_degraded(ctx)
     _gate_comment(ctx, "in_progress")
     standing = _standing_review(ctx) if ctx.trigger == Trigger.REVIEW_REPLY else None
     for name, fn in (
@@ -1585,18 +1722,23 @@ def run(ctx: RunContext) -> RunStatus:
             ctx,
             step=StepName.PHASE2,
             phase="phase2",
-            lm=_with_effort(pol.phase2_reviewer, effort.phase2),
+            lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
             expected_phase="final",
         )
         ctx.verify2 = _verify_step(
             ctx,
             step=StepName.VERIFY2,
             phase="verify2",
-            lm=pol.phase2_verifier,
+            lm=ctx.lane_model(pol.phase2_verifier),
             expected_phase="final",
         )
         ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
-        _publish_step(ctx, phase="final", verified=ctx.verify2, verifier_lm=pol.phase2_verifier)
+        _publish_step(
+            ctx,
+            phase="final",
+            verified=ctx.verify2,
+            verifier_lm=ctx.lane_model(pol.phase2_verifier),
+        )
         return RunStatus.DONE
     ctx.phase1_outputs = _reviewer_step(
         ctx,
@@ -1609,7 +1751,7 @@ def run(ctx: RunContext) -> RunStatus:
         ctx,
         step=StepName.VERIFY1,
         phase="verify1",
-        lm=pol.phase1_verifier,
+        lm=ctx.lane_model(pol.phase1_verifier),
         expected_phase="preliminary",
     )
     _step_start(ctx, StepName.GATE)
@@ -1623,17 +1765,16 @@ def run(ctx: RunContext) -> RunStatus:
     )
     if not admit:
         ctx.check_cancel()
+        verifier1 = ctx.lane_model(pol.phase1_verifier)
         if ctx.verify1.blocker_count or not pol.phase2_enabled:
-            _publish_step(
-                ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=pol.phase1_verifier
-            )
+            _publish_step(ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=verifier1)
         else:
             # no blockers and the tier says a second round adds nothing: final from Phase 1
             _publish_step(
                 ctx,
                 phase="final",
                 verified=ctx.verify1,
-                verifier_lm=pol.phase1_verifier,
+                verifier_lm=verifier1,
                 phase2_skipped=f"triage rated this change {ctx.tier}",
             )
         return RunStatus.DONE
@@ -1641,14 +1782,20 @@ def run(ctx: RunContext) -> RunStatus:
         ctx,
         step=StepName.PHASE2,
         phase="phase2",
-        lm=_with_effort(pol.phase2_reviewer, effort.phase2),
+        lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
         expected_phase="final",
     )
     ctx.verify2 = _verify_step(
-        ctx, step=StepName.VERIFY2, phase="verify2", lm=pol.phase2_verifier, expected_phase="final"
+        ctx,
+        step=StepName.VERIFY2,
+        phase="verify2",
+        lm=ctx.lane_model(pol.phase2_verifier),
+        expected_phase="final",
     )
     ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
-    _publish_step(ctx, phase="final", verified=ctx.verify2, verifier_lm=pol.phase2_verifier)
+    _publish_step(
+        ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
+    )
     return RunStatus.DONE
 
 
@@ -1668,6 +1815,7 @@ def main(
     dry_run: bool = False,
     heartbeat: bool = True,
     quota_reader: quota.QuotaReader | None = None,
+    prober: Any = None,
 ) -> RunStatus:
     row = conn.execute(
         "SELECT r.*, h.repo, h.number, h.sha, h.trigger FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
@@ -1694,6 +1842,7 @@ def main(
     if lane_runner:
         ctx.lane_runner = lane_runner
     ctx.quota_reader = quota_reader
+    ctx.prober = prober
     with tx(conn):
         claimed = conn.execute(
             "UPDATE runs SET heartbeat_at=?, status='running' WHERE id=? AND token=? AND status IN ('spawned','running')",

@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import config as cfg_mod
 from . import db as db_mod
+from . import degraded as degraded_mod
 from . import doctor as doctor_mod
 from . import exporter as exporter_mod
 from . import status as status_mod
@@ -79,6 +80,38 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(
             f"watchdog: stuck={w['stuck']} eligible={w['eligible']} ingest_stale={w['ingest_stale']} median_run_min={snap['median_run_minutes']}"
         )
+        d = snap["degraded"]
+        if d.get("configured"):
+            mode = "DEGRADED" if d["active"] else "normal"
+            probe = d.get("last_probe") or {}
+            print(
+                f"mode: {mode} forced={d.get('forced') or 'auto'} sentinel={d['sentinel']} "
+                f"last_probe={probe.get('at') or 'never'} ({probe.get('reason') or '-'})"
+            )
+    return 0
+
+
+def cmd_degraded(args: argparse.Namespace) -> int:
+    """Show or force the degraded mode: `on` / `off` / `auto` (probe the sentinel)."""
+    cfg = _cfg(args)
+    conn = db_mod.connect(cfg.db_path)
+    if cfg.policy.degraded is None:
+        print("no `degraded` block in the skills policy; nothing to switch", file=sys.stderr)
+        return 1
+    if args.mode:
+        degraded_mod.force(conn, args.mode)
+        state = degraded_mod.detect(conn, cfg, refresh=True)
+        with db_mod.tx(conn):
+            db_mod.event(
+                conn, "degraded.forced", detail=f"{args.mode} by operator -> {state.describe()}"
+            )
+        print(f"degraded mode set to {args.mode}: now {state.describe()}")
+        return 0
+    if args.probe:
+        state = degraded_mod.detect(conn, cfg, refresh=True)
+    else:
+        state = degraded_mod.detect(conn, cfg)
+    print(json.dumps({**state.as_dict(), **degraded_mod.snapshot(conn, cfg)}, indent=1))
     return 0
 
 
@@ -231,6 +264,10 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("repo")
     s.add_argument("number", type=int)
     s.set_defaults(fn=cmd_retry)
+    s = sub.add_parser("degraded", help="show or force the degraded (stand-in models) mode")
+    s.add_argument("mode", nargs="?", choices=["on", "off", "auto"])
+    s.add_argument("--probe", action="store_true", help="re-probe the sentinel model now")
+    s.set_defaults(fn=cmd_degraded)
     s = sub.add_parser("doctor", help="check gh, claude, proxy, models")
     s.add_argument("--no-models", action="store_true")
     s.set_defaults(fn=cmd_doctor)

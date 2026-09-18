@@ -352,6 +352,7 @@ class FakeLanes:
         self.broken_once: set[str] = set()
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
+        self.dead_stderr = "API Error: 429 rate limited"  # what a dead lane says
 
     def __call__(self, spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
         self.calls.append(spec)
@@ -359,9 +360,7 @@ class FakeLanes:
         if spec.role in self.timeout_roles:
             return LaneResult(exit_code=None, stdout="", stderr="", duration_s=1, timed_out=True)
         if spec.model in self.dead_models:
-            return LaneResult(
-                exit_code=1, stdout="", stderr="API Error: 429 rate limited", duration_s=1
-            )
+            return LaneResult(exit_code=1, stdout="", stderr=self.dead_stderr, duration_s=1)
         if spec.role == "selector":
             out = self.selector
         elif spec.role == "triage":

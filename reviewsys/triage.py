@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import Config
+from .config import Config, LaneModel
 from .contract import parse_json_object
 from .lane import LaneResult, LaneSpec, run_claude_lane
 
@@ -66,15 +66,18 @@ def triage(
     run_dir: Path,
     worktree: Path,
     runner: Any = run_claude_lane,
+    lane: LaneModel | None = None,
 ) -> Triage:
+    """`lane` overrides the policy's triage lane (degraded-mode stand-in)."""
     pol = cfg.policy
     assert pol.triage is not None
+    lane = lane or pol.triage
     tiers = list(pol.tiers)
     spec = LaneSpec(
         role="triage",
-        agent=pol.triage.agent,
-        model=pol.triage.model,
-        effort=pol.triage.effort,
+        agent=lane.agent,
+        model=lane.model,
+        effort=lane.effort,
         prompt=_prompt(repo, base_ref, title, body, files, tiers),
         cwd=worktree,
         add_dir=run_dir,
@@ -86,7 +89,10 @@ def triage(
         try:
             res: LaneResult = runner(spec, run_dir / "triage" / f"attempt-{attempt}", worktree)
             if not res.ok:
-                error = f"exit {res.exit_code} timed_out={res.timed_out}"
+                said = (res.stderr or res.result_text).strip().splitlines()
+                error = f"exit {res.exit_code} timed_out={res.timed_out}" + (
+                    f": {said[0][:200]}" if said else ""
+                )
                 continue
             obj = parse_json_object(res.result_text)
             tier = str(obj.get("tier") or "").strip().lower()

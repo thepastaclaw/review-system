@@ -6,6 +6,7 @@ import sqlite3
 from datetime import timedelta
 from typing import Any
 
+from . import degraded
 from .config import Config
 from .db import fmt_ts, kv_get, now, now_dt, parse_ts
 
@@ -60,6 +61,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         "notify_last_at": kv_get(conn, "notify.last_at"),
         "ingest_error_streak": int(kv_get(conn, "ingest.error_streak", "0") or 0),
         "watchdog": watchdog(conn, cfg),
+        "degraded": degraded.snapshot(conn, cfg),
     }
 
 

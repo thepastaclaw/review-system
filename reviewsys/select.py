@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -75,7 +76,9 @@ def select(
     run_dir: Path,
     worktree: Path,
     runner: Any = run_claude_lane,
+    model_for: Callable[[str], str] = lambda m: m,
 ) -> Selection:
+    """`model_for` maps a policy model to the one to actually run (degraded-mode stand-ins)."""
     available = list(cfg.specialists_for(repo))
     always = [s.id for s in available if s.always_run]
     discretionary = [s for s in available if not s.always_run]
@@ -93,14 +96,18 @@ def select(
         claude_bin=cfg.claude_bin,
     )
     error: str | None = None
-    for attempt, model in enumerate(
-        (cfg.policy.selector_model, cfg.policy.phase2_reviewer.model), 1
-    ):
+    candidates = dict.fromkeys(
+        model_for(m) for m in (cfg.policy.selector_model, cfg.policy.phase2_reviewer.model)
+    )
+    for attempt, model in enumerate(candidates, 1):
         spec = dataclasses.replace(spec, model=model)
         try:
             res: LaneResult = runner(spec, run_dir / "selector" / f"attempt-{attempt}", worktree)
             if not res.ok:
-                error = f"{model}: exit {res.exit_code} timed_out={res.timed_out}"
+                said = (res.stderr or res.result_text).strip().splitlines()
+                error = f"{model}: exit {res.exit_code} timed_out={res.timed_out}" + (
+                    f": {said[0][:200]}" if said else ""
+                )
                 continue
             obj = parse_json_object(res.result_text)
             picked = [
