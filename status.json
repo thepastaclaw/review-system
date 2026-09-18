@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-18T00:04:00Z",
-  "generated_at": "2026-09-18T00:04:00Z",
+  "data_as_of": "2026-09-18T00:05:00Z",
+  "generated_at": "2026-09-18T00:05:00Z",
   "history": {
     "daily": [
       {
@@ -69,6 +69,38 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=ae7f6cbb",
+        "kind": "run.spawned",
+        "number": 523,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 948,
+        "ts": "2026-09-18T00:04:32Z"
+      },
+      {
+        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
+        "kind": "select.degraded",
+        "number": 1484,
+        "repo": "dashpay/tenderdash",
+        "run_id": 946,
+        "ts": "2026-09-18T00:04:27Z"
+      },
+      {
+        "detail": "after 3 attempt(s): phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "head.failed",
+        "number": 983,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": null,
+        "ts": "2026-09-18T00:04:07Z"
+      },
+      {
+        "detail": "phase2/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down",
+        "kind": "run.failed",
+        "number": 983,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 945,
+        "ts": "2026-09-18T00:04:07Z"
+      },
       {
         "detail": "PastaPastaPasta replied on comment 4025930038 -> noop 1bb8225b",
         "kind": "head.review_reply",
@@ -356,38 +388,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-09-17T23:49:31Z"
-      },
-      {
-        "detail": "ccae2654 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 547,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-09-17T23:49:31Z"
-      },
-      {
-        "detail": "attempt 3 sha=3c0679ce",
-        "kind": "run.spawned",
-        "number": 983,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 945,
-        "ts": "2026-09-17T23:47:51Z"
-      },
-      {
-        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
-        "kind": "select.degraded",
-        "number": 4789,
-        "repo": "dashpay/platform",
-        "run_id": 943,
-        "ts": "2026-09-17T23:47:49Z"
-      },
-      {
-        "detail": "method=heuristic error=gpt-6-astra: exit 143 timed_out=True",
-        "kind": "select.degraded",
-        "number": 996,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 944,
-        "ts": "2026-09-17T23:47:49Z"
       }
     ],
     "tokens_by_effort": [
@@ -417,7 +417,7 @@
       },
       {
         "effort": "high",
-        "lanes": 1472,
+        "lanes": 1473,
         "tokens_in": 1016712290,
         "tokens_out": 6942745
       }
@@ -452,8 +452,8 @@
         "tokens_out": 2957455
       },
       {
-        "avg_tokens_per_lane": 860950.0,
-        "lanes": 2921,
+        "avg_tokens_per_lane": 860655.0,
+        "lanes": 2922,
         "model": "gpt-6-astra",
         "tokens_in": 2503219448,
         "tokens_out": 11614493
@@ -966,7 +966,7 @@
       "completed_reviews": 657,
       "findings": 4252,
       "reviews": 2884,
-      "runs": 947,
+      "runs": 948,
       "tokens_in": 5869346331,
       "tokens_out": 56697481,
       "tokens_total": 5926043812
@@ -975,28 +975,14 @@
   "live": {
     "active": [
       {
-        "attempt": 3,
-        "deadline_at": "2026-09-18T05:47:51Z",
-        "elapsed_seconds": 969,
-        "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-09-18T00:03:51Z",
-        "id": 945,
-        "number": 983,
-        "phase": "phase2",
-        "repo": "dashpay/dash-evo-tool",
-        "sha": "3c0679ce9a36b6ec0f074c362705c3183e221388",
-        "started_at": "2026-09-17T23:47:51Z",
-        "status": "running"
-      },
-      {
         "attempt": 2,
         "deadline_at": "2026-09-18T06:00:24Z",
-        "elapsed_seconds": 216,
+        "elapsed_seconds": 276,
         "heartbeat_age_seconds": 6,
-        "heartbeat_at": "2026-09-18T00:03:54Z",
+        "heartbeat_at": "2026-09-18T00:04:54Z",
         "id": 946,
         "number": 1484,
-        "phase": "select",
+        "phase": "triage",
         "repo": "dashpay/tenderdash",
         "sha": "28f85449d98188642fed3d6923ec2c2b6f6b6fc2",
         "started_at": "2026-09-18T00:00:24Z",
@@ -1005,15 +991,29 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-18T06:00:24Z",
-        "elapsed_seconds": 216,
+        "elapsed_seconds": 276,
         "heartbeat_age_seconds": 6,
-        "heartbeat_at": "2026-09-18T00:03:54Z",
+        "heartbeat_at": "2026-09-18T00:04:54Z",
         "id": 947,
         "number": 547,
         "phase": "triage",
         "repo": "PastaPastaPasta/yappr",
         "sha": "ccae26540998c28586691a74d48a62e6407a0af0",
         "started_at": "2026-09-18T00:00:24Z",
+        "status": "running"
+      },
+      {
+        "attempt": 1,
+        "deadline_at": "2026-09-18T06:04:32Z",
+        "elapsed_seconds": 28,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-09-18T00:04:48Z",
+        "id": 948,
+        "number": 523,
+        "phase": "triage",
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "ae7f6cbba2a16fa4898fa4af19885cdb8d41c710",
+        "started_at": "2026-09-18T00:04:32Z",
         "status": "running"
       }
     ],
@@ -1022,42 +1022,26 @@
       "priority_overflow": 1,
       "typical": 2
     },
-    "failed_heads_24h": 5,
+    "failed_heads_24h": 6,
     "heads": {
       "closed": 285,
       "done": 2864,
-      "failed": 33,
-      "queued": 32,
+      "failed": 34,
+      "queued": 31,
       "running": 3,
       "superseded": 806
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-09-18T00:00:24Z",
+    "ingest_last_at": "2026-09-18T00:04:32Z",
     "last_run_done_at": "2026-09-17T22:44:55Z",
-    "last_run_started_at": "2026-09-18T00:00:24Z",
+    "last_run_started_at": "2026-09-18T00:04:32Z",
     "median_run_minutes": 49.05,
     "notify_last_at": "2026-09-18T00:03:01Z",
     "oldest_queued_at": "2026-09-17T14:25:33Z",
-    "priority_queued": 6,
+    "priority_queued": 5,
     "queued": [
       {
-        "age_seconds": 869,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-09-17T23:49:55Z",
-        "number": 523,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/523",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/523#issuecomment-5692119645",
-        "priority": true,
-        "queued_at": "2026-09-17T23:49:31Z",
-        "reason": "waiting for a review slot",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "ae7f6cbba2a16fa4898fa4af19885cdb8d41c710",
-        "title": "fix: refresh read receipts in active conversations",
-        "trigger": "review_reply"
-      },
-      {
-        "age_seconds": 698,
+        "age_seconds": 758,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T23:52:22Z",
@@ -1073,7 +1057,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 562,
+        "age_seconds": 622,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T23:54:38Z",
@@ -1089,7 +1073,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 562,
+        "age_seconds": 622,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T23:54:38Z",
@@ -1105,7 +1089,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 217,
+        "age_seconds": 277,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-18T00:01:18Z",
@@ -1121,7 +1105,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 3733,
+        "age_seconds": 3793,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-09-18T00:14:58Z",
@@ -1137,7 +1121,7 @@
         "trigger": "review_reply"
       },
       {
-        "age_seconds": 29752,
+        "age_seconds": 29812,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T16:18:08Z",
@@ -1153,7 +1137,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 27937,
+        "age_seconds": 27997,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T16:48:23Z",
@@ -1169,7 +1153,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 25859,
+        "age_seconds": 25919,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T17:23:01Z",
@@ -1185,7 +1169,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 23464,
+        "age_seconds": 23524,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T18:02:56Z",
@@ -1201,7 +1185,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 17269,
+        "age_seconds": 17329,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T19:46:11Z",
@@ -1217,7 +1201,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 16317,
+        "age_seconds": 16377,
         "author": "QuantumExplorer",
         "eligible": true,
         "eligible_at": "2026-09-17T20:02:03Z",
@@ -1233,7 +1217,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 14882,
+        "age_seconds": 14942,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T20:25:58Z",
@@ -1249,7 +1233,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 14654,
+        "age_seconds": 14714,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-17T20:29:46Z",
@@ -1265,7 +1249,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 11127,
+        "age_seconds": 11187,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1281,7 +1265,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 11127,
+        "age_seconds": 11187,
         "author": "HashEngineering",
         "eligible": true,
         "eligible_at": "2026-09-17T21:28:33Z",
@@ -1297,7 +1281,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 8745,
+        "age_seconds": 8805,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T22:08:15Z",
@@ -1313,7 +1297,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 8503,
+        "age_seconds": 8563,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T22:12:17Z",
@@ -1329,7 +1313,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 6072,
+        "age_seconds": 6132,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T22:52:48Z",
@@ -1345,7 +1329,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 5122,
+        "age_seconds": 5182,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-17T23:08:38Z",
@@ -1361,7 +1345,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 32571,
+        "age_seconds": 32631,
         "author": "lklimek",
         "eligible": true,
         "eligible_at": "2026-09-17T23:14:58Z",
@@ -1377,7 +1361,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 4328,
+        "age_seconds": 4388,
         "author": "DCG-Claude",
         "eligible": true,
         "eligible_at": "2026-09-17T23:21:52Z",
@@ -1393,7 +1377,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 34707,
+        "age_seconds": 34767,
         "author": "QuantumExplorer",
         "eligible": true,
         "eligible_at": "2026-09-17T23:58:40Z",
@@ -1409,7 +1393,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 869,
+        "age_seconds": 929,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:19:31Z",
@@ -1425,7 +1409,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 869,
+        "age_seconds": 929,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:19:31Z",
@@ -1441,7 +1425,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 869,
+        "age_seconds": 929,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:19:31Z",
@@ -1457,7 +1441,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 668,
+        "age_seconds": 728,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1473,7 +1457,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 668,
+        "age_seconds": 728,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1489,7 +1473,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 668,
+        "age_seconds": 728,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1505,7 +1489,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 668,
+        "age_seconds": 728,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:22:52Z",
@@ -1521,7 +1505,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 470,
+        "age_seconds": 530,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:26:10Z",
@@ -1537,7 +1521,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 470,
+        "age_seconds": 530,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-09-18T00:26:10Z",
@@ -1553,11 +1537,11 @@
         "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-18T00:04:00Z",
+    "ts": "2026-09-18T00:05:00Z",
     "watchdog": {
       "active": 3,
-      "eligible": 22,
-      "idle_minutes": 3.6,
+      "eligible": 21,
+      "idle_minutes": 0.4666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
