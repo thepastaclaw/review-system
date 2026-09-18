@@ -10,6 +10,7 @@ from typing import Any
 
 from .config import Config
 from .db import now, now_dt, parse_ts
+from .queue_status import queued_order
 from .status import snapshot
 
 
@@ -21,15 +22,24 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     at = now_dt()
     live = snapshot(conn, cfg)
     queued = []
-    for row in conn.execute(
-        "SELECT h.*, p.title, p.author FROM heads h LEFT JOIN prs p ON p.repo=h.repo AND p.number=h.number "
-        "WHERE h.status='queued' ORDER BY h.priority DESC, h.eligible_at, h.queued_at"
-    ):
+    # the order the scheduler will actually pick them (shared with the queue comments): eligible
+    # priority heads, then eligible normal heads by queued_at, then heads still in debounce or
+    # backoff. Sorting by eligible_at would put a head that just finished its backoff ahead of
+    # one queued hours earlier, which is not what happens.
+    ts = now()
+    for pos, h in enumerate(queued_order(conn, ts=ts), 1):
+        row = conn.execute(
+            "SELECT h.*, p.title, p.author FROM heads h LEFT JOIN prs p ON p.repo=h.repo AND p.number=h.number WHERE h.id=?",
+            (h["id"],),
+        ).fetchone()
+        if row is None:
+            continue
         comment = conn.execute(
             "SELECT value FROM kv WHERE key=?", (f"queue.comment_id:{row['repo']}#{row['number']}",)
         ).fetchone()
         queued.append(
             {
+                "position": pos,
                 "repo": row["repo"],
                 "number": row["number"],
                 "sha": row["sha"],
@@ -40,9 +50,9 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
                 "queued_at": row["queued_at"],
                 "eligible_at": row["eligible_at"],
                 "age_seconds": _age(row["queued_at"], at),
-                "eligible": row["eligible_at"] <= now(),
+                "eligible": row["eligible_at"] <= ts,
                 "reason": "waiting for debounce/backoff"
-                if row["eligible_at"] > now()
+                if row["eligible_at"] > ts
                 else "waiting for a review slot",
                 "pr_url": f"https://github.com/{row['repo']}/pull/{row['number']}",
                 "prioritize_url": f"https://github.com/{row['repo']}/issues/{row['number']}#issuecomment-{comment[0]}"
