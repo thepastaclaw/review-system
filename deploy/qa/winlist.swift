@@ -9,6 +9,8 @@ guard let list = CGWindowListCopyWindowInfo(opts, kCGNullWindowID) as? [[String:
     print("CGWindowListCopyWindowInfo returned nil (no window server access)")
     exit(2)
 }
+let d = CGDisplayBounds(CGMainDisplayID())
+print("display=\(Int(d.width))x\(Int(d.height))")
 var n = 0
 for w in list {
     let owner = w["kCGWindowOwnerName"] as? String ?? "?"
