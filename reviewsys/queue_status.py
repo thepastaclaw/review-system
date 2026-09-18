@@ -15,6 +15,7 @@ import re
 import sqlite3
 from typing import Any
 
+from . import degraded as degraded_mod
 from . import github
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
@@ -44,19 +45,31 @@ def _fmt_minutes(m: float) -> str:
 
 
 def queue_body(
-    sha: str, *, position: int, eta_minutes: float, run_minutes: float, priority: bool
+    sha: str,
+    *,
+    position: int,
+    eta_minutes: float,
+    run_minutes: float,
+    priority: bool,
+    degraded: bool = False,
 ) -> str:
     """Rendered queue comment. Deliberately omits the queue total so a PR's body only changes
-    when its own position or ETA changes."""
+    when its own position or ETA changes (or the system enters/leaves degraded mode)."""
+    warn = f"{github.DEGRADED_BADGE} —" if degraded else ""
     if priority:
-        head = f"⚡ Priority review — {_ordinal(position)} in line, starts as soon as a slot frees"
+        head = f"{warn or '⚡'} Priority review — {_ordinal(position)} in line, starts as soon as a slot frees"
     else:
-        head = f"🕓 Queued for automated review — {_ordinal(position)} in line, estimated start in {_fmt_minutes(eta_minutes)}"
+        head = f"{warn or '🕓'} Queued for automated review — {_ordinal(position)} in line, estimated start in {_fmt_minutes(eta_minutes)}"
     lines = [
         github.GATE_MARKER,
         f"{head} (commit {sha[:8]})",
         f"_Estimated review time once started: {_fmt_minutes(run_minutes)} (two-phase automated review; median of recent runs)._",
     ]
+    if degraded:
+        lines.append(
+            "_The primary review models are currently out of quota; this review will run on "
+            "stand-in models and be marked as degraded._"
+        )
     if not priority:
         lines += ["", PRIORITY_BOX]
     return "\n".join(lines)
@@ -225,6 +238,7 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     active = conn.execute(
         "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
     ).fetchone()["n"]
+    is_degraded = bool(degraded_mod.snapshot(conn, cfg).get("active"))
     for pos, h in enumerate(rows, 1):
         if h["id"] not in comments:
             continue  # read failed this pass; try again next time
@@ -239,6 +253,7 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
             eta_minutes=max(ahead + busy, wait),
             run_minutes=run_min,
             priority=bool(h["priority"]),
+            degraded=is_degraded,
         )
         existing = comments[h["id"]]
         if existing and str(existing.get("body") or "") == body:

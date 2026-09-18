@@ -6,6 +6,7 @@ specialists, model policy and prompts. reviewsys reads it read-only.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import tomllib
@@ -42,6 +43,8 @@ class LaneModel:
     # but far too slow at the top of the scale. Never allowed on the last rung, which must
     # always be able to run Phase 1.
     use_up_to: str | None = None
+    # set on a lane that runs on a degraded-mode stand-in: the primary model it replaces
+    substitute_for: str | None = None
 
 
 EFFORT_LEVELS = ("low", "medium", "high", "xhigh", "max")
@@ -58,6 +61,42 @@ class TierEffort:
 
     phase1: str
     phase2: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class Substitute:
+    """A stand-in model for one primary model while that primary is unavailable."""
+
+    model: str
+    effort_cap: str | None = None  # the stand-in's top effort (e.g. no `max` on the tier)
+
+
+@dataclass(frozen=True, slots=True)
+class DegradedPolicy:
+    """What the pipeline does when the primary (OpenAI) models are out of quota or down.
+
+    `sentinel` is probed before every run; while it answers 429 (or an operator forces the
+    mode on) every lane whose model is in `substitutes` runs on its stand-in, Phase 1 is
+    capped at `phase1_effort_cap` so the included-quota rungs stay eligible, and everything
+    published says so. A lane that hits a quota failure on a primary model mid-run switches
+    the rest of the run the same way."""
+
+    sentinel: str
+    substitutes: dict[str, Substitute]
+    phase1_effort_cap: str | None = None
+    backlog_skip_phase1: bool = False  # the backlog rule stays off: both phases must run
+    label: str = "degraded"
+
+    def resolve(self, lm: LaneModel) -> LaneModel:
+        """`lm` on its stand-in (effort capped), or unchanged when it has none."""
+        sub = self.substitutes.get(lm.model)
+        if sub is None or lm.substitute_for is not None:
+            return lm
+        effort = min_effort(lm.effort, sub.effort_cap) if sub.effort_cap else lm.effort
+        return dataclasses.replace(lm, model=sub.model, effort=effort, substitute_for=lm.model)
+
+    def phase1_effort(self, effort: str) -> str:
+        return min_effort(effort, self.phase1_effort_cap) if self.phase1_effort_cap else effort
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +121,9 @@ class ModelPolicy:
     # answers human replies on an already-reviewed commit (see converse.py); None = the
     # Phase-2 reviewer model at high effort under the agent name `conversation`
     conversation: LaneModel | None = None
+    # stand-ins while the primary models are unavailable; None = no degraded mode, a run
+    # whose primary model is down fails as before
+    degraded: DegradedPolicy | None = None
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -303,6 +345,46 @@ def _candidates(node: dict[str, Any], base: LaneModel) -> tuple[LaneModel, ...]:
     return out
 
 
+def _degraded(node: dict[str, Any] | None) -> DegradedPolicy | None:
+    if not node:
+        return None
+    sentinel = str(node.get("sentinel") or "")
+    if not sentinel:
+        raise ValueError("degraded policy needs a `sentinel` model to probe")
+    subs: dict[str, Substitute] = {}
+    for primary, spec in (node.get("substitutes") or {}).items():
+        model = str((spec or {}).get("model") or "") if isinstance(spec, dict) else str(spec or "")
+        if not model:
+            raise ValueError(f"degraded substitute for {primary!r} has no model")
+        cap = spec.get("effort_cap") if isinstance(spec, dict) else None
+        if cap is not None and str(cap) not in EFFORT_LEVELS:
+            raise ValueError(
+                f"degraded substitute for {primary!r}: effort_cap {cap!r} not in {EFFORT_LEVELS}"
+            )
+        subs[str(primary)] = Substitute(
+            model=model, effort_cap=str(cap) if cap is not None else None
+        )
+    if not subs:
+        raise ValueError("degraded policy needs at least one substitute")
+    for primary, sub in subs.items():
+        if sub.model in subs:
+            raise ValueError(
+                f"degraded substitute {sub.model!r} (for {primary!r}) is itself substituted; stand-ins must be terminal"
+            )
+    if sentinel not in subs:
+        raise ValueError(f"degraded sentinel {sentinel!r} has no substitute")
+    cap1 = node.get("phase1_effort_cap")
+    if cap1 is not None and str(cap1) not in EFFORT_LEVELS:
+        raise ValueError(f"degraded phase1_effort_cap {cap1!r} not in {EFFORT_LEVELS}")
+    return DegradedPolicy(
+        sentinel=sentinel,
+        substitutes=subs,
+        phase1_effort_cap=str(cap1) if cap1 is not None else None,
+        backlog_skip_phase1=bool(node.get("backlog_skip_phase1", False)),
+        label=str(node.get("label") or "degraded"),
+    )
+
+
 def load_skills_config(
     skills_dir: Path,
 ) -> tuple[tuple[RepoConfig, ...], tuple[Specialist, ...], ModelPolicy, dict[str, Any]]:
@@ -352,6 +434,7 @@ def load_skills_config(
         tiers=_tiers(triage_node, p1.effort, p2.effort),
         fallback_tier=str(triage_node.get("fallback_tier", "normal")).lower(),
         conversation=_lane(pol, "conversation") if pol.get("conversation") else None,
+        degraded=_degraded(pol.get("degraded")),
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")

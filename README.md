@@ -174,6 +174,57 @@ by the final verifier still publish REQUEST_CHANGES. The rule never applies to a
 2026-09-08: GLM Phase-1 lanes took 65–140 min each, sequentially; astra Phase-2 lanes
 3–11 min.
 
+## Degraded mode: stand-in models when the OpenAI pool is dry
+
+`gpt-6-astra` sits on the critical path of every run (triage, Phase-1 gate verifier,
+Phase-2 reviewers, final verifier, conversation lane) and the selector/repair models
+share the same Codex pool, so when that pool is out of quota every run dies on a 429
+and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
+`review_model_policy.degraded` block in the skills config the pipeline keeps going:
+
+```json
+"degraded": {
+  "sentinel": "gpt-6-astra",
+  "phase1_effort_cap": "high",
+  "substitutes": {
+    "gpt-6-astra":  {"model": "muse-spark-1.3-contributor", "effort_cap": "xhigh"},
+    "gpt-5.6-terra": "muse-spark-1.3-contributor",
+    "gpt-5.6-luna":  "muse-spark-1.3-contributor"
+  }
+}
+```
+
+- **Detection.** Before every run the worker sends one 1-token request for the
+  `sentinel` through the proxy (cached 2 min in `kv degraded.probe`). Only a
+  quota-shaped answer (HTTP 429, "cooling down", "usage limit") counts; a dead proxy
+  or a 5xx does not, because swapping models would not help. A lane that dies on a
+  quota error mid-run (reviewer, verifier, triage or selector) flips the run over on
+  the spot, gets its attempts again on the stand-in, and records a 20-minute hold so
+  the following runs start degraded even if a tiny probe happens to get through.
+  The daemon re-probes every 2 minutes so the mode clears by itself once quota is
+  back (a lane-observed hold keeps it on for its 20 minutes first), and sends one
+  Slack alert per transition (`degraded.transition` event). Only a lane's *stderr*
+  is classified, never model output: a reviewer discussing rate limits in the PR
+  under review must not flip the system.
+- **What changes.** Every lane whose model has a substitute runs on it, with the
+  lane's effort clamped to the substitute's `effort_cap`. Phase 1 stays on its own
+  ladder but the tier effort is capped at `phase1_effort_cap` (`high`), so the GLM
+  rung (passed over above `high`) and Gemini stay eligible instead of every Phase 1
+  landing on the paid Muse rung too. Both phases always run: the backlog shortcut is
+  disabled in degraded mode because it would put the whole review on one stand-in
+  with no cross-model check. A degraded review never APPROVEs (it stops at COMMENT);
+  blockers still REQUEST_CHANGES; and a same-sha re-review in degraded mode never
+  retracts a standing full-strength approval (`review.verdict_kept`).
+- **Disclosure.** Review title `⚠️ DEGRADED — …`, a warning block under the title
+  naming the reason and the stand-ins, `- **Degraded mode**: …` and
+  "`muse…` (standing in for `gpt-6-astra`)" in the provenance, the gate comment and
+  queue comment carry `⚠️ DEGRADED`, `runs.degraded=1`, events `degraded.run` /
+  `degraded.entered_midrun`, and `reviewsys status` prints a `mode:` line.
+- **Operator override.** `reviewsys degraded on|off|auto` (`--probe` re-probes now);
+  `doctor` prints the current state and probes every stand-in model.
+- Without a `degraded` block nothing changes: a primary-model outage fails runs as
+  before.
+
 ## Final approval after an iterative review
 
 An incremental review is a reconciliation pass, not by itself a new approval gate. It
@@ -415,6 +466,7 @@ minute if it dies. `~/.reviewsys/mode` records live/shadow for the watchdog.
     $R enqueue OWNER/REPO N       # priority review of a PR's live head
     $R cancel --run-id N          # cooperative cancel of an active run
     $R retry OWNER/REPO N         # re-queue a PR whose head ended `failed`
+    $R degraded [on|off|auto]     # show / force the stand-in-models mode (see above)
     $R import-legacy PATH         # one-off: mark legacy queue.json `done` rows as reviewed
 
 Where to look when something is off, in order:

@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import quota
+from . import degraded, quota
 from .config import Config
 from .lane import CLAUDE_SETTINGS
 
@@ -26,15 +26,6 @@ def _first_line(r: subprocess.CompletedProcess[str]) -> str:
     """The first line a command said (stderr preferred), or "" when it said nothing."""
     said = (r.stderr or r.stdout).strip()
     return said.splitlines()[0] if said else ""
-
-
-def _proxy_key() -> str | None:
-    p = Path.home() / ".cli-proxy-api" / "client-keys.json"
-    try:
-        d = json.loads(p.read_text())
-    except (OSError, json.JSONDecodeError):
-        return None
-    return d.get("claude-code") or d.get("openclaw") or (next(iter(d.values())) if d else None)
 
 
 def _messages(model: str, key: str, *, stop: bool) -> tuple[int, bytes]:
@@ -167,6 +158,21 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
         f"{cfg.max_concurrent} normal + {cfg.priority_overflow} priority "
         f"(ceiling {cfg.max_concurrent + cfg.priority_overflow}, from config.toml)",
     )
+    dp = cfg.policy.degraded
+    if dp is None:
+        _ok("degraded mode", True, "not configured: a primary-model outage fails runs")
+    else:
+        subs = ", ".join(f"{k}->{v.model}" for k, v in dp.substitutes.items())
+        if probe_models:
+            exhausted, reason = degraded.probe(dp.sentinel)
+            state = f"{'ACTIVE' if exhausted else 'inactive'} ({reason})"
+        else:
+            state = f"sentinel {dp.sentinel} not probed (--no-models)"
+        _ok(
+            "degraded mode",
+            True,
+            f"{state}; stand-ins {subs}; phase1 effort cap {dp.phase1_effort_cap or 'none'}",
+        )
     for rel in ("prompts/review-agent.md", "prompts/verifier-agent.md"):
         ok &= _ok(f"template {rel}", (cfg.skills_dir / rel).exists())
     for rc in cfg.repos:
@@ -183,7 +189,7 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
         except OSError as exc:
             ok &= _ok(f"writable {d}", False, str(exc))
     if probe_models:
-        key = _proxy_key()
+        key = degraded.client_key()
         if not key:
             ok &= _ok("proxy client key", False, "~/.cli-proxy-api/client-keys.json unreadable")
         else:
@@ -198,6 +204,8 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             if cfg.policy.triage:
                 models.add(cfg.policy.triage.model)
             models.update(c.model for c in cfg.policy.phase1_candidates)
+            if cfg.policy.degraded:
+                models.update(s.model for s in cfg.policy.degraded.substitutes.values())
             for m in sorted(models):
                 good, detail = probe_single_stop(m, key)
                 ok &= _ok(f"proxy model {m} (single stop_sequence)", good, detail)

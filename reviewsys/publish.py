@@ -198,6 +198,9 @@ class Provenance:
     adhoc: bool = False  # repo has no skills entry: generic guidance, all specialists offered
     fresh_final: bool = False  # an independent Phase-2 gate ran after iterative reconciliation
     conversation: bool = False  # no reviewer lanes ran: a discussion outcome moved the verdict
+    # stand-in models were in use (primary models out of quota): {reason, source, since,
+    # label, substitutes:{primary: stand_in}, phase1_effort_cap}
+    degraded: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -219,12 +222,7 @@ class ReviewModel:
 
     @property
     def canonical_event(self) -> str:
-        if self.verified.blocker_count:
-            return "REQUEST_CHANGES"
-        if self.provenance.phase2_skipped:
-            # a Phase-1-only verdict never approves: the second-round reviewers did not run
-            return "COMMENT"
-        return "APPROVE" if self.verified.review_action == "APPROVE" else "COMMENT"
+        return verdict_event(self.verified, self.provenance)
 
 
 def _location(f: Finding) -> str:
@@ -264,25 +262,68 @@ def _fence(content: str) -> str:
     return "`" * max(3, longest + 1)
 
 
+def _model_label(lane: dict[str, Any]) -> str:
+    """A lane's model, naming the primary it stood in for when it was a degraded-mode swap."""
+    sub = lane.get("substitute_for")
+    return f"`{lane['model']}` (standing in for `{sub}`)" if sub else f"`{lane['model']}`"
+
+
 def _source_line(p: Provenance) -> str:
     if p.conversation:
         return (
-            f"Source: conversation lane `{p.verifier['model']}` (agent: `{p.verifier['agent']}`); "
-            "no reviewer or verifier lanes ran for this follow-up"
+            f"Source: conversation lane {_model_label(p.verifier)} "
+            f"(agent: `{p.verifier['agent']}`); no reviewer or verifier lanes ran for this follow-up"
         )
     parts = [
-        f"reviewer {i}: `{r['model']}` (agent: `{r['agent']}`, role: `{r['role']}`)"
+        f"reviewer {i}: {_model_label(r)} (agent: `{r['agent']}`, role: `{r['role']}`)"
         for i, r in enumerate(p.reviewers, 1)
     ]
     parts.append(
-        f"final verifier: `{p.verifier['model']}` (agent: `{p.verifier['agent']}`, role: `{p.verifier['role']}`)"
+        f"final verifier: {_model_label(p.verifier)} "
+        f"(agent: `{p.verifier['agent']}`, role: `{p.verifier['role']}`)"
     )
     return "Source: " + "; ".join(parts)
 
 
+DEGRADED_BADGE = github.DEGRADED_BADGE  # one badge for reviews, gate and queue comments
+
+
+def _substitutions(d: dict[str, Any]) -> str:
+    """`primary → stand-in` pairs from a degraded disclosure; "" when it carries none."""
+    return ", ".join(f"`{k}` → `{v}`" for k, v in sorted((d.get("substitutes") or {}).items()))
+
+
+def degraded_banner(d: dict[str, Any]) -> str:
+    """The visible warning at the top of anything published while stand-ins were in use."""
+    subs = _substitutions(d)
+    cap = d.get("phase1_effort_cap")
+    return (
+        f"> **{DEGRADED_BADGE} review.** The primary review models were unavailable "
+        f"({d.get('reason') or 'quota exhausted'}), so this review ran on stand-in models"
+        + (f": {subs}" if subs else "")
+        + ". Both review phases and the independent verifiers still ran, but on weaker models"
+        + (f", with Phase 1 capped at `{cap}` effort" if cap else "")
+        + ". Treat the verdict as provisional; a full-strength re-review will run on the next "
+        "push once the primary models are back."
+    )
+
+
+def _degraded_line(d: dict[str, Any]) -> str:
+    subs = _substitutions(d)
+    line = f"- **Degraded mode**: {d.get('reason') or 'primary models unavailable'} (detected by {d.get('source') or 'probe'}"
+    if d.get("since"):
+        line += f", since {d['since']}"
+    line += ")"
+    if subs:
+        line += f"; stand-ins {subs}"
+    if d.get("phase1_effort_cap"):
+        line += f"; Phase 1 effort capped at `{d['phase1_effort_cap']}`"
+    return line
+
+
 def _triage_line(t: dict[str, Any]) -> str:
     if str(t.get("method", "")).startswith("llm:"):
-        how = f"`{t['model']}` (effort {t['effort']})"
+        how = f"{_model_label(t)} (effort {t['effort']})"
     else:
         how = f"fallback after triage failure ({t.get('error') or 'unknown'})"
     why = f" — {t['reasoning']}" if t.get("reasoning") else ""
@@ -299,18 +340,20 @@ def _phase1_choice_line(c: dict[str, Any]) -> str:
 
 def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     if p.conversation:
-        return [
+        return ([_degraded_line(p.degraded)] if p.degraded else []) + [
             "- Verdict moved because every blocking finding on this commit was withdrawn, "
             "resolved or deferred in the inline discussion; the code was not re-reviewed"
         ]
 
     def fmt(r: dict[str, Any]) -> str:
         status = r["status"] + (f", effort {r['effort']}" if r.get("effort") else "")
-        return f"`{r['model']}` — {r['role']} ({status}); agent `{r['agent']}`"
+        return f"{_model_label(r)} — {r['role']} ({status}); agent `{r['agent']}`"
 
     p1 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase1"]
     p2 = [fmt(r) for r in p.reviewers if r.get("phase") == "phase2"]
     lines: list[str] = []
+    if p.degraded:
+        lines.append(_degraded_line(p.degraded))
     if p.adhoc:
         lines.append(
             "- Ad hoc review: this repository has no PastaClaw review skill; reviewers used "
@@ -330,7 +373,7 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
             "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"
         )
     lines += [
-        f"- Fresh verifier: `{p.verifier['model']}` — {p.verifier['role']}; agent `{p.verifier['agent']}`",
+        f"- Fresh verifier: {_model_label(p.verifier)} — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]
     if phase == "preliminary":
         lines.append("- Phase 2 reviewers: **not run (deferred by blocker gate)**")
@@ -393,14 +436,17 @@ def render(m: ReviewModel) -> str:
     ).strip()
     if m.rereview:
         title = f"Re-review — {title}"
+    if m.provenance.degraded:
+        title = f"{DEGRADED_BADGE} — {title}"
     parts = [
         github.REVIEW_MARKER,
         f"<!-- thepastaclaw-review-phase v1 phase={m.phase} sha={m.head_sha} policy={m.provenance.policy_fingerprint[:16]} -->",
         f"## {title}",
         "",
-        summary,
-        "",
     ]
+    if m.provenance.degraded:
+        parts += [degraded_banner(m.provenance.degraded), ""]
+    parts += [summary, ""]
     if m.phase == "preliminary":
         parts += [
             "Validated blockers were found by the Phase-1 review and confirmed by a fresh verifier. Phase 2 is deferred until a fresh same-head revalidation clears the blocker gate.",
@@ -1005,10 +1051,17 @@ def render_verdict_update(
     summary = "\n".join(
         line for line in verified.summary.splitlines() if not _SUMMARY_SOURCE_LINE_RE.match(line)
     ).strip()
+    title = f"Re-review after discussion — commit {head_sha[:8]}"
+    if provenance.degraded:
+        title = f"{DEGRADED_BADGE} — {title}"
     parts = [
         UPDATE_MARKER.format(phase=phase, sha=head_sha),
-        f"## Re-review after discussion — commit {head_sha[:8]}",
+        f"## {title}",
         "",
+    ]
+    if provenance.degraded:
+        parts += [degraded_banner(provenance.degraded), ""]
+    parts += [
         f"Standing review was `{previous_event}`; this re-review is `{new_event}`: "
         + ("no blocking findings remain." if not n else f"{n} blocking finding(s) now stand."),
         "",
@@ -1063,9 +1116,16 @@ def standing_verdict(
 
 
 def verdict_event(verified: VerifierOutput, provenance: Provenance) -> str:
+    """Blockers always REQUEST_CHANGES. APPROVE only when the full-strength pipeline ran:
+    a Phase-1-only verdict (the second-round reviewers did not run) and a degraded-mode
+    verdict (stand-in models) both stop at COMMENT."""
     if verified.blocker_count:
         return "REQUEST_CHANGES"
-    if verified.review_action == "APPROVE" and not provenance.phase2_skipped:
+    if (
+        verified.review_action == "APPROVE"
+        and not provenance.phase2_skipped
+        and not provenance.degraded
+    ):
         return "APPROVE"
     return "COMMENT"
 

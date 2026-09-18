@@ -55,6 +55,15 @@ class LaneResult:
     def ok(self) -> bool:
         return self.exit_code == 0 and not self.timed_out
 
+    @property
+    def first_stderr_line(self) -> str:
+        """The lane's first non-blank stderr line: infrastructure error text (an upstream
+        429, a launcher crash), never model output. "" when it said nothing."""
+        for line in (self.stderr or "").splitlines():
+            if line.strip():
+                return line.strip()
+        return ""
+
 
 def argv_for(spec: LaneSpec) -> list[str]:
     argv = [

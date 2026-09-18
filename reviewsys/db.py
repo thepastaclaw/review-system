@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -85,6 +85,9 @@ MIGRATIONS: dict[int, str] = {
     2: """
     ALTER TABLE lanes ADD COLUMN effort TEXT;
     ALTER TABLE runs ADD COLUMN tier TEXT;
+    """,
+    3: """
+    ALTER TABLE runs ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0;
     """,
 }
 
