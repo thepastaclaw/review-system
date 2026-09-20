@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-20T09:20:00Z",
-  "generated_at": "2026-09-20T09:20:00Z",
+  "data_as_of": "2026-09-20T09:21:01Z",
+  "generated_at": "2026-09-20T09:21:01Z",
   "history": {
     "daily": [
       {
@@ -84,6 +84,30 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "muse-spark-1.3-contributor: not quota-gated; skipped gemini-3.8-flash-high (lane failed: [infra] phase1/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gemini-3.8-flash-high are cooling down (last error: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Individual quota reached. Please upgra), glm-5.3-flash (not used above high effort; tier asks max)",
+        "kind": "phase1.model_fallback",
+        "number": 4818,
+        "repo": "dashpay/platform",
+        "run_id": 1175,
+        "ts": "2026-09-20T09:20:26Z"
+      },
+      {
+        "detail": "gemini-3.8-flash-high: antigravity quota: weekly 100% left, 5h 100% left",
+        "kind": "phase1.model_selected",
+        "number": 4818,
+        "repo": "dashpay/platform",
+        "run_id": 1175,
+        "ts": "2026-09-20T09:20:26Z"
+      },
+      {
+        "detail": "attempt 1 sha=7de890a8",
+        "kind": "run.spawned",
+        "number": 4818,
+        "repo": "dashpay/platform",
+        "run_id": 1175,
+        "ts": "2026-09-20T09:20:02Z"
+      },
       {
         "detail": "hard-killed after cancel request (terminated)",
         "kind": "run.cancelled",
@@ -379,30 +403,6 @@
         "repo": "dashpay/platform",
         "run_id": 1171,
         "ts": "2026-09-20T07:28:19Z"
-      },
-      {
-        "detail": "head superseded: new head 6faa0545",
-        "kind": "run.cancel_requested",
-        "number": null,
-        "repo": null,
-        "run_id": 1171,
-        "ts": "2026-09-20T07:26:37Z"
-      },
-      {
-        "detail": "6faa0545 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 4818,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-09-20T07:26:29Z"
-      },
-      {
-        "detail": "head 4379 superseded by 6faa0545",
-        "kind": "head.superseded",
-        "number": 4818,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-09-20T07:26:29Z"
       }
     ],
     "tokens_by_effort": [
@@ -432,7 +432,7 @@
       },
       {
         "effort": "high",
-        "lanes": 2414,
+        "lanes": 2416,
         "tokens_in": 1915318937,
         "tokens_out": 17096625
       }
@@ -460,8 +460,8 @@
         "tokens_out": 259385
       },
       {
-        "avg_tokens_per_lane": 3242978.0,
-        "lanes": 384,
+        "avg_tokens_per_lane": 3226175.0,
+        "lanes": 386,
         "model": "gemini-3.8-flash-high",
         "tokens_in": 1238796168,
         "tokens_out": 6507466
@@ -475,6 +475,11 @@
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 1175,
+        "tokens_in": 0,
+        "tokens_out": 0
+      },
       {
         "run_id": 1174,
         "tokens_in": 0,
@@ -969,11 +974,6 @@
         "run_id": 1076,
         "tokens_in": 522331,
         "tokens_out": 7313
-      },
-      {
-        "run_id": 1075,
-        "tokens_in": 3635682,
-        "tokens_out": 79037
       }
     ],
     "totals": {
@@ -981,14 +981,29 @@
       "completed_reviews": 777,
       "findings": 5478,
       "reviews": 3003,
-      "runs": 1174,
+      "runs": 1175,
       "tokens_in": 7558881124,
       "tokens_out": 81753907,
       "tokens_total": 7640635031
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "deadline_at": "2026-09-20T15:20:02Z",
+        "elapsed_seconds": 59,
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-09-20T09:20:47Z",
+        "id": 1175,
+        "number": 4818,
+        "phase": "phase1",
+        "repo": "dashpay/platform",
+        "sha": "7de890a810bc978b34252ece5bd405ddbfce0948",
+        "started_at": "2026-09-20T09:20:02Z",
+        "status": "running"
+      }
+    ],
     "capacity": {
       "maximum": 3,
       "priority_overflow": 1,
@@ -999,7 +1014,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-09-20T09:18:40Z",
+        "at": "2026-09-20T09:20:44Z",
         "quota_exhausted": false,
         "reason": "gpt-6-astra answered"
       },
@@ -1018,42 +1033,26 @@
       "closed": 340,
       "done": 2983,
       "failed": 22,
-      "queued": 3,
+      "queued": 2,
+      "running": 1,
       "superseded": 915
     },
     "ingest_error_streak": 0,
     "ingest_last_at": "2026-09-20T09:19:58Z",
     "last_run_done_at": "2026-09-20T03:37:29Z",
-    "last_run_started_at": "2026-09-20T08:53:21Z",
+    "last_run_started_at": "2026-09-20T09:20:02Z",
     "median_run_minutes": 55.11666666666667,
     "notify_last_at": "2026-09-20T09:19:58Z",
-    "oldest_queued_at": "2026-09-20T08:49:31Z",
+    "oldest_queued_at": "2026-09-20T08:53:18Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1829,
-        "author": "llbartekll",
-        "eligible": true,
-        "eligible_at": "2026-09-20T09:19:31Z",
-        "number": 4818,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/4818",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/4818#issuecomment-5730955859",
-        "priority": false,
-        "queued_at": "2026-09-20T08:49:31Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "7de890a810bc978b34252ece5bd405ddbfce0948",
-        "title": "feat(swift-sdk)!: freeze schemas only after App Store publication",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1602,
+        "age_seconds": 1663,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-09-20T09:23:18Z",
         "number": 4852,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/4852",
         "prioritize_url": "https://github.com/dashpay/platform/issues/4852#issuecomment-5748802342",
         "priority": false,
@@ -1065,12 +1064,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1380,
+        "age_seconds": 1441,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-09-20T09:27:00Z",
         "number": 4851,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/4851",
         "prioritize_url": "https://github.com/dashpay/platform/issues/4851#issuecomment-5748664083",
         "priority": false,
@@ -1082,11 +1081,11 @@
         "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-20T09:20:00Z",
+    "ts": "2026-09-20T09:21:01Z",
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 26.65,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.9833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
