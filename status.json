@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-20T08:38:00Z",
-  "generated_at": "2026-09-20T08:38:00Z",
+  "data_as_of": "2026-09-20T08:39:00Z",
+  "generated_at": "2026-09-20T08:39:00Z",
   "history": {
     "daily": [
       {
@@ -84,6 +84,30 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "head superseded: new head ff5e638d",
+        "kind": "run.cancel_requested",
+        "number": null,
+        "repo": null,
+        "run_id": 1173,
+        "ts": "2026-09-20T08:38:12Z"
+      },
+      {
+        "detail": "ff5e638d trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 4849,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-09-20T08:38:09Z"
+      },
+      {
+        "detail": "head 4385 superseded by ff5e638d",
+        "kind": "head.superseded",
+        "number": 4849,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-09-20T08:38:09Z"
+      },
       {
         "detail": "muse-spark-1.3-contributor: not quota-gated; skipped gemini-3.8-flash-high (lane failed: [infra] phase1/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gemini-3.8-flash-high are cooling down (last error: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Individual quota reached. Please upgra), glm-5.3-flash (not used above high effort; tier asks max)",
         "kind": "phase1.model_fallback",
@@ -379,30 +403,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-09-20T06:27:46Z"
-      },
-      {
-        "detail": "{'worktrees_removed': 2, 'runs_removed': 0, 'events_pruned': 0, 'inbox_pruned': 0, 'silence_pruned': 0}",
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-09-20T06:20:05Z"
-      },
-      {
-        "detail": "pr_closed",
-        "kind": "head.closed",
-        "number": 4843,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-09-20T06:13:01Z"
-      },
-      {
-        "detail": "hard-killed after cancel request (terminated)",
-        "kind": "run.cancelled",
-        "number": 4843,
-        "repo": "dashpay/platform",
-        "run_id": 1169,
-        "ts": "2026-09-20T06:10:43Z"
       }
     ],
     "tokens_by_effort": [
@@ -992,9 +992,9 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-20T13:56:39Z",
-        "elapsed_seconds": 2481,
+        "elapsed_seconds": 2541,
         "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-09-20T08:37:56Z",
+        "heartbeat_at": "2026-09-20T08:38:56Z",
         "id": 1172,
         "number": 4818,
         "phase": "phase2",
@@ -1006,8 +1006,8 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-20T14:34:29Z",
-        "elapsed_seconds": 211,
-        "heartbeat_age_seconds": 1,
+        "elapsed_seconds": 271,
+        "heartbeat_age_seconds": 61,
         "heartbeat_at": "2026-09-20T08:37:59Z",
         "id": 1173,
         "number": 4849,
@@ -1047,21 +1047,21 @@
       "closed": 338,
       "done": 2983,
       "failed": 22,
-      "queued": 2,
-      "running": 2,
-      "superseded": 912
+      "queued": 3,
+      "running": 1,
+      "superseded": 913
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-09-20T08:34:25Z",
+    "ingest_last_at": "2026-09-20T08:38:12Z",
     "last_run_done_at": "2026-09-20T03:37:29Z",
     "last_run_started_at": "2026-09-20T08:34:29Z",
     "median_run_minutes": 55.11666666666667,
-    "notify_last_at": "2026-09-20T08:36:31Z",
+    "notify_last_at": "2026-09-20T08:38:53Z",
     "oldest_queued_at": "2026-09-20T08:22:58Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 902,
+        "age_seconds": 962,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-09-20T08:52:58Z",
@@ -1078,7 +1078,7 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 444,
+        "age_seconds": 504,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-09-20T09:00:36Z",
@@ -1093,13 +1093,30 @@
         "sha": "c8f39fc7947c14c5f6620c6b1b5e846b0c643292",
         "title": "feat(drive): record the Merk shape of layers below a template",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 51,
+        "author": "QuantumExplorer",
+        "eligible": false,
+        "eligible_at": "2026-09-20T09:08:09Z",
+        "number": 4849,
+        "position": 3,
+        "pr_url": "https://github.com/dashpay/platform/pull/4849",
+        "prioritize_url": "https://github.com/dashpay/platform/issues/4849#issuecomment-5748473704",
+        "priority": false,
+        "queued_at": "2026-09-20T08:38:09Z",
+        "reason": "waiting for debounce/backoff",
+        "repo": "dashpay/platform",
+        "sha": "ff5e638d4c9fcf8f0789cf6aca45c00a1c08dfe2",
+        "title": "feat(platform)!: a reason on contract bans and suspensions",
+        "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-20T08:38:00Z",
+    "ts": "2026-09-20T08:39:00Z",
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 3.5166666666666666,
+      "idle_minutes": 4.516666666666667,
       "ingest_stale": false,
       "stuck": false
     }
