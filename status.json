@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-20T20:45:01Z",
-  "generated_at": "2026-09-20T20:45:01Z",
+  "data_as_of": "2026-09-20T20:46:00Z",
+  "generated_at": "2026-09-20T20:46:00Z",
   "history": {
     "daily": [
       {
@@ -84,6 +84,14 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": "degraded (`gpt-6-astra` unavailable: All credentials for model gpt-6-astra are cooling down (last error: usage_limit_reached: The usage limit has been reache; probe)",
+        "kind": "degraded.transition",
+        "number": null,
+        "repo": null,
+        "run_id": null,
+        "ts": "2026-09-20T20:45:34Z"
+      },
       {
         "detail": "muse-spark-1.3-contributor: not quota-gated; skipped gemini-3.8-flash-high (lane failed: [infra] phase1/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gemini-3.8-flash-high are cooling down (last error: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Individual quota reached. Please upgra), glm-5.3-flash (not used above high effort; tier asks max)",
         "kind": "phase1.model_fallback",
@@ -391,14 +399,6 @@
       {
         "detail": "muse-spark-1.3-contributor: not quota-gated; skipped gemini-3.8-flash-high (lane failed: [infra] phase1/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gemini-3.8-flash-high are cooling down (last error: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Individual quota reached. Please upgra), glm-5.3-flash (not used above high effort; tier asks max)",
         "kind": "phase1.model_fallback",
-        "number": 7694,
-        "repo": "dashpay/dash",
-        "run_id": 1197,
-        "ts": "2026-09-20T18:28:28Z"
-      },
-      {
-        "detail": "gemini-3.8-flash-high: antigravity quota: weekly 100% left, 5h 100% left",
-        "kind": "phase1.model_selected",
         "number": 7694,
         "repo": "dashpay/dash",
         "run_id": 1197,
@@ -992,9 +992,9 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-20T23:49:05Z",
-        "elapsed_seconds": 10556,
-        "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-09-20T20:44:58Z",
+        "elapsed_seconds": 10615,
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-09-20T20:45:58Z",
         "id": 1196,
         "number": 4657,
         "phase": "phase1",
@@ -1006,9 +1006,9 @@
       {
         "attempt": 1,
         "deadline_at": "2026-09-21T02:44:30Z",
-        "elapsed_seconds": 31,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-09-20T20:45:00Z",
+        "elapsed_seconds": 90,
+        "heartbeat_age_seconds": 0,
+        "heartbeat_at": "2026-09-20T20:46:00Z",
         "id": 1201,
         "number": 7706,
         "phase": "phase1",
@@ -1024,17 +1024,17 @@
       "typical": 2
     },
     "degraded": {
-      "active": false,
+      "active": true,
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-09-20T20:43:25Z",
-        "quota_exhausted": false,
-        "reason": "gpt-6-astra answered"
+        "at": "2026-09-20T20:45:34Z",
+        "quota_exhausted": true,
+        "reason": "`gpt-6-astra` unavailable: All credentials for model gpt-6-astra are cooling down (last error: usage_limit_reached: The usage limit has been reache"
       },
       "phase1_effort_cap": "high",
       "sentinel": "gpt-6-astra",
-      "since": null,
+      "since": "2026-09-20T20:45:34Z",
       "substitutes": {
         "gpt-5.6-luna": "muse-spark-1.3-contributor",
         "gpt-5.6-sol": "muse-spark-1.3-contributor",
@@ -1056,12 +1056,12 @@
     "last_run_done_at": "2026-09-20T19:53:21Z",
     "last_run_started_at": "2026-09-20T20:44:30Z",
     "median_run_minutes": 65.81666666666666,
-    "notify_last_at": "2026-09-20T20:42:55Z",
+    "notify_last_at": "2026-09-20T20:45:10Z",
     "oldest_queued_at": "2026-09-20T18:39:26Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 6622,
+        "age_seconds": 6681,
         "author": "PastaPastaPasta",
         "eligible": true,
         "eligible_at": "2026-09-20T19:24:39Z",
@@ -1078,7 +1078,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 6168,
+        "age_seconds": 6227,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-20T19:32:13Z",
@@ -1095,7 +1095,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 7535,
+        "age_seconds": 7594,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-09-20T20:49:17Z",
@@ -1112,7 +1112,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 34,
+        "age_seconds": 93,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-09-20T21:14:27Z",
@@ -1129,11 +1129,11 @@
         "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-20T20:45:01Z",
+    "ts": "2026-09-20T20:46:00Z",
     "watchdog": {
       "active": 2,
       "eligible": 2,
-      "idle_minutes": 0.5166666666666667,
+      "idle_minutes": 1.5,
       "ingest_stale": false,
       "stuck": false
     }
