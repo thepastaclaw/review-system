@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-09-20T22:05:00Z",
-  "generated_at": "2026-09-20T22:05:00Z",
+  "data_as_of": "2026-09-20T22:06:01Z",
+  "generated_at": "2026-09-20T22:06:01Z",
   "history": {
     "daily": [
       {
@@ -71,7 +71,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 1991,
+        "count": 1992,
         "severity": "blocking"
       },
       {
@@ -79,11 +79,27 @@
         "severity": "nitpick"
       },
       {
-        "count": 3208,
+        "count": 3209,
         "severity": "suggestion"
       }
     ],
     "recent_events": [
+      {
+        "detail": "attempt 1 failed (infra); retry in 5m",
+        "kind": "head.requeued",
+        "number": 4657,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-09-20T22:05:57Z"
+      },
+      {
+        "detail": "verify1/verifier lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gpt-6-astra are cooling down (last error: usage_limit_reached: The usage limit has been reached)",
+        "kind": "run.failed",
+        "number": 4657,
+        "repo": "dashpay/platform",
+        "run_id": 1196,
+        "ts": "2026-09-20T22:05:57Z"
+      },
       {
         "detail": "muse-spark-1.3-contributor: not quota-gated; skipped gemini-3.8-flash-high (lane failed: [infra] phase1/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gemini-3.8-flash-high are cooling down (last error: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Individual quota reached. Please upgra), glm-5.3-flash (zai below 15% reserve: 5h 100% left, weekly 13% left)",
         "kind": "phase1.model_fallback",
@@ -387,22 +403,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-09-20T19:21:33Z"
-      },
-      {
-        "detail": "muse-spark-1.3-contributor: not quota-gated; skipped gemini-3.8-flash-high (lane failed: [infra] phase1/general lane failed twice: [infra] lane exit 1: API Error: Request rejected (429) \u00b7 All credentials for model gemini-3.8-flash-high are cooling down (last error: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Individual quota reached. Please upgra), glm-5.3-flash (not used above high effort; tier asks max)",
-        "kind": "phase1.model_fallback",
-        "number": 7705,
-        "repo": "dashpay/dash",
-        "run_id": 1199,
-        "ts": "2026-09-20T19:10:30Z"
-      },
-      {
-        "detail": "gemini-3.8-flash-high: antigravity quota: weekly 100% left, 5h 100% left",
-        "kind": "phase1.model_selected",
-        "number": 7705,
-        "repo": "dashpay/dash",
-        "run_id": 1199,
-        "ts": "2026-09-20T19:10:29Z"
       }
     ],
     "tokens_by_effort": [
@@ -420,13 +420,13 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 1957,
-        "tokens_in": 3809775375,
-        "tokens_out": 47362177
+        "lanes": 1958,
+        "tokens_in": 3813696537,
+        "tokens_out": 47415667
       },
       {
         "effort": "medium",
-        "lanes": 762,
+        "lanes": 764,
         "tokens_in": 67421851,
         "tokens_out": 1184687
       },
@@ -439,11 +439,11 @@
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 1318850.0,
-        "lanes": 1351,
+        "avg_tokens_per_lane": 1320815.0,
+        "lanes": 1352,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 1736998729,
-        "tokens_out": 44768282
+        "tokens_in": 1740919891,
+        "tokens_out": 44821772
       },
       {
         "avg_tokens_per_lane": 9532015.0,
@@ -467,8 +467,8 @@
         "tokens_out": 6507466
       },
       {
-        "avg_tokens_per_lane": 819497.0,
-        "lanes": 3415,
+        "avg_tokens_per_lane": 819017.0,
+        "lanes": 3417,
         "model": "gpt-6-astra",
         "tokens_in": 2785460529,
         "tokens_out": 13120739
@@ -517,8 +517,8 @@
       },
       {
         "run_id": 1196,
-        "tokens_in": 26023816,
-        "tokens_out": 879877
+        "tokens_in": 29944978,
+        "tokens_out": 933367
       },
       {
         "run_id": 1195,
@@ -977,38 +977,24 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 9904401,
+      "avg_tokens_per_completed_review": 9909407,
       "completed_reviews": 794,
-      "findings": 5602,
+      "findings": 5604,
       "reviews": 3020,
       "runs": 1204,
-      "tokens_in": 7778138701,
-      "tokens_out": 85956055,
-      "tokens_total": 7864094756
+      "tokens_in": 7782059863,
+      "tokens_out": 86009545,
+      "tokens_total": 7868069408
     }
   },
   "live": {
     "active": [
       {
         "attempt": 1,
-        "deadline_at": "2026-09-20T23:49:05Z",
-        "elapsed_seconds": 15355,
-        "heartbeat_age_seconds": 15,
-        "heartbeat_at": "2026-09-20T22:04:45Z",
-        "id": 1196,
-        "number": 4657,
-        "phase": "phase1",
-        "repo": "dashpay/platform",
-        "sha": "1e8c9d3fa2c5dd9bef0c16b5240e46b4573eee53",
-        "started_at": "2026-09-20T17:49:05Z",
-        "status": "running"
-      },
-      {
-        "attempt": 1,
         "deadline_at": "2026-09-21T03:56:01Z",
-        "elapsed_seconds": 539,
+        "elapsed_seconds": 600,
         "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-09-20T22:04:46Z",
+        "heartbeat_at": "2026-09-20T22:05:47Z",
         "id": 1204,
         "number": 7639,
         "phase": "phase1",
@@ -1028,7 +1014,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-09-20T22:02:59Z",
+        "at": "2026-09-20T22:05:14Z",
         "quota_exhausted": true,
         "reason": "`gpt-6-astra` unavailable: All credentials for model gpt-6-astra are cooling down (last error: usage_limit_reached: The usage limit has been reache"
       },
@@ -1047,8 +1033,8 @@
       "closed": 358,
       "done": 2999,
       "failed": 22,
-      "queued": 2,
-      "running": 2,
+      "queued": 3,
+      "running": 1,
       "superseded": 936
     },
     "ingest_error_streak": 0,
@@ -1057,11 +1043,11 @@
     "last_run_started_at": "2026-09-20T21:56:01Z",
     "median_run_minutes": 52.95,
     "notify_last_at": "2026-09-20T22:04:51Z",
-    "oldest_queued_at": "2026-09-20T19:02:13Z",
+    "oldest_queued_at": "2026-09-20T16:09:22Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 10967,
+        "age_seconds": 11028,
         "author": "knst",
         "eligible": true,
         "eligible_at": "2026-09-20T19:32:13Z",
@@ -1078,7 +1064,7 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 4833,
+        "age_seconds": 4894,
         "author": "QuantumExplorer",
         "eligible": true,
         "eligible_at": "2026-09-20T21:14:27Z",
@@ -1093,13 +1079,30 @@
         "sha": "4b3b8d1faf78b719ac9ec18251e594856df8b846",
         "title": "feat(platform)!: composite and flat indexOnly terminals with an entry payload",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 21399,
+        "author": "shumkov",
+        "eligible": false,
+        "eligible_at": "2026-09-20T22:10:57Z",
+        "number": 4657,
+        "position": 3,
+        "pr_url": "https://github.com/dashpay/platform/pull/4657",
+        "prioritize_url": "https://github.com/dashpay/platform/issues/4657#issuecomment-5626555729",
+        "priority": false,
+        "queued_at": "2026-09-20T16:09:22Z",
+        "reason": "waiting for debounce/backoff",
+        "repo": "dashpay/platform",
+        "sha": "1e8c9d3fa2c5dd9bef0c16b5240e46b4573eee53",
+        "title": "feat(platform)!: delete and erase lifecycle for keep-history documents",
+        "trigger": "new_push"
       }
     ],
-    "ts": "2026-09-20T22:05:00Z",
+    "ts": "2026-09-20T22:06:01Z",
     "watchdog": {
-      "active": 2,
+      "active": 1,
       "eligible": 2,
-      "idle_minutes": 8.983333333333333,
+      "idle_minutes": 10.0,
       "ingest_stale": false,
       "stuck": false
     }
