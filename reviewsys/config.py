@@ -79,12 +79,15 @@ class DegradedPolicy:
     mode on) every lane whose model is in `substitutes` runs on its stand-in, Phase 1 is
     capped at `phase1_effort_cap` so the included-quota rungs stay eligible, and everything
     published says so. A lane that hits a quota failure on a primary model mid-run switches
-    the rest of the run the same way."""
+    the rest of the run the same way. The backlog rule is unchanged by the mode
+    (`backlog_skip_phase1`): a deep queue still goes straight to Phase 2, because the slow
+    Phase-1 rungs are exactly what a backlog cannot afford. Set it false to trade throughput
+    for the cross-model check."""
 
     sentinel: str
     substitutes: dict[str, Substitute]
     phase1_effort_cap: str | None = None
-    backlog_skip_phase1: bool = False  # the backlog rule stays off: both phases must run
+    backlog_skip_phase1: bool = True  # the backlog rule still applies: a deep queue skips Phase 1
     label: str = "degraded"
 
     def resolve(self, lm: LaneModel) -> LaneModel:
@@ -380,7 +383,7 @@ def _degraded(node: dict[str, Any] | None) -> DegradedPolicy | None:
         sentinel=sentinel,
         substitutes=subs,
         phase1_effort_cap=str(cap1) if cap1 is not None else None,
-        backlog_skip_phase1=bool(node.get("backlog_skip_phase1", False)),
+        backlog_skip_phase1=bool(node.get("backlog_skip_phase1", True)),
         label=str(node.get("label") or "degraded"),
     )
 

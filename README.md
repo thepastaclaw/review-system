@@ -174,6 +174,11 @@ by the final verifier still publish REQUEST_CHANGES. The rule never applies to a
 2026-09-08: GLM Phase-1 lanes took 65–140 min each, sequentially; astra Phase-2 lanes
 3–11 min.
 
+The rule also applies in [degraded mode](#degraded-mode-stand-in-models-when-the-openai-pool-is-dry),
+where Phase 2 runs on the stand-in: a degraded backlog is the case that can least afford
+the slow Phase-1 rungs. Set `backlog_skip_phase1: false` in the degraded policy to keep
+both phases (and the cross-model check) at that cost.
+
 ## Degraded mode: stand-in models when the OpenAI pool is dry
 
 `gpt-6-astra` sits on the critical path of every run (triage, Phase-1 gate verifier,
@@ -210,9 +215,12 @@ and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
   lane's effort clamped to the substitute's `effort_cap`. Phase 1 stays on its own
   ladder but the tier effort is capped at `phase1_effort_cap` (`high`), so the GLM
   rung (passed over above `high`) and Gemini stay eligible instead of every Phase 1
-  landing on the paid Muse rung too. Both phases always run: the backlog shortcut is
-  disabled in degraded mode because it would put the whole review on one stand-in
-  with no cross-model check. A degraded review never APPROVEs (it stops at COMMENT);
+  landing on the paid Muse rung too. Both phases run, except under a deep queue: the
+  backlog shortcut still applies (`backlog_skip_phase1`, default true), so a degraded
+  backlog run goes straight to Phase 2 on the stand-in instead of waiting on the slow
+  Phase-1 rungs — a review then has no cross-model check, which is the trade the queue
+  buys. Set it false to keep both phases regardless of the queue.
+  A degraded review never APPROVEs (it stops at COMMENT);
   blockers still REQUEST_CHANGES; and a same-sha re-review in degraded mode never
   retracts a standing full-strength approval (`review.verdict_kept`).
 - **Disclosure.** Review title `⚠️ DEGRADED — …`, a warning block under the title
