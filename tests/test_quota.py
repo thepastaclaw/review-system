@@ -16,6 +16,7 @@ GEMINI = LaneModel(
 GLM = LaneModel("phase1-reviewer", "glm-5.3-flash", "max", QuotaSource("zai"))
 MUSE = LaneModel("phase1-reviewer", "muse-spark-1.3-contributor", "xhigh")
 LADDER = (GEMINI, GLM, MUSE)
+DAILY, PROD = quota.ANTIGRAVITY_QUOTA_URLS
 
 
 def _status(*remaining: float) -> quota.QuotaStatus:
@@ -143,7 +144,7 @@ class FakeManagement(quota.Management):
         if path == "api-call" and method == "POST":
             req = json.loads(data or b"{}")
             self.api_calls.append(req)
-            status, body = self.upstream[req["url"]]
+            status, body = self.upstream.get(req["url"], (404, "not found"))
             return {"status_code": status, "body": json.dumps(body), "header": {}}
         return self.routes[(method, path)]
 
@@ -183,9 +184,7 @@ AG_SUMMARY = {
 
 
 def test_antigravity_reads_only_the_named_group_with_the_stored_credential():
-    mgmt = FakeManagement(
-        {("GET", "auth-files"): AG_FILES}, {quota.ANTIGRAVITY_QUOTA_URL: (200, AG_SUMMARY)}
-    )
+    mgmt = FakeManagement({("GET", "auth-files"): AG_FILES}, {DAILY: (200, AG_SUMMARY)})
     st = quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
     assert st.account == "a@g" and st.remaining == pytest.approx(0.2)
     assert [w.name for w in st.windows] == ["weekly", "5h"]
@@ -196,10 +195,48 @@ def test_antigravity_reads_only_the_named_group_with_the_stored_credential():
     assert call["header"]["User-Agent"] == quota.ANTIGRAVITY_USER_AGENT
 
 
-def test_antigravity_missing_group_or_credential_is_an_error():
+def test_antigravity_prefers_the_daily_endpoint():
+    # the prod host reports every bucket full while the daily host has the real usage
+    full = {
+        "groups": [
+            {
+                "displayName": "Gemini Models",
+                "buckets": [{"window": "weekly", "remainingFraction": 1}],
+            }
+        ]
+    }
+    spent = {
+        "groups": [
+            {
+                "displayName": "Gemini Models",
+                "buckets": [{"window": "weekly", "remainingFraction": 0.0067}],
+            }
+        ]
+    }
     mgmt = FakeManagement(
-        {("GET", "auth-files"): AG_FILES}, {quota.ANTIGRAVITY_QUOTA_URL: (200, AG_SUMMARY)}
+        {("GET", "auth-files"): AG_FILES}, {DAILY: (200, spent), PROD: (200, full)}
     )
+    assert quota.read(mgmt, QuotaSource("antigravity", "Gemini Models")).remaining == pytest.approx(
+        0.0067
+    )
+    assert [c["url"] for c in mgmt.api_calls] == [DAILY]
+
+
+def test_antigravity_falls_back_to_prod_when_daily_fails_or_lacks_the_group():
+    for daily in ((403, "no valid license"), (200, {"groups": []})):
+        mgmt = FakeManagement(
+            {("GET", "auth-files"): AG_FILES}, {DAILY: daily, PROD: (200, AG_SUMMARY)}
+        )
+        st = quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
+        assert st.remaining == pytest.approx(0.2)
+        assert [c["url"] for c in mgmt.api_calls] == [DAILY, PROD]
+    mgmt = FakeManagement({("GET", "auth-files"): AG_FILES}, {})
+    with pytest.raises(quota.QuotaError, match=r"HTTP 404.*HTTP 404"):
+        quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
+
+
+def test_antigravity_missing_group_or_credential_is_an_error():
+    mgmt = FakeManagement({("GET", "auth-files"): AG_FILES}, {DAILY: (200, AG_SUMMARY)})
     with pytest.raises(quota.QuotaError, match="no quota group"):
         quota.read(mgmt, QuotaSource("antigravity", "Nope"))
     mgmt = FakeManagement({("GET", "auth-files"): {"files": []}}, {})
@@ -217,9 +254,7 @@ def test_go_null_slices_are_quota_errors_not_crashes():
         {"groups": [{"displayName": "Gemini Models", "buckets": None}]},
         None,
     ):
-        mgmt = FakeManagement(
-            {("GET", "auth-files"): AG_FILES}, {quota.ANTIGRAVITY_QUOTA_URL: (200, summary)}
-        )
+        mgmt = FakeManagement({("GET", "auth-files"): AG_FILES}, {DAILY: (200, summary)})
         with pytest.raises(quota.QuotaError, match="no quota group"):
             quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
     for conf in (
@@ -244,9 +279,7 @@ def test_go_null_slices_are_quota_errors_not_crashes():
 def test_missing_remaining_fraction_means_exhausted():
     # proto3 JSON omits zero-valued fields, so an absent remainingFraction is 0
     summary = {"groups": [{"displayName": "Gemini Models", "buckets": [{"window": "5h"}]}]}
-    mgmt = FakeManagement(
-        {("GET", "auth-files"): AG_FILES}, {quota.ANTIGRAVITY_QUOTA_URL: (200, summary)}
-    )
+    mgmt = FakeManagement({("GET", "auth-files"): AG_FILES}, {DAILY: (200, summary)})
     assert quota.read(mgmt, QuotaSource("antigravity", "Gemini Models")).remaining == 0.0
 
 

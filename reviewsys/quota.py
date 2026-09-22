@@ -8,9 +8,10 @@ The proxy itself has no "remaining quota" endpoint; it does expose `POST /api-ca
 sends an arbitrary request signed with one of its stored credentials. Each provider's own
 quota endpoint is called that way, so the credentials never leave the proxy:
 
-- antigravity: `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary` (what the
-  Antigravity IDE shows): groups ("Gemini Models", "Claude and GPT models") of 5h + weekly
-  buckets with a `remainingFraction`.
+- antigravity: `v1internal:retrieveUserQuotaSummary` (what the Antigravity IDE shows): groups
+  ("Gemini Models", "Claude and GPT models") of 5h + weekly buckets with a `remainingFraction`.
+  Asked of `daily-cloudcode-pa` first, as the Antigravity client and the proxy do: the prod
+  host answers too, but with every bucket full while the daily host reports real usage.
 - zai: `api.z.ai/api/monitor/usage/quota/limit` (what the Z.AI console shows): a 5h and a
   weekly `CREDIT_LIMIT` with `percentage` used.
 
@@ -47,7 +48,13 @@ CACHE_MAX_AGE = timedelta(
     hours=1
 )  # a reading this fresh still gates a rung when the live one fails
 
-ANTIGRAVITY_QUOTA_URL = "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary"
+# in the order the proxy's own management UI tries them. The prod host alone is wrong, not
+# down: on 2026-09-22 it said Gemini weekly 100% left while daily said 0.7% and the proxy had
+# the model in a 48 h quota cooldown, so every run burned two 429'd lanes on a dead rung.
+ANTIGRAVITY_QUOTA_URLS = (
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+    "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+)
 # the endpoint answers 403 "no valid license" to anything but an Antigravity client UA
 ANTIGRAVITY_USER_AGENT = "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)"
 ZAI_QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit"
@@ -195,29 +202,37 @@ def _collect[C](
 def _antigravity_windows(
     mgmt: Management, source: QuotaSource, credential: tuple[str, str]
 ) -> tuple[Window, ...]:
+    """The first endpoint in `ANTIGRAVITY_QUOTA_URLS` that answers with the group wins."""
     auth_index, project = credential
     if not auth_index or not project:
         raise QuotaError("credential has no auth_index/project_id")
-    _, data = mgmt.api_call(
-        auth_index,
-        "POST",
-        ANTIGRAVITY_QUOTA_URL,
-        body=json.dumps({"project": project}),
-        headers={"User-Agent": ANTIGRAVITY_USER_AGENT},
-    )
-    windows = tuple(
-        Window(
-            name=str(bucket.get("window") or bucket.get("bucketId") or "?"),
-            remaining=_fraction_left(bucket.get("remainingFraction")),
-            reset_at=str(bucket["resetTime"]) if bucket.get("resetTime") else None,
+    errors: list[str] = []
+    for url in ANTIGRAVITY_QUOTA_URLS:
+        try:
+            _, data = mgmt.api_call(
+                auth_index,
+                "POST",
+                url,
+                body=json.dumps({"project": project}),
+                headers={"User-Agent": ANTIGRAVITY_USER_AGENT},
+            )
+        except QuotaError as exc:
+            errors.append(str(exc))
+            continue
+        windows = tuple(
+            Window(
+                name=str(bucket.get("window") or bucket.get("bucketId") or "?"),
+                remaining=_fraction_left(bucket.get("remainingFraction")),
+                reset_at=str(bucket["resetTime"]) if bucket.get("resetTime") else None,
+            )
+            for group in _dicts(data, "groups")
+            if not source.group or str(group.get("displayName", "")).lower() == source.group.lower()
+            for bucket in _dicts(group, "buckets")
         )
-        for group in _dicts(data, "groups")
-        if not source.group or str(group.get("displayName", "")).lower() == source.group.lower()
-        for bucket in _dicts(group, "buckets")
-    )
-    if not windows:
-        raise QuotaError(f"no quota group {source.group!r} in response")
-    return windows
+        if windows:
+            return windows
+        errors.append(f"no quota group {source.group!r} in response")
+    raise QuotaError("; ".join(errors))
 
 
 def _antigravity(mgmt: Management, source: QuotaSource) -> list[QuotaStatus]:
