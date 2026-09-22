@@ -7,6 +7,12 @@ permissions:
   contents: read
   pages: write
   id-token: write
+# the publisher pushes to observability-data every minute, so without this each push
+# stacks another deploy: 105 runs were queued behind each other on 2026-09-22 and the
+# repo's own `check` runs waited ~1h45m for a slot. Only the newest publish matters.
+concurrency:
+  group: pages
+  cancel-in-progress: true
 jobs:
   deploy:
     runs-on: ubuntu-latest
