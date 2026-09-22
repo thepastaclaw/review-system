@@ -9,8 +9,10 @@ with silently unreviewed PRs (2026-09-17: 60 failed runs in 8 h). With a
 - probes the policy's `sentinel` model before every run (cached briefly in `kv`);
 - while it answers with a quota error, or an operator forced the mode on, runs every lane
   whose model has a stand-in on that stand-in, caps the Phase-1 tier effort so the
-  included-quota rungs (Gemini, GLM) stay eligible, and keeps BOTH phases running (the
-  backlog shortcut is off: it would route the whole review onto one model);
+  included-quota rungs (Gemini, GLM) stay eligible, and keeps both phases running unless
+  the queue is deep enough for the backlog rule, which still sends a run straight to
+  Phase 2 on the stand-in (`backlog_skip_phase1`, on by default: the slow Phase-1 rungs
+  are what a backlog can least afford);
 - switches the rest of a run over when a lane on a primary model dies on a quota error
   mid-run, and remembers that so the next run starts degraded;
 - says so everywhere: review title and banner, provenance, gate and queue comments, the

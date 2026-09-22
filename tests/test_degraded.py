@@ -413,10 +413,34 @@ def test_without_a_degraded_block_a_quota_failure_still_fails_the_run(cfg, conn,
     assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 0
 
 
-def test_degraded_mode_keeps_both_phases_under_a_deep_backlog(
+def test_degraded_mode_under_a_deep_backlog_runs_phase_2_only_on_the_standin(
     conn, gh, lanes, skills_dir, tmp_path
 ):
     c = _cfg_with(skills_dir, tmp_path)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier()
+    with tx(conn):
+        for i in range(c.backlog_skip_phase1_above + 5):
+            enqueue_head(conn, c, "dashpay/platform", 100 + i, f"{i:040x}", Trigger.NEW_PR)
+    rid, status = _run(c, conn, gh, lanes, prober=EXHAUSTED)
+    assert status == RunStatus.DONE
+    assert (
+        conn.execute(
+            "SELECT status FROM steps WHERE run_id=? AND name='phase1'", (rid,)
+        ).fetchone()["status"]
+        == "skipped"
+    )
+    # the slow Phase-1 rungs are exactly what the backlog cannot afford
+    assert {s.model for s in _reviewer_calls(lanes)} == {MUSE}
+    body = gh.posted_reviews[0]["body"]
+    assert "Phase 2 only (queue backlog)" in body
+    assert DEGRADED_BADGE in body
+
+
+def test_degraded_policy_can_keep_both_phases_under_a_deep_backlog(
+    conn, gh, lanes, skills_dir, tmp_path
+):
+    c = _cfg_with(skills_dir, tmp_path, block={**DEGRADED_BLOCK, "backlog_skip_phase1": False})
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier()
     with tx(conn):

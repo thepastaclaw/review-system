@@ -1412,8 +1412,9 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
         return False
     dp = ctx.degraded_policy
     if dp is not None and not dp.backlog_skip_phase1:
-        # skipping Phase 1 would put the whole review on one stand-in model; degraded mode
-        # keeps both phases so the cross-model check survives
+        # opt-in: keep both phases in degraded mode so the cross-model check survives, at the
+        # cost of the slow Phase-1 rungs. Off by default -- a deep queue in degraded mode is
+        # the case that can least afford them.
         return False
     queued = ctx.conn.execute("SELECT COUNT(*) AS n FROM heads WHERE status='queued'").fetchone()[
         "n"
