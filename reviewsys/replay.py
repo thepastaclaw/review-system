@@ -9,10 +9,10 @@ refuses every write (non-GET REST, GraphQL mutations), and the worker's dry-run 
 the production work directory's bare mirrors (read + fetch only) but gets its own worktrees
 and run directories under `--out`.
 
-The ledger a v10 run matches against is rebuilt from the production database as it stood
-before the replayed head: every issue posted on the PR at an earlier head, with its thread
-state as of now. That is an approximation (a thread may have been resolved after the replayed
-head); the report says so.
+The replay sees the PR as it was when the source run started: its history is seeded from
+the runs before it, and every GitHub comment, review and thread comment created after that
+moment is filtered out. One thing cannot be rewound: whether a thread was resolved, which is
+read as of now; the report says so.
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ from .models import RunStatus, Trigger
 
 def _source_run(prod: sqlite3.Connection, run_id: int) -> sqlite3.Row:
     row = prod.execute(
-        "SELECT r.id, h.repo, h.number, h.sha, h.trigger, r.tier FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
+        "SELECT r.id, r.started_at, h.repo, h.number, h.sha, h.trigger, r.tier FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
         (run_id,),
     ).fetchone()
     if not isinstance(row, sqlite3.Row):
@@ -42,25 +42,24 @@ def _source_run(prod: sqlite3.Connection, run_id: int) -> sqlite3.Row:
 
 
 def _seed(scratch: sqlite3.Connection, prod: sqlite3.Connection, src: sqlite3.Row) -> None:
-    """Copy what the worker reads about this PR's history (posted findings from earlier heads,
-    reviews, the `prs` row) into the scratch database."""
-    repo, number, sha = src["repo"], src["number"], src["sha"]
+    """Copy this PR's history from before the source run (findings posted and conceded by
+    earlier runs, the heads they were posted at) into the scratch database."""
+    repo, number = src["repo"], src["number"]
+    earlier = prod.execute(
+        "SELECT f.stage, f.phase, f.hash, f.file, f.line_start, f.line_end, f.severity, f.confidence, "
+        "f.category, f.title, f.body, h.sha, r.started_at FROM findings f JOIN runs r ON r.id=f.run_id "
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND f.run_id < ? "
+        "AND f.stage IN ('posted','conceded') ORDER BY f.id",
+        (repo, number, src["id"]),
+    ).fetchall()
     with tx(scratch):
         scratch.execute(
             "INSERT OR REPLACE INTO prs (repo, number, head_sha, state, updated_at) VALUES (?,?,?,?,?)",
-            (repo, number, sha, "open", now()),
+            (repo, number, src["sha"], "open", now()),
         )
-        earlier = prod.execute(
-            "SELECT pf.hash, pf.sha, pf.review_id, pf.posted_at FROM posted_findings pf "
-            "WHERE pf.repo=? AND pf.number=? AND pf.sha != ?",
-            (repo, number, sha),
-        ).fetchall()
-        for r in earlier:
-            scratch.execute(
-                "INSERT OR IGNORE INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?)",
-                (repo, number, r["hash"], r["sha"], r["review_id"], r["posted_at"]),
-            )
-        # the findings rows those hashes point at (stage 'posted'), under a placeholder run
+        if not earlier:
+            return
+        # one placeholder run holds the history rows (the worker only reads them per PR)
         scratch.execute(
             "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?)",
             (repo, number, "0" * 40, "manual", "done", now(), now()),
@@ -71,21 +70,14 @@ def _seed(scratch: sqlite3.Connection, prod: sqlite3.Connection, src: sqlite3.Ro
             (hid, 1, "done", "seed", now(), now()),
         )
         rid = scratch.execute("SELECT last_insert_rowid()").fetchone()[0]
-        for h in {str(r["hash"]) for r in earlier}:
-            f = prod.execute(
-                "SELECT phase, file, line_start, line_end, severity, confidence, category, title, body "
-                "FROM findings WHERE hash=? AND stage IN ('posted','conceded') ORDER BY id DESC LIMIT 1",
-                (h,),
-            ).fetchone()
-            if f is None:
-                continue
+        for f in earlier:
             scratch.execute(
                 "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     rid,
                     f["phase"],
-                    "posted",
-                    h,
+                    f["stage"],
+                    f["hash"],
                     f["file"],
                     f["line_start"],
                     f["line_end"],
@@ -96,6 +88,12 @@ def _seed(scratch: sqlite3.Connection, prod: sqlite3.Connection, src: sqlite3.Ro
                     f["body"],
                 ),
             )
+            if f["stage"] == "posted":
+                scratch.execute(
+                    "INSERT INTO posted_findings (repo, number, hash, sha, posted_at) VALUES (?,?,?,?,?) "
+                    "ON CONFLICT(repo, number, hash) DO UPDATE SET sha=excluded.sha, posted_at=excluded.posted_at",
+                    (repo, number, f["hash"], f["sha"], f["started_at"]),
+                )
 
 
 def _historical(prod: sqlite3.Connection, run_id: int) -> list[dict[str, Any]]:
@@ -146,7 +144,7 @@ def replay(
             (hid, 1, "spawned", "replay", now(), now()),
         )
         new_run = scratch.execute("SELECT last_insert_rowid()").fetchone()[0]
-    gh = _PinnedHead(cfg.gh_bin, src["sha"])
+    gh = _PinnedHead(cfg.gh_bin, src["sha"], str(src["started_at"]))
     status = worker.main(rc, scratch, new_run, gh=gh, dry_run=True, heartbeat=False)
     found = [
         dict(r)
@@ -177,7 +175,7 @@ def replay(
         "review_body": next(
             (p.read_text() for p in (rc.runs_dir / f"run-{new_run}").glob("review-*.md")), ""
         ),
-        "caveat": "ledger thread state is as of now, not as of the replayed head",
+        "caveat": "thread resolution state is as of now, not as of the replayed head",
     }
     (work / "report.json").write_text(json.dumps(report, indent=1))
     scratch.close()
@@ -191,27 +189,49 @@ def replay(
 
 
 class _PinnedHead(Gh):
-    """Read-only gh that reports the PR as open at the replayed sha: a replay reviews that
-    exact commit even if the PR has moved on or merged since."""
+    """Read-only gh that shows the PR as it was when the source run started: open at the
+    replayed sha, and without any comment, review or thread comment created later."""
 
-    def __init__(self, bin_path: str, sha: str) -> None:
+    def __init__(self, bin_path: str, sha: str, cutoff: str) -> None:
         super().__init__(bin_path, runner=read_only_runner())
         self.sha = sha
+        self.cutoff = cutoff  # ISO-8601 Z, compares as a string with GitHub's timestamps
 
     def api(self, endpoint: str, **kw: Any) -> Any:
         data = super().api(endpoint, **kw)
-        # repos/{owner}/{repo}/pulls/{number}
         parts = endpoint.split("?")[0].strip("/").split("/")
-        if (
-            len(parts) == 5
-            and parts[0] == "repos"
-            and parts[3] == "pulls"
-            and isinstance(data, dict)
-        ):
+        if parts[:1] != ["repos"]:
+            return data
+        if len(parts) == 5 and parts[3] == "pulls" and isinstance(data, dict):
+            # repos/{owner}/{repo}/pulls/{number}
             data = {
                 **data,
                 "state": "open",
                 "merged": False,
                 "head": {**(data.get("head") or {}), "sha": self.sha},
             }
+        elif len(parts) == 6 and parts[5] in ("comments", "reviews") and isinstance(data, list):
+            # repos/{owner}/{repo}/{pulls|issues}/{number}/{comments|reviews}
+            key = "submitted_at" if parts[5] == "reviews" else "created_at"
+            data = [r for r in data if isinstance(r, dict) and str(r.get(key) or "") < self.cutoff]
+        return data
+
+    def graphql(
+        self, query: str, variables: dict[str, Any] | None = None, *, timeout: int | None = None
+    ) -> Any:
+        data = super().graphql(query, variables, timeout=timeout)
+        if "reviewThreads(" not in query or not isinstance(data, dict):
+            return data
+        pr = (data.get("repository") or {}).get("pullRequest") or {}
+        threads = pr.get("reviewThreads") or {}
+        kept = []
+        for n in threads.get("nodes") or []:
+            cs = [
+                c
+                for c in (n.get("comments") or {}).get("nodes") or []
+                if str(c.get("createdAt") or "") < self.cutoff
+            ]
+            if cs:
+                kept.append({**n, "comments": {"nodes": cs}})
+        threads["nodes"] = kept
         return data

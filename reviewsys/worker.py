@@ -850,6 +850,7 @@ def step_publish(
             dry_run=ctx.dry_run,
             force_comment=True,
         )
+        (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
         _record_publication(ctx, phase, model, result, verified)
         return result
     model = _build_review(

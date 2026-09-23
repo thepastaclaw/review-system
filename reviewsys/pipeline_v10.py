@@ -85,6 +85,8 @@ class PhaseResult:
 # ---- small helpers ----
 
 _FIELD_RE = re.compile(r"\{([a-z_]+)\}")
+# publication renders the severity itself ("🔴 Blocking: <title>")
+_SEVERITY_LABEL_RE = re.compile(r"^\W*(blocking|suggestion|nitpick)\W*[:\-]\s*", re.IGNORECASE)
 
 
 def _fill(template: str, values: dict[str, str]) -> str:
@@ -803,7 +805,8 @@ def compose(
             r = by_id.get(v.group.representative.id)
             if not r:
                 continue
-            title, body = str(r.get("title") or "").strip(), str(r.get("body") or "").strip()
+            title = _SEVERITY_LABEL_RE.sub("", str(r.get("title") or "").strip())
+            body = str(r.get("body") or "").strip()
             if title:
                 v.finding.title = title
             if body:
