@@ -44,3 +44,20 @@ def test_read_only_runner_passes_reads():
     gh.graphql("query { viewer { login } }")
     gh.run("pr", "diff", "1")
     assert len(calls) == 3
+
+
+def test_pinned_head_reports_the_replayed_sha_open():
+    import json
+
+    from reviewsys import github
+    from reviewsys.replay import _PinnedHead
+
+    pr = {"state": "closed", "merged": True, "head": {"sha": "b" * 40}, "base": {"ref": "main"}}
+
+    def run(argv, stdin, timeout):
+        return subprocess.CompletedProcess(argv, 0, json.dumps(pr), "")
+
+    gh = _PinnedHead("gh", "a" * 40)
+    gh.runner = read_only_runner(run)
+    meta = github.pr_meta(gh, "o/r", 7)
+    assert (meta.head_sha, meta.state, meta.merged) == ("a" * 40, "open", False)

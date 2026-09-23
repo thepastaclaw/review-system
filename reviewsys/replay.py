@@ -200,11 +200,12 @@ class _PinnedHead(Gh):
 
     def api(self, endpoint: str, **kw: Any) -> Any:
         data = super().api(endpoint, **kw)
+        # repos/{owner}/{repo}/pulls/{number}
         parts = endpoint.split("?")[0].strip("/").split("/")
         if (
-            len(parts) == 4
+            len(parts) == 5
             and parts[0] == "repos"
-            and parts[2] == "pulls"
+            and parts[3] == "pulls"
             and isinstance(data, dict)
         ):
             data = {
