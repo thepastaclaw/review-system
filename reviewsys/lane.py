@@ -17,10 +17,23 @@ from .contract import parse_json_object
 from .models import FailKind, ReviewError
 
 LaneRunner = Callable[["LaneSpec", Path, Path], "LaneResult"]
+
+
+class TurnCapReached(ReviewError):
+    """The lane used every turn `--max-turns` allowed without answering. Retrying it would do
+    the same; the caller decides what an unfinished lane means."""
+
+
 LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is never starved
 # Plan mode otherwise enables Claude Code's separate LLM permission classifier.
 # Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
 CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
+# `--add-dir` re-enables CLAUDE.md discovery under `--bare`, which put the launcher's own
+# global CLAUDE.md (commit/push rules for an implementation agent) plus git-status and
+# commit-attribution reminders in front of every review prompt (~12k chars, verified in the
+# proxy request log 2026-09-22). Lanes get exactly the context their prompt carries; the
+# reviewed repo's own CLAUDE.md/AGENTS.md reach the finders through the prompt instead.
+LANE_ENV = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +48,12 @@ class LaneSpec:
     timeout_seconds: int
     claude_bin: str
     max_budget_usd: float | None = None
+    # JSON Schema for the lane's answer. Claude Code enforces it client-side (a
+    # `StructuredOutput` tool validated locally, retried in-conversation), so it works for
+    # every model behind the proxy; the answer lands in the envelope's `structured_output`.
+    json_schema: dict[str, Any] | None = None
+    max_turns: int | None = None
+    clean_context: bool = False  # LANE_ENV: no CLAUDE.md discovery, no git instructions
 
 
 @dataclass(slots=True)
@@ -50,6 +69,7 @@ class LaneResult:
     cost_usd: float | None = None
     turns: int | None = None
     subtype: str | None = None
+    structured: dict[str, Any] | None = None  # the schema-validated answer, when one was asked
 
     @property
     def ok(self) -> bool:
@@ -86,6 +106,10 @@ def argv_for(spec: LaneSpec) -> list[str]:
     ]
     if spec.max_budget_usd:
         argv += ["--max-budget-usd", f"{spec.max_budget_usd:.2f}"]
+    if spec.json_schema is not None:
+        argv += ["--json-schema", json.dumps(spec.json_schema, separators=(",", ":"))]
+    if spec.max_turns:
+        argv += ["--max-turns", str(spec.max_turns)]
     return argv
 
 
@@ -94,7 +118,12 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
     so a group kill takes the lane down with us."""
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "prompt.md").write_text(spec.prompt, encoding="utf-8")
-    env = {**os.environ, "GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+    env = {
+        **os.environ,
+        "GODEBUG": "netdns=go",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        **(LANE_ENV if spec.clean_context else {}),
+    }
     t0 = time.monotonic()
     proc = subprocess.Popen(
         argv_for(spec),
@@ -162,6 +191,9 @@ def _extract_result(res: LaneResult) -> None:
     if not isinstance(env, dict) or ("result" not in env and env.get("type") != "result"):
         res.result_text = text
         return
+    structured = env.get("structured_output")
+    if isinstance(structured, dict):
+        res.structured = structured
     res.result_text = str(env.get("result") or "")
     usage = env.get("usage") or {}
     if isinstance(usage, dict):
@@ -186,6 +218,14 @@ def lane_output(res: LaneResult) -> dict[str, Any]:
     if res.timed_out:
         raise ReviewError(FailKind.INFRA, "lane timed out")
     if res.exit_code != 0:
+        if res.subtype == "error_max_turns":
+            raise TurnCapReached(FailKind.CONTRACT, f"lane hit its turn cap ({res.turns} turns)")
+        if res.subtype == "error_max_structured_output_retries":
+            # the model kept answering off-schema: a contract failure, not infrastructure
+            raise ReviewError(
+                FailKind.CONTRACT,
+                f"lane never produced schema-valid output after {res.turns or '?'} turns",
+            )
         if res.subtype and res.subtype.startswith("error_"):
             raise ReviewError(
                 FailKind.INFRA,
@@ -194,6 +234,8 @@ def lane_output(res: LaneResult) -> dict[str, Any]:
         raise ReviewError(
             FailKind.INFRA, f"lane exit {res.exit_code}: {(res.stderr or res.result_text)[:200]}"
         )
+    if res.structured is not None:
+        return res.structured
     return parse_json_object(res.result_text)
 
 

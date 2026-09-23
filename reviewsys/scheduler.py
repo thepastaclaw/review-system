@@ -248,9 +248,11 @@ def apply_supersedes(conn: sqlite3.Connection, cfg: Config) -> int:
     rows = conn.execute(
         "SELECT r.id, r.phase, h.status AS head_status, h.reason FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.status IN ('spawned','running') AND r.cancel_requested=0 AND h.status NOT IN ('running')"
     ).fetchall()
+    # v9's verify2 is the final verifier (nearly done); v10's verify2 is per-candidate lanes
+    late = ("verify2", "publish") if cfg.policy.pipeline is None else ("compose", "publish")
     n = 0
     for r in rows:
-        if r["head_status"] == HeadStatus.SUPERSEDED.value and r["phase"] in ("verify2", "publish"):
+        if r["head_status"] == HeadStatus.SUPERSEDED.value and r["phase"] in late:
             continue  # let it finish; publish will note new commits
         request_cancel(conn, r["id"], f"head {r['head_status']}: {r['reason'] or ''}")
         n += 1

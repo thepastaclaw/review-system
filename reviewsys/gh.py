@@ -50,6 +50,37 @@ def _default_runner(
     )
 
 
+_WRITE_GRAPHQL = ("mutation",)
+
+
+def read_only_runner(inner: GhRunner | None = None) -> GhRunner:
+    """A runner that refuses every call that could change GitHub (a non-GET REST call or a
+    GraphQL mutation). Used by `reviewsys replay`, which must be unable to post however the
+    code paths it exercises are wired."""
+    run = inner or _default_runner
+
+    def runner(
+        argv: Sequence[str], stdin: str | None, timeout: int
+    ) -> subprocess.CompletedProcess[str]:
+        args = list(argv)[1:]
+        writes = False
+        if args[:2] == ["api", "graphql"]:
+            q = next((a for a in args if a.startswith("query=")), "")
+            writes = q.split("=", 1)[-1].lstrip().startswith(_WRITE_GRAPHQL)
+        elif args[:1] == ["api"]:
+            method = args[args.index("--method") + 1] if "--method" in args else "GET"
+            writes = method.upper() != "GET" or "--input" in args
+        elif args[:2] != ["pr", "diff"]:
+            writes = True  # only `api` reads and `pr diff` are known to be read-only
+        if writes:
+            return subprocess.CompletedProcess(
+                argv, 1, "", f"read-only gh: refused {' '.join(args[:4])}"
+            )
+        return run(argv, stdin, timeout)
+
+    return runner
+
+
 class Gh:
     def __init__(
         self, bin_path: str = "gh", runner: GhRunner | None = None, *, default_timeout: int = 120

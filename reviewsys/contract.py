@@ -79,6 +79,9 @@ class Finding:
     prior_hash: str | None = None  # finding_hash carried from a prior round (STILL_VALID)
     root_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # v10: an open ledger issue re-affirmed this round; it has a live thread already, so it
+    # counts toward the verdict but is never posted again. Set by the harness only.
+    carried: bool = False
 
     @property
     def hash(self) -> str:

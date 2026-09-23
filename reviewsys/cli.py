@@ -61,6 +61,30 @@ def cmd_worker(args: argparse.Namespace) -> int:
     return 0 if status.value == "done" else 1
 
 
+def cmd_replay(args: argparse.Namespace) -> int:
+    from .replay import replay
+
+    cfg = _cfg(args)
+    out = Path(args.out).expanduser()
+    for rid in args.run_id:
+        report = replay(
+            cfg, run_id=rid, out=out, skills=Path(args.skills).expanduser() if args.skills else None
+        )
+        print(
+            json.dumps(
+                {
+                    k: report[k]
+                    for k in ("source_run", "repo", "number", "status", "reason", "tokens_in")
+                }
+                | {
+                    "historical": len(report["historical_posted"]),
+                    "replay": len(report["replay_findings"]),
+                }
+            )
+        )
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     conn = db_mod.connect(cfg.db_path)
@@ -246,6 +270,14 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--run-id", type=int, required=True)
     s.add_argument("--dry-run", action="store_true", help="do everything except post to GitHub")
     s.set_defaults(fn=cmd_worker)
+    s = sub.add_parser(
+        "replay",
+        help="re-review past runs' exact heads under a (new) policy; read-only, posts nothing",
+    )
+    s.add_argument("run_id", type=int, nargs="+")
+    s.add_argument("--out", required=True, help="directory for scratch DBs, worktrees, reports")
+    s.add_argument("--skills", help="skills checkout holding the policy to replay under")
+    s.set_defaults(fn=cmd_replay)
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)

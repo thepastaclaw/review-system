@@ -88,6 +88,23 @@ def linked_commits(threads: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
     return out
 
 
+def linked_commits_block(
+    fetched: list[dict[str, str]], unfetched: list[dict[str, str]], head_sha: str
+) -> str:
+    """The prompt's list of commits humans linked, with how to read each one."""
+    lines = [
+        f"- `{c['sha']}` from {c['owner']}/{c['repo']}: available in this checkout; inspect it "
+        f"with `git show {c['sha']}` and `git diff {head_sha[:12]} {c['sha']}`"
+        for c in fetched
+    ] + [
+        f"- `{c['sha']}` from {c['owner']}/{c['repo']}: could NOT be fetched "
+        f"({c.get('reason') or 'unavailable'}); you can only discuss it from what the thread "
+        "says about it"
+        for c in unfetched
+    ]
+    return "\n".join(lines) or "- none"
+
+
 def _thread_for_prompt(h: str, t: dict[str, Any]) -> dict[str, Any]:
     exchange = []
     for c in t.get("transcript") or []:

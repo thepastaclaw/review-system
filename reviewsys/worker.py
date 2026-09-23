@@ -36,7 +36,15 @@ from .db import event, kv_get, kv_set, now, tx
 from .degraded import Prober
 from .gate import admit_phase2
 from .gh import Gh
-from .lane import LaneResult, LaneRunner, LaneSpec, lane_output, prompt_sha, run_claude_lane
+from .lane import (
+    LaneResult,
+    LaneRunner,
+    LaneSpec,
+    TurnCapReached,
+    lane_output,
+    prompt_sha,
+    run_claude_lane,
+)
 from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
 from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, skill_texts, verifier_prompt
 from .scheduler import finish_run
@@ -91,6 +99,8 @@ class RunContext:
     prior_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     # finding_hash -> thread facts for every unresolved bot finding thread on the PR
     open_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # v10: the same for resolved ones (their discussion, for issues that come back)
+    resolved_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     coverage_from: str = ""
     phase1_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
     phase2_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
@@ -482,8 +492,13 @@ def _run_lane(
     prompt: str,
     is_verifier: bool,
     fresh: bool = False,
+    schema: dict[str, Any] | None = None,
+    max_turns: int | None = None,
 ) -> dict[str, Any]:
     """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output.
+
+    With `schema` the answer is enforced by Claude Code itself (retried in-conversation), so
+    there is no repair lane: a lane that still fails the contract is retried whole.
 
     A lane on a primary model that dies on a quota failure flips the run into degraded mode
     (when the policy has a stand-in for that model) and gets its two attempts again on the
@@ -508,13 +523,36 @@ def _run_lane(
             timeout_seconds=ctx.cfg.lane_timeout_minutes * 60,
             claude_bin=ctx.cfg.claude_bin,
             max_budget_usd=ctx.cfg.lane_budget_usd,
+            json_schema=schema,
+            max_turns=max_turns,
+            clean_context=ctx.cfg.policy.pipeline is not None,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)
         try:
             out = lane_output(res)
         except ReviewError as exc:
-            if exc.kind == FailKind.CONTRACT and res.ok and res.result_text.strip():
+            if isinstance(exc, TurnCapReached):
+                _lane_row(
+                    ctx,
+                    phase=phase,
+                    role=role,
+                    lm=lm,
+                    attempt=attempt,
+                    attempt_id=attempt_id,
+                    status="turn_cap",
+                    res=res,
+                    artifact_dir=art,
+                    psha=psha,
+                    reason=str(exc),
+                )
+                raise
+            if (
+                schema is None
+                and exc.kind == FailKind.CONTRACT
+                and res.ok
+                and res.result_text.strip()
+            ):
                 repaired = _repair(ctx, res.result_text, art)
                 if repaired is not None:
                     _lane_row(
@@ -839,8 +877,8 @@ def step_publish(
 
 
 def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
-    if not ctx.open_threads or ctx.dry_run:
-        return
+    if not ctx.open_threads or ctx.dry_run or ctx.cfg.policy.pipeline is not None:
+        return  # v10: the thread lane already answered every thread it had something for
     answered = publish.answer_replied_threads(
         ctx.gh,
         ctx.repo,
@@ -1288,7 +1326,7 @@ def _publish_step(
     verified: VerifierOutput,
     verifier_lm: LaneModel,
     phase2_skipped: str | None = None,
-) -> None:
+) -> publish.PublishResult:
     _step_start(ctx, StepName.PUBLISH)
     res = step_publish(
         ctx, phase=phase, verified=verified, verifier_lm=verifier_lm, phase2_skipped=phase2_skipped
@@ -1306,6 +1344,7 @@ def _publish_step(
         blocker_count=verified.blocker_count,
         phase2_skipped=phase2_skipped,
     )
+    return res
 
 
 def _fresh_final_if_needed(
@@ -1768,6 +1807,10 @@ def run(ctx: RunContext) -> RunStatus:
         elif name == StepName.TRIAGE and ctx.triage:
             detail = dataclasses.asdict(ctx.triage)
         _step_end(ctx, name, "ok", detail)
+    if pol.pipeline is not None:
+        from . import pipeline_v10
+
+        return pipeline_v10.run(ctx, reply_only=standing is not None)
     if standing:
         # a human replied on a commit we already reviewed: the code did not change, the
         # discussion did. Answer the threads; never re-run the review pipeline for that.

@@ -198,16 +198,20 @@ def evidence_bundle(
     return {"pr": meta.as_dict(), "issue_comments": ev_comments, "review_threads": ev_threads}
 
 
-def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, dict[str, Any]]:
+def finding_threads(
+    threads: list[dict[str, Any]], bot_login: str, *, include_resolved: bool = False
+) -> dict[str, dict[str, Any]]:
     """finding_hash -> thread facts for every unresolved bot finding thread.
 
     `awaiting_answer` is True when the newest human reply is newer than the bot's newest
-    answer in that thread (someone is waiting on us). Resolved threads are left out entirely:
-    a maintainer who closed the discussion does not want it reopened by a bot comment."""
+    answer in that thread (someone is waiting on us). Resolved threads are left out (a
+    maintainer who closed the discussion does not want it reopened by a bot comment) unless
+    `include_resolved`, for reading their history; those carry `is_resolved` and are never
+    awaiting an answer."""
     out: dict[str, dict[str, Any]] = {}
     for t in threads:
         cs = t.get("comments") or []
-        if not cs or t.get("is_resolved"):
+        if not cs or (t.get("is_resolved") and not include_resolved):
             continue
         root = cs[0]
         if not _is_bot(root, bot_login):
@@ -239,11 +243,16 @@ def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, 
             (str(c.get("created_at") or "") for c in cs[1:] if _is_bot(c, bot_login)),
             default="",
         )
-        awaiting = bool(replies) and str(replies[-1].get("created_at") or "") > last_bot
+        awaiting = (
+            not t.get("is_resolved")
+            and bool(replies)
+            and str(replies[-1].get("created_at") or "") > last_bot
+        )
         severity, title = _finding_title(body)
         out[m.group(1)] = {
             "comment_id": root.get("id"),
             "thread_id": t.get("thread_id"),
+            "is_resolved": bool(t.get("is_resolved")),
             "awaiting_answer": awaiting,
             "latest_reply_id": replies[-1].get("id") if replies else None,
             # Keep the bot's own answers so publishing can make open-thread reconciliation

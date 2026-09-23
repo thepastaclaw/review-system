@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -88,6 +88,20 @@ MIGRATIONS: dict[int, str] = {
     """,
     3: """
     ALTER TABLE runs ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0;
+    """,
+    # v10 issue ledger: one row per issue reviewsys raised on a PR, keyed by the byte-stable
+    # finding_hash. `status` moves open -> fixed|withdrawn|deferred|outdated only through the
+    # thread lane's explicit outcomes; `closed_sha` is the head it was closed on, which the
+    # withdrawn-issue revival rule diffs against.
+    4: """
+    CREATE TABLE ledger (
+        repo TEXT NOT NULL, number INTEGER NOT NULL, hash TEXT NOT NULL,
+        file TEXT, line_start INTEGER, line_end INTEGER,
+        severity TEXT NOT NULL, category TEXT, title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'open', note TEXT NOT NULL DEFAULT '',
+        opened_sha TEXT NOT NULL, closed_sha TEXT, updated_at TEXT NOT NULL,
+        PRIMARY KEY (repo, number, hash));
+    CREATE INDEX ledger_pr ON ledger (repo, number, status);
     """,
 }
 

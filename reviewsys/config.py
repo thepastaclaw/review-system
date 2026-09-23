@@ -103,6 +103,33 @@ class DegradedPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class PipelineV10:
+    """`review_model_policy.pipeline` (policy v10+): the v10 review flow. Absent: the v9 flow.
+
+    Paths are relative to the skills repo. `general_lanes` split the old general reviewer into
+    method lanes in Phase 2; Phase 1 runs one `phase1_general` lane that carries every method.
+    `specialist_prompts` maps a specialist id to its v10 method file (a specialist without one
+    keeps running on its legacy prompt under the v9 flow only, so every selectable specialist
+    needs an entry). Efforts: `specialist_effort_cap` clamps the named specialists' tier effort;
+    `max_turns` caps finder lanes per phase (0 = no cap)."""
+
+    finder_frame: str
+    general_lanes: dict[str, str]  # lane name -> method file, Phase 2
+    phase1_general: tuple[str, ...]  # method files concatenated into Phase 1's single lane
+    specialist_prompts: dict[str, str]
+    triage_prompt: str
+    verifier_prompt: str
+    threads_prompt: str
+    composer_prompt: str
+    specialist_effort_cap: dict[str, str] = field(default_factory=dict)
+    max_turns: dict[str, int] = field(default_factory=dict)
+    verify_cap: int = 12
+    verify_concurrency: int = 3
+    triage_effort: str = "medium"
+    composer_effort: str = "medium"
+
+
+@dataclass(frozen=True, slots=True)
 class ModelPolicy:
     name: str
     fingerprint: str
@@ -127,6 +154,8 @@ class ModelPolicy:
     # stand-ins while the primary models are unavailable; None = no degraded mode, a run
     # whose primary model is down fails as before
     degraded: DegradedPolicy | None = None
+    # the v10 review flow; None = v9
+    pipeline: PipelineV10 | None = None
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -388,6 +417,46 @@ def _degraded(node: dict[str, Any] | None) -> DegradedPolicy | None:
     )
 
 
+def _pipeline(
+    node: dict[str, Any] | None, specialists: tuple[Specialist, ...]
+) -> PipelineV10 | None:
+    if not node:
+        return None
+    general = {str(k): str(v) for k, v in (node.get("general_lanes") or {}).items()}
+    if not general:
+        raise ValueError("pipeline.general_lanes must name at least one Phase-2 method lane")
+    phase1 = tuple(str(x) for x in (node.get("phase1_general") or general.values()))
+    sp = {str(k): str(v) for k, v in (node.get("specialist_prompts") or {}).items()}
+    missing = sorted(s.id for s in specialists if s.id not in sp)
+    if missing:
+        raise ValueError(f"pipeline.specialist_prompts has no v10 prompt for {missing}")
+    caps = {str(k): str(v) for k, v in (node.get("specialist_effort_cap") or {}).items()}
+    for k, v in caps.items():
+        if v not in EFFORT_LEVELS:
+            raise ValueError(f"pipeline.specialist_effort_cap[{k!r}] {v!r} not in {EFFORT_LEVELS}")
+    turns = {str(k): int(v) for k, v in (node.get("max_turns") or {}).items()}
+    efforts = {k: str(node.get(k, "medium")) for k in ("triage_effort", "composer_effort")}
+    for k, v in efforts.items():
+        if v not in EFFORT_LEVELS:
+            raise ValueError(f"pipeline.{k} {v!r} not in {EFFORT_LEVELS}")
+    return PipelineV10(
+        finder_frame=str(node["finder_frame"]),
+        general_lanes=general,
+        phase1_general=phase1,
+        specialist_prompts=sp,
+        triage_prompt=str(node["triage_prompt"]),
+        verifier_prompt=str(node["verifier_prompt"]),
+        threads_prompt=str(node["threads_prompt"]),
+        composer_prompt=str(node["composer_prompt"]),
+        specialist_effort_cap=caps,
+        max_turns=turns,
+        verify_cap=max(1, int(node.get("verify_cap", 12))),
+        verify_concurrency=max(1, int(node.get("verify_concurrency", 3))),
+        triage_effort=efforts["triage_effort"],
+        composer_effort=efforts["composer_effort"],
+    )
+
+
 def load_skills_config(
     skills_dir: Path,
 ) -> tuple[tuple[RepoConfig, ...], tuple[Specialist, ...], ModelPolicy, dict[str, Any]]:
@@ -438,6 +507,7 @@ def load_skills_config(
         fallback_tier=str(triage_node.get("fallback_tier", "normal")).lower(),
         conversation=_lane(pol, "conversation") if pol.get("conversation") else None,
         degraded=_degraded(pol.get("degraded")),
+        pipeline=_pipeline(pol.get("pipeline"), specialists),
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")

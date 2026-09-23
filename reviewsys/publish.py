@@ -550,6 +550,9 @@ class PublishResult:
     comments: list[dict[str, Any]] = field(default_factory=list)
     suppressed: list[Suppressed] = field(default_factory=list)
     skipped_reason: str | None = None
+    # the findings this review put on GitHub: inline comments plus the ones rendered in the
+    # body because GitHub cannot take them inline (empty unless posted)
+    published: list[Finding] = field(default_factory=list)
 
 
 THREAD_REUSE_MARKER = "<!-- thepastaclaw-thread-reuse v1 root={root} sha={sha} -->"
@@ -649,11 +652,19 @@ def build(
     superseded_note: str | None = None,
     rereview: bool = False,
 ) -> ReviewModel:
-    findings, collapsed = collapse_same_root(list(verified.findings))
+    # v10 carries open ledger issues into the verdict: they count toward it but are never
+    # posted again (one without a live thread is restated in the body instead)
+    carried: list[Finding] = []
+    fresh: list[Finding] = []
+    for f in verified.findings:
+        (carried if f.carried else fresh).append(f)
+    findings, collapsed = collapse_same_root(fresh)
     kept, sup = dedupe_against_github(
         gh, repo, number, head_sha, findings, bot_login, dry_run=dry_run
     )
-    suppressed = list(collapsed) + list(sup)
+    suppressed = (
+        [Suppressed(f, "carried_open_issue") for f in carried] + list(collapsed) + list(sup)
+    )
     if has_same_root_duplicates(kept):
         raise ReviewError(
             FailKind.CONTRACT, "same-root duplicates survived collapse; refusing to publish"
@@ -671,6 +682,7 @@ def build(
                 comments.append(c)
             else:
                 skipped.append(f)
+    skipped += [f for f in carried if not f.extra.get("has_thread")]
     return ReviewModel(
         repo=repo,
         number=number,
@@ -727,6 +739,10 @@ def publish(
         review_url=str(resp.get("html_url") or ""),
         comments=m.comments,
         suppressed=m.suppressed,
+        published=[
+            *m.kept,
+            *[f for f in m.skipped if f not in m.kept and not f.carried],
+        ],
     )
 
 
