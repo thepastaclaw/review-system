@@ -182,6 +182,9 @@ def replay(
     (work / "report.json").write_text(json.dumps(report, indent=1))
     scratch.close()
     prod.close()
+    # the worker keeps a failed run's worktree for debugging; a replay's is disposable (a
+    # Rust repo's can reach tens of GB) and the lane artifacts are what the report needs
+    shutil.rmtree(rc.worktrees_dir, ignore_errors=True)
     if status != RunStatus.DONE:
         report["hint"] = f"see {work}/work/runs for lane artifacts"
     return report
