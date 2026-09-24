@@ -17,6 +17,7 @@ from . import proc
 from .config import Config
 from .db import event, fmt_ts, now, parse_ts, tx
 from .models import FailKind, HeadStatus, RunStatus
+from .slots import capacity
 
 log = logging.getLogger(__name__)
 
@@ -46,14 +47,15 @@ def schedule(conn: sqlite3.Connection, cfg: Config, *, spawn: bool = True) -> li
     active_prs = {(r["repo"], r["number"]) for r in active}
     normal_used = sum(1 for r in active if not r["priority"])
     priority_used = sum(1 for r in active if r["priority"])
+    cap = capacity(conn, cfg)  # scales with the usable OpenAI accounts
     # Under backlog pressure, temporarily lend a priority overflow slot to normal work -- but
     # never the last one, so a priority head always has somewhere to land.
     queued_count = conn.execute("SELECT COUNT(*) FROM heads WHERE status='queued'").fetchone()[0]
-    lent = 1 if queued_count > 10 and cfg.priority_overflow > 1 else 0
-    normal_capacity = cfg.max_concurrent + lent
+    lent = 1 if queued_count > 10 and cap.priority > 1 else 0
+    normal_capacity = cap.normal + lent
     for head in eligible_heads(conn, ts=ts):
         # Hard ceiling for every kind of head; nothing else can start once it is reached.
-        if normal_used + priority_used >= cfg.max_concurrent + cfg.priority_overflow:
+        if normal_used + priority_used >= cap.ceiling:
             break
         if (head["repo"], head["number"]) in active_prs:
             continue  # single-flight per PR

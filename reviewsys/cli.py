@@ -46,9 +46,13 @@ def cmd_tick(args: argparse.Namespace) -> int:
         # in-memory slot accounting, so the two together could start twice the slot ceiling.
         # `--no-spawn` builds a Daemon without the schedule task and is safe to run any time.
         acquire_singleton_lock(cfg.db_path.with_suffix(".daemon.lock"))
-    res = Daemon(
+    d = Daemon(
         cfg, conn, spawn=not args.no_spawn, notifier=Notifier(cfg, wake_enabled=not args.no_wake)
-    ).tick(force=True)
+    )
+    if args.no_spawn:
+        # without the daemon lock, never race the live daemon over the proxy's accounts
+        d.tasks = [t for t in d.tasks if t.name != "accounts"]
+    res = d.tick(force=True)
     print(json.dumps(res, default=str, indent=1))
     return 0
 
@@ -76,6 +80,10 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(
                 f"  run {a['id']} {a['repo']}#{a['number']} {a['sha'][:8]} phase={a['phase']} pid={a['pid']} hb={a['heartbeat_at']}"
             )
+        c = snap["capacity"]
+        print(
+            f"slots: {c['normal']} normal + {c['priority']} priority (x{c['scale']}: {c['reason']})"
+        )
         w = snap["watchdog"]
         print(
             f"watchdog: stuck={w['stuck']} eligible={w['eligible']} ingest_stale={w['ingest_stale']} median_run_min={snap['median_run_minutes']}"

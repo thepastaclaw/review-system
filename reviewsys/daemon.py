@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import degraded, labels
+from . import degraded, labels, slots
 from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
@@ -27,6 +27,12 @@ from .scheduler import apply_supersedes, schedule
 from .status import watchdog
 
 log = logging.getLogger(__name__)
+
+# at most one @-mention page per this interval: while degraded it re-pages this often until
+# someone fixes it, and a probe flapping in and out of the mode cannot page more often
+DEGRADED_REPAGE_S = 3600
+KV_PAGED_AT = "degraded.paged_at"  # last delivered @-mention page
+KV_PAGE_OPEN = "degraded.page_open"  # "1" while #claw has a page with no all-clear yet
 
 
 def acquire_singleton_lock(path: Path) -> IO[str]:
@@ -88,6 +94,10 @@ class Daemon:
                 Task("queue_comments", cfg.queue_comment_interval_seconds, self.t_queue_comments),
                 Task("labels", 60, self.t_labels),
             ]
+        # the reserves protect accounts other clients share, so they are enforced even in
+        # shadow mode; slot scaling only matters to a daemon that schedules
+        if cfg.account_reserves or (spawn and cfg.account_scale_max > 1):
+            self.tasks.append(Task("accounts", 120, self.t_accounts))
         if cfg.policy.degraded is not None:
             self.tasks.append(Task("degraded", 120, self.t_degraded))
         self.tasks += [Task("watchdog", 300, self.t_watchdog), Task("gc", 3600, self.t_gc)]
@@ -154,16 +164,71 @@ class Daemon:
     def t_gc(self) -> object:
         return gc_mod.run(self.conn, self.cfg)
 
+    def t_accounts(self) -> object:
+        cap, changes = slots.refresh(self.conn, self.cfg)
+        for action, email, detail in changes:
+            # events are exported to the public status page: no account names there
+            with tx(self.conn):
+                event(self.conn, f"account.{action}", detail="reserved account: " + detail)
+            self.notifier.alert(f"OpenAI account {email} {action} in the proxy: {detail}")
+        return cap.as_dict()
+
     def t_degraded(self) -> object:
-        """Re-probe the sentinel so the mode flips back on its own once quota returns, and
-        tell the operator once on every transition (workers flipping mid-run count too)."""
+        """Re-probe the sentinel so the mode flips back on its own once quota returns.
+
+        Only a person can add or re-enable an OpenAI account, so an outage the probe found
+        pages #claw with pasta and latte mentioned, and re-pages every `DEGRADED_REPAGE_S`
+        until it clears. The same interval bounds a flapping probe: a flip back into the mode
+        within it goes to the operator DM only. The all-clear goes to #claw only when #claw
+        has an open page and the probe (not an operator override) says the models answer. A
+        page that fails to deliver is retried on the next pass, not an hour later."""
         state = degraded.detect(self.conn, self.cfg, prober=self.prober, refresh=True)
         alert = degraded.transition(self.conn, state)
         if alert:
             with tx(self.conn):
                 event(self.conn, "degraded.transition", detail=state.describe())
-            self.notifier.alert(alert)
+        page_open = kv_get(self.conn, KV_PAGE_OPEN) == "1"
+        if not state.active:
+            if alert and page_open and state.source == "probe":
+                self.notifier.page(alert, resolved=True)
+            elif alert:
+                self.notifier.alert(alert)
+            if page_open:
+                with tx(self.conn):
+                    self.conn.execute("DELETE FROM kv WHERE key=?", (KV_PAGE_OPEN,))
+            return state.as_dict()
+        if state.source == "forced":
+            if alert:
+                self.notifier.alert(alert)  # the operator who forced it already knows
+            return state.as_dict()
+        last = kv_get(self.conn, KV_PAGED_AT)
+        due = last is None or (now_dt() - parse_ts(last)).total_seconds() >= DEGRADED_REPAGE_S
+        if due:
+            text = (
+                alert
+                if alert or not page_open
+                else f"STILL in DEGRADED mode since {state.since or '?'}: {state.reason}"
+            ) or f"in DEGRADED mode: {state.reason}"
+            if self.notifier.page(f"{text}\n{self._accounts_summary()}"):
+                with tx(self.conn):
+                    kv_set(self.conn, KV_PAGED_AT, now())
+                    kv_set(self.conn, KV_PAGE_OPEN, "1")
+        elif alert:
+            self.notifier.alert(alert)  # flapping back in within the hour: no new @-mentions
         return state.as_dict()
+
+    def _accounts_summary(self) -> str:
+        """What a human needs to act on: which OpenAI accounts are out and until when."""
+        stored = slots.stored_accounts(self.conn)
+        if stored is None:
+            return "OpenAI accounts: no reading from the proxy yet."
+        at, accounts = stored
+        lines = [f"OpenAI accounts (as of {at}):"]
+        for a in accounts:
+            back = f", back {a.reset_at}" if a.reset_at else ""
+            lines.append(f"• {'ok  ' if a.usable else 'OUT '} {a.name}: {a.reason}{back}")
+        lines.append("Fix: add a fresh account to the proxy or re-enable one with quota left.")
+        return "\n".join(lines)
 
     # ---- loop ----
     def tick(self, *, force: bool = False) -> dict[str, object]:

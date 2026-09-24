@@ -424,17 +424,41 @@ whose heartbeat is older than 5 min, whose deadline passed, or whose process is
 gone, and requeues the head with backoff (`infra` up to 3 attempts, `contract`
 twice, `fatal` never). Slot counts are recomputed from the DB every tick.
 
-Two reviews run at once normally, plus one overflow slot a priority head may
-claim: `max_concurrent + priority_overflow` is a hard ceiling no head of any kind
-crosses. A backlog (>10 queued) lends an overflow slot to normal work only while
-one remains free for priority, so with the default single overflow slot the
-priority lane stays reserved however long the queue gets.
+Slots scale with the OpenAI (Codex) accounts that can take work, because the
+primary models are limited per ChatGPT account (~3 concurrent streams, weekly
+quota), not globally. Each usable account adds `max_concurrent` normal slots
+plus `priority_overflow` slots a priority head may claim (2 + 1), for at most
+`account_scale_max` accounts (3, so 6 + 3). The total is a hard ceiling no head
+of any kind crosses. Every 2 min the daemon reads the proxy's `auth-files`
+(its record of each credential's cooldowns and `X-Codex-*-Used-Percent` quota
+headers; nothing is sent to OpenAI). An account is usable when it is enabled, not
+parked, and not cooling down for itself or for the sentinel model: it is spent to
+the end. The exception is `account_reserves` in the box's `config.toml`, keyed by account
+email (the list lives only on the box, since this repository is public): at
+that floor reviewsys *disables the account in the proxy*, so no client eats into
+the reserve, and re-enables it once the window that hit the floor has reset. It
+alerts on both, and it never re-enables an account an operator disabled. With no
+reading, or one older than 20 min,
+capacity falls back to one unit (2 + 1). A backlog (>10 queued) lends an overflow
+slot to normal work only while one remains free for priority, so the priority lane
+stays reserved however long the queue gets. `reviewsys status` prints the
+effective `slots:` line.
 
 ## Alerts (Slack via `openclaw message send`)
 
 Only: a head failed after all retries, watchdog (eligible work + free slot +
 nothing started for 30 min, or ingest stale/erroring), daemon start/stop.
 Everything else is in `events` and `reviewsys status`.
+
+Degraded mode is a page, not an alert: only a person can add or re-enable an
+OpenAI account. Entering it posts to `page_target` (#claw) with `page_mentions`
+(pasta, latte) @-mentioned, and copies the operator DM. The page lists every
+account as usable, out, or parked for its reserve, with its reset time. At most
+one @-mention page goes out per hour: it re-pages hourly until the mode clears,
+and if the probe flaps back into the mode within the hour, only the DM hears about
+it. When the probe sees the models answer again, the all-clear goes to the same
+places without mentions. An undelivered page is retried on the next pass. If an
+operator forces the mode on or off, only the DM hears about it.
 
 ## Development
 
@@ -486,7 +510,9 @@ Where to look when something is off, in order:
 4. `~/.reviewsys/watchdog.log` — every restart the cron watchdog performed
 
 Config knobs (`~/.reviewsys/config.toml`, restart the daemon after editing):
-`max_concurrent` / `priority_overflow` (slots), `debounce_minutes`,
+`max_concurrent` / `priority_overflow` (slots per usable OpenAI account),
+`account_scale_max` (1 = static slots), `account_reserves`, `page_target` / `page_mentions`
+(`[identity]`, degraded-mode pages), `debounce_minutes`,
 `lane_timeout_minutes` (wall-clock bound per lane), `lane_budget_usd` (runaway
 guard passed as `claude --max-budget-usd`; it is the CLI's list-price estimate,
 not real spend, so keep it well above a normal $3–10 lane).

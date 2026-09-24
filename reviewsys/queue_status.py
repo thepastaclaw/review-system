@@ -21,6 +21,7 @@ from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .models import Trigger
+from .slots import capacity
 from .status import median_run_minutes
 
 log = logging.getLogger(__name__)
@@ -188,7 +189,7 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     stats = {"written": 0, "promoted": 0, "deferred": 0}
     ts = now()
     run_min = median_run_minutes(conn) or DEFAULT_RUN_MINUTES
-    slots = max(cfg.max_concurrent, 1)
+    slots = max(capacity(conn, cfg).normal, 1)
     rows = queued_order(conn, ts=ts)
     comments: dict[int, dict[str, Any] | None] = {}
     for h in rows:

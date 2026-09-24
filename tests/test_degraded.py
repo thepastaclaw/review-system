@@ -12,7 +12,7 @@ import pytest
 from reviewsys import config as cfg_mod
 from reviewsys import degraded, worker
 from reviewsys.daemon import Daemon
-from reviewsys.db import kv_get, tx
+from reviewsys.db import kv_get, kv_set, tx
 from reviewsys.github import gate_body
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import RunStatus, Trigger
@@ -488,7 +488,7 @@ def test_degraded_preliminary_review_still_requests_changes(conn, gh, lanes, ski
 # ---- daemon, status, comments ----
 
 
-def test_daemon_probes_periodically_and_alerts_on_transition(
+def test_daemon_probes_periodically_and_pages_on_transition(
     cfg, conn, gh, notifier, skills_dir, tmp_path
 ):
     c = _cfg_with(skills_dir, tmp_path)
@@ -498,19 +498,95 @@ def test_daemon_probes_periodically_and_alerts_on_transition(
     )
     assert any(t.name == "degraded" for t in d.tasks)
     assert d.t_degraded()["active"] is True
-    assert [t for k, t in notifier.sent if k == "alert" and "DEGRADED" in t]
+    pages = [t for k, t in notifier.sent if k == "page"]
+    assert len(pages) == 1 and "entering DEGRADED" in pages[0]
+    assert "OpenAI accounts" in pages[0], "the page says what a human has to fix"
     n = len(notifier.sent)
     d.t_degraded()
-    assert len(notifier.sent) == n, "no repeat alert while the mode is unchanged"
+    assert len(notifier.sent) == n, "no repeat page within the re-page interval"
     state["exhausted"] = False
     assert d.t_degraded()["active"] is False
-    assert any("leaving degraded" in t for _, t in notifier.sent[n:])
+    assert [k for k, t in notifier.sent[n:]] == ["resolved"]
+    assert "leaving degraded" in notifier.sent[-1][1]
     kinds = [r["kind"] for r in conn.execute("SELECT kind FROM events")]
     assert kinds.count("degraded.transition") == 2
     # no task at all without a policy block (`cfg` was loaded before the block was added)
     assert cfg.policy.degraded is None
     plain = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False)
     assert not any(t.name == "degraded" for t in plain.tasks)
+
+
+def test_degraded_repages_hourly_until_it_clears(cfg, conn, gh, notifier, skills_dir, tmp_path):
+    from reviewsys import daemon as daemon_mod
+
+    c = _cfg_with(skills_dir, tmp_path)
+    d = Daemon(c, conn, gh=gh, notifier=notifier, spawn=False, prober=EXHAUSTED)
+    d.t_degraded()
+    d.t_degraded()
+    assert [k for k, _ in notifier.sent] == ["page"]
+    with tx(conn):  # an hour passes
+        kv_set(conn, daemon_mod.KV_PAGED_AT, "2000-01-01T00:00:00Z")
+    d.t_degraded()
+    assert [k for k, _ in notifier.sent] == ["page", "page"]
+    assert "STILL in DEGRADED mode" in notifier.sent[-1][1]
+
+
+def test_a_flapping_probe_pages_at_most_hourly(cfg, conn, gh, notifier, skills_dir, tmp_path):
+    c = _cfg_with(skills_dir, tmp_path)
+    state = {"exhausted": True}
+    d = Daemon(
+        c, conn, gh=gh, notifier=notifier, spawn=False, prober=lambda m: (state["exhausted"], "r")
+    )
+    for _ in range(4):
+        state["exhausted"] = True
+        d.t_degraded()
+        state["exhausted"] = False
+        d.t_degraded()
+    kinds = [k for k, _ in notifier.sent]
+    assert kinds.count("page") == 1, "one @-mention page however often the probe flaps"
+    assert kinds.count("resolved") == 1, "one all-clear, for the page that went out"
+
+
+def test_an_undelivered_page_is_retried_on_the_next_pass(conn, gh, skills_dir, tmp_path):
+    from tests.conftest import FakeNotifier
+
+    c = _cfg_with(skills_dir, tmp_path)
+    delivered = {"ok": False}
+
+    class Flaky(FakeNotifier):
+        def page(self, text, *, resolved=False):
+            super().page(text, resolved=resolved)
+            return delivered["ok"]
+
+    n = Flaky(c)
+    d = Daemon(c, conn, gh=gh, notifier=n, spawn=False, prober=EXHAUSTED)
+    d.t_degraded()
+    delivered["ok"] = True
+    d.t_degraded()
+    assert [k for k, _ in n.sent] == ["page", "page"]
+    d.t_degraded()
+    assert [k for k, _ in n.sent] == ["page", "page"], "delivered: quiet for the hour"
+
+
+def test_forcing_the_mode_off_does_not_announce_an_all_clear(
+    cfg, conn, gh, notifier, skills_dir, tmp_path
+):
+    c = _cfg_with(skills_dir, tmp_path)
+    d = Daemon(c, conn, gh=gh, notifier=notifier, spawn=False, prober=EXHAUSTED)
+    d.t_degraded()
+    degraded.force(conn, "off")
+    d.t_degraded()
+    assert [k for k, _ in notifier.sent] == ["page", "alert"], "the problem is not fixed"
+
+
+def test_forced_degraded_is_not_paged(cfg, conn, gh, notifier, skills_dir, tmp_path):
+    """The operator who forced it knows; nobody needs waking."""
+    c = _cfg_with(skills_dir, tmp_path)
+    degraded.force(conn, "on")
+    d = Daemon(c, conn, gh=gh, notifier=notifier, spawn=False, prober=FINE)
+    d.t_degraded()
+    d.t_degraded()
+    assert [k for k, _ in notifier.sent] == ["alert"]
 
 
 def test_status_snapshot_and_cli_show_the_mode(conn, gh, skills_dir, tmp_path, capsys):

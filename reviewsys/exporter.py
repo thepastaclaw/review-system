@@ -116,10 +116,13 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "SELECT ts,kind,repo,number,run_id,detail FROM events ORDER BY id DESC LIMIT 40"
         )
     ]
+    cap = live.pop("capacity")
     live["capacity"] = {
-        "typical": cfg.max_concurrent,
-        "priority_overflow": cfg.priority_overflow,
-        "maximum": cfg.max_concurrent + cfg.priority_overflow,
+        "typical": cap["normal"],
+        "priority_overflow": cap["priority"],
+        "maximum": cap["ceiling"],
+        "scale": cap["scale"],
+        "usable_accounts": cap["usable"],
     }
     live["priority_queued"] = sum(1 for q in queued if q["priority"])
     return {
