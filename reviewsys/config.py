@@ -172,8 +172,11 @@ class Config:
     gh_bin: str
     openclaw_bin: str
     # scheduling
-    max_concurrent: int
-    priority_overflow: int
+    max_concurrent: int  # per usable OpenAI account (see slots.py)
+    priority_overflow: int  # per usable OpenAI account
+    account_scale_max: int  # most accounts the slots scale over; 1 = static slots
+    # OpenAI account (email) -> fraction of its quota nobody may spend; unlisted = 0
+    account_reserves: dict[str, float]
     debounce_minutes: int
     max_attempts: int
     retry_backoff_minutes: tuple[int, ...]
@@ -193,6 +196,10 @@ class Config:
     bot_login: str
     slack_target: str | None
     slack_account: str
+    # loud, shared alert for outages someone must fix (degraded mode): a channel plus the
+    # Slack user ids to @-mention; None = page the `slack_target` DM only
+    page_target: str | None
+    page_mentions: tuple[str, ...]
     agent_session_key: str
     trusted_reviewers: tuple[str, ...]
     # retention
@@ -243,6 +250,11 @@ class Config:
         return self.work_dir / "logs"
 
 
+# #claw and pasta + latte: the people who can add or re-enable an OpenAI account. Code
+# defaults as well as TOML ones, so a box config.toml predating them still pages.
+DEFAULT_PAGE_TARGET = "channel:C0AEQ5D7SJ3"
+DEFAULT_PAGE_MENTIONS = ("UCW1VE04T", "U02CNG35EGG")
+
 DEFAULT_TOML = """\
 # reviewsys configuration
 [paths]
@@ -256,8 +268,15 @@ openclaw = "openclaw"
 [scheduling]
 # Additional automation-owned forks to poll and review (without a skills entry).
 additional_repos = []
+# slots per usable OpenAI account; the effective capacity is this times the number of
+# accounts with quota left (at most account_scale_max), never less than one unit
 max_concurrent = 2
 priority_overflow = 1
+account_scale_max = 3
+# fraction of an account's quota to leave untouched, keyed by account email; at the floor
+# the account is disabled in the proxy (for every client) until its window resets.
+# Unlisted accounts are spent to the end. Set on the box only: this repository is public.
+account_reserves = {}
 debounce_minutes = 30
 max_attempts = 3
 retry_backoff_minutes = [5, 15, 45]
@@ -282,6 +301,9 @@ backlog_skip_phase1_above = 10
 bot_login = "thepastaclaw"
 slack_target = "user:UCW1VE04T"
 slack_account = "default"
+# degraded mode pages this channel (#claw) and @-mentions these users (pasta, latte)
+page_target = "channel:C0AEQ5D7SJ3"
+page_mentions = ["UCW1VE04T", "U02CNG35EGG"]
 agent_session_key = "agent:main:main"
 trusted_reviewers = ["PastaPastaPasta", "QuantumExplorer", "shumkov", "lklimek", "dustinface", "thephez", "knst", "pauldelucia", "UdjinM6"]
 
@@ -461,6 +483,11 @@ def _tiers(node: dict[str, Any], p1_default: str, p2_default: str) -> dict[str, 
     return out
 
 
+def _mentions(value: Any) -> tuple[str, ...]:
+    """Slack user ids; a single id written as a string is one mention, not one per letter."""
+    return (str(value),) if isinstance(value, str) else tuple(str(u) for u in value or ())
+
+
 def load(path: Path | None = None, *, skills_override: Path | None = None) -> Config:
     path = path or DEFAULT_CONFIG_PATH
     text = path.read_text() if path.exists() else DEFAULT_TOML
@@ -482,6 +509,11 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         priority_overflow=max(
             0, int(s.get("priority_overflow", settings.get("priority_review_overflow_slots", 1)))
         ),
+        account_scale_max=max(1, int(s.get("account_scale_max", 3))),
+        account_reserves={
+            str(k).lower(): min(1.0, max(0.0, float(v)))
+            for k, v in (s.get("account_reserves") or {}).items()
+        },
         debounce_minutes=int(s.get("debounce_minutes", settings.get("debounce_minutes", 30))),
         max_attempts=int(s["max_attempts"]),
         retry_backoff_minutes=tuple(int(x) for x in s["retry_backoff_minutes"]),
@@ -502,6 +534,8 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         bot_login=str(i["bot_login"]),
         slack_target=i.get("slack_target"),
         slack_account=str(i.get("slack_account", "default")),
+        page_target=i.get("page_target", DEFAULT_PAGE_TARGET) or None,
+        page_mentions=_mentions(i.get("page_mentions", DEFAULT_PAGE_MENTIONS)),
         agent_session_key=str(i.get("agent_session_key", "agent:main:main")),
         trusted_reviewers=tuple(i.get("trusted_reviewers", [])),
         artifact_retention_days=int(r["artifact_days"]),

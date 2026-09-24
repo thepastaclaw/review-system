@@ -155,8 +155,8 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
     _ok(
         "review slots",
         True,
-        f"{cfg.max_concurrent} normal + {cfg.priority_overflow} priority "
-        f"(ceiling {cfg.max_concurrent + cfg.priority_overflow}, from config.toml)",
+        f"{cfg.max_concurrent} normal + {cfg.priority_overflow} priority per usable OpenAI "
+        f"account, up to {cfg.account_scale_max} accounts (from config.toml)",
     )
     dp = cfg.policy.degraded
     if dp is None:

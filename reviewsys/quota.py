@@ -23,6 +23,7 @@ never gated.
 
 from __future__ import annotations
 
+import http.client
 import json
 import logging
 import os
@@ -110,6 +111,9 @@ class Management:
     def post(self, path: str, body: dict[str, Any]) -> Any:
         return self._call("POST", path, json.dumps(body).encode())
 
+    def patch(self, path: str, body: dict[str, Any]) -> Any:
+        return self._call("PATCH", path, json.dumps(body).encode())
+
     def _call(self, method: str, path: str, data: bytes | None) -> Any:
         req = urllib.request.Request(
             f"{self.base_url}/v0/management/{path.lstrip('/')}",
@@ -122,7 +126,12 @@ class Management:
                 return json.loads(resp.read() or b"null")
         except urllib.error.HTTPError as exc:
             raise QuotaError(f"management {method} {path}: HTTP {exc.code}") from exc
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        except (
+            urllib.error.URLError,
+            http.client.HTTPException,
+            OSError,
+            json.JSONDecodeError,
+        ) as exc:  # a connection dropped mid-response surfaces as HTTPException/OSError
             raise QuotaError(f"management {method} {path}: {exc}") from exc
 
     def api_call(

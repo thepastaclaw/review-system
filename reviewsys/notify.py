@@ -14,7 +14,7 @@ Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 
 def _run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(list(argv), capture_output=True, text=True, timeout=60, check=False)
+    return subprocess.run(list(argv), capture_output=True, text=True, timeout=120, check=False)
 
 
 class Notifier:
@@ -32,6 +32,28 @@ class Notifier:
         if not self.cfg.slack_target:
             log.warning("alert (no slack target configured): %s", text)
             return False
+        return self._send(self.cfg.slack_target, f":rotating_light: reviewsys: {text}")
+
+    def page(self, text: str, *, resolved: bool = False) -> bool:
+        """An outage a person has to fix: posted to the shared page channel with the on-call
+        users @-mentioned, and to the operator DM as well. `resolved=True` is the all-clear:
+        same places, no mentions. True if either copy landed."""
+        self.sent.append(("resolved" if resolved else "page", text))
+        if resolved:
+            loud = f":white_check_mark: reviewsys: {text}"
+        else:
+            loud = f":rotating_light::rotating_light: *reviewsys needs a human* :rotating_light::rotating_light:\n{text}"
+        delivered = False
+        if self.cfg.page_target:
+            mentions = "" if resolved else " ".join(f"<@{u}>" for u in self.cfg.page_mentions)
+            delivered = self._send(self.cfg.page_target, f"{mentions} {loud}".strip())
+        if self.cfg.slack_target and self.cfg.slack_target != self.cfg.page_target:
+            delivered = self._send(self.cfg.slack_target, loud) or delivered
+        if not delivered:
+            log.error("page not delivered anywhere: %s", text)
+        return delivered
+
+    def _send(self, target: str, message: str) -> bool:
         argv = [
             self.cfg.openclaw_bin,
             "message",
@@ -41,17 +63,19 @@ class Notifier:
             "--account",
             self.cfg.slack_account,
             "--target",
-            self.cfg.slack_target,
+            target,
             "-m",
-            f":rotating_light: reviewsys: {text}",
+            message,
         ]
         try:
             proc = self.runner(argv)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            log.error("alert delivery failed: %s", exc)
+            log.error("alert delivery to %s failed: %s", target, exc)
             return False
         if proc.returncode != 0:
-            log.error("alert delivery rc=%s: %s", proc.returncode, (proc.stderr or "")[:200])
+            log.error(
+                "alert delivery to %s rc=%s: %s", target, proc.returncode, (proc.stderr or "")[:200]
+            )
             return False
         return True
 

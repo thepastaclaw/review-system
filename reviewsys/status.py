@@ -6,7 +6,7 @@ import sqlite3
 from datetime import timedelta
 from typing import Any
 
-from . import degraded
+from . import degraded, slots
 from .config import Config
 from .db import fmt_ts, kv_get, now, now_dt, parse_ts
 
@@ -62,6 +62,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         "ingest_error_streak": int(kv_get(conn, "ingest.error_streak", "0") or 0),
         "watchdog": watchdog(conn, cfg),
         "degraded": degraded.snapshot(conn, cfg),
+        "capacity": slots.capacity(conn, cfg).as_dict(),
     }
 
 
@@ -79,7 +80,7 @@ def watchdog(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     idle_min = (ts - parse_ts(last_start)).total_seconds() / 60 if last_start else None
     stuck = (
         bool(eligible)
-        and active < cfg.max_concurrent
+        and active < slots.capacity(conn, cfg).normal
         and (idle_min is None or idle_min > cfg.watchdog_minutes)
     )
     ingest_last = kv_get(conn, "ingest.last_at")
