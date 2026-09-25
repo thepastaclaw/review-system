@@ -1182,7 +1182,7 @@ def _degrade_on_quota_failure(
     if not _flip_to_degraded(
         ctx,
         lm.model,
-        error=res.stderr or "",
+        error=res.infra_error,
         upstream=res.first_stderr_line,
         detail=f"{lm.model} lane: {exc.message}",
     ):
