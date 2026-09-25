@@ -82,6 +82,12 @@ class StepName(StrEnum):
     VERIFY2 = "verify2"
     FRESH_PHASE2 = "fresh_phase2"
     FRESH_VERIFY2 = "fresh_verify2"
+    # v10 pipeline
+    GROUP1 = "group1"  # dedupe Phase-1 candidates and match them to the issue ledger
+    GROUP2 = "group2"
+    THREADS = "threads"  # the one lane that reads maintainers and moves ledger issues
+    CODERABBIT = "coderabbit"  # verify CodeRabbit comments no finder matched
+    COMPOSE = "compose"
     PUBLISH = "publish"
 
 

@@ -116,6 +116,15 @@ def remove_worktree(mirror: Path, path: Path) -> None:
             _git("worktree", "prune", cwd=mirror)
 
 
+def diff_file(worktree: Path, old: str, new: str, path: str, *, context: int = 3) -> str | None:
+    """`git diff old new -- path` inside the run's worktree, or None when either commit is not
+    available (a force-pushed-away head) or git fails. Never raises."""
+    try:
+        return _git("diff", f"-U{context}", old, new, "--", path, cwd=worktree, timeout=120)
+    except ReviewError:
+        return None
+
+
 def merge_base(worktree: Path, base_branch: str, sha: str) -> str | None:
     try:
         _git(
