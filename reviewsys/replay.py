@@ -21,6 +21,7 @@ import dataclasses
 import json
 import shutil
 import sqlite3
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -115,6 +116,12 @@ def replay(
     work = out / f"run-{run_id}"
     if work.exists():
         shutil.rmtree(work)
+    # a removed replay leaves its worktree registered in the shared mirror, and the same
+    # worktree name is reused on a re-run: forget worktrees whose directories are gone
+    for mirror in cfg.mirrors_dir.glob("*.git"):
+        subprocess.run(
+            ["git", "-C", str(mirror), "worktree", "prune"], capture_output=True, check=False
+        )
     (work / "work").mkdir(parents=True)
     # share the bare mirrors (fetch-only), isolate everything else
     (work / "work" / "mirrors").symlink_to(cfg.mirrors_dir)
