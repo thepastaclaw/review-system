@@ -56,12 +56,33 @@ class LaneResult:
         return self.exit_code == 0 and not self.timed_out
 
     @property
+    def api_error(self) -> str:
+        """The upstream error Claude Code reported for a failed call ("API Error: 429 ...").
+        It lands in the envelope's `result` with `is_error`, not on stderr. Only set when the
+        lane failed and the text is Claude Code's own API-error prefix, so it is never model
+        output. "" otherwise."""
+        text = self.result_text.strip()
+        if self.exit_code != 0 and text.startswith("API Error"):
+            return text.splitlines()[0][:500]
+        return ""
+
+    @property
+    def infra_error(self) -> str:
+        """Infrastructure error text for quota detection and disclosure: the API error when
+        there is one, else stderr (a launcher crash). Never model output."""
+        return "\n".join(x for x in (self.api_error, self.stderr or "") if x)
+
+    @property
     def first_stderr_line(self) -> str:
-        """The lane's first non-blank stderr line: infrastructure error text (an upstream
-        429, a launcher crash), never model output. "" when it said nothing."""
+        """The lane's first meaningful infrastructure error line (an upstream 429, a launcher
+        crash), never model output. "" when it said nothing. Claude Code's own diagnostics
+        (`[claude-code:...]`, printed for every proxied model) are skipped."""
+        if self.api_error:
+            return self.api_error
         for line in (self.stderr or "").splitlines():
-            if line.strip():
-                return line.strip()
+            s = line.strip()
+            if s and not s.startswith("[claude-code:"):
+                return s
         return ""
 
 
@@ -192,7 +213,8 @@ def lane_output(res: LaneResult) -> dict[str, Any]:
                 f"lane {res.subtype.removeprefix('error_')} after {res.turns or '?'} turns, ${res.cost_usd or '?'}",
             )
         raise ReviewError(
-            FailKind.INFRA, f"lane exit {res.exit_code}: {(res.stderr or res.result_text)[:200]}"
+            FailKind.INFRA,
+            f"lane exit {res.exit_code}: {(res.first_stderr_line or res.result_text)[:200]}",
         )
     return parse_json_object(res.result_text)
 
