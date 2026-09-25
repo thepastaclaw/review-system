@@ -171,3 +171,42 @@ def test_extract_result_error_envelope_is_readable():
     assert res.exit_code == 1
     with pytest.raises(ReviewError, match=r"lane max_budget_usd after 63 turns, \$4.0086"):
         lane_output(res)
+
+
+def test_quota_errors_in_the_envelope_reach_quota_detection():
+    """Claude Code reports an upstream error in the result envelope, not on stderr, and prints
+    a `[claude-code:unrecognized_model]` diagnostic on stderr for every proxied model. The
+    quota check must see the former and skip the latter (2026-09-24: Astra cooled down
+    mid-run and lanes failed as `unrecognized_model` instead of flipping to degraded mode)."""
+    import json
+
+    from reviewsys.degraded import looks_like_quota_failure
+    from reviewsys.lane import LaneResult, _extract_result, lane_output
+
+    env = {
+        "type": "result",
+        "subtype": "success",
+        "is_error": True,
+        "result": "API Error: Request rejected (429) · All credentials for model gpt-6-astra are cooling down",
+    }
+    res = LaneResult(
+        exit_code=1,
+        stdout=json.dumps(env),
+        stderr='[claude-code:unrecognized_model] {"model":"gpt-6-astra","query_source":"sdk"}\n',
+        duration_s=1,
+    )
+    _extract_result(res)
+    assert res.first_stderr_line.startswith("API Error: Request rejected (429)")
+    assert looks_like_quota_failure(res.infra_error)
+    with pytest.raises(ReviewError) as e:
+        lane_output(res)
+    assert "cooling down" in e.value.message and "unrecognized_model" not in e.value.message
+    # a successful lane's result is model output and is never treated as an API error
+    ok = LaneResult(
+        exit_code=0,
+        stdout=json.dumps({"type": "result", "result": "API Error: x"}),
+        stderr="",
+        duration_s=1,
+    )
+    _extract_result(ok)
+    assert ok.api_error == "" and ok.infra_error == ""
