@@ -58,7 +58,8 @@ LIGHT_TITLE_RE = re.compile(
 # branch-to-branch syncs carry content that was (or will be) audited through its source PRs;
 # a 10k+ line merge is not reviewable as one unit, so these are recorded, not run
 SYNC_TITLE_RE = re.compile(
-    r"^(chore: )?(merge|sync) v?\d[\w.-]* (dev )?into |^merge/.+ into ", re.IGNORECASE
+    r"^(\w+(\([^)]*\))?!?: )?(merge|sync) v?\d[\w.-]* (dev )?into |^merge/.+ into ",
+    re.IGNORECASE,
 )
 CANONICAL_RC = "Canonical verifier result: `REQUEST_CHANGES`"
 BLOCKING_COUNT_RE = re.compile(r"🔴 ([1-9]\d*) blocking")
