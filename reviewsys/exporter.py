@@ -113,7 +113,8 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     recent = [
         dict(r)
         for r in conn.execute(
-            "SELECT ts,kind,repo,number,run_id,detail FROM events ORDER BY id DESC LIMIT 40"
+            "SELECT ts,kind,repo,number,run_id,detail FROM events WHERE kind NOT LIKE 'audit.%' "
+            "ORDER BY id DESC LIMIT 40"
         )
     ]
     cap = live.pop("capacity")

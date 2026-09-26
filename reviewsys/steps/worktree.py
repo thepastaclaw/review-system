@@ -129,3 +129,49 @@ def merge_base(worktree: Path, base_branch: str, sha: str) -> str | None:
         return _git("merge-base", f"origin/{base_branch}", sha, cwd=worktree).strip() or None
     except ReviewError:
         return None
+
+
+def fetch_branch(repo_dir: Path, branch: str) -> str | None:
+    """Fetch `branch` into refs/remotes/origin/<branch>; its tip sha, or None when it is gone."""
+    try:
+        _git(
+            "fetch",
+            "--no-tags",
+            "origin",
+            f"+refs/heads/{branch}:refs/remotes/origin/{branch}",
+            cwd=repo_dir,
+            timeout=900,
+        )
+        return _git("rev-parse", f"origin/{branch}", cwd=repo_dir).strip() or None
+    except ReviewError:
+        return None
+
+
+def ensure_commit(repo_dir: Path, sha: str) -> bool:
+    """Make `sha` present (fetching it by id when needed); False when it cannot be had."""
+    try:
+        _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=repo_dir)
+        return True
+    except ReviewError:
+        pass
+    try:
+        _git("fetch", "--no-tags", "origin", sha, cwd=repo_dir, timeout=900)
+        _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=repo_dir)
+        return True
+    except ReviewError:
+        return False
+
+
+def pre_merge_base(worktree: Path, base_branch: str, merge_commit: str, sha: str) -> str | None:
+    """Where the PR's own diff starts, as GitHub showed it at merge time: the merge base of the
+    head with the base branch just before the merge (the merge commit's first parent). Right
+    for merge, squash and rebase merges alike; the merge base with *today's* base would be the
+    head itself after a true merge and so an empty diff. None when it cannot be determined."""
+    if base_branch:
+        fetch_branch(worktree, base_branch)
+    if not ensure_commit(worktree, merge_commit):
+        return None
+    try:
+        return _git("merge-base", f"{merge_commit}^1", sha, cwd=worktree).strip() or None
+    except ReviewError:
+        return None

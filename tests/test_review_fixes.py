@@ -7,7 +7,7 @@ import threading
 
 from reviewsys import worker
 from reviewsys.contract import Finding
-from reviewsys.db import connect, now, tx
+from reviewsys.db import SCHEMA_VERSION, connect, now, tx
 from reviewsys.dedupe import collapse_same_root
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import RunStatus, Trigger
@@ -32,7 +32,7 @@ def test_concurrent_first_migration_does_not_crash(tmp_path):
         t.join()
     assert not errors, errors
     c = sqlite3.connect(p)
-    assert c.execute("SELECT version FROM schema_version").fetchall() == [(3,)]
+    assert c.execute("SELECT version FROM schema_version").fetchall() == [(SCHEMA_VERSION,)]
 
 
 def test_worker_never_resurrects_a_reaped_run(cfg, conn, gh, lanes):

@@ -52,6 +52,7 @@ class Trigger(StrEnum):
     PRIORITY_REQUEST = "priority_request"  # checkbox ticked on the queue comment
     REVIEW_REPLY = "review_reply"  # a human replied under one of the bot's finding threads
     MANUAL = "manual"
+    AUDIT = "audit"  # post-merge review of a PR merged without a clean review (audit queue)
 
     @property
     def priority(self) -> bool:
@@ -82,6 +83,7 @@ class StepName(StrEnum):
     VERIFY2 = "verify2"
     FRESH_PHASE2 = "fresh_phase2"
     FRESH_VERIFY2 = "fresh_verify2"
+    PERSISTENCE = "persistence"  # audit: is each blocker still present on the base tip?
     PUBLISH = "publish"
 
 

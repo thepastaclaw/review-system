@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import converse, degraded, github, labels, publish, quota
+from . import audit, converse, degraded, github, labels, publish, quota
 from .config import Config, DegradedPolicy, LaneModel, min_effort
 from .contract import (
     Finding,
@@ -39,7 +39,7 @@ from .gh import Gh
 from .lane import LaneResult, LaneRunner, LaneSpec, lane_output, prompt_sha, run_claude_lane
 from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
 from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, skill_texts, verifier_prompt
-from .scheduler import finish_run
+from .scheduler import finish_run, live_queued_count
 from .select import Selection, select, write_selection
 from .steps import worktree as wt
 from .triage import Triage, triage, write_triage
@@ -64,6 +64,7 @@ class RunContext:
     token: str
     run_dir: Path
     trigger: str = ""  # heads.trigger: what queued this head
+    audit: dict[str, Any] | None = None  # the audits row when this is a post-merge audit run
     worktree: Path | None = None
     mirror: Path | None = None
     meta: github.PrMeta | None = None
@@ -100,6 +101,10 @@ class RunContext:
     lane_runner: LaneRunner = run_claude_lane
     dry_run: bool = False
     cancel_flag: threading.Event = field(default_factory=threading.Event)
+
+    @property
+    def is_audit(self) -> bool:
+        return self.audit is not None
 
     def check_cancel(self) -> None:
         if self.cancel_flag.is_set():
@@ -265,7 +270,7 @@ def _set_run_review(
 
 
 def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
-    if ctx.dry_run:
+    if ctx.dry_run or ctx.is_audit:
         return
     if ctx.triage is not None:
         kw.setdefault("tier", ctx.tier)
@@ -288,6 +293,9 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
 
 def step_worktree(ctx: RunContext) -> None:
     meta = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
+    if ctx.is_audit:
+        _audit_worktree(ctx, meta)
+        return
     if meta.state != "open" or meta.merged:
         raise ReviewError(FailKind.FATAL, f"PR is {meta.state}{' (merged)' if meta.merged else ''}")
     if meta.head_sha != ctx.sha:
@@ -296,21 +304,54 @@ def step_worktree(ctx: RunContext) -> None:
         )
     ctx.meta = meta
     ctx.base_sha = meta.base_sha
-    ctx.mirror = wt.ensure_mirror(ctx.cfg.mirrors_dir, ctx.repo)
-    wt.fetch_head(ctx.mirror, ctx.number, ctx.sha)
-    ctx.worktree = wt.create_worktree(
-        ctx.mirror,
-        ctx.cfg.worktrees_dir,
-        f"{ctx.repo.replace('/', '-')}-{ctx.number}-{ctx.run_id}",
-        ctx.sha,
-    )
+    ctx.worktree = _checkout_head(ctx)
     base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
     ctx.coverage_from = base or f"{ctx.sha}~1"
+    _record_worktree(ctx)
+
+
+def _worktree_name(ctx: RunContext, suffix: str = "") -> str:
+    return f"{ctx.repo.replace('/', '-')}-{ctx.number}-{ctx.run_id}{suffix}"
+
+
+def _checkout_head(ctx: RunContext) -> Path:
+    """Fetch the assigned head into the repo's mirror and check it out in a fresh worktree."""
+    ctx.mirror = wt.ensure_mirror(ctx.cfg.mirrors_dir, ctx.repo)
+    wt.fetch_head(ctx.mirror, ctx.number, ctx.sha)
+    return wt.create_worktree(ctx.mirror, ctx.cfg.worktrees_dir, _worktree_name(ctx), ctx.sha)
+
+
+def _record_worktree(ctx: RunContext) -> None:
     with tx(ctx.conn):
         ctx.conn.execute(
             "UPDATE runs SET worktree=?, run_dir=? WHERE id=?",
             (str(ctx.worktree), str(ctx.run_dir), ctx.run_id),
         )
+
+
+def _audit_worktree(ctx: RunContext, meta: github.PrMeta) -> None:
+    """The merged head, reviewed against the base branch as it stood just before the merge:
+    the first parent of the merge commit (for a squash or rebase merge, the parent of the
+    first landed commit is the same thing). The PR's own diff, as merged, not today's base."""
+    assert ctx.audit is not None
+    if not meta.merged:
+        raise ReviewError(FailKind.FATAL, f"audit of a PR that is not merged (state {meta.state})")
+    ctx.meta = meta
+    ctx.worktree = _checkout_head(ctx)
+    merge = str(ctx.audit.get("merge_commit") or "")
+    base = wt.pre_merge_base(ctx.worktree, meta.base_ref, merge, ctx.sha) if merge else None
+    if base is None and meta.base_ref:
+        base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha)
+    if not base or base == ctx.sha:
+        # the merge base with *today's* base is the head itself after a true merge: that range
+        # is empty and would report a false clean. Better no answer than a wrong one.
+        raise ReviewError(
+            FailKind.INFRA if not base else FailKind.FATAL,
+            f"cannot determine the pre-merge base of {ctx.sha[:8]} (merge {merge[:8] or '?'})",
+        )
+    ctx.coverage_from = base
+    ctx.base_sha = base
+    _record_worktree(ctx)
 
 
 def step_select(ctx: RunContext) -> None:
@@ -1289,6 +1330,15 @@ def _publish_step(
     verifier_lm: LaneModel,
     phase2_skipped: str | None = None,
 ) -> None:
+    if ctx.is_audit:
+        _audit_publish(
+            ctx,
+            phase=phase,
+            verified=verified,
+            verifier_lm=verifier_lm,
+            phase2_skipped=phase2_skipped,
+        )
+        return
     _step_start(ctx, StepName.PUBLISH)
     res = step_publish(
         ctx, phase=phase, verified=verified, verifier_lm=verifier_lm, phase2_skipped=phase2_skipped
@@ -1306,6 +1356,161 @@ def _publish_step(
         blocker_count=verified.blocker_count,
         phase2_skipped=phase2_skipped,
     )
+
+
+def _audit_publish(
+    ctx: RunContext,
+    *,
+    phase: str,
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+    phase2_skipped: str | None = None,
+) -> None:
+    """An audit never posts a review: the verdict goes to the report (and, for a merge the
+    sweep caught live, to a post-merge comment plus one issue while blockers are still
+    present). A light audit that finds a blocker is re-queued as a full one instead."""
+    assert ctx.audit is not None and ctx.meta is not None
+    if ctx.audit["mode"] == audit.MODE_LIGHT and verified.blocker_count:
+        audit.escalate(ctx.conn, int(ctx.audit["id"]), ctx.head_id)
+        return
+    prov = publish.Provenance(
+        reviewers=ctx.reviewers,
+        verifier=_lane_provenance(verifier_lm, "final-verifier"),
+        policy_fingerprint=ctx.cfg.policy.fingerprint,
+        triage=_triage_provenance(ctx),
+        phase2_skipped=phase2_skipped,
+        phase1_skipped=ctx.phase1_skipped,
+        phase1_choice=_phase1_choice_provenance(ctx),
+        adhoc=ctx.adhoc,
+        fresh_final=ctx.fresh_final,
+        degraded=_degraded_provenance(ctx),
+    )
+    # dry_run: the dedupe pass must not reply on the merged PR's old threads
+    model = publish.build(
+        ctx.gh,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        phase=phase,
+        verified=verified,
+        provenance=prov,
+        bot_login=ctx.cfg.bot_login,
+        diff_text=None,
+        dry_run=True,
+    )
+    body = publish.render(model)
+    (ctx.run_dir / f"audit-review-{phase}.md").write_text(body)
+    persistence, tip_ref, tip_sha = step_persistence(ctx, verified)
+    outcome = audit.Outcome(
+        audit=ctx.audit,
+        verdict=publish.verdict_event(verified, prov),
+        findings=list(verified.findings),
+        persistence=persistence,
+        tip_ref=tip_ref,
+        tip_sha=tip_sha,
+        review_body=body,
+        degraded=ctx.is_degraded,
+        run_id=ctx.run_id,
+    )
+    _step_start(ctx, StepName.PUBLISH)
+    audit.write_report(ctx.cfg, outcome)
+    comment_url = issue_url = None
+    if ctx.audit["source"] == audit.SOURCE_LIVE and ctx.cfg.audit.post_live and not ctx.dry_run:
+        aid = int(ctx.audit["id"])
+        comment_url, issue_url = audit.post_live(
+            ctx.gh,
+            outcome,
+            bot_login=ctx.cfg.bot_login,
+            persist=lambda col, url: audit.persist_url(ctx.conn, aid, col, url),
+        )
+    with tx(ctx.conn):
+        audit.record(ctx.conn, outcome, comment_url=comment_url, issue_url=issue_url)
+        _insert_findings(ctx, phase, "audit-posted", verified.findings)
+        _set_run_review(
+            ctx, blocker_count=verified.blocker_count, review_id=None, review_url=comment_url
+        )
+    _step_end(
+        ctx,
+        StepName.PUBLISH,
+        "ok",
+        {
+            "audit": True,
+            "verdict": outcome.verdict,
+            "blockers": len(outcome.blockers),
+            "still_present": len(outcome.open_blockers),
+            "comment": comment_url,
+            "issue": issue_url,
+        },
+    )
+
+
+def step_persistence(
+    ctx: RunContext, verified: VerifierOutput
+) -> tuple[dict[str, dict[str, Any]], str, str]:
+    """Audit: for every blocker, is it still present on the base branch tip today? One lane in
+    a worktree at the tip, read-only. No blockers: nothing to check. A failed lane leaves every
+    blocker UNKNOWN (counted as open), never FIXED."""
+    assert ctx.audit is not None and ctx.meta is not None and ctx.mirror is not None
+    blockers = [f for f in verified.findings if f.severity == "blocking"]
+    tip_ref = ctx.meta.base_ref or str(ctx.audit.get("base_ref") or "")
+    hashes = [f.hash for f in blockers]
+    if not blockers:
+        return {}, tip_ref, ""
+    _step_start(ctx, StepName.PERSISTENCE)
+    tip_sha = wt.fetch_branch(ctx.mirror, tip_ref) if tip_ref else None
+    if tip_sha is None:
+        # the base branch is gone (a feature branch deleted after it merged on): check against
+        # where the merge landed instead
+        tip_sha = str(ctx.audit.get("merge_commit") or "") or ctx.sha
+        tip_ref = f"{tip_ref or 'base'} (deleted; merge commit)"
+    tip_wt = None
+    try:
+        wt.ensure_commit(ctx.mirror, tip_sha)
+        tip_wt = wt.create_worktree(
+            ctx.mirror, ctx.cfg.worktrees_dir, _worktree_name(ctx, "-tip"), tip_sha
+        )
+        wt.ensure_commit(tip_wt, ctx.sha)  # `git show <head>:path` must work from the tip
+        prompt = audit.persistence_prompt(
+            repo=ctx.repo,
+            number=ctx.number,
+            title=ctx.meta.title,
+            merged_at=str(ctx.audit.get("merged_at") or ""),
+            head_sha=ctx.sha,
+            tip_ref=tip_ref,
+            tip_sha=tip_sha,
+            blockers=blockers,
+        )
+        lm = dataclasses.replace(ctx.cfg.policy.conversation_lane, agent="audit-persistence")
+        saved, ctx.worktree = ctx.worktree, tip_wt
+        try:
+            raw = _run_lane(
+                ctx, phase="persistence", role="persistence", lm=lm, prompt=prompt, is_verifier=True
+            )
+        finally:
+            ctx.worktree = saved
+        result = audit.parse_persistence(raw, hashes)
+        status = "ok"
+    except ReviewError as exc:
+        if ctx.audit["source"] == audit.SOURCE_LIVE and exc.kind is FailKind.INFRA:
+            # a live audit posts an issue from this answer: never on a lane that merely died
+            raise
+        log.warning("persistence check failed: %s", exc)
+        result = audit.parse_persistence({}, hashes)
+        status = "failed"
+    finally:
+        if tip_wt is not None:
+            wt.remove_worktree(ctx.mirror, tip_wt)
+    (ctx.run_dir / "persistence.json").write_text(json.dumps(result, indent=1))
+    _step_end(
+        ctx,
+        StepName.PERSISTENCE,
+        status,
+        {
+            "tip": f"{tip_ref}@{tip_sha[:8]}",
+            "statuses": {h: r["status"] for h, r in result.items()},
+        },
+    )
+    return result, tip_ref, tip_sha
 
 
 def _fresh_final_if_needed(
@@ -1408,7 +1613,7 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     `skipped`, an event, and disclosed in the review provenance and the gate comment.
     """
     limit = ctx.cfg.backlog_skip_phase1_above
-    if limit <= 0 or not ctx.cfg.policy.phase2_enabled or phase2_effort is None:
+    if ctx.is_audit or limit <= 0 or not ctx.cfg.policy.phase2_enabled or phase2_effort is None:
         return False
     dp = ctx.degraded_policy
     if dp is not None and not dp.backlog_skip_phase1:
@@ -1416,9 +1621,7 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
         # cost of the slow Phase-1 rungs. Off by default -- a deep queue in degraded mode is
         # the case that can least afford them.
         return False
-    queued = ctx.conn.execute("SELECT COUNT(*) AS n FROM heads WHERE status='queued'").fetchone()[
-        "n"
-    ]
+    queued = live_queued_count(ctx.conn)
     if queued <= limit:
         return False
     reason = f"skipped for throughput: {queued} PRs queued, above the {limit} limit"
@@ -1436,6 +1639,9 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
         )
     _gate_comment(ctx, "in_progress")
     return True
+
+
+LIGHT_AUDIT_TIER = "trivial"  # the policy tier a light audit reviews at (Phase 1 only)
 
 
 # ---- conversation mode: answer replies on an already-reviewed commit ----
@@ -1759,6 +1965,9 @@ def run(ctx: RunContext) -> RunStatus:
             continue
         if standing and name in (StepName.SELECT, StepName.TRIAGE):
             continue  # a conversation needs no specialist selection or effort triage
+        if name == StepName.TRIAGE and ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
+            ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
+            continue
         ctx.check_cancel()
         _step_start(ctx, name)
         fn(ctx)
@@ -1816,6 +2025,10 @@ def run(ctx: RunContext) -> RunStatus:
     _step_start(ctx, StepName.GATE)
     tier_allows = effort.phase2 is not None
     admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled, tier_allows=tier_allows)
+    if ctx.audit and ctx.audit["mode"] != audit.MODE_LIGHT:
+        # nobody will push a fix and re-run the gate on a merged PR: an audit needs the
+        # complete finding set, so Phase 2 runs whether or not Phase 1 found blockers
+        admit = pol.phase2_enabled and tier_allows
     _step_end(
         ctx,
         StepName.GATE,
@@ -1859,7 +2072,7 @@ def run(ctx: RunContext) -> RunStatus:
 
 
 def cleanup(ctx: RunContext, status: RunStatus) -> None:
-    if ctx.worktree and ctx.mirror and status == RunStatus.DONE:
+    if ctx.worktree and ctx.mirror and (status == RunStatus.DONE or ctx.is_audit):
         wt.remove_worktree(ctx.mirror, ctx.worktree)
         shutil.rmtree(ctx.worktree, ignore_errors=True)
 
@@ -1877,7 +2090,7 @@ def main(
     prober: Prober | None = None,
 ) -> RunStatus:
     row = conn.execute(
-        "SELECT r.*, h.repo, h.number, h.sha, h.trigger FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
+        "SELECT r.*, h.repo, h.number, h.sha, h.trigger, h.queue FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
         (run_id,),
     ).fetchone()
     if row is None:
@@ -1898,6 +2111,10 @@ def main(
         trigger=str(row["trigger"] or ""),
         dry_run=dry_run,
     )
+    if row["queue"] == "audit":
+        ctx.audit = audit.load(conn, ctx.head_id)
+        if ctx.audit is None:
+            raise SystemExit(f"run {run_id}: audit head without an audits row")
     if lane_runner:
         ctx.lane_runner = lane_runner
     ctx.quota_reader = quota_reader
