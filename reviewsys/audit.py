@@ -26,6 +26,7 @@ present; backfilled audits never post on GitHub.
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import re
@@ -137,24 +138,34 @@ def fetch_merged(gh: Gh, repo: str, since: str) -> list[MergedPr]:
 # ---- classification ----
 
 
+def _by_bot(r: dict[str, Any], bot_login: str) -> bool:
+    return str((r.get("author") or {}).get("login") or "").lower() == bot_login.lower()
+
+
+def _phase_sha(r: dict[str, Any]) -> tuple[str, str]:
+    """(phase, commit) a bot review is about, from its marker: `legacy` for the old pipeline's
+    markerless reviews, which pin the commit instead."""
+    m = PHASE_MARKER_RE.search(str(r.get("body") or ""))
+    if m:
+        return m.group(1), m.group(2)
+    return "legacy", str((r.get("commit") or {}).get("oid") or "")
+
+
 def _bot_reviews_at(pr: MergedPr, bot_login: str) -> list[dict[str, Any]]:
-    """The bot's reviews of the merged head, oldest first, with the phase from the marker
-    (`legacy` for the old pipeline's markerless reviews, which pin the commit instead)."""
+    """The bot's reviews of the merged head, oldest first, with the phase from the marker."""
     out = []
     for r in pr.reviews:
-        if str((r.get("author") or {}).get("login") or "").lower() != bot_login.lower():
+        if not _by_bot(r, bot_login):
             continue
-        body = str(r.get("body") or "")
-        m = PHASE_MARKER_RE.search(body)
-        sha = m.group(2) if m else str((r.get("commit") or {}).get("oid") or "")
+        phase, sha = _phase_sha(r)
         if sha != pr.head_sha:
             continue
         out.append(
             {
                 "state": str(r.get("state") or ""),
-                "phase": m.group(1) if m else "legacy",
+                "phase": phase,
                 "at": str(r.get("submittedAt") or ""),
-                "body": body,
+                "body": str(r.get("body") or ""),
             }
         )
     return sorted(out, key=lambda r: r["at"])
@@ -202,7 +213,7 @@ def prior_note(pr: MergedPr, bot_login: str) -> str:
     review's state, phase and commit."""
     best: dict[str, Any] | None = None
     for r in pr.reviews:
-        if str((r.get("author") or {}).get("login") or "").lower() != bot_login.lower():
+        if not _by_bot(r, bot_login):
             continue
         at = str(r.get("submittedAt") or "")
         if pr.merged_at and at > pr.merged_at:
@@ -211,11 +222,9 @@ def prior_note(pr: MergedPr, bot_login: str) -> str:
             best = r
     if best is None:
         return "none"
-    body = str(best.get("body") or "")
-    m = PHASE_MARKER_RE.search(body)
-    sha = m.group(2) if m else str((best.get("commit") or {}).get("oid") or "")
+    phase, sha = _phase_sha(best)
     where = "merged head" if sha == pr.head_sha else f"older commit {sha[:8]}"
-    return f"{best.get('state')} ({m.group(1) if m else 'legacy'}) on {where}"
+    return f"{best.get('state')} ({phase}) on {where}"
 
 
 def mode_for(pr: MergedPr) -> str:
@@ -248,6 +257,14 @@ def seed_rank(pr: MergedPr, mode: str, first_mergers: tuple[str, ...]) -> int:
 # ---- enqueue ----
 
 
+def _excluded(cfg: Config, pr: MergedPr) -> bool:
+    return pr.repo in cfg.audit.exclude_repos or pr.author.lower() in IGNORED_AUTHORS
+
+
+def _clean(conn: sqlite3.Connection, cfg: Config, pr: MergedPr) -> bool:
+    return is_clean(pr, cfg.bot_login, db_verdict(conn, pr.repo, pr.number, pr.head_sha))
+
+
 def enqueue(
     conn: sqlite3.Connection,
     cfg: Config,
@@ -260,47 +277,42 @@ def enqueue(
     """Queue an audit of `pr`'s merged head unless one exists or a clean review stands.
     Caller holds a transaction. Returns created | clean | exists | skipped | excluded."""
     ts = ts or now()
-    if pr.repo in cfg.audit.exclude_repos or pr.author.lower() in IGNORED_AUTHORS:
+    if _excluded(cfg, pr):
         return "excluded"
     if conn.execute(
         "SELECT 1 FROM audits WHERE repo=? AND number=?", (pr.repo, pr.number)
     ).fetchone():
         return "exists"
-    if is_clean(pr, cfg.bot_login, db_verdict(conn, pr.repo, pr.number, pr.head_sha)):
+    if _clean(conn, cfg, pr):
         return "clean"
     mode = mode_for(pr)
-    cols = (
-        "repo, number, sha, source, mode, rank, title, author, merged_by, merged_at, "
-        "merge_commit, base_ref, coverage, queued_at"
-    )
-    vals = (
-        pr.repo,
-        pr.number,
-        pr.head_sha,
-        source,
-        mode,
-        rank,
-        pr.title,
-        pr.author,
-        pr.merged_by,
-        pr.merged_at,
-        pr.merge_commit,
-        pr.base_ref,
-        prior_note(pr, cfg.bot_login),
-        ts,
+    row: dict[str, Any] = {
+        "repo": pr.repo,
+        "number": pr.number,
+        "sha": pr.head_sha,
+        "source": source,
+        "mode": mode,
+        "rank": rank,
+        "title": pr.title,
+        "author": pr.author,
+        "merged_by": pr.merged_by,
+        "merged_at": pr.merged_at,
+        "merge_commit": pr.merge_commit,
+        "base_ref": pr.base_ref,
+        "coverage": prior_note(pr, cfg.bot_login),
+        "queued_at": ts,
+    }
+    if mode == MODE_SYNC:
+        row |= {"finished_at": ts, "verdict": "SKIPPED"}
+    else:
+        row["head_id"] = _audit_head(conn, pr, ts=ts)
+    conn.execute(
+        f"INSERT INTO audits ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
+        tuple(row.values()),
     )
     if mode == MODE_SYNC:
-        conn.execute(
-            f"INSERT INTO audits ({cols}, finished_at, verdict) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-            (*vals, ts, "SKIPPED"),
-        )
         event(conn, "audit.skipped", repo=pr.repo, number=pr.number, detail="branch sync merge")
         return "skipped"
-    head_id = _audit_head(conn, pr, ts=ts)
-    conn.execute(
-        f"INSERT INTO audits ({cols}, head_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        (*vals, head_id),
-    )
     event(
         conn,
         "audit.queued",
@@ -384,13 +396,12 @@ def seed(
             mode = mode_for(pr)
             rank = seed_rank(pr, mode, first_mergers)
             if dry_run:
-                clean = is_clean(
-                    pr, cfg.bot_login, db_verdict(conn, pr.repo, pr.number, pr.head_sha)
-                )
-                excluded = (
-                    pr.repo in cfg.audit.exclude_repos or pr.author.lower() in IGNORED_AUTHORS
-                )
-                res = "excluded" if excluded else "clean" if clean else f"would-queue:{mode}"
+                if _excluded(cfg, pr):
+                    res = "excluded"
+                elif _clean(conn, cfg, pr):
+                    res = "clean"
+                else:
+                    res = f"would-queue:{mode}"
             else:
                 with tx(conn):
                     res = enqueue(conn, cfg, pr, source=SOURCE_SEED, rank=rank)
@@ -528,12 +539,16 @@ class Outcome:
         return [f for f in self.findings if f.severity == "blocking"]
 
     @property
+    def others(self) -> list[Finding]:
+        return [f for f in self.findings if f.severity != "blocking"]
+
+    @property
     def open_blockers(self) -> list[Finding]:
-        return [
-            f
-            for f in self.blockers
-            if self.persistence.get(f.hash, {}).get("status", "UNKNOWN") in OPEN_STATUSES
-        ]
+        return [f for f in self.blockers if self.check(f).get("status", "UNKNOWN") in OPEN_STATUSES]
+
+    def check(self, f: Finding) -> dict[str, Any]:
+        """The persistence answer for `f`; {} when it was never checked."""
+        return self.persistence.get(f.hash) or {}
 
 
 def report_path(repo: str, number: int) -> str:
@@ -554,7 +569,7 @@ def _loc(f: Finding) -> str:
 
 def render_report(o: Outcome) -> str:
     a = o.audit
-    head = [
+    parts = [
         f"# {a['repo']}#{a['number']}: {a['title']}",
         "",
         f"- PR: {_pr_url(a['repo'], a['number'])}",
@@ -567,25 +582,23 @@ def render_report(o: Outcome) -> str:
         f"{len(o.open_blockers)} still open on `{o.tip_ref}` @ `{o.tip_sha[:8]}`",
         "",
     ]
-    parts = head
     if o.blockers:
         parts += ["## Blocking findings", ""]
         for f in o.blockers:
-            p = o.persistence.get(f.hash, {"status": "UNKNOWN", "evidence": "", "fixed_by": None})
+            p = o.check(f)
             fixed = f" · fixed by {p['fixed_by']}" if p.get("fixed_by") else ""
             parts += [
                 f"### 🔴 {f.title}",
-                f"`{_loc(f)}` · today: **{p['status']}**{fixed}",
+                f"`{_loc(f)}` · today: **{p.get('status', 'UNKNOWN')}**{fixed}",
                 "",
                 f.body or "",
                 "",
                 f"> Tip check: {p.get('evidence') or '—'}",
                 "",
             ]
-    others = [f for f in o.findings if f.severity != "blocking"]
-    if others:
+    if o.others:
         parts += ["## Other findings", ""]
-        for f in others:
+        for f in o.others:
             parts += [f"- **{f.severity}: {f.title}** (`{_loc(f)}`)", ""]
     parts += [
         "<details><summary>Full review body</summary>",
@@ -598,7 +611,7 @@ def render_report(o: Outcome) -> str:
     return "\n".join(parts)
 
 
-def write_report(cfg: Config, gh: Gh, o: Outcome) -> None:
+def write_report(cfg: Config, o: Outcome) -> None:
     """Write the per-PR report on disk. Committing it to the report repo is the index task's
     job (`sync_reports`): one writer, so concurrent audit workers never race the contents API
     on the same branch, and a failed commit is simply retried on the next pass."""
@@ -620,8 +633,6 @@ def report_repo_private(gh: Gh, repo: str) -> bool:
 def sync_reports(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
     """Commit every finished audit's report whose content the repo does not have yet.
     Tracks the committed digest per report in kv so unchanged reports cost no API call."""
-    import hashlib
-
     pushed = 0
     rows = conn.execute(
         "SELECT repo, number, verdict FROM audits WHERE finished_at IS NOT NULL "
@@ -713,7 +724,9 @@ def render_index(conn: sqlite3.Connection) -> str:
         "|---|---|---|---|---|---|",
     ]
     for r in still:
-        parts.append(_index_row(r))
+        parts.append(
+            _index_row(r, r["merged_by"], r["blockers"], r["still_present"], _report_link(r))
+        )
     parts += [
         "",
         "## All audits",
@@ -722,28 +735,28 @@ def render_index(conn: sqlite3.Connection) -> str:
         "|---|---|---|---|---|---|---|---|",
     ]
     for r in rows:
-        state = "done" if r["finished_at"] else (r["head_status"] or "?")
         parts.append(
-            f"| [{r['repo'].split('/')[1]}#{r['number']}]({_pr_url(r['repo'], r['number'])}) | "
-            f"{_cell(r['title'])} | {r['merged_by']} | {state} | {r['verdict'] or ''} | "
-            f"{'' if r['blockers'] is None else r['blockers']} | "
-            f"{'' if r['still_present'] is None else r['still_present']} | "
-            + (
-                f"[report]({report_path(r['repo'], r['number'])})"
-                if r["verdict"] and r["verdict"] != "SKIPPED"
-                else ""
+            _index_row(
+                r,
+                r["merged_by"],
+                "done" if r["finished_at"] else (r["head_status"] or "?"),
+                r["verdict"] or "",
+                "" if r["blockers"] is None else r["blockers"],
+                "" if r["still_present"] is None else r["still_present"],
+                _report_link(r) if r["verdict"] and r["verdict"] != "SKIPPED" else "",
             )
-            + " |"
         )
     return "\n".join(parts) + "\n"
 
 
-def _index_row(r: sqlite3.Row) -> str:
-    return (
-        f"| [{r['repo'].split('/')[1]}#{r['number']}]({_pr_url(r['repo'], r['number'])}) | "
-        f"{_cell(r['title'])} | {r['merged_by']} | {r['blockers']} | {r['still_present']} | "
-        f"[report]({report_path(r['repo'], r['number'])}) |"
-    )
+def _index_row(r: sqlite3.Row, *cells: object) -> str:
+    """A table row: the PR link and title, then `cells`."""
+    pr = f"[{r['repo'].split('/')[1]}#{r['number']}]({_pr_url(r['repo'], r['number'])})"
+    return "| " + " | ".join([pr, _cell(r["title"]), *map(str, cells)]) + " |"
+
+
+def _report_link(r: sqlite3.Row) -> str:
+    return f"[report]({report_path(r['repo'], r['number'])})"
 
 
 def _cell(text: str) -> str:
@@ -806,13 +819,12 @@ def render_live_comment(o: Outcome) -> str:
     if o.blockers:
         lines += ["", f"Checked against `{o.tip_ref}` @ `{o.tip_sha[:8]}`:", ""]
         for f in o.blockers:
-            p = o.persistence.get(f.hash, {})
+            p = o.check(f)
             fixed = f" (fixed by {p['fixed_by']})" if p.get("fixed_by") else ""
             lines.append(f"- **{p.get('status', 'UNKNOWN')}**{fixed} — {f.title} (`{_loc(f)}`)")
-    others = [f for f in o.findings if f.severity != "blocking"]
-    if others:
-        lines += ["", f"<details><summary>{len(others)} non-blocking finding(s)</summary>", ""]
-        lines += [f"- {f.severity}: {f.title} (`{_loc(f)}`)" for f in others]
+    if o.others:
+        lines += ["", f"<details><summary>{len(o.others)} non-blocking finding(s)</summary>", ""]
+        lines += [f"- {f.severity}: {f.title} (`{_loc(f)}`)" for f in o.others]
         lines += ["", "</details>"]
     head = "\n".join(lines)
     review = _cap(o.review_body, BODY_LIMIT - len(head) - 200)
@@ -823,9 +835,7 @@ def render_issue(o: Outcome, comment_url: str | None) -> tuple[str, str]:
     a = o.audit
     n = len(o.open_blockers)
     title = f"Post-merge review: {n} blocking finding(s) in #{a['number']} — {a['title']}"[:250]
-    unknown = sum(
-        1 for f in o.open_blockers if o.persistence.get(f.hash, {}).get("status") != "STILL_PRESENT"
-    )
+    unknown = sum(1 for f in o.open_blockers if o.check(f).get("status") != "STILL_PRESENT")
     lines = [
         POST_MERGE_MARKER,
         f"Automated post-merge review of #{a['number']} (merged by @{a['merged_by']} at "
@@ -841,7 +851,7 @@ def render_issue(o: Outcome, comment_url: str | None) -> tuple[str, str]:
     if comment_url:
         lines += [f"Full review: {comment_url}", ""]
     for f in o.open_blockers:
-        p = o.persistence.get(f.hash, {})
+        p = o.check(f)
         lines += [
             f"### {f.title}",
             f"`{_loc(f)}` (at the merged commit) · today: **{p.get('status', 'UNKNOWN')}**",
@@ -854,36 +864,33 @@ def render_issue(o: Outcome, comment_url: str | None) -> tuple[str, str]:
     return title, _cap("\n".join(lines))
 
 
-def _existing_comment(gh: Gh, repo: str, number: int, bot_login: str) -> str | None:
-    rows = gh.api(f"repos/{repo}/issues/{number}/comments?per_page=100", paginate=True) or []
-    for c in rows:
+def _find_marked(gh: Gh, path: str, match: Callable[[dict[str, Any]], bool]) -> str | None:
+    """URL of the first item under `path` that carries the post-merge marker and `match`es."""
+    for item in gh.api(path, paginate=True) or []:
         if (
-            isinstance(c, dict)
-            and str((c.get("user") or {}).get("login") or "").lower() == bot_login.lower()
-            and POST_MERGE_MARKER in str(c.get("body") or "")
+            isinstance(item, dict)
+            and POST_MERGE_MARKER in str(item.get("body") or "")
+            and match(item)
         ):
-            return str(c.get("html_url") or "") or None
+            return str(item.get("html_url") or "") or None
     return None
+
+
+def _existing_comment(gh: Gh, repo: str, number: int, bot_login: str) -> str | None:
+    return _find_marked(
+        gh,
+        f"repos/{repo}/issues/{number}/comments?per_page=100",
+        lambda c: str((c.get("user") or {}).get("login") or "").lower() == bot_login.lower(),
+    )
 
 
 def _existing_issue(gh: Gh, repo: str, number: int, bot_login: str) -> str | None:
-    rows = (
-        gh.api(
-            f"repos/{repo}/issues?creator={bot_login}&state=all&per_page=100",
-            paginate=True,
-        )
-        or []
-    )
     prefix = f"in #{number} — "
-    for i in rows:
-        if (
-            isinstance(i, dict)
-            and not i.get("pull_request")
-            and POST_MERGE_MARKER in str(i.get("body") or "")
-            and prefix in str(i.get("title") or "")
-        ):
-            return str(i.get("html_url") or "") or None
-    return None
+    return _find_marked(
+        gh,
+        f"repos/{repo}/issues?creator={bot_login}&state=all&per_page=100",
+        lambda i: not i.get("pull_request") and prefix in str(i.get("title") or ""),
+    )
 
 
 def post_live(
@@ -944,6 +951,7 @@ def record(
     """Persist the outcome. Caller holds the write transaction."""
     aid = o.audit["id"]
     conn.execute("DELETE FROM audit_findings WHERE audit_id=?", (aid,))
+    checks = {f.hash: o.check(f) for f in o.findings}
     conn.executemany(
         "INSERT OR REPLACE INTO audit_findings (audit_id, run_id, hash, severity, file, line_start, "
         "line_end, category, title, body, status, evidence, fixed_by) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -959,9 +967,9 @@ def record(
                 f.category,
                 f.title,
                 f.body[:8000],
-                (o.persistence.get(f.hash) or {}).get("status"),
-                (o.persistence.get(f.hash) or {}).get("evidence"),
-                (o.persistence.get(f.hash) or {}).get("fixed_by"),
+                checks[f.hash].get("status"),
+                checks[f.hash].get("evidence"),
+                checks[f.hash].get("fixed_by"),
             )
             for f in o.findings
         ],

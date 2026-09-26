@@ -162,14 +162,6 @@ def ensure_commit(repo_dir: Path, sha: str) -> bool:
         return False
 
 
-def is_ancestor(repo_dir: Path, ancestor: str, descendant: str) -> bool:
-    try:
-        _git("merge-base", "--is-ancestor", ancestor, descendant, cwd=repo_dir)
-        return True
-    except ReviewError:
-        return False
-
-
 def pre_merge_base(worktree: Path, base_branch: str, merge_commit: str, sha: str) -> str | None:
     """Where the PR's own diff starts, as GitHub showed it at merge time: the merge base of the
     head with the base branch just before the merge (the merge commit's first parent). Right

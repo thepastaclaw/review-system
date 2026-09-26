@@ -304,16 +304,24 @@ def step_worktree(ctx: RunContext) -> None:
         )
     ctx.meta = meta
     ctx.base_sha = meta.base_sha
-    ctx.mirror = wt.ensure_mirror(ctx.cfg.mirrors_dir, ctx.repo)
-    wt.fetch_head(ctx.mirror, ctx.number, ctx.sha)
-    ctx.worktree = wt.create_worktree(
-        ctx.mirror,
-        ctx.cfg.worktrees_dir,
-        f"{ctx.repo.replace('/', '-')}-{ctx.number}-{ctx.run_id}",
-        ctx.sha,
-    )
+    ctx.worktree = _checkout_head(ctx)
     base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
     ctx.coverage_from = base or f"{ctx.sha}~1"
+    _record_worktree(ctx)
+
+
+def _worktree_name(ctx: RunContext, suffix: str = "") -> str:
+    return f"{ctx.repo.replace('/', '-')}-{ctx.number}-{ctx.run_id}{suffix}"
+
+
+def _checkout_head(ctx: RunContext) -> Path:
+    """Fetch the assigned head into the repo's mirror and check it out in a fresh worktree."""
+    ctx.mirror = wt.ensure_mirror(ctx.cfg.mirrors_dir, ctx.repo)
+    wt.fetch_head(ctx.mirror, ctx.number, ctx.sha)
+    return wt.create_worktree(ctx.mirror, ctx.cfg.worktrees_dir, _worktree_name(ctx), ctx.sha)
+
+
+def _record_worktree(ctx: RunContext) -> None:
     with tx(ctx.conn):
         ctx.conn.execute(
             "UPDATE runs SET worktree=?, run_dir=? WHERE id=?",
@@ -329,14 +337,7 @@ def _audit_worktree(ctx: RunContext, meta: github.PrMeta) -> None:
     if not meta.merged:
         raise ReviewError(FailKind.FATAL, f"audit of a PR that is not merged (state {meta.state})")
     ctx.meta = meta
-    ctx.mirror = wt.ensure_mirror(ctx.cfg.mirrors_dir, ctx.repo)
-    wt.fetch_head(ctx.mirror, ctx.number, ctx.sha)
-    ctx.worktree = wt.create_worktree(
-        ctx.mirror,
-        ctx.cfg.worktrees_dir,
-        f"{ctx.repo.replace('/', '-')}-{ctx.number}-{ctx.run_id}",
-        ctx.sha,
-    )
+    ctx.worktree = _checkout_head(ctx)
     merge = str(ctx.audit.get("merge_commit") or "")
     base = wt.pre_merge_base(ctx.worktree, meta.base_ref, merge, ctx.sha) if merge else None
     if base is None and meta.base_ref:
@@ -350,11 +351,7 @@ def _audit_worktree(ctx: RunContext, meta: github.PrMeta) -> None:
         )
     ctx.coverage_from = base
     ctx.base_sha = base
-    with tx(ctx.conn):
-        ctx.conn.execute(
-            "UPDATE runs SET worktree=?, run_dir=? WHERE id=?",
-            (str(ctx.worktree), str(ctx.run_dir), ctx.run_id),
-        )
+    _record_worktree(ctx)
 
 
 def step_select(ctx: RunContext) -> None:
@@ -1416,7 +1413,7 @@ def _audit_publish(
         run_id=ctx.run_id,
     )
     _step_start(ctx, StepName.PUBLISH)
-    audit.write_report(ctx.cfg, ctx.gh, outcome)
+    audit.write_report(ctx.cfg, outcome)
     comment_url = issue_url = None
     if ctx.audit["source"] == audit.SOURCE_LIVE and ctx.cfg.audit.post_live and not ctx.dry_run:
         aid = int(ctx.audit["id"])
@@ -1428,7 +1425,7 @@ def _audit_publish(
         )
     with tx(ctx.conn):
         audit.record(ctx.conn, outcome, comment_url=comment_url, issue_url=issue_url)
-        _record_findings_tx(ctx, phase, "posted", verified.findings)
+        _insert_findings(ctx, phase, "audit-posted", verified.findings)
         _set_run_review(
             ctx, blocker_count=verified.blocker_count, review_id=None, review_url=comment_url
         )
@@ -1445,11 +1442,6 @@ def _audit_publish(
             "issue": issue_url,
         },
     )
-
-
-def _record_findings_tx(ctx: RunContext, phase: str, stage: str, findings: list[Finding]) -> None:
-    """`_insert_findings` under a transaction the caller already holds, as audit rows."""
-    _insert_findings(ctx, phase, f"audit-{stage}", findings)
 
 
 def step_persistence(
@@ -1475,10 +1467,7 @@ def step_persistence(
     try:
         wt.ensure_commit(ctx.mirror, tip_sha)
         tip_wt = wt.create_worktree(
-            ctx.mirror,
-            ctx.cfg.worktrees_dir,
-            f"{ctx.repo.replace('/', '-')}-{ctx.number}-{ctx.run_id}-tip",
-            tip_sha,
+            ctx.mirror, ctx.cfg.worktrees_dir, _worktree_name(ctx, "-tip"), tip_sha
         )
         wt.ensure_commit(tip_wt, ctx.sha)  # `git show <head>:path` must work from the tip
         prompt = audit.persistence_prompt(
@@ -1491,8 +1480,7 @@ def step_persistence(
             tip_sha=tip_sha,
             blockers=blockers,
         )
-        lm = ctx.cfg.policy.conversation_lane
-        lm = dataclasses.replace(lm, agent="audit-persistence")
+        lm = dataclasses.replace(ctx.cfg.policy.conversation_lane, agent="audit-persistence")
         saved, ctx.worktree = ctx.worktree, tip_wt
         try:
             raw = _run_lane(
