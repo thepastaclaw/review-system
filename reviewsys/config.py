@@ -163,6 +163,26 @@ class Specialist:
 
 
 @dataclass(frozen=True, slots=True)
+class AuditConfig:
+    """The audit queue: post-merge reviews of PRs merged without a clean review (audit.py).
+
+    Audit runs only ever use capacity live review leaves idle: none starts while a live head
+    is eligible, and they never count against the live slots. `max_concurrent` is the steady
+    state (one at a time); raise it on the box to drain a backfill."""
+
+    enabled: bool = True
+    max_concurrent: int = 1
+    # private repository the per-PR audit reports are committed to (never a PR comment for
+    # backfilled audits); "" keeps reports on disk under work/audit only
+    report_repo: str = ""
+    report_branch: str = "main"
+    # post a comment + open one issue per PR with blockers for merges the sweep caught live
+    post_live: bool = False
+    # repos never audited (also: never auto-enrolled on merge)
+    exclude_repos: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     # paths
     db_path: Path
@@ -210,6 +230,7 @@ class Config:
     specialists: tuple[Specialist, ...]
     policy: ModelPolicy
     extra: dict[str, Any] = field(default_factory=dict)
+    audit: AuditConfig = field(default_factory=AuditConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -310,6 +331,18 @@ trusted_reviewers = ["PastaPastaPasta", "QuantumExplorer", "shumkov", "lklimek",
 [retention]
 artifact_days = 14
 worktree_budget_gb = 60
+
+[audit]
+# post-merge reviews of PRs merged without a clean review; they only use slots live review
+# leaves idle. Raise max_concurrent to drain a backfill.
+enabled = true
+max_concurrent = 1
+# private repo the per-PR audit reports are committed to ("" = on disk only)
+report_repo = ""
+report_branch = "main"
+# for merges seen live: post a "Post-merge review" comment and one issue per PR with blockers
+post_live = false
+exclude_repos = []
 """
 
 
@@ -544,4 +577,16 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         specialists=specialists,
         policy=policy,
         extra={**settings, "additional_repos": s.get("additional_repos", [])},
+        audit=_audit(t.get("audit") or {}),
+    )
+
+
+def _audit(a: dict[str, Any]) -> AuditConfig:
+    return AuditConfig(
+        enabled=bool(a.get("enabled", True)),
+        max_concurrent=max(0, int(a.get("max_concurrent", 1))),
+        report_repo=str(a.get("report_repo") or ""),
+        report_branch=str(a.get("report_branch") or "main"),
+        post_live=bool(a.get("post_live", False)),
+        exclude_repos=tuple(str(x) for x in a.get("exclude_repos") or ()),
     )

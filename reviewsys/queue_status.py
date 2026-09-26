@@ -86,7 +86,7 @@ def queued_order(conn: sqlite3.Connection, *, ts: str | None = None) -> list[sql
     eligible normal, then heads still in debounce/backoff (by when they become eligible)."""
     ts = ts or now()
     return conn.execute(
-        "SELECT id, repo, number, sha, priority, eligible_at FROM heads WHERE status='queued' "
+        "SELECT id, repo, number, sha, priority, eligible_at FROM heads WHERE status='queued' AND queue='live' "
         "ORDER BY (eligible_at > ?) ASC, priority DESC, CASE WHEN eligible_at > ? THEN eligible_at ELSE queued_at END ASC",
         (ts, ts),
     ).fetchall()
@@ -237,7 +237,8 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
         except Exception as exc:
             log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
     active = conn.execute(
-        "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
+        "SELECT COUNT(*) AS n FROM runs r JOIN heads h ON h.id=r.head_id "
+        "WHERE r.status IN ('spawned','running') AND h.queue='live'"
     ).fetchone()["n"]
     is_degraded = bool(degraded_mod.snapshot(conn, cfg).get("active"))
     for pos, h in enumerate(rows, 1):

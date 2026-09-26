@@ -10,6 +10,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from . import audit as audit_mod
 from . import config as cfg_mod
 from . import db as db_mod
 from . import degraded as degraded_mod
@@ -220,6 +221,68 @@ def cmd_export_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_audit(args: argparse.Namespace) -> int:
+    """The audit queue: backfill, progress, concurrency, per-PR reports, retries."""
+    cfg = _cfg(args)
+    conn = db_mod.connect(cfg.db_path)
+    if args.action == "seed":
+        if not args.since:
+            print("audit seed needs --since YYYY-MM-DD", file=sys.stderr)
+            return 1
+        rows = audit_mod.seed(
+            conn,
+            cfg,
+            Gh(cfg.gh_bin),
+            since=args.since,
+            repos=tuple(args.repo or ()),
+            first_mergers=tuple(args.first or ()),
+            dry_run=args.dry_run,
+        )
+        counts: dict[str, int] = {}
+        for r in rows:
+            counts[r["result"]] = counts.get(r["result"], 0) + 1
+        if args.json:
+            print(json.dumps(rows, indent=1))
+        print(json.dumps({"total": len(rows), **counts}))
+        return 0
+    if args.action == "status":
+        print(json.dumps(audit_mod.summary(conn, cfg), indent=1))
+        return 0
+    if args.action == "concurrency":
+        if args.value is None:
+            print(audit_mod.concurrency(conn, cfg))
+            return 0
+        with db_mod.tx(conn):
+            if args.value < 0:
+                conn.execute("DELETE FROM kv WHERE key=?", (audit_mod.KV_CONCURRENCY,))
+            else:
+                db_mod.kv_set(conn, audit_mod.KV_CONCURRENCY, str(args.value))
+        print(audit_mod.concurrency(conn, cfg))
+        return 0
+    if args.action == "report":
+        if not args.target:
+            print(audit_mod.render_index(conn), end="")
+            return 0
+        repo, _, number = args.target.partition("#")
+        path = audit_mod.local_report(cfg, repo, int(number))
+        if not path.exists():
+            print(f"no report for {args.target} yet", file=sys.stderr)
+            return 1
+        print(path.read_text(), end="")
+        return 0
+    if args.action == "retry":
+        with db_mod.tx(conn):
+            n = conn.execute(
+                "UPDATE heads SET status='queued', attempts=0, eligible_at=?, finished_at=NULL, "
+                "reason=NULL WHERE queue='audit' AND status='failed'",
+                (db_mod.now(),),
+            ).rowcount
+            db_mod.event(conn, "audit.retried", detail=f"{n} failed audit heads re-queued")
+        print(f"re-queued {n} failed audit heads")
+        return 0
+    return 1
+
+
 def cmd_init_config(args: argparse.Namespace) -> int:
     path = Path(args.config) if args.config else cfg_mod.DEFAULT_CONFIG_PATH
     if path.exists() and not args.force:
@@ -284,6 +347,20 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("export-status", help="write a sanitized public observability snapshot")
     s.add_argument("--output", required=True, help="directory receiving status.json")
     s.set_defaults(fn=cmd_export_status)
+    s = sub.add_parser("audit", help="post-merge audit queue: seed, status, concurrency, report")
+    s.add_argument("action", choices=["seed", "status", "concurrency", "report", "retry"])
+    s.add_argument("target", nargs="?", help="report: owner/repo#N (omit for the index)")
+    s.add_argument("--since", help="seed: merged on or after this date (YYYY-MM-DD)")
+    s.add_argument("--repo", action="append", help="seed: only this repo (repeatable)")
+    s.add_argument(
+        "--first", action="append", help="seed: audit PRs merged by this login first (repeatable)"
+    )
+    s.add_argument("--dry-run", action="store_true", help="seed: classify only, queue nothing")
+    s.add_argument("--json", action="store_true", help="seed: print every row")
+    s.add_argument(
+        "--value", type=int, help="concurrency: audit runs at once (-1 = back to the config value)"
+    )
+    s.set_defaults(fn=cmd_audit)
     s = sub.add_parser("init-config")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_init_config)

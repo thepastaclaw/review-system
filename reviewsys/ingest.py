@@ -85,9 +85,11 @@ def enqueue_head(
     """
     ts = ts or now()
     existing = conn.execute(
-        "SELECT id, status, priority FROM heads WHERE repo=? AND number=? AND sha=?",
+        "SELECT id, status, priority, queue FROM heads WHERE repo=? AND number=? AND sha=?",
         (repo, number, sha),
     ).fetchone()
+    if existing and existing["queue"] == "audit":
+        return "noop"  # the PR merged: its head belongs to the audit queue now
     priority = 1 if trigger.priority else 0
     if existing:
         if (
@@ -124,7 +126,7 @@ def enqueue_head(
         return "noop"
     # supersede older active heads for this PR
     for row in conn.execute(
-        "SELECT id, status FROM heads WHERE repo=? AND number=? AND status IN ('queued','running')",
+        "SELECT id, status FROM heads WHERE repo=? AND number=? AND status IN ('queued','running') AND queue='live'",
         (repo, number),
     ).fetchall():
         conn.execute(
@@ -158,7 +160,7 @@ def close_pr_heads(
 ) -> int:
     ts = ts or now()
     rows = conn.execute(
-        "SELECT id FROM heads WHERE repo=? AND number=? AND status IN ('queued','running')",
+        "SELECT id FROM heads WHERE repo=? AND number=? AND status IN ('queued','running') AND queue='live'",
         (repo, number),
     ).fetchall()
     for row in rows:

@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -88,6 +88,30 @@ MIGRATIONS: dict[int, str] = {
     """,
     3: """
     ALTER TABLE runs ADD COLUMN degraded INTEGER NOT NULL DEFAULT 0;
+    """,
+    # the audit queue: post-merge reviews of PRs merged without a clean review (see audit.py)
+    4: """
+    ALTER TABLE heads ADD COLUMN queue TEXT NOT NULL DEFAULT 'live';
+    CREATE TABLE audits (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        head_id INTEGER UNIQUE REFERENCES heads(id),  -- NULL: recorded, never run (sync merge)
+        repo TEXT NOT NULL, number INTEGER NOT NULL, sha TEXT NOT NULL,
+        source TEXT NOT NULL, mode TEXT NOT NULL, rank INTEGER NOT NULL DEFAULT 100,
+        title TEXT NOT NULL DEFAULT '', author TEXT NOT NULL DEFAULT '',
+        merged_by TEXT NOT NULL DEFAULT '', merged_at TEXT, merge_commit TEXT,
+        base_ref TEXT NOT NULL DEFAULT '', coverage TEXT NOT NULL DEFAULT '',
+        queued_at TEXT NOT NULL, finished_at TEXT, run_id INTEGER,
+        verdict TEXT, blockers INTEGER, still_present INTEGER, findings INTEGER,
+        tip_ref TEXT, tip_sha TEXT, comment_url TEXT, issue_url TEXT,
+        degraded INTEGER NOT NULL DEFAULT 0, escalated INTEGER NOT NULL DEFAULT 0,
+        UNIQUE (repo, number));
+    CREATE INDEX audits_rank ON audits (rank, merged_at);
+    CREATE TABLE audit_findings (
+        audit_id INTEGER NOT NULL REFERENCES audits(id), run_id INTEGER NOT NULL,
+        hash TEXT NOT NULL, severity TEXT NOT NULL, file TEXT, line_start INTEGER,
+        line_end INTEGER, category TEXT, title TEXT NOT NULL, body TEXT NOT NULL,
+        status TEXT, evidence TEXT, fixed_by TEXT,
+        PRIMARY KEY (audit_id, hash));
     """,
 }
 

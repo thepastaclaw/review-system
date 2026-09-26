@@ -71,7 +71,8 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int) -> str | None:
     if pr and pr["state"] != "open":
         return None
     head = conn.execute(
-        "SELECT sha FROM heads WHERE repo=? AND number=? ORDER BY id DESC LIMIT 1", (repo, number)
+        "SELECT sha FROM heads WHERE repo=? AND number=? AND queue='live' ORDER BY id DESC LIMIT 1",
+        (repo, number),
     ).fetchone()
     if not head or (pr and pr["head_sha"] != head["sha"]):
         return None
@@ -90,7 +91,7 @@ def _dirty_prs(conn: sqlite3.Connection, since: str) -> list[tuple[str, int]]:
     else:
         rows = conn.execute(
             "SELECT repo, number FROM reviews WHERE posted_at >= ?"
-            " UNION SELECT repo, number FROM heads WHERE queued_at >= ?"
+            " UNION SELECT repo, number FROM heads WHERE queued_at >= ? AND queue='live'"
             " UNION SELECT repo, number FROM prs WHERE updated_at >= ?",
             (since, since, since),
         ).fetchall()

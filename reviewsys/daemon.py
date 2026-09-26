@@ -13,12 +13,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import degraded, labels, slots
+from . import audit, degraded, labels, slots
 from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .ingest import ingest_notifications, ingest_prs, ingest_review_replies
+from .models import ReviewError
 from .notify import Notifier
 from .queue_status import update_queue_comments
 from .reaper import reap
@@ -33,6 +34,8 @@ log = logging.getLogger(__name__)
 DEGRADED_REPAGE_S = 3600
 KV_PAGED_AT = "degraded.paged_at"  # last delivered @-mention page
 KV_PAGE_OPEN = "degraded.page_open"  # "1" while #claw has a page with no all-clear yet
+AUDIT_SWEEP_S = 600  # look for merges this often (GitHub search, one query per repo)
+AUDIT_INDEX_S = 900  # regenerate the audit index at most this often
 
 
 def acquire_singleton_lock(path: Path) -> IO[str]:
@@ -94,6 +97,11 @@ class Daemon:
                 Task("queue_comments", cfg.queue_comment_interval_seconds, self.t_queue_comments),
                 Task("labels", 60, self.t_labels),
             ]
+            if cfg.audit.enabled:
+                self.tasks += [
+                    Task("audit_sweep", AUDIT_SWEEP_S, self.t_audit_sweep),
+                    Task("audit_index", AUDIT_INDEX_S, self.t_audit_index),
+                ]
         # the reserves protect accounts other clients share, so they are enforced even in
         # shadow mode; slot scaling only matters to a daemon that schedules
         if cfg.account_reserves or (spawn and cfg.account_scale_max > 1):
@@ -122,6 +130,26 @@ class Daemon:
     def t_labels(self) -> object:
         return labels.reconcile(self.conn, self.gh, repos=self.labels_repos)
 
+    def t_audit_sweep(self) -> object:
+        return audit.sweep(self.conn, self.cfg, self.gh)
+
+    def t_audit_index(self) -> object:
+        last = kv_get(self.conn, "audit.index_at") or ""
+        newest = self.conn.execute("SELECT MAX(finished_at) FROM audits").fetchone()[0] or ""
+        pending = kv_get(self.conn, "audit.index_pending") == "1"
+        if newest and newest <= last and not pending:
+            return "unchanged"
+        try:
+            res = audit.publish_index(self.conn, self.cfg, self.gh)
+            ok = not res.get("refused")
+        except ReviewError as exc:
+            log.warning("audit index publish failed: %s", exc)
+            res, ok = {"error": str(exc)}, False
+        with tx(self.conn):
+            kv_set(self.conn, "audit.index_at", now())
+            kv_set(self.conn, "audit.index_pending", "0" if ok else "1")
+        return res
+
     def t_supersede(self) -> object:
         return apply_supersedes(self.conn, self.cfg)
 
@@ -135,7 +163,7 @@ class Daemon:
         started = schedule(self.conn, self.cfg, spawn=self.spawn)
         # alert on heads that just exhausted retries
         rows = self.conn.execute(
-            "SELECT id, repo, number, sha, reason FROM heads WHERE status='failed' AND finished_at > COALESCE((SELECT value FROM kv WHERE key='alert.failed_after'), '')"
+            "SELECT id, repo, number, sha, reason FROM heads WHERE status='failed' AND queue='live' AND finished_at > COALESCE((SELECT value FROM kv WHERE key='alert.failed_after'), '')"
         ).fetchall()
         for r in rows:
             self.notifier.alert(

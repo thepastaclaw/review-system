@@ -6,15 +6,17 @@ import sqlite3
 from datetime import timedelta
 from typing import Any
 
-from . import degraded, slots
+from . import audit, degraded, slots
 from .config import Config
 from .db import fmt_ts, kv_get, now, now_dt, parse_ts
 
 
 def median_run_minutes(conn: sqlite3.Connection) -> float | None:
-    """Median wall-clock minutes of the last 20 completed runs, or None before the first one."""
+    """Median wall-clock minutes of the last 20 completed live runs, or None before the first
+    one. Audit runs (forced Phase 2 plus a persistence check) would inflate every live ETA."""
     recent_done = conn.execute(
-        "SELECT started_at, finished_at FROM runs WHERE status='done' ORDER BY finished_at DESC LIMIT 20"
+        "SELECT r.started_at, r.finished_at FROM runs r JOIN heads h ON h.id=r.head_id "
+        "WHERE r.status='done' AND h.queue='live' ORDER BY r.finished_at DESC LIMIT 20"
     ).fetchall()
     durations = sorted(
         (parse_ts(r["finished_at"]) - parse_ts(r["started_at"])).total_seconds() / 60
@@ -28,7 +30,9 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     ts = now()
     counts = {
         r["status"]: int(r["n"])
-        for r in conn.execute("SELECT status, COUNT(*) AS n FROM heads GROUP BY status")
+        for r in conn.execute(
+            "SELECT status, COUNT(*) AS n FROM heads WHERE queue='live' GROUP BY status"
+        )
     }
     active = [
         dict(r)
@@ -36,16 +40,16 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "SELECT r.id, r.status, r.phase, r.pid, r.started_at, r.heartbeat_at, r.attempt, h.repo, h.number, h.sha FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.status IN ('spawned','running')"
         )
     ]
-    oldest = conn.execute("SELECT MIN(queued_at) AS q FROM heads WHERE status='queued'").fetchone()[
-        "q"
-    ]
+    oldest = conn.execute(
+        "SELECT MIN(queued_at) AS q FROM heads WHERE status='queued' AND queue='live'"
+    ).fetchone()["q"]
     last_start = conn.execute("SELECT MAX(started_at) AS s FROM runs").fetchone()["s"]
     last_done = conn.execute(
         "SELECT MAX(finished_at) AS f FROM runs WHERE status='done'"
     ).fetchone()["f"]
     median = median_run_minutes(conn)
     failed_24h = conn.execute(
-        "SELECT COUNT(*) AS n FROM heads WHERE status='failed' AND finished_at>=?",
+        "SELECT COUNT(*) AS n FROM heads WHERE status='failed' AND queue='live' AND finished_at>=?",
         (fmt_ts(parse_ts(ts) - timedelta(hours=24)),),
     ).fetchone()["n"]
     return {
@@ -63,6 +67,7 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         "watchdog": watchdog(conn, cfg),
         "degraded": degraded.snapshot(conn, cfg),
         "capacity": slots.capacity(conn, cfg).as_dict(),
+        "audit": audit.summary(conn, cfg),
     }
 
 
@@ -70,13 +75,16 @@ def watchdog(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     """True 'stuck' when eligible work exists, a slot is free, and nothing started recently."""
     ts = now_dt()
     eligible = conn.execute(
-        "SELECT COUNT(*) AS n FROM heads WHERE status='queued' AND eligible_at<=?",
+        "SELECT COUNT(*) AS n FROM heads WHERE status='queued' AND queue='live' AND eligible_at<=?",
         (fmt_ts(ts),),
     ).fetchone()["n"]
     active = conn.execute(
-        "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
+        "SELECT COUNT(*) AS n FROM runs r JOIN heads h ON h.id=r.head_id "
+        "WHERE r.status IN ('spawned','running') AND h.queue='live'"
     ).fetchone()["n"]
-    last_start = conn.execute("SELECT MAX(started_at) AS s FROM runs").fetchone()["s"]
+    last_start = conn.execute(
+        "SELECT MAX(r.started_at) AS s FROM runs r JOIN heads h ON h.id=r.head_id WHERE h.queue='live'"
+    ).fetchone()["s"]
     idle_min = (ts - parse_ts(last_start)).total_seconds() / 60 if last_start else None
     stuck = (
         bool(eligible)

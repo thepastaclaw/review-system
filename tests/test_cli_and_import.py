@@ -1,7 +1,7 @@
 import json
 
 from reviewsys import cli
-from reviewsys.db import connect
+from reviewsys.db import SCHEMA_VERSION, connect
 from reviewsys.legacy_import import import_queue
 
 
@@ -55,7 +55,7 @@ def test_db_migration_idempotent(tmp_path):
     c1 = connect(p)
     c1.close()
     c2 = connect(p)
-    assert c2.execute("SELECT version FROM schema_version").fetchone()[0] == 3
+    assert c2.execute("SELECT version FROM schema_version").fetchone()[0] == SCHEMA_VERSION
     assert c2.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
 
