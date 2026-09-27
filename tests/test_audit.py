@@ -85,6 +85,12 @@ def test_modes_and_ranks():
     )
     assert audit.mode_for(_pr(title="Merge/v4.2 dev into 4.3 dev")) == audit.MODE_SYNC
     assert audit.mode_for(_pr(title="chore: merge v1.7-dev into v1.8-dev")) == audit.MODE_SYNC
+    assert audit.mode_for(_pr(title="fix: merge v4.2-dev into v4.3-dev")) == audit.MODE_SYNC
+    assert audit.mode_for(_pr(title="backport: Merge bitcoin#29904, 29967")) == audit.MODE_FULL
+    assert (
+        audit.mode_for(_pr(title="refactor(ui): merge identity screens into the identity module"))
+        == audit.MODE_FULL
+    )
     assert audit.mode_for(_pr(title="feat(drive): x")) == audit.MODE_FULL
     first = ("QuantumExplorer",)
     qe_platform = audit.seed_rank(_pr(), audit.MODE_FULL, first)
