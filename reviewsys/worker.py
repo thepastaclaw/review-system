@@ -2233,13 +2233,24 @@ def _phase2_only(ctx: RunContext, effort: Any) -> RunStatus:
 def _phase1_failure_falls_through(
     ctx: RunContext, exc: ReviewError, *, phase2_effort: str | None
 ) -> bool:
-    """Phase 1 failed for good (a reviewer lane died twice on every rung of the ladder, or the
-    gate verifier died twice): rather than failing the run and retrying it from scratch,
-    review with Phase 2 alone, exactly like the backlog rule does. Only when there is a
-    Phase 2 to fall through to (enabled, and the tier runs it). Whatever Phase 1 produced is
-    dropped: unverified, it must not reach the final verifier as if it had been gated. The
-    error text stays in the step and the event; the review only says Phase 1 failed."""
-    if not ctx.cfg.policy.phase2_enabled or phase2_effort is None:
+    """Phase 1 failed (a reviewer lane died on every rung of the ladder, the gate verifier
+    died twice, or either returned output that breaks the contract): rather than failing the
+    run and retrying it from scratch, review with Phase 2 alone, exactly like the backlog rule
+    does. Whatever Phase 1 produced is dropped: unverified, it must not reach the final
+    verifier as if it had been gated. The error text stays in the step and the event; the
+    review only says Phase 1 failed.
+
+    Not when there is no Phase 2 to fall through to (disabled, or the tier skips it), not for
+    an audit (it needs the complete finding set and has no one waiting on it: it fails and is
+    retried, like the backlog rule leaves audits alone), and not for a FATAL error (a broken
+    prompt template would only fail Phase 2 the same way, after spending it)."""
+    ctx.check_cancel()
+    if (
+        not ctx.cfg.policy.phase2_enabled
+        or phase2_effort is None
+        or ctx.is_audit
+        or exc.kind is FailKind.FATAL
+    ):
         return False
     log.warning("phase1 failed (%s); continuing with Phase 2 only", exc)
     ctx.phase1_skipped = PHASE1_FAILED

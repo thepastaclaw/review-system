@@ -646,3 +646,18 @@ def test_reports_are_never_written_to_a_public_repo(cfg, conn, gh):
     gh._dispatch = dispatch
     assert audit.publish_index(conn, cfg, gh) == {"repo": "o/public", "refused": "not private"}
     assert writes == []
+
+
+def test_audit_phase1_failure_fails_the_run_instead_of_falling_through(cfg, conn, gh, lanes):
+    """An audit needs the complete finding set and no one is waiting on it: a dead Phase 1
+    fails the run (retried later) rather than recording a Phase-2-only verdict."""
+    _merged(gh)
+    lanes.reviewer["default"] = {"summary": "s", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.dead_models = {"gpt-5.6-sol"}
+    lanes.dead_stderr = "segfault in the launcher"
+    _, status = _audit_run(cfg, conn, gh, lanes)
+    assert status == RunStatus.FAILED
+    assert not conn.execute(
+        "SELECT COUNT(*) FROM events WHERE kind='phase1.failed_fallthrough'"
+    ).fetchone()[0]

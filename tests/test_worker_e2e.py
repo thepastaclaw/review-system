@@ -592,7 +592,7 @@ def test_deep_backlog_skips_phase1_and_discloses_it(cfg, conn, gh, lanes):
         s.role == "verifier" and "must be `preliminary`" in s.prompt for s in lanes.calls
     )
     verifier = [s for s in lanes.calls if s.role == "verifier"]
-    assert len(verifier) == 1 and "Phase-1 reviewer lanes did not run" in verifier[0].prompt
+    assert len(verifier) == 1 and "There is no Phase-1 evidence" in verifier[0].prompt
     step = conn.execute(
         "SELECT status, detail FROM steps WHERE run_id=? AND name='phase1'", (rid,)
     ).fetchone()
@@ -2365,9 +2365,7 @@ def test_phase1_failure_on_last_rung_falls_through_to_phase_2(
     assert status == RunStatus.DONE
     body = gh.posted_reviews[0]["body"]
     assert "## Final validation — Phase 2 only (Phase 1 failed)" in body
-    assert (
-        "- Phase 1 reviewers: **not run (Phase 1 failed, so this review is Phase 2 only)**" in body
-    )
+    assert "- Phase 1 reviewers: **failed (failed on every model; its output was dropped)**" in body
     assert "429" not in body, "the error text stays in the event"
     assert "Phase 2 only (Phase 1 failed)" in gh.gate_bodies[-1]
     step = conn.execute(
@@ -2382,7 +2380,7 @@ def test_phase1_failure_on_last_rung_falls_through_to_phase_2(
         == 1
     )
     verifier = next(s for s in lanes.calls if s.role == "verifier")
-    assert "Phase 1 failed, so this review is Phase 2 only" in verifier.prompt
+    assert "no Phase-1 evidence for this head (Phase 1 failed on every model" in verifier.prompt
 
 
 def test_phase1_failure_on_a_trivial_tier_still_fails_the_run(
@@ -2539,3 +2537,45 @@ def test_triage_prompt_makes_normal_the_default_and_critical_conjunctive():
     assert "Size alone never qualifies" in p
     assert "When unsure between two tiers pick the lower one" in p
     assert "pick the higher" not in p
+
+
+def test_contract_breaking_phase1_output_falls_through(cfg, conn, gh, lanes):
+    """A Phase-1 reviewer whose output breaks the contract (wrong head_sha) drops Phase 1."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    real = lanes.__call__
+
+    def runner(spec, art, worktree):
+        res = real(spec, art, worktree)
+        if spec.role == "general" and "set to `preliminary`" in spec.prompt:
+            text = res.result_text.replace(HEAD, "f" * 40)
+            res.result_text, res.stdout = text, json.dumps({"result": text})
+        return res
+
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=runner, heartbeat=False) == (
+        RunStatus.DONE
+    )
+    assert "Phase 2 only (Phase 1 failed)" in gh.posted_reviews[0]["body"]
+
+
+def test_fatal_phase1_error_still_fails_the_run(cfg, conn, gh, lanes, monkeypatch):
+    """A broken prompt template would break Phase 2 the same way: fail now, spend nothing."""
+    from reviewsys.models import FailKind, ReviewError
+
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+
+    def broken(*a, **k):
+        raise ReviewError(FailKind.FATAL, "verifier template missing")
+
+    monkeypatch.setattr(worker, "verifier_prompt", broken)
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.FAILED
+    assert not [s for s in lanes.calls if s.model == "gpt-6-astra" and s.role != "triage"]
+    step = conn.execute(
+        "SELECT name, status FROM steps WHERE run_id=? AND name='verify1'", (rid,)
+    ).fetchone()
+    assert step["status"] == "failed"

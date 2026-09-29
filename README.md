@@ -471,11 +471,14 @@ at a time; each usable OpenAI account adds three more slots.
 
 One lane failing for good (twice, and on every Phase-1 rung) fails the phase; its
 siblings are stopped (`lanes.status = cancelled`) instead of spending quota on an
-abandoned phase. A failed Phase 1 (reviewers or gate verifier) no longer fails the run:
-it is dropped and the run goes on with Phase 2 alone, exactly like the backlog rule
-(`phase1` step `failed` with `fell_through`, event `phase1.failed_fallthrough`, review
-titled "Final validation — Phase 2 only (Phase 1 failed)"). Only a `trivial` tier, which
-has no Phase 2, still fails. A failed Phase 2 fails the run as before. A Phase-1 rung that dies moves the whole run down
+abandoned phase. A failed Phase 1 no longer fails the run: whether a reviewer lane died on
+every rung, the gate verifier died twice, or either returned output that breaks the
+contract, Phase 1 is dropped and the run goes on with Phase 2 alone, exactly like the
+backlog rule (the step that failed, `phase1` or `verify1`, is marked `failed` with
+`fell_through`; event `phase1.failed_fallthrough`; review titled "Final validation —
+Phase 2 only (Phase 1 failed)"). It still fails the run for a `trivial` tier (no Phase 2),
+for an audit (it needs the complete finding set and is retried instead), and for a FATAL
+error such as a broken prompt template. A failed Phase 2 fails the run as before. A Phase-1 rung that dies moves the whole run down
 the ladder once: lanes still on the dead rung follow when they fail, lanes not yet
 started go straight to the new rung. Provenance and finding rows keep role order.
 

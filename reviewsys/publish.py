@@ -364,7 +364,8 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     if p.triage:
         lines.append(_triage_line(p.triage))
     if p.phase1_skipped:
-        p1_line = f"- Phase 1 reviewers: **not run ({p.phase1_skipped})**"
+        state = "failed" if p.phase1_skipped == github.PHASE1_FAILED else "not run"
+        p1_line = f"- Phase 1 reviewers: **{state} ({p.phase1_skipped})**"
     else:
         p1_line = "- Phase 1 reviewers: " + (", ".join(p1) if p1 else "provenance missing")
     lines.append(p1_line)
