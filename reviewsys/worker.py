@@ -82,6 +82,8 @@ class RunContext:
     phase1_skipped: str | None = (
         None  # reason when the backlog rule sent this run straight to Phase 2
     )
+    # the second model Phase-2 reviewer lanes also run on for this run (see ComparisonPolicy)
+    compare_model: str | None = None
     phase1_choice: quota.Choice | None = None  # which Phase-1 ladder rung ran, and why
     phase1_lm: LaneModel | None = None  # the lane model of that rung; Phase-1 lanes start on it
     phase1_effort: str | None = None  # the tier's Phase-1 effort, re-capped per rung
@@ -554,6 +556,8 @@ def _run_lane(
     is_verifier: bool,
     fresh: bool = False,
     should_stop: Callable[[], bool] | None = None,
+    key: str | None = None,
+    comparison: bool = False,
 ) -> dict[str, Any]:
     """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output.
 
@@ -562,7 +566,9 @@ def _run_lane(
     stand-in, so one exhausted pool does not fail the review.
 
     `should_stop` (default: the run was cancelled) is polled while the lane runs; a stopped
-    lane raises Cancelled when the run was cancelled, else LaneStopped."""
+    lane raises Cancelled when the run was cancelled, else LaneStopped. `key` names the lane
+    among its phase's outputs when it differs from `role` (a comparison lane). A `comparison`
+    lane never runs on a stand-in and never flips the run: it fails instead."""
     assert ctx.worktree
     stop = should_stop or ctx.cancel_flag.is_set
     last: str = ""
@@ -572,8 +578,10 @@ def _run_lane(
         if stop():
             ctx.check_cancel()  # a cancelled run is Cancelled, never just a stopped lane
             raise LaneStopped()
+        if comparison and ctx.is_degraded:
+            raise ReviewError(FailKind.INFRA, f"{phase}/{key}: the run went degraded")
         # re-resolved per attempt: a parallel sibling may have flipped the run to degraded
-        lm = ctx.lane_model(lm)
+        lm = lm if comparison else ctx.lane_model(lm)
         if phase == "phase1" and not is_verifier and ctx.phase1_lm not in (None, lm):
             # ... or moved it down the Phase-1 ladder: no second try on the rung it left
             raise ReviewError(FailKind.INFRA, f"{phase}/{role}: the run left {lm.model}")
@@ -647,7 +655,7 @@ def _run_lane(
                 reason=str(exc),
             )
             last = str(exc)
-            switched = _degrade_on_quota_failure(ctx, lm, exc, res)
+            switched = None if comparison else _degrade_on_quota_failure(ctx, lm, exc, res)
             if switched is not None:
                 lm, budget = switched, attempt + 2
             continue
@@ -669,6 +677,7 @@ def _run_lane(
                     "model": lm.model,
                     "agent": lm.agent,
                     "role": role,
+                    "key": key or role,
                     "effort": lm.effort,
                     "status": "completed",
                     "phase": phase,
@@ -719,6 +728,8 @@ def _reviewer_lane(
     prompt: str,
     fresh: bool = False,
     should_stop: Callable[[], bool] | None = None,
+    key: str | None = None,
+    comparison: bool = False,
 ) -> dict[str, Any]:
     """One reviewer lane, retried down the Phase-1 ladder when its rung dies. A Phase-1 lane
     starts (and restarts) on the run's current rung, so a lane that starts after a sibling
@@ -736,6 +747,8 @@ def _reviewer_lane(
                 is_verifier=False,
                 fresh=fresh,
                 should_stop=should_stop,
+                key=key,
+                comparison=comparison,
             )
         except ReviewError as exc:
             nxt = _phase1_fallback(ctx, lm, exc) if phase == "phase1" else None
@@ -759,10 +772,20 @@ def _reviewer_lanes(
 
     One lane failing for good fails the phase, exactly as it did when they ran one after
     another: its siblings are stopped rather than left to spend quota on a run that will be
-    retried from scratch."""
+    retried from scratch.
+
+    On a comparison run (`ctx.compare_model`) every Phase-2 role also runs on that model,
+    keyed `<role>#2` beside the primary lane. A comparison lane that fails is dropped with an
+    event; it never fails the phase."""
     assert ctx.meta
     meta = ctx.meta.as_dict()
     roles = ["general", *ctx.selection]
+    # (output key, role, lane model, comparison?) -- primary lanes first, so they start first
+    lanes: list[tuple[str, str, LaneModel, bool]] = [(r, r, lm, False) for r in roles]
+    if phase == "phase2" and ctx.compare_model:
+        twin = dataclasses.replace(lm, model=ctx.compare_model, substitute_for=None)
+        lanes += [(f"{r}{COMPARE_SUFFIX}", r, twin, True) for r in roles]
+    keys = [k for k, *_ in lanes]
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
@@ -771,7 +794,7 @@ def _reviewer_lanes(
     def stopped() -> bool:
         return ctx.cancel_flag.is_set() or abandon.is_set()
 
-    def review(role: str) -> ReviewerOutput:
+    def review(key: str, role: str, lane_lm: LaneModel, comparison: bool) -> ReviewerOutput | None:
         try:
             prompt = reviewer_prompt(
                 ctx.cfg,
@@ -787,25 +810,50 @@ def _reviewer_lanes(
                 prior_sha=review_prior_sha,
                 fresh=fresh,
             )
-            raw = _reviewer_lane(
-                ctx, phase=phase, role=role, lm=lm, prompt=prompt, fresh=fresh, should_stop=stopped
-            )
-            return parse_reviewer_output(
-                raw,
-                expected_phase=expected_phase,
-                head_sha=ctx.sha,
-                source=f"{phase}:{role}",
-                prior_hashes=prior_hashes,
-            )
+            try:
+                raw = _reviewer_lane(
+                    ctx,
+                    phase=phase,
+                    role=role,
+                    lm=lane_lm,
+                    prompt=prompt,
+                    fresh=fresh,
+                    should_stop=stopped,
+                    key=key,
+                    comparison=comparison,
+                )
+                return parse_reviewer_output(
+                    raw,
+                    expected_phase=expected_phase,
+                    head_sha=ctx.sha,
+                    source=f"{phase}:{key}",
+                    prior_hashes=prior_hashes,
+                )
+            except ReviewError as exc:
+                if not comparison:
+                    raise
+                log.warning("comparison lane %s on %s dropped: %s", key, lane_lm.model, exc)
+                with tx(ctx.conn):
+                    event(
+                        ctx.conn,
+                        "compare.lane_dropped",
+                        repo=ctx.repo,
+                        number=ctx.number,
+                        run_id=ctx.run_id,
+                        detail=f"{phase}/{key} {lane_lm.model}: {exc.message[:400]}",
+                    )
+                return None
         finally:
             ctx.close_lane_conn()
 
     first = len(ctx.reviewers)
-    results: dict[str, ReviewerOutput] = {}
+    results: dict[str, ReviewerOutput | None] = {}
     errors: list[BaseException] = []
     workers = max(1, min(len(roles), ctx.cfg.phase_parallelism))
+    if len(lanes) > len(roles):
+        workers *= 2  # the comparison lanes must not hold the primary ones back
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"{phase}-lane") as pool:
-        futures = {pool.submit(review, role): role for role in roles}
+        futures = {pool.submit(review, *lane): lane[0] for lane in lanes}
         try:
             for fut in as_completed(futures):
                 try:
@@ -816,7 +864,7 @@ def _reviewer_lanes(
                     for f in futures:
                         f.cancel()  # roles not started yet never start
         finally:
-            if len(results) < len(roles):
+            if len(results) < len(lanes):
                 abandon.set()  # however we leave (an interrupt too), no lane outlives the phase
     if errors:
         # a cancelled run wins; else the failure that stopped the others, never a stopped lane
@@ -824,15 +872,20 @@ def _reviewer_lanes(
             (e for e in errors if isinstance(e, Cancelled)),
             next((e for e in errors if not isinstance(e, LaneStopped)), errors[0]),
         )
-    if len(results) < len(roles):
+    if len(results) < len(lanes):
         ctx.check_cancel()
         raise ReviewError(FailKind.INFRA, f"{phase}: a reviewer lane never ran")
-    # provenance and finding rows in role order, as if the lanes had run one after another
-    ctx.reviewers[first:] = sorted(ctx.reviewers[first:], key=lambda r: roles.index(r["role"]))
-    outputs = {role: results[role] for role in roles}
+    # provenance and finding rows in lane order, as if the lanes had run one after another
+    ctx.reviewers[first:] = sorted(
+        ctx.reviewers[first:], key=lambda r: keys.index(r.get("key", r["role"]))
+    )
+    outputs = {k: out for k in keys if (out := results[k]) is not None}
     with tx(ctx.conn):
-        for output in outputs.values():
-            _insert_findings(ctx, phase, "lane", output.findings)
+        for k, output in outputs.items():
+            # comparison lanes' own findings are kept apart so `reviewsys compare` can tell
+            # which model raised what; nothing else reads that stage
+            stage = "compare" if k.endswith(COMPARE_SUFFIX) else "lane"
+            _insert_findings(ctx, phase, stage, output.findings)
     return outputs
 
 
@@ -1216,6 +1269,10 @@ def _build_review(
         adhoc=ctx.adhoc,
         fresh_final=ctx.fresh_final,
         degraded=_degraded_provenance(ctx),
+        # only when a comparison lane actually finished (they are dropped on failure)
+        compare_model=ctx.compare_model
+        if any(str(r.get("key", "")).endswith(COMPARE_SUFFIX) for r in ctx.reviewers)
+        else None,
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -1790,6 +1847,32 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     return True
 
 
+def _choose_comparison(ctx: RunContext) -> None:
+    """Sample this run for a model comparison (see ComparisonPolicy). Never on an audit, in
+    degraded mode (both sets would run on the same stand-in), or when the comparison model
+    is the primary one."""
+    cmp = ctx.cfg.policy.comparison
+    if (
+        cmp is None
+        or ctx.is_audit
+        or ctx.is_degraded
+        or cmp.model == ctx.cfg.policy.phase2_reviewer.model
+        or not cmp.selects(ctx.repo, ctx.number, ctx.sha, ctx.tier)
+    ):
+        return
+    ctx.compare_model = cmp.model
+    with tx(ctx.conn):
+        event(
+            ctx.conn,
+            "compare.selected",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"tier={ctx.tier} primary={ctx.cfg.policy.phase2_reviewer.model} second={cmp.model}",
+        )
+
+
+COMPARE_SUFFIX = "#2"  # output key of a comparison lane: `<role>#2`
 LIGHT_AUDIT_TIER = "trivial"  # the policy tier a light audit reviews at (Phase 1 only)
 PHASE1_FAILED = github.PHASE1_FAILED
 
@@ -2135,6 +2218,7 @@ def run(ctx: RunContext) -> RunStatus:
         _step_end(ctx, StepName.CONVERSE, "ok", detail)
         return RunStatus.DONE
     effort = pol.tier_effort(ctx.tier)
+    _choose_comparison(ctx)
     if _backlog_skips_phase1(ctx, phase2_effort=effort.phase2):
         return _phase2_only(ctx, effort)
     try:
