@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -104,13 +105,13 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
     rid, status = _run(cfg, conn, gh, lanes)
     assert status == RunStatus.DONE
     roles = [(s.role, s.model, s.effort) for s in lanes.calls]
-    # selector, triage, phase1 general+always-on+security (GLM @max), verifier (Sol),
-    # phase2 x3 (astra @high for the `normal` tier), final verifier (astra, fixed high)
+    # selector, triage, phase1 general+always-on+security (GLM @max, in parallel), verifier
+    # (Sol), phase2 x3 (astra @high for the `normal` tier), final verifier (astra, fixed high)
     assert roles[0][0] == "selector"
     assert roles[1] == ("triage", "gpt-6-astra", "low")
-    assert roles[2:5] == [
-        ("general", "glm-5.3-flash", "max"),
+    assert sorted(roles[2:5]) == [
         ("always-on", "glm-5.3-flash", "max"),
+        ("general", "glm-5.3-flash", "max"),
         ("security-auditor", "glm-5.3-flash", "max"),
     ]
     assert roles[5] == ("verifier", "gpt-5.6-sol", "high")
@@ -661,7 +662,8 @@ def test_adhoc_review_of_unlisted_repo(cfg, conn, gh, lanes):
     assert sel.role == "selector" and "security-auditor" in sel.prompt
     assert "always-on" not in sel.prompt, "always-run specialists are repo-specific"
     roles = [s.role for s in _reviewer_calls(lanes)]
-    assert roles == ["general", "security-auditor"] * 2
+    # each phase runs its two lanes in parallel, in either order
+    assert sorted(roles[:2]) == sorted(roles[2:]) == ["general", "security-auditor"]
     general = next(s for s in _reviewer_calls(lanes) if s.role == "general")
     assert "ad hoc review" in general.prompt and "PROJECT SKILL" not in general.prompt
     body = gh.posted_reviews[0]["body"]
@@ -2009,7 +2011,8 @@ def test_verdict_update_converges_on_bot_authored_pr(cfg, conn, gh, lanes):
     from reviewsys.contract import parse_verifier_output
 
     ctx = worker.RunContext.__new__(worker.RunContext)
-    ctx.conn, ctx.repo, ctx.number, ctx.sha, ctx.run_id = conn, "dashpay/platform", 1, HEAD, rid
+    ctx.main_conn, ctx.owner_thread = conn, threading.get_ident()
+    ctx.repo, ctx.number, ctx.sha, ctx.run_id = "dashpay/platform", 1, HEAD, rid
     out = parse_verifier_output(
         {**_verifier([b]), "review_phase": "final"},
         expected_phase="final",
@@ -2291,13 +2294,14 @@ def test_phase1_lane_failure_falls_down_the_ladder(cfg, conn, gh, lanes, skills_
     rid, status = _run_ladder(cfg2, conn, gh, lanes, reader)
     assert status == RunStatus.DONE
     p1 = [(s.role, s.model) for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"]
-    # general tried twice on gemini, then general + the specialists on glm
-    assert p1[:2] == [("general", "gemini-3.8-flash-high")] * 2
-    assert p1[2:] == [
-        ("general", "glm-5.3-flash"),
-        ("always-on", "glm-5.3-flash"),
-        ("security-auditor", "glm-5.3-flash"),
-    ]
+    # the lanes start side by side on gemini; the first to die there twice moves the run down
+    # the ladder, lanes still on gemini follow when they die, and lanes that had not started
+    # yet go straight to glm. Every role finishes on glm, exactly once.
+    roles = ["always-on", "general", "security-auditor"]
+    on_gemini = [r for r, m in p1 if m == "gemini-3.8-flash-high"]
+    assert 2 <= len(on_gemini) <= 6 and len(on_gemini) % 2 == 0, "two tries per lane on a rung"
+    assert sorted(r for r, m in p1 if m == "glm-5.3-flash") == roles
+    assert {m for _, m in p1} == {"gemini-3.8-flash-high", "glm-5.3-flash"}
     body = gh.posted_reviews[0]["body"]
     assert (
         "- Phase 1 model: `glm-5.3-flash` — zai quota: 5h 90% left, weekly 90% left; "
@@ -2315,9 +2319,8 @@ def test_phase1_lane_failure_falls_down_the_ladder(cfg, conn, gh, lanes, skills_
     rows = conn.execute(
         "SELECT model, status FROM lanes WHERE run_id=? AND phase='phase1' ORDER BY id", (rid,)
     ).fetchall()
-    assert [(r["model"], r["status"]) for r in rows][:2] == [
-        ("gemini-3.8-flash-high", "failed")
-    ] * 2
+    assert {r["status"] for r in rows if r["model"] == "gemini-3.8-flash-high"} == {"failed"}
+    assert [r["status"] for r in rows if r["model"] == "glm-5.3-flash"] == ["completed"] * 3
 
 
 def test_fallback_below_a_dead_rung_honours_the_ceiling(cfg, conn, gh, lanes, skills_dir, tmp_path):
@@ -2338,8 +2341,9 @@ def test_fallback_below_a_dead_rung_honours_the_ceiling(cfg, conn, gh, lanes, sk
     _, status = _run_ladder(cfg2, conn, gh, lanes, reader)
     assert status == RunStatus.DONE
     models = [s.model for s in _reviewer_calls(lanes) if s.model != "gpt-6-astra"]
-    assert models[:2] == ["gemini-3.8-flash-high"] * 2
-    assert set(models[2:]) == {"muse-spark-1.3-contributor"}
+    assert models[0] == "gemini-3.8-flash-high"
+    assert set(models) == {"gemini-3.8-flash-high", "muse-spark-1.3-contributor"}
+    assert models.count("muse-spark-1.3-contributor") == 3  # every role, once, on muse
     body = gh.posted_reviews[0]["body"]
     assert "`glm-5.3-flash` (not used above high effort; tier asks max)" in body
 

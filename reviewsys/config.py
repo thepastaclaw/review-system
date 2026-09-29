@@ -212,6 +212,10 @@ class Config:
     watchdog_minutes: int
     comment_budget: int
     backlog_skip_phase1_above: int  # queued heads above this -> runs skip Phase 1 (0 disables)
+    # reviewer lanes one phase of one run runs at once (1 = sequential, the pre-v0.19 flow)
+    phase_parallelism: int
+    # machine-wide lane slots per non-gpt model family (see lanepool.py); unlisted = ungated
+    lane_pools: dict[str, int]
     # identity / alerting
     bot_login: str
     slack_target: str | None
@@ -276,6 +280,9 @@ class Config:
 DEFAULT_PAGE_TARGET = "channel:C0AEQ5D7SJ3"
 DEFAULT_PAGE_MENTIONS = ("UCW1VE04T", "U02CNG35EGG")
 
+# box config.toml files predating parallel lanes get the same caps as a fresh one
+DEFAULT_LANE_POOLS = {"muse": 8, "glm": 6, "gemini": 6}
+
 DEFAULT_TOML = """\
 # reviewsys configuration
 [paths]
@@ -317,6 +324,13 @@ comment_budget = 10
 # when more heads than this are queued, new runs skip the Phase-1 reviewers and go
 # straight to Phase 2; 0 disables. Disclosed in the review and the gate comment.
 backlog_skip_phase1_above = 10
+# the general reviewer and the specialists of one phase run side by side, at most this
+# many at once per run (1 = one after another)
+phase_parallelism = 4
+# machine-wide cap on lanes in flight per model family, across every run. gpt lanes are
+# capped by the review slot ceiling instead (the per-account stream budget); a family
+# not listed here is not capped.
+lane_pools = { muse = 8, glm = 6, gemini = 6 }
 
 [identity]
 bot_login = "thepastaclaw"
@@ -564,6 +578,12 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         watchdog_minutes=int(s["watchdog_minutes"]),
         comment_budget=int(s.get("comment_budget", settings.get("comment_budget", 10))),
         backlog_skip_phase1_above=int(s.get("backlog_skip_phase1_above", 10)),
+        phase_parallelism=max(1, int(s.get("phase_parallelism", 4))),
+        lane_pools={
+            str(k): max(1, int(v))
+            for k, v in (s.get("lane_pools", DEFAULT_LANE_POOLS) or {}).items()
+            if str(k) != "gpt"  # gpt is always the review slot ceiling
+        },
         bot_login=str(i["bot_login"]),
         slack_target=i.get("slack_target"),
         slack_account=str(i.get("slack_account", "default")),

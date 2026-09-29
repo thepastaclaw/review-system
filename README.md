@@ -20,7 +20,8 @@ tested, one daemon, one SQLite file, no lock files.
 | `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
 | `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
 | `quota.py` | Phase-1 model ladder: remaining Antigravity / Z.AI quota via the proxy's management `api-call`; first rung with quota runs |
-| `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage |
+| `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage; stoppable mid-run |
+| `lanepool.py` | machine-wide lane slots per model family (`flock` files), shared by every worker |
 | `prompts.py` | assembles prompts from the `thepastaclaw/skills` repo templates |
 | `contract.py` | reviewer/verifier JSON contracts; legacy-compatible `finding_hash` / `dedupe_key` |
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
@@ -444,6 +445,36 @@ slot to normal work only while one remains free for priority, so the priority la
 stays reserved however long the queue gets. `reviewsys status` prints the
 effective `slots:` line.
 
+### Parallel reviewer lanes
+
+Within a phase the general reviewer and the selected specialists run side by side
+(`phase_parallelism`, default 4, per run; 1 restores the one-after-another flow). They
+never read each other's output, so only the verifier after them waits for all of them;
+the phases themselves still run in order. Measured 2026-09-23..27 (193 two-phase
+reviews, 2–6 reviewers per phase), this cuts a full review from ~65 to a projected
+~38 min; a cap of 3 already gets ~95% of that.
+
+A run no longer holds one model session at a time, so every lane (reviewers, verifiers,
+triage, selector, repair) first takes a slot in its model family's machine-wide pool
+(`lanepool.py`): an exclusive `flock` on one of N files under `work/lane-slots`, held
+while the lane runs and dropped by the kernel if the worker dies. `gpt` lanes get the
+review slot ceiling (the per-account stream budget the run slots were sized to); the
+other families take `lane_pools` (`muse = 8, glm = 6, gemini = 6` by default, from the
+measured headroom: Muse 100 RPM per team at ~3.7 req/min per lane, peak 11 in flight
+with no 429s). A lane waiting for a slot simply starts later. Two rules keep one busy
+run from starving the rest: the top slot of each pool is kept for lanes that are not
+parallel reviewers (verifiers, triage, selector, repair, conversation), which sit on
+some run's critical path; and parallel reviewers wait in line (a ticket file per waiter
+under `lane-slots/<pool>.wait`), priority runs before live runs before audits, then first
+come first served. So at the static 2 + 1 ceiling a Phase-2 run gets two gpt reviewers
+at a time; each usable OpenAI account adds three more slots.
+
+One lane failing for good (twice, and on every Phase-1 rung) fails the phase as
+before; its siblings are stopped (`lanes.status = cancelled`) instead of spending quota
+on a run that is retried from scratch. A Phase-1 rung that dies moves the whole run down
+the ladder once: lanes still on the dead rung follow when they fail, lanes not yet
+started go straight to the new rung. Provenance and finding rows keep role order.
+
 ## Alerts (Slack via `openclaw message send`)
 
 Only: a head failed after all retries, watchdog (eligible work + free slot +
@@ -513,6 +544,8 @@ Config knobs (`~/.reviewsys/config.toml`, restart the daemon after editing):
 `max_concurrent` / `priority_overflow` (slots per usable OpenAI account),
 `account_scale_max` (1 = static slots), `account_reserves`, `page_target` / `page_mentions`
 (`[identity]`, degraded-mode pages), `debounce_minutes`,
+`phase_parallelism` (reviewer lanes per phase per run), `lane_pools` (lanes in flight per
+model family across all runs; `gpt` always follows the slot ceiling),
 `lane_timeout_minutes` (wall-clock bound per lane), `lane_budget_usd` (runaway
 guard passed as `claude --max-budget-usd`; it is the CLI's list-price estimate,
 not real spend, so keep it well above a normal $3–10 lane).

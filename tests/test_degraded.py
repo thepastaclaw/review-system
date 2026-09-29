@@ -271,11 +271,10 @@ def test_degraded_run_swaps_every_primary_lane_and_discloses_it(
     assert calls[0] == ("selector", "glm-5.3-flash", "low")  # terra -> glm
     assert calls[1] == ("triage", MUSE, "low")  # astra -> muse
     # Phase 1 stays on its own model but the tier's `max` is capped to `high`
-    assert calls[2:5] == [
-        (r, "glm-5.3-flash", "high") for r in ("general", "always-on", "security-auditor")
-    ]
+    roles = ("always-on", "general", "security-auditor")  # a phase's lanes run in parallel
+    assert sorted(calls[2:5]) == [(r, "glm-5.3-flash", "high") for r in roles]
     assert calls[5] == ("verifier", MUSE, "high")  # sol gate verifier -> muse
-    assert calls[6:9] == [(r, MUSE, "high") for r in ("general", "always-on", "security-auditor")]
+    assert sorted(calls[6:9]) == [(r, MUSE, "high") for r in roles]
     assert calls[9] == ("verifier", MUSE, "high")
     assert {s.model for s in lanes.calls} == {"glm-5.3-flash", MUSE}, "no primary model touched"
     # persisted + evented
