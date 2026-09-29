@@ -1773,7 +1773,7 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     queued = live_queued_count(ctx.conn)
     if queued <= limit:
         return False
-    reason = f"skipped for throughput: {queued} PRs queued, above the {limit} limit"
+    reason = f"{github.PHASE1_BACKLOG} {queued} PRs queued, above the {limit} limit"
     ctx.phase1_skipped = reason
     _step_start(ctx, StepName.PHASE1)
     _step_end(ctx, StepName.PHASE1, "skipped", {"reason": reason, "queued": queued, "limit": limit})
@@ -1791,6 +1791,7 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
 
 
 LIGHT_AUDIT_TIER = "trivial"  # the policy tier a light audit reviews at (Phase 1 only)
+PHASE1_FAILED = github.PHASE1_FAILED
 
 
 # ---- conversation mode: answer replies on an already-reviewed commit ----
@@ -2135,42 +2136,26 @@ def run(ctx: RunContext) -> RunStatus:
         return RunStatus.DONE
     effort = pol.tier_effort(ctx.tier)
     if _backlog_skips_phase1(ctx, phase2_effort=effort.phase2):
-        ctx.phase2_outputs = _reviewer_step(
+        return _phase2_only(ctx, effort)
+    try:
+        ctx.phase1_outputs = _reviewer_step(
             ctx,
-            step=StepName.PHASE2,
-            phase="phase2",
-            lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
-            expected_phase="final",
+            step=StepName.PHASE1,
+            phase="phase1",
+            lm=lambda: _choose_phase1(ctx, effort.phase1),
+            expected_phase="preliminary",
         )
-        ctx.verify2 = _verify_step(
+        ctx.verify1 = _verify_step(
             ctx,
-            step=StepName.VERIFY2,
-            phase="verify2",
-            lm=ctx.lane_model(pol.phase2_verifier),
-            expected_phase="final",
+            step=StepName.VERIFY1,
+            phase="verify1",
+            lm=ctx.lane_model(pol.phase1_verifier),
+            expected_phase="preliminary",
         )
-        ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
-        _publish_step(
-            ctx,
-            phase="final",
-            verified=ctx.verify2,
-            verifier_lm=ctx.lane_model(pol.phase2_verifier),
-        )
-        return RunStatus.DONE
-    ctx.phase1_outputs = _reviewer_step(
-        ctx,
-        step=StepName.PHASE1,
-        phase="phase1",
-        lm=lambda: _choose_phase1(ctx, effort.phase1),
-        expected_phase="preliminary",
-    )
-    ctx.verify1 = _verify_step(
-        ctx,
-        step=StepName.VERIFY1,
-        phase="verify1",
-        lm=ctx.lane_model(pol.phase1_verifier),
-        expected_phase="preliminary",
-    )
+    except ReviewError as exc:
+        if not _phase1_failure_falls_through(ctx, exc, phase2_effort=effort.phase2):
+            raise
+        return _phase2_only(ctx, effort)
     _step_start(ctx, StepName.GATE)
     tier_allows = effort.phase2 is not None
     admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled, tier_allows=tier_allows)
@@ -2218,6 +2203,62 @@ def run(ctx: RunContext) -> RunStatus:
         ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
     )
     return RunStatus.DONE
+
+
+def _phase2_only(ctx: RunContext, effort: Any) -> RunStatus:
+    """Phase 2 and the final verifier on their own, when Phase 1 did not run (a deep queue)
+    or did not finish (every rung of its ladder failed)."""
+    pol = ctx.cfg.policy
+    ctx.phase2_outputs = _reviewer_step(
+        ctx,
+        step=StepName.PHASE2,
+        phase="phase2",
+        lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
+        expected_phase="final",
+    )
+    ctx.verify2 = _verify_step(
+        ctx,
+        step=StepName.VERIFY2,
+        phase="verify2",
+        lm=ctx.lane_model(pol.phase2_verifier),
+        expected_phase="final",
+    )
+    ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
+    _publish_step(
+        ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
+    )
+    return RunStatus.DONE
+
+
+def _phase1_failure_falls_through(
+    ctx: RunContext, exc: ReviewError, *, phase2_effort: str | None
+) -> bool:
+    """Phase 1 failed for good (a reviewer lane died twice on every rung of the ladder, or the
+    gate verifier died twice): rather than failing the run and retrying it from scratch,
+    review with Phase 2 alone, exactly like the backlog rule does. Only when there is a
+    Phase 2 to fall through to (enabled, and the tier runs it). Whatever Phase 1 produced is
+    dropped: unverified, it must not reach the final verifier as if it had been gated. The
+    error text stays in the step and the event; the review only says Phase 1 failed."""
+    if not ctx.cfg.policy.phase2_enabled or phase2_effort is None:
+        return False
+    log.warning("phase1 failed (%s); continuing with Phase 2 only", exc)
+    ctx.phase1_skipped = PHASE1_FAILED
+    ctx.phase1_outputs, ctx.verify1 = {}, None
+    ctx.reviewers[:] = [r for r in ctx.reviewers if r["phase"] != "phase1"]
+    row = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (ctx.run_id,)).fetchone()
+    step = StepName(row["phase"]) if row and row["phase"] else StepName.PHASE1
+    _step_end(ctx, step, "failed", {"error": exc.message[:1000], "fell_through": True})
+    with tx(ctx.conn):
+        event(
+            ctx.conn,
+            "phase1.failed_fallthrough",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=exc.message[:500],
+        )
+    _gate_comment(ctx, "in_progress")
+    return True
 
 
 def cleanup(ctx: RunContext, status: RunStatus) -> None:

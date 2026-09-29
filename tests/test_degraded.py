@@ -394,7 +394,9 @@ def test_non_quota_failure_does_not_degrade(conn, gh, lanes, skills_dir, tmp_pat
     lanes.dead_models = {"gpt-5.6-sol"}
     lanes.dead_stderr = "segfault in the launcher"
     rid, status = _run(c, conn, gh, lanes, prober=FINE)
-    assert status == RunStatus.FAILED
+    # the gate verifier died (not on quota): Phase 1 is dropped and the review is Phase 2 only
+    assert status == RunStatus.DONE
+    assert "Phase 2 only (Phase 1 failed)" in gh.posted_reviews[0]["body"]
     assert MUSE not in {s.model for s in lanes.calls}
     assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 0
     assert (
@@ -403,13 +405,23 @@ def test_non_quota_failure_does_not_degrade(conn, gh, lanes, skills_dir, tmp_pat
     )
 
 
-def test_without_a_degraded_block_a_quota_failure_still_fails_the_run(cfg, conn, gh, lanes):
+def test_without_a_degraded_block_a_quota_failure_falls_through_to_phase_2(cfg, conn, gh, lanes):
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier()
     lanes.dead_models = {"gpt-5.6-sol"}
     rid, status = _run(cfg, conn, gh, lanes, prober=FINE)
-    assert status == RunStatus.FAILED
+    assert status == RunStatus.DONE
     assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 0
+    # ... but a dead Phase-2 model still fails the run: there is nothing left to fall to
+    lanes.dead_models = {"gpt-6-astra"}
+    gh.posted_reviews.clear()
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done'")
+        enqueue_head(conn, cfg, "dashpay/platform", 2, "c" * 40, Trigger.MENTION)
+    (rid2,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid2, gh=gh, lane_runner=lanes, heartbeat=False) == (
+        RunStatus.FAILED
+    )
 
 
 def test_degraded_mode_under_a_deep_backlog_runs_phase_2_only_on_the_standin(

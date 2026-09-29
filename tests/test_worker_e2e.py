@@ -2351,10 +2351,46 @@ def test_fallback_below_a_dead_rung_honours_the_ceiling(cfg, conn, gh, lanes, sk
     assert "`glm-5.3-flash` (not used above high effort; tier asks max)" in body
 
 
-def test_phase1_failure_on_last_rung_still_fails_the_run(
+def test_phase1_failure_on_last_rung_falls_through_to_phase_2(
     cfg, conn, gh, lanes, skills_dir, tmp_path
 ):
+    """Every Phase-1 rung is out: the run does not fail and retry, it reviews with Phase 2
+    alone and says so, like the backlog rule."""
     cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    lanes.dead_models = {"muse-spark-1.3-contributor"}
+    reader = _quota_reader({"antigravity": (0.0, 0.0), "zai": (0.0, 0.0)})
+    rid, status = _run_ladder(cfg2, conn, gh, lanes, reader)
+    assert status == RunStatus.DONE
+    body = gh.posted_reviews[0]["body"]
+    assert "## Final validation — Phase 2 only (Phase 1 failed)" in body
+    assert (
+        "- Phase 1 reviewers: **not run (Phase 1 failed, so this review is Phase 2 only)**" in body
+    )
+    assert "429" not in body, "the error text stays in the event"
+    assert "Phase 2 only (Phase 1 failed)" in gh.gate_bodies[-1]
+    step = conn.execute(
+        "SELECT status, detail FROM steps WHERE run_id=? AND name='phase1'", (rid,)
+    ).fetchone()
+    assert step["status"] == "failed" and '"fell_through": true' in step["detail"]
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM events WHERE kind='phase1.failed_fallthrough' AND run_id=?",
+            (rid,),
+        ).fetchone()[0]
+        == 1
+    )
+    verifier = next(s for s in lanes.calls if s.role == "verifier")
+    assert "Phase 1 failed, so this review is Phase 2 only" in verifier.prompt
+
+
+def test_phase1_failure_on_a_trivial_tier_still_fails_the_run(
+    cfg, conn, gh, lanes, skills_dir, tmp_path
+):
+    """A trivial tier has no Phase 2 to fall through to."""
+    cfg2 = _ladder_cfg(skills_dir, tmp_path)
+    lanes.triage = {"tier": "trivial", "reasoning": "typo"}
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier([])
     lanes.dead_models = {"muse-spark-1.3-contributor"}

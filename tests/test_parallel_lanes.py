@@ -126,9 +126,15 @@ def test_parallelism_one_is_the_old_sequential_flow(cfg, conn, gh, lanes):
     assert runner.peak == 1
 
 
-def test_a_failed_lane_stops_its_siblings_and_fails_the_run(cfg, conn, gh, lanes):
-    """One reviewer failing for good fails the phase, as before; the lanes still running are
-    stopped (and recorded as cancelled) instead of spending quota on a run that is retried."""
+def test_a_failed_lane_stops_its_siblings_and_fails_the_phase(cfg, conn, gh, lanes):
+    """One reviewer failing for good fails the phase; the lanes still running are stopped
+    (and recorded as cancelled) instead of spending quota on a phase that is abandoned. Phase 2
+    runs the same way, so a failing lane there fails the run."""
+    # straight to Phase 2, with gpt slots for all three reviewers at once
+    cfg = dataclasses.replace(cfg, backlog_skip_phase1_above=1, max_concurrent=4)
+    with tx(conn):  # a queue deeper than the limit once the head under test has started
+        for n in (98, 99):
+            enqueue_head(conn, cfg, "dashpay/platform", n, f"{n}" * 20, Trigger.NEW_PR)
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier()
     lanes.timeout_roles = {"general"}
@@ -158,11 +164,11 @@ def test_a_failed_lane_stops_its_siblings_and_fails_the_run(cfg, conn, gh, lanes
     assert status == RunStatus.FAILED
     assert sorted(stopped) == ["always-on", "security-auditor"]
     reason = conn.execute("SELECT reason FROM runs WHERE id=?", (rid,)).fetchone()["reason"]
-    assert "phase1/general lane failed twice" in reason, "the real failure, not a stopped lane"
+    assert "phase2/general lane failed twice" in reason, "the real failure, not a stopped lane"
     rows = {
         r["role"]: r["status"]
         for r in conn.execute(
-            "SELECT role, status FROM lanes WHERE run_id=? AND phase='phase1'", (rid,)
+            "SELECT role, status FROM lanes WHERE run_id=? AND phase='phase2'", (rid,)
         )
     }
     assert rows == {"general": "failed", "always-on": "cancelled", "security-auditor": "cancelled"}

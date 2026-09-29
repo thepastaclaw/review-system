@@ -193,7 +193,9 @@ class Provenance:
     policy_fingerprint: str
     triage: dict[str, Any] | None = None  # {tier, model, effort, method, reasoning, error}
     phase2_skipped: str | None = None  # set when a final review was published from Phase 1 only
-    phase1_skipped: str | None = None  # set when the run went straight to Phase 2 (queue backlog)
+    phase1_skipped: str | None = (
+        None  # set when the run went straight to Phase 2 (backlog / failure)
+    )
     phase1_choice: dict[str, Any] | None = None  # {model, reason, skipped:[{model, reason}]}
     adhoc: bool = False  # repo has no skills entry: generic guidance, all specialists offered
     fresh_final: bool = False  # an independent Phase-2 gate ran after iterative reconciliation
@@ -428,7 +430,7 @@ def render(m: ReviewModel) -> str:
         tier = (m.provenance.triage or {}).get("tier", "trivial")
         title = f"Final review — Phase 1 only ({tier} change)"
     elif m.provenance.phase1_skipped:
-        title = "Final validation — Phase 2 only (queue backlog)"
+        title = f"Final validation — Phase 2 only ({github.phase2_only_label(m.provenance.phase1_skipped)})"
     else:
         title = "Final validation — Phase 1 + Phase 2"
     summary = "\n".join(

@@ -356,6 +356,16 @@ def upsert_gate_comment(gh: Gh, repo: str, number: int, bot_login: str, body: st
         gh.api(f"repos/{repo}/issues/{number}/comments", method="POST", body={"body": body})
 
 
+# why a run reviewed with Phase 2 alone (RunContext.phase1_skipped starts with one of these)
+PHASE1_BACKLOG = "skipped for throughput:"
+PHASE1_FAILED = "Phase 1 failed, so this review is Phase 2 only"
+
+
+def phase2_only_label(phase1_skipped: str) -> str:
+    """Short label for a Phase-2-only review, for titles and the gate comment."""
+    return "queue backlog" if phase1_skipped.startswith(PHASE1_BACKLOG) else "Phase 1 failed"
+
+
 def gate_body(
     status: str,
     sha: str,
@@ -373,7 +383,7 @@ def gate_body(
     s = sha[:8]
     t = f" · triage: {tier}" if tier else ""
     if phase1_skipped:
-        t += " · Phase 2 only (queue backlog)"
+        t += f" · Phase 2 only ({phase2_only_label(phase1_skipped)})"
     if adhoc:
         t += " · ad hoc (no repo skill)"
     if degraded:
