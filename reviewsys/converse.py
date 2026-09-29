@@ -14,7 +14,8 @@ so the model can read them). It returns one outcome per replied thread:
   WITHDRAWN            the human is right (or the finding no longer holds): concede and resolve
   FIXED                the code now addresses it (a linked or pushed commit): confirm and resolve
   STILL_VALID          the finding still holds and there is something NEW to say: say it
-  INTENTIONALLY_DEFERRED  the maintainers chose not to act; acknowledge and stop
+  INTENTIONALLY_DEFERRED  the maintainers chose not to act and the finding need not block this
+                       PR (pre-existing, out of scope, a follow-up): acknowledge and stop
   NO_REPLY             nothing useful to add (a question addressed to someone else, an
                        acknowledgement, a repeat of a point already answered): stay silent
 
@@ -24,6 +25,7 @@ short status word; the model writes the rest.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from dataclasses import dataclass
@@ -39,6 +41,12 @@ CONVERSATION_STATUSES = (
     "INTENTIONALLY_DEFERRED",
     "NO_REPLY",
 )
+# outcomes after which a blocking finding no longer holds up the verdict on this commit; a
+# deferral only counts when a maintainer made the call (`accept_deferrals`)
+LIFTING_STATUSES = frozenset({"WITHDRAWN", "FIXED", "INTENTIONALLY_DEFERRED"})
+MAINTAINER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+# posted-only status: the lane chose INTENTIONALLY_DEFERRED but no maintainer made that call
+DEFERRAL_PENDING = "DEFERRAL_PENDING"
 # 'https://github.com/<owner>/<repo>/commit/<sha>' or '/pull/<n>/commits/<sha>' links in a reply
 COMMIT_LINK_RE = re.compile(
     r"https?://github\.com/([\w.-]+)/([\w.-]+)/(?:commit|pull/\d+/commits)/([0-9a-f]{7,40})"
@@ -86,6 +94,30 @@ def linked_commits(threads: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
                     }
                 )
     return out
+
+
+def _maintainer_spoke_last(thread: dict[str, Any]) -> bool:
+    """A maintainer is among the human replies since our last answer on the thread."""
+    transcript = list(thread.get("transcript") or [])
+    last_bot = max((i for i, c in enumerate(transcript) if c.get("is_bot")), default=-1)
+    return any(c.get("association") in MAINTAINER_ASSOCIATIONS for c in transcript[last_bot + 1 :])
+
+
+def accept_deferrals(
+    out: ConversationOutput, threads: dict[str, dict[str, Any]]
+) -> ConversationOutput:
+    """An outside contributor declining to fix a blocker is not a maintainer decision to defer
+    it: such a deferral is posted as DEFERRAL_PENDING (the blocker stands, and the note says
+    so) instead of claiming we will stop pressing while REQUEST_CHANGES stays up."""
+    outcomes = {
+        h: (
+            dataclasses.replace(o, status=DEFERRAL_PENDING)
+            if o.status == "INTENTIONALLY_DEFERRED" and not _maintainer_spoke_last(threads[h])
+            else o
+        )
+        for h, o in out.outcomes.items()
+    }
+    return ConversationOutput(outcomes=outcomes)
 
 
 def _thread_for_prompt(h: str, t: dict[str, Any]) -> dict[str, Any]:
@@ -187,15 +219,22 @@ def prompt(
         "- Never repeat a point you already made. If your previous answer already said it and "
         "the human did not engage with it, either find a *new* way to make it concrete (a "
         "specific interleaving, a specific line, a specific command that would demonstrate it) "
-        "or accept that it did not persuade and stop pressing.\n"
+        "or accept that it did not persuade and stop pressing (NO_REPLY: the finding keeps "
+        "its severity).\n"
         "- If a human proposes a change (a linked commit, a sketch, an alternative test), "
         "evaluate the proposal on its merits and say whether it resolves your concern. If it "
         "does, say so plainly and mark the finding FIXED or WITHDRAWN as appropriate. Do not "
         "answer a concrete proposal with a restatement of the original concern.\n"
         "- If you were wrong, or the finding was overstated, say so and WITHDRAW it. Conceding "
         "a point costs nothing; digging in costs the maintainers' trust.\n"
-        "- If the maintainers have made a deliberate call not to act, mark it "
-        "INTENTIONALLY_DEFERRED, acknowledge it in one sentence, and stop.\n"
+        "- If a maintainer (association OWNER, MEMBER or COLLABORATOR) has made a deliberate "
+        "call not to act and you accept that the finding need not block this pull request "
+        "(it predates the change, or lies outside what the pull request claims to do), mark "
+        "it INTENTIONALLY_DEFERRED, acknowledge it in one sentence, and stop. This lifts the "
+        "finding's blocking status on this commit. A defect this diff introduces or makes "
+        "worse is not deferrable because someone prefers a follow-up. If you still believe "
+        "the pull request must not merge as it stands, do not use INTENTIONALLY_DEFERRED: "
+        "use STILL_VALID when you have something new to say, otherwise NO_REPLY.\n"
         "- If a reply is addressed to someone else, is a bare acknowledgement, or asks a "
         "question you cannot usefully answer from the code, mark NO_REPLY. Silence is better "
         "than noise. In particular, if a human explicitly asked someone else to weigh in, do not "

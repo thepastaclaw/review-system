@@ -795,6 +795,10 @@ _CONVERSATION_NOTE = {
     "INTENTIONALLY_DEFERRED": (
         "\n\n_Noted as intentionally deferred; I will not press it further here._"
     ),
+    "DEFERRAL_PENDING": (
+        "\n\n_Deferring this needs a maintainer's call; until then it still blocks this pull "
+        "request._"
+    ),
 }
 
 
@@ -1055,7 +1059,7 @@ def render_verdict_update(
     provenance: Provenance,
     previous_event: str,
     new_event: str,
-    withdrawn_blockers: list[str],
+    lifted_blockers: list[str],
 ) -> str:
     n = verified.blocker_count
     summary = "\n".join(
@@ -1077,8 +1081,8 @@ def render_verdict_update(
         "",
     ]
     parts += [_counts_line(list(verified.findings), include_zero=True), ""]
-    if withdrawn_blockers:
-        parts += ["Withdrawn blocking finding(s):", *(f"- {t}" for t in withdrawn_blockers), ""]
+    if lifted_blockers:
+        parts += ["No longer blocking:", *(f"- {t}" for t in lifted_blockers), ""]
     if summary:
         parts += [summary, ""]
     parts += [
@@ -1170,7 +1174,7 @@ def publish_verdict_update(
     verified: VerifierOutput,
     provenance: Provenance,
     previous_event: str,
-    withdrawn_blockers: list[str],
+    lifted_blockers: list[str],
     bot_login: str,
 ) -> PublishResult:
     event = verdict_event(verified, provenance)
@@ -1181,7 +1185,7 @@ def publish_verdict_update(
         provenance=provenance,
         previous_event=previous_event,
         new_event=event,
-        withdrawn_blockers=withdrawn_blockers,
+        lifted_blockers=lifted_blockers,
     )
     own = github.pr_meta(gh, repo, number).author.lower() == bot_login.lower()
     transport = transport_event(event, own_pr=own)
