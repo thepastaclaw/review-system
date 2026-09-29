@@ -108,9 +108,9 @@ def attribute_sources(
 
     def raised_by(reviewer: dict[str, Any], f: Finding) -> bool:
         phase = str(reviewer["phase"])
-        role = str(reviewer["role"])
+        key = str(reviewer.get("key") or reviewer["role"])  # `<role>#2` for a comparison lane
         prefix = "fresh:" if reviewer.get("fresh") else ""
-        return any(lf.hash == f.hash for lf in lane_findings.get(f"{phase}:{prefix}{role}", []))
+        return any(lf.hash == f.hash for lf in lane_findings.get(f"{phase}:{prefix}{key}", []))
 
     for f in verified.findings:
         labels = _source_labels(f.source)
@@ -203,6 +203,8 @@ class Provenance:
     # stand-in models were in use (primary models out of quota): {reason, source, since,
     # label, substitutes:{primary: stand_in}, phase1_effort_cap}
     degraded: dict[str, Any] | None = None
+    # the second model the Phase-2 reviewers also ran on for a model comparison
+    compare_model: str | None = None
 
 
 @dataclass(slots=True)
@@ -388,6 +390,11 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
         lines.append(
             "- Phase 2 reviewers: " + (", ".join(p2) if p2 else "no successful evidence recorded")
         )
+        if p.compare_model:
+            lines.append(
+                f"- Model comparison: every Phase-2 reviewer also ran on `{p.compare_model}`; "
+                "the verifier weighed both sets without knowing which model wrote which"
+            )
     return lines
 
 

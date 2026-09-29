@@ -206,6 +206,8 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             models.update(c.model for c in cfg.policy.phase1_candidates)
             if cfg.policy.degraded:
                 models.update(s.model for s in cfg.policy.degraded.substitutes.values())
+            if cfg.policy.comparison:
+                models.add(cfg.policy.comparison.model)
             for m in sorted(models):
                 good, detail = probe_single_stop(m, key)
                 ok &= _ok(f"proxy model {m} (single stop_sequence)", good, detail)

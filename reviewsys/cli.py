@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import audit as audit_mod
+from . import compare as compare_mod
 from . import config as cfg_mod
 from . import db as db_mod
 from . import degraded as degraded_mod
@@ -283,6 +284,18 @@ def cmd_audit(args: argparse.Namespace) -> int:
     return 1
 
 
+def cmd_compare(args: argparse.Namespace) -> int:
+    """How the comparison model did against the primary on sampled runs (compare.py)."""
+    cfg = _cfg(args)
+    conn = db_mod.connect(cfg.db_path)
+    runs = compare_mod.compare_runs(conn, since=args.since)
+    if args.json:
+        print(json.dumps(compare_mod.summarize(runs), indent=1))
+    else:
+        print(compare_mod.render(runs), end="")
+    return 0
+
+
 def cmd_init_config(args: argparse.Namespace) -> int:
     path = Path(args.config) if args.config else cfg_mod.DEFAULT_CONFIG_PATH
     if path.exists() and not args.force:
@@ -347,6 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("export-status", help="write a sanitized public observability snapshot")
     s.add_argument("--output", required=True, help="directory receiving status.json")
     s.set_defaults(fn=cmd_export_status)
+    s = sub.add_parser("compare", help="primary vs comparison model on sampled runs")
+    s.add_argument("--since", help="only runs started at or after this ISO timestamp")
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(fn=cmd_compare)
     s = sub.add_parser("audit", help="post-merge audit queue: seed, status, concurrency, report")
     s.add_argument("action", choices=["seed", "status", "concurrency", "report", "retry"])
     s.add_argument("target", nargs="?", help="report: owner/repo#N (omit for the index)")

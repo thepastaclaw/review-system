@@ -37,7 +37,7 @@ State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps,
 
 Models, agents and default reasoning levels come from `review_model_policy` in the
 skills repo's `config.json`, read at every config load (no redeploy to change them).
-If the policy has a `triage` block, a `gpt-6-astra --effort low` lane rates each PR
+If the policy has a `triage` block, a `gpt-6.1-sol --effort low` lane rates each PR
 and the tier picks the `--effort` of the reviewer lanes; verifiers keep their fixed
 level. Blockers always win: a Phase-1 blocker publishes the preliminary review
 regardless of tier. `trivial` with no blockers publishes a *final* review from
@@ -50,7 +50,7 @@ alone never qualifies, and the tie-break is the lower tier. This replaced the
 "large *or* sensitive, when unsure go higher" wording on 2026-09-10 after 87 % of
 runs came out critical.
 
-| tier | Phase 1 (ladder rung, capped by the rung's `reasoning`) | Phase 2 (gpt-6-astra) |
+| tier | Phase 1 (ladder rung, capped by the rung's `reasoning`) | Phase 2 (gpt-6.1-sol) |
 |---|---|---|
 | trivial | high | skipped |
 | low | high | medium |
@@ -158,14 +158,17 @@ publishing, `publish.attribute_sources` rewrites that into the lanes that
 actually raised it: within each named phase, the lanes whose own output carries
 the same `finding_hash`, or every lane of the phase when the verifier retitled
 or merged. The inline footer then reads
-"source: gpt-6-astra (phase2-reviewer: general); coderabbit".
+"source: gpt-6.1-sol (phase2-reviewer: general); coderabbit". On a
+[comparison run](#model-comparison-a-second-model-on-a-sample-of-runs) each lane is
+matched by its own output key (`general#2` for the comparison twin), so the footer
+names the model that actually raised the finding.
 
 ## Backlog mode: Phase 2 only
 
 `backlog_skip_phase1_above` in `config.toml` (default 10, `0` disables) trades depth
 for throughput. When a run starts and more heads than that are queued, the worker
 records the `phase1` step as `skipped`, emits `phase1.skipped_backlog`, and goes
-straight to the Phase-2 gpt-6-astra reviewers and final verifier. The verifier is
+straight to the Phase-2 reviewers and final verifier. The verifier is
 told the Phase-1 block is intentionally empty. The review is titled "Final validation
 — Phase 2 only (queue backlog)", the provenance says
 "Phase 1 reviewers: **not run (skipped for throughput: N PRs queued, above the L
@@ -182,7 +185,7 @@ both phases (and the cross-model check) at that cost.
 
 ## Degraded mode: stand-in models when the OpenAI pool is dry
 
-`gpt-6-astra` sits on the critical path of every run (triage, Phase-1 gate verifier,
+The primary OpenAI model (`gpt-6.1-sol` since policy v10, `gpt-6-astra` before) sits on the critical path of every run (triage, Phase-1 gate verifier,
 Phase-2 reviewers, final verifier, conversation lane) and the selector/repair models
 share the same Codex pool, so when that pool is out of quota every run dies on a 429
 and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
@@ -233,6 +236,64 @@ and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
   `doctor` prints the current state and probes every stand-in model.
 - Without a `degraded` block nothing changes: a primary-model outage fails runs as
   before.
+
+## Model comparison: a second model on a sample of runs
+
+A `review_model_policy.comparison` block runs a second model beside the primary one
+on a sample of runs, so a new model can be judged against the one it replaced on
+real PRs (policy v10: `gpt-6.1-sol` primary, `gpt-6-astra` on 25 % of `critical`
+runs):
+
+```json
+"comparison": {"model": "gpt-6-astra", "tiers": ["critical"], "fraction": 0.25}
+```
+
+- **Selection.** After triage, a run whose tier is listed is picked when a stable
+  hash of `repo#number@sha` falls under `fraction`, so a retried run makes the same
+  choice. Never on an audit or in degraded mode (both sets would run on the same
+  stand-in). The comparison model must differ from the Phase-2 model (checked at
+  load). Event `compare.selected` records the pair.
+- **What runs.** Every Phase-2 reviewer lane (general and each specialist) also runs
+  on the comparison model at the same effort, keyed `<role>#2`, on a thread pool of
+  its own so the primary lanes keep their `phase_parallelism`. Not on the fresh final
+  pass: it would double an already large verifier prompt. The verifier gets both sets
+  in the one Phase-2 block under neutral labels (`general/a`, `general/b`; which one
+  is the comparison model is drawn per run), and the primary verifier alone decides
+  the verdict. Comparison output never answers or resolves a finding thread.
+- **It never holds the review up.** Comparison lanes take their slots in a
+  machine-wide `compare` lane pool (`[scheduling] lane_pools.compare`, default 2),
+  never the production `gpt` one: a slot is held for the whole lane, so a comparison
+  lane in the production pool could make a primary lane (even its own run's retry)
+  wait. They still use the same OpenAI accounts, whose stream budget the `gpt`
+  ceiling is, so one only starts while the `gpt` pool has an idle reviewer slot at
+  that moment; the `compare` pool bounds how far they can overshoot when production
+  picks up after they started. Each gets one attempt. A failed one is dropped (`compare.lane_dropped`), and
+  one still running (or still waiting for a slot) 20 minutes (`COMPARE_GRACE_MINUTES`)
+  after the last primary lane of its phase finished is stopped and dropped the same
+  way, with a reason saying which. A quota error on one
+  never flips the run into degraded mode or onto a stand-in. A phase that fails
+  stops its comparison lanes too. Per phase, `compare.lanes` records `kept=N
+  dropped=M`.
+- **Disclosure.** Only when a comparison lane finished: the provenance lists it with
+  the other Phase-2 reviewers and adds "Model comparison: every Phase-2 reviewer also
+  ran on `…`". Inline footers name the model whose lane actually raised the finding.
+- **Reading it.** Reviewer-lane findings are stored with the role in the stage:
+  `lane:<role>` (primary), `compare:<role>` (comparison), `fresh:<role>` (fresh final
+  pass); the fresh final verifier writes `verified-fresh`, the first one `verified`.
+  `reviewsys compare [--since ISO] [--json]` compares per role and first round only: a
+  role counts when both its lanes finished and the comparison lane was not dropped.
+  Every finding the first final verifier kept is credited to the model(s) whose paired
+  lanes raised it (same `finding_hash`, or same file and category with overlapping
+  lines when the verifier retitled); one only an unpaired role raised is left out. Per
+  model: raised, kept, kept blockers, kept findings *only* that model raised, output
+  tokens. Runs count when finished, never degraded, only the two models in the first
+  Phase 2, and at least one paired role (a run the Phase-1 gate stopped has no Phase
+  2). Caveats: the verifier is the primary model itself, so a preference for its own
+  model's wording cannot be ruled out; comparison lanes dropped for time or slots skew
+  towards large PRs; and with 2 compare slots admitted only on idle production
+  capacity, runs with many specialists mostly pair `general` and one or two of them,
+  so the numbers lean towards the general reviewer. The report says how many roles
+  were left out.
 
 ## Final approval after an iterative review
 

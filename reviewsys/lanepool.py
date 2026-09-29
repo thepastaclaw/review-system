@@ -23,6 +23,15 @@ Two rules keep a busy run from starving the others:
   (audits only ever use capacity live review leaves idle), then first come first served.
   Without the line, a run whose lane just finished takes the freed slot straight back for
   its next reviewer, before any other run's waiter wakes up.
+
+Comparison lanes (a second model beside Phase 2, see `ComparisonPolicy`) take slots in a
+pool of their own, `compare`, never the model family's: a slot is held for the whole lane
+and cannot be taken back, so a comparison lane in a production pool could make a primary
+lane (its own run's retry included) wait behind it. They still draw on the same OpenAI
+accounts, whose stream budget the `gpt` ceiling is, so one only starts while the `gpt` pool
+has an idle reviewer slot at that moment (it does not take it), and the `compare` pool
+(`[scheduling] lane_pools.compare`, default COMPARE_POOL_SLOTS) bounds how far they can go
+over the budget when production picks up after they started.
 """
 
 from __future__ import annotations
@@ -44,6 +53,9 @@ POLL_SECONDS = 1.0
 # a reviewer lane's place in line; lanes that are not parallel reviewers do not line up
 RANK_PRIORITY, RANK_LIVE, RANK_AUDIT = 1, 2, 3
 
+COMPARE_POOL = "compare"
+COMPARE_POOL_SLOTS = 2
+
 
 def pool_of(model: str) -> str:
     return model.split("-", 1)[0]
@@ -53,6 +65,8 @@ def limit(conn: sqlite3.Connection, cfg: Config, pool: str) -> int | None:
     """The pool's slot count right now; None = not gated."""
     if pool == "gpt":
         return slots.capacity(conn, cfg).ceiling
+    if pool == COMPARE_POOL:  # always bounded, even when config.toml lists other pools only
+        return cfg.lane_pools.get(pool, COMPARE_POOL_SLOTS)
     return cfg.lane_pools.get(pool)
 
 
@@ -99,18 +113,21 @@ def acquire(
     count: Callable[[], int],
     should_stop: Callable[[], bool],
     rank: int | None = None,
+    admit: Callable[[], bool] | None = None,
 ) -> int | None:
     """Block until the lane may start and return its locked slot fd, or None once
     `should_stop()` says it is no longer wanted. `rank` None: not a parallel reviewer, may
-    take any slot (the reserved top one first) without lining up. `count` is re-read on
-    every pass, so a capacity change applies to lanes still waiting."""
+    take any slot (the reserved top one first) without lining up; `admit` (rank None only)
+    must also say yes before it tries. `count` is re-read on every pass, so a capacity
+    change applies to lanes still waiting."""
     slot_dir.mkdir(parents=True, exist_ok=True)
     if rank is None:
         while True:
             n = max(1, count())
-            fd = _try_slots(slot_dir, pool, range(n - 1, -1, -1))
-            if fd is not None:
-                return fd
+            if admit is None or admit():
+                fd = _try_slots(slot_dir, pool, range(n - 1, -1, -1))
+                if fd is not None:
+                    return fd
             if should_stop():
                 return None
             time.sleep(POLL_SECONDS)
@@ -151,16 +168,35 @@ def gated(
     slot_dir = cfg.work_dir / "lane-slots"
 
     def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
-        pool = pool_of(spec.model)
+        pool = spec.pool or pool_of(spec.model)
         if limit(conn(), cfg, pool) is None:
             return runner(spec, artifact_dir, worktree)
+
+        def gpt_idle() -> bool:
+            """No production reviewer is waiting and one of their slots is free right now
+            (probed, not kept): a waiter may be about to take the free slot."""
+            wait_dir = slot_dir / "gpt.wait"
+            if wait_dir.is_dir() and _line(wait_dir):
+                return False
+            n = limit(conn(), cfg, "gpt") or 1
+            fd = _try_slots(slot_dir, "gpt", range(max(1, n - 1)))
+            if fd is None:
+                return False
+            release(fd)
+            return True
+
         fd = acquire(
             slot_dir,
             pool,
             lambda: limit(conn(), cfg, pool) or 1,
             spec.should_stop or run_stopped,
             rank=reviewer_rank if spec.parallel else None,
+            admit=gpt_idle if pool == COMPARE_POOL else None,
         )
+        stop = spec.should_stop or run_stopped
+        if fd is not None and stop():
+            release(fd)  # stopped while it waited: a lane no longer wanted must not start
+            fd = None
         if fd is None:
             return LaneResult(
                 exit_code=None, stdout="", stderr="", duration_s=0, cancelled=True, started=False

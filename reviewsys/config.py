@@ -7,6 +7,7 @@ specialists, model policy and prompts. reviewsys reads it read-only.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import tomllib
@@ -103,6 +104,29 @@ class DegradedPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class ComparisonPolicy:
+    """Run a second model beside the primary one on a sample of runs, to compare them.
+
+    On a selected run every Phase-2 reviewer lane (general and each specialist; not the fresh
+    final pass) also runs on `model`. The verifier sees both sets under neutral labels, so the
+    findings it keeps show what each model contributes (`reviewsys compare`). A comparison
+    lane never fails or holds up the run and never flips it into degraded mode (see
+    `worker._reviewer_lanes`). Selection is a stable hash of the head, so a retried run makes
+    the same choice. Never in degraded mode (both would run on the same stand-in) or on
+    audits."""
+
+    model: str
+    tiers: tuple[str, ...]
+    fraction: float  # of the runs in `tiers`, 0..1
+
+    def selects(self, repo: str, number: int, sha: str, tier: str) -> bool:
+        if tier not in self.tiers:
+            return False
+        digest = hashlib.sha256(f"{repo}#{number}@{sha}".encode()).digest()
+        return int.from_bytes(digest[:8], "big") / 2**64 < self.fraction
+
+
+@dataclass(frozen=True, slots=True)
 class ModelPolicy:
     name: str
     fingerprint: str
@@ -127,6 +151,8 @@ class ModelPolicy:
     # stand-ins while the primary models are unavailable; None = no degraded mode, a run
     # whose primary model is down fails as before
     degraded: DegradedPolicy | None = None
+    # a second model run beside the primary on a sample of runs; None = never
+    comparison: ComparisonPolicy | None = None
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -457,6 +483,28 @@ def _degraded(node: dict[str, Any] | None) -> DegradedPolicy | None:
     )
 
 
+def _comparison(
+    node: dict[str, Any] | None, tiers: dict[str, TierEffort], primary: str
+) -> ComparisonPolicy | None:
+    if not node:
+        return None
+    model = str(node.get("model") or "")
+    if not model:
+        raise ValueError("comparison policy needs a `model`")
+    if model == primary:
+        raise ValueError(
+            f"comparison model {model!r} is the Phase-2 model it would compare against"
+        )
+    fraction = float(node.get("fraction", 0))
+    if not 0.0 <= fraction <= 1.0:
+        raise ValueError(f"comparison.fraction {fraction!r} must be in [0, 1]")
+    names = tuple(str(t).lower() for t in node.get("tiers") or ())
+    unknown = [t for t in names if t not in tiers]
+    if unknown:
+        raise ValueError(f"comparison.tiers {unknown!r} are not configured tiers")
+    return ComparisonPolicy(model=model, tiers=names, fraction=fraction)
+
+
 def load_skills_config(
     skills_dir: Path,
 ) -> tuple[tuple[RepoConfig, ...], tuple[Specialist, ...], ModelPolicy, dict[str, Any]]:
@@ -490,6 +538,7 @@ def load_skills_config(
         raise ValueError(f"phase1.quota_reserve {reserve!r} must be a fraction in [0, 1)")
     p2 = _lane(pol["phase2"], "reviewer")
     triage_node = pol.get("triage") or {}
+    tiers = _tiers(triage_node, p1.effort, p2.effort)
     policy = ModelPolicy(
         name=str(pol["name"]),
         fingerprint=str(pol["fingerprint"]),
@@ -503,10 +552,11 @@ def load_skills_config(
         phase1_candidates=_candidates(p1_node, p1),
         quota_reserve=reserve,
         triage=_lane(pol, "triage") if triage_node else None,
-        tiers=_tiers(triage_node, p1.effort, p2.effort),
+        tiers=tiers,
         fallback_tier=str(triage_node.get("fallback_tier", "normal")).lower(),
         conversation=_lane(pol, "conversation") if pol.get("conversation") else None,
         degraded=_degraded(pol.get("degraded")),
+        comparison=_comparison(pol.get("comparison"), tiers, p2.model),
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
