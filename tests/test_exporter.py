@@ -66,3 +66,37 @@ def test_export_carries_degraded_state(cfg, conn, skills_dir, tmp_path):
     d = build_export(conn, c)["live"]["degraded"]
     assert d["active"] and d["forced"] == "on"
     assert d["substitutes"] == {"gpt-6-astra": "muse-spark-1.3-contributor"}
+
+
+def test_export_marks_audit_runs(cfg, conn):
+    """A post-merge audit is always of a merged PR: the dashboard must say so, or a healthy
+    audit hours into Phase 1 looks like a live review stuck on a PR that closed long ago."""
+    ts = fmt_ts(now_dt())
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, title, state, updated_at) VALUES (?,?,?,?,?,?)",
+            ("dashpay/platform", 7, "7" * 40, "feat: merged earlier", "closed", ts),
+        )
+        for number, queue in ((7, "audit"), (8, "live")):
+            hid = conn.execute(
+                "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at, queue) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "dashpay/platform",
+                    number,
+                    f"{number}" * 40,
+                    "audit" if queue == "audit" else "new_pr",
+                    "running",
+                    ts,
+                    ts,
+                    queue,
+                ),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, heartbeat_at, deadline_at, phase) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (hid, 1, "running", f"t{number}", ts, ts, ts, "phase1"),
+            )
+    active = {a["number"]: a for a in build_export(conn, cfg)["live"]["active"]}
+    assert active[7]["queue"] == "audit" and active[7]["title"] == "feat: merged earlier"
+    assert active[8]["queue"] == "live" and active[8]["title"] is None
