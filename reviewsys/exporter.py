@@ -61,9 +61,13 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             }
         )
     runs = []
+    # `queue` tells a post-merge audit (of a PR that is merged by definition) apart from a live
+    # review; without it an audit reads as a review stuck on a PR that closed hours ago
     for row in conn.execute(
-        "SELECT r.id,r.status,r.phase,r.attempt,r.started_at,r.heartbeat_at,r.deadline_at,h.repo,h.number,h.sha "
-        "FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.status IN ('spawned','running') ORDER BY r.started_at"
+        "SELECT r.id,r.status,r.phase,r.attempt,r.started_at,r.heartbeat_at,r.deadline_at,h.repo,h.number,h.sha,"
+        "h.queue,p.title FROM runs r JOIN heads h ON h.id=r.head_id "
+        "LEFT JOIN prs p ON p.repo=h.repo AND p.number=h.number "
+        "WHERE r.status IN ('spawned','running') ORDER BY r.started_at"
     ):
         runs.append(
             {
