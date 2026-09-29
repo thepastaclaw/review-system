@@ -122,7 +122,7 @@ def acquire(
         while True:
             if _line(wait_dir)[:1] == [ticket.name]:
                 n = max(1, count())
-                fd = _try_slots(slot_dir, pool, range(n - 1 if n > 1 else n))
+                fd = _try_slots(slot_dir, pool, range(max(1, n - 1)))
                 if fd is not None:
                     return fd
             if should_stop():

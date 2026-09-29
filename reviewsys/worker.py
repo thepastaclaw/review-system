@@ -773,35 +773,32 @@ def _reviewer_lanes(
 
     def review(role: str) -> ReviewerOutput:
         try:
-            return _review(role)
+            prompt = reviewer_prompt(
+                ctx.cfg,
+                repo=ctx.repo,
+                number=ctx.number,
+                head_sha=ctx.sha,
+                phase=expected_phase,
+                role=role,
+                meta=meta,
+                coverage_from=ctx.coverage_from,
+                evidence=ctx.evidence,
+                prior=review_prior,
+                prior_sha=review_prior_sha,
+                fresh=fresh,
+            )
+            raw = _reviewer_lane(
+                ctx, phase=phase, role=role, lm=lm, prompt=prompt, fresh=fresh, should_stop=stopped
+            )
+            return parse_reviewer_output(
+                raw,
+                expected_phase=expected_phase,
+                head_sha=ctx.sha,
+                source=f"{phase}:{role}",
+                prior_hashes=prior_hashes,
+            )
         finally:
             ctx.close_lane_conn()
-
-    def _review(role: str) -> ReviewerOutput:
-        prompt = reviewer_prompt(
-            ctx.cfg,
-            repo=ctx.repo,
-            number=ctx.number,
-            head_sha=ctx.sha,
-            phase=expected_phase,
-            role=role,
-            meta=meta,
-            coverage_from=ctx.coverage_from,
-            evidence=ctx.evidence,
-            prior=review_prior,
-            prior_sha=review_prior_sha,
-            fresh=fresh,
-        )
-        raw = _reviewer_lane(
-            ctx, phase=phase, role=role, lm=lm, prompt=prompt, fresh=fresh, should_stop=stopped
-        )
-        return parse_reviewer_output(
-            raw,
-            expected_phase=expected_phase,
-            head_sha=ctx.sha,
-            source=f"{phase}:{role}",
-            prior_hashes=prior_hashes,
-        )
 
     first = len(ctx.reviewers)
     results: dict[str, ReviewerOutput] = {}
@@ -821,15 +818,15 @@ def _reviewer_lanes(
         finally:
             if len(results) < len(roles):
                 abandon.set()  # however we leave (an interrupt too), no lane outlives the phase
-    if errors or len(results) < len(roles):
+    if errors:
         # a cancelled run wins; else the failure that stopped the others, never a stopped lane
-        if not errors:
-            ctx.check_cancel()
-            raise ReviewError(FailKind.INFRA, f"{phase}: a reviewer lane never ran")
         raise next(
             (e for e in errors if isinstance(e, Cancelled)),
             next((e for e in errors if not isinstance(e, LaneStopped)), errors[0]),
         )
+    if len(results) < len(roles):
+        ctx.check_cancel()
+        raise ReviewError(FailKind.INFRA, f"{phase}: a reviewer lane never ran")
     # provenance and finding rows in role order, as if the lanes had run one after another
     ctx.reviewers[first:] = sorted(ctx.reviewers[first:], key=lambda r: roles.index(r["role"]))
     outputs = {role: results[role] for role in roles}
@@ -2269,16 +2266,18 @@ def main(
             raise SystemExit(f"run {run_id}: audit head without an audits row")
     # every lane of this run, parallel reviewers and side lanes alike, first takes a slot in
     # its model's machine-wide pool (lanepool.py)
+    if ctx.is_audit:
+        rank = lanepool.RANK_AUDIT
+    elif row["priority"]:
+        rank = lanepool.RANK_PRIORITY
+    else:
+        rank = lanepool.RANK_LIVE
     ctx.lane_runner = lanepool.gated(
         lane_runner or run_claude_lane,
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,
-        reviewer_rank=lanepool.RANK_AUDIT
-        if ctx.is_audit
-        else lanepool.RANK_PRIORITY
-        if row["priority"]
-        else lanepool.RANK_LIVE,
+        reviewer_rank=rank,
     )
     ctx.quota_reader = quota_reader
     ctx.prober = prober

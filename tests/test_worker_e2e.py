@@ -2298,8 +2298,11 @@ def test_phase1_lane_failure_falls_down_the_ladder(cfg, conn, gh, lanes, skills_
     # the ladder, lanes still on gemini follow when they die, and lanes that had not started
     # yet go straight to glm. Every role finishes on glm, exactly once.
     roles = ["always-on", "general", "security-auditor"]
+    # (a lane whose first try failed after a sibling had already moved the run makes no
+    # second try on the rung the run left)
     on_gemini = [r for r, m in p1 if m == "gemini-3.8-flash-high"]
-    assert 2 <= len(on_gemini) <= 6 and len(on_gemini) % 2 == 0, "two tries per lane on a rung"
+    assert 2 <= len(on_gemini) <= 6
+    assert all(on_gemini.count(r) <= 2 for r in roles), "at most two tries per lane on a rung"
     assert sorted(r for r, m in p1 if m == "glm-5.3-flash") == roles
     assert {m for _, m in p1} == {"gemini-3.8-flash-high", "glm-5.3-flash"}
     body = gh.posted_reviews[0]["body"]

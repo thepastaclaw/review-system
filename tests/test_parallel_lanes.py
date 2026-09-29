@@ -133,9 +133,15 @@ def test_a_failed_lane_stops_its_siblings_and_fails_the_run(cfg, conn, gh, lanes
     lanes.verifier["default"] = _verifier()
     lanes.timeout_roles = {"general"}
     stopped: list[str] = []
+    running = threading.Semaphore(0)  # general fails only once both siblings are running
 
     def runner(spec: LaneSpec, art: Path, worktree: Path) -> LaneResult:
+        if spec.role == "general" and spec.should_stop is not None:
+            for _ in range(2):
+                assert running.acquire(timeout=10)
+            running.release(2)  # a retry of general must not wait again
         if spec.role in ("always-on", "security-auditor"):
+            running.release()
             # a long lane: runs until the phase is abandoned
             deadline = time.monotonic() + 10
             while time.monotonic() < deadline:

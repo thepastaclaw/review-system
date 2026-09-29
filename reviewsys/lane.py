@@ -98,11 +98,10 @@ def argv_for(spec: LaneSpec) -> list[str]:
     """The lane's command line, under `nice`: review lanes are batch work and the proxies they
     talk to must win the CPU. (Not `preexec_fn=os.nice`: that runs Python in the forked child,
     which can deadlock now that a worker starts lanes from several threads.)"""
-    return ["nice", "-n", str(LANE_NICE), *_claude_argv(spec)]
-
-
-def _claude_argv(spec: LaneSpec) -> list[str]:
     argv = [
+        "nice",
+        "-n",
+        str(LANE_NICE),
         spec.claude_bin,
         "--bare",
         "--settings",
@@ -229,8 +228,8 @@ def _terminate(proc: subprocess.Popen[str], last: subprocess.TimeoutExpired) -> 
         return proc.communicate(timeout=15)
     except subprocess.TimeoutExpired as exc:
         _close_pipes(proc)
-        out, err = _decoded(exc)
-        return (out or _decoded(last)[0]), (err or _decoded(last)[1])
+        (out, err), (last_out, last_err) = _decoded(exc), _decoded(last)
+        return out or last_out, err or last_err
 
 
 def _extract_result(res: LaneResult) -> None:
