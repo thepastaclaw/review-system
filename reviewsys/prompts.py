@@ -200,7 +200,7 @@ def verifier_prompt(
         f"- `review_phase` must be `{phase}`.\n- Exact head: `{head_sha}`.\n"
         "- In the template above, 'Codex' findings are the Phase-1 reviewer lanes and 'Claude' findings are the Phase-2 reviewer lanes; the model names are historical.\n"
         + (
-            f"- The Phase-1 reviewer lanes did not run for this head ({phase1_skipped}); the 'Codex' block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
+            f"- There is no Phase-1 evidence for this head (Phase 1 {phase1_skipped}); the 'Codex' block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
             if phase1_skipped
             else ""
         )

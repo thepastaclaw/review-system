@@ -18,11 +18,12 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from . import audit, converse, degraded, github, labels, publish, quota
+from . import audit, converse, degraded, github, labels, lanepool, publish, quota
 from .config import Config, DegradedPolicy, LaneModel, min_effort
 from .contract import (
     Finding,
@@ -32,7 +33,7 @@ from .contract import (
     parse_reviewer_output,
     parse_verifier_output,
 )
-from .db import event, kv_get, kv_set, now, tx
+from .db import connect_existing, event, kv_get, kv_set, now, tx
 from .degraded import Prober
 from .gate import admit_phase2
 from .gh import Gh
@@ -51,10 +52,15 @@ class Cancelled(Exception):
     pass
 
 
+class LaneStopped(Exception):
+    """A lane stopped before it finished because its phase is being abandoned (a sibling lane
+    failed). Never a failure of its own: the sibling's error is what the run reports."""
+
+
 @dataclass(slots=True)
 class RunContext:
     cfg: Config
-    conn: sqlite3.Connection
+    main_conn: sqlite3.Connection  # the worker thread's; lane threads get their own (`conn`)
     gh: Gh
     run_id: int
     head_id: int
@@ -77,6 +83,7 @@ class RunContext:
         None  # reason when the backlog rule sent this run straight to Phase 2
     )
     phase1_choice: quota.Choice | None = None  # which Phase-1 ladder rung ran, and why
+    phase1_lm: LaneModel | None = None  # the lane model of that rung; Phase-1 lanes start on it
     phase1_effort: str | None = None  # the tier's Phase-1 effort, re-capped per rung
     quota_reader: quota.QuotaReader | None = None  # test injection; None = proxy lookup
     degraded: degraded.State | None = None  # stand-in models in use (see degraded.py)
@@ -101,6 +108,29 @@ class RunContext:
     lane_runner: LaneRunner = run_claude_lane
     dry_run: bool = False
     cancel_flag: threading.Event = field(default_factory=threading.Event)
+    # the reviewer lanes of a phase run in parallel threads: this guards the run-wide
+    # decisions they can race on (falling down the Phase-1 ladder, flipping to degraded)
+    state_lock: threading.Lock = field(default_factory=threading.Lock)
+    lane_conns: threading.local = field(default_factory=threading.local)
+    owner_thread: int = field(default_factory=threading.get_ident)  # the one using main_conn
+
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """This thread's database connection: the worker's own on the main thread, a private
+        one on a parallel lane thread (closed by `close_lane_conn` when the lane ends)."""
+        if threading.get_ident() == self.owner_thread:
+            return self.main_conn
+        c: sqlite3.Connection | None = getattr(self.lane_conns, "conn", None)
+        if c is None:
+            assert str(self.cfg.db_path) != ":memory:", "lane threads need a database file"
+            c = self.lane_conns.conn = connect_existing(self.cfg.db_path)
+        return c
+
+    def close_lane_conn(self) -> None:
+        c = getattr(self.lane_conns, "conn", None)
+        if c is not None:
+            c.close()
+            self.lane_conns.conn = None
 
     @property
     def is_audit(self) -> bool:
@@ -523,19 +553,30 @@ def _run_lane(
     prompt: str,
     is_verifier: bool,
     fresh: bool = False,
+    should_stop: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output.
 
     A lane on a primary model that dies on a quota failure flips the run into degraded mode
     (when the policy has a stand-in for that model) and gets its two attempts again on the
-    stand-in, so one exhausted pool does not fail the review."""
+    stand-in, so one exhausted pool does not fail the review.
+
+    `should_stop` (default: the run was cancelled) is polled while the lane runs; a stopped
+    lane raises Cancelled when the run was cancelled, else LaneStopped."""
     assert ctx.worktree
-    lm = ctx.lane_model(lm)
+    stop = should_stop or ctx.cancel_flag.is_set
     last: str = ""
     attempt, budget = 0, 2
     while attempt < budget:
         attempt += 1
-        ctx.check_cancel()
+        if stop():
+            ctx.check_cancel()  # a cancelled run is Cancelled, never just a stopped lane
+            raise LaneStopped()
+        # re-resolved per attempt: a parallel sibling may have flipped the run to degraded
+        lm = ctx.lane_model(lm)
+        if phase == "phase1" and not is_verifier and ctx.phase1_lm not in (None, lm):
+            # ... or moved it down the Phase-1 ladder: no second try on the rung it left
+            raise ReviewError(FailKind.INFRA, f"{phase}/{role}: the run left {lm.model}")
         attempt_id = uuid.uuid4().hex[:12]
         art = ctx.run_dir / "attempts" / f"{phase}-{role}-{attempt_id}"
         spec = LaneSpec(
@@ -549,14 +590,35 @@ def _run_lane(
             timeout_seconds=ctx.cfg.lane_timeout_minutes * 60,
             claude_bin=ctx.cfg.claude_bin,
             max_budget_usd=ctx.cfg.lane_budget_usd,
+            should_stop=stop,
+            parallel=not is_verifier,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)
+        if res.cancelled:
+            if res.started:  # a lane stopped while it waited for a slot never ran
+                _lane_row(
+                    ctx,
+                    phase=phase,
+                    role=role,
+                    lm=lm,
+                    attempt=attempt,
+                    attempt_id=attempt_id,
+                    status="cancelled",
+                    res=res,
+                    artifact_dir=art,
+                    psha=psha,
+                    reason="run cancelled"
+                    if ctx.cancel_flag.is_set()
+                    else "another lane of this phase failed",
+                )
+            ctx.check_cancel()
+            raise LaneStopped()
         try:
             out = lane_output(res)
         except ReviewError as exc:
             if exc.kind == FailKind.CONTRACT and res.ok and res.result_text.strip():
-                repaired = _repair(ctx, res.result_text, art)
+                repaired = _repair(ctx, res.result_text, art, stop)
                 if repaired is not None:
                     _lane_row(
                         ctx,
@@ -622,7 +684,9 @@ def _run_lane(
     )
 
 
-def _repair(ctx: RunContext, raw: str, art: Path) -> dict[str, Any] | None:
+def _repair(
+    ctx: RunContext, raw: str, art: Path, stop: Callable[[], bool]
+) -> dict[str, Any] | None:
     if len(raw) > 200_000 or not ctx.worktree:
         return None
     spec = LaneSpec(
@@ -635,6 +699,7 @@ def _repair(ctx: RunContext, raw: str, art: Path) -> dict[str, Any] | None:
         add_dir=ctx.run_dir,
         timeout_seconds=300,
         claude_bin=ctx.cfg.claude_bin,
+        should_stop=stop,
     )
     try:
         res = ctx.lane_runner(spec, art / "repair", ctx.worktree)
@@ -646,16 +711,32 @@ def _repair(ctx: RunContext, raw: str, art: Path) -> dict[str, Any] | None:
 
 
 def _reviewer_lane(
-    ctx: RunContext, *, phase: str, role: str, lm: LaneModel, prompt: str, fresh: bool = False
-) -> tuple[dict[str, Any], LaneModel]:
-    """One reviewer lane, retried down the Phase-1 ladder when its rung dies. Returns the
-    raw output and the model that produced it, so the remaining roles stay on that rung."""
+    ctx: RunContext,
+    *,
+    phase: str,
+    role: str,
+    lm: LaneModel,
+    prompt: str,
+    fresh: bool = False,
+    should_stop: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """One reviewer lane, retried down the Phase-1 ladder when its rung dies. A Phase-1 lane
+    starts (and restarts) on the run's current rung, so a lane that starts after a sibling
+    fell down the ladder does not walk into the same dead rung."""
     while True:
+        if phase == "phase1" and ctx.phase1_lm is not None:
+            lm = ctx.phase1_lm
         try:
-            raw = _run_lane(
-                ctx, phase=phase, role=role, lm=lm, prompt=prompt, is_verifier=False, fresh=fresh
+            return _run_lane(
+                ctx,
+                phase=phase,
+                role=role,
+                lm=lm,
+                prompt=prompt,
+                is_verifier=False,
+                fresh=fresh,
+                should_stop=should_stop,
             )
-            return raw, lm
         except ReviewError as exc:
             nxt = _phase1_fallback(ctx, lm, exc) if phase == "phase1" else None
             if nxt is None:
@@ -671,36 +752,87 @@ def _reviewer_lanes(
     expected_phase: str,
     fresh: bool = False,
 ) -> dict[str, ReviewerOutput]:
+    """The general reviewer and every selected specialist, side by side (at most
+    `phase_parallelism` at once; each lane also waits for a slot in its model's pool, see
+    lanepool.py). The reviewers of a phase never read each other's output, so only the
+    verifier after them has to wait for all of them.
+
+    One lane failing for good fails the phase, exactly as it did when they ran one after
+    another: its siblings are stopped rather than left to spend quota on a run that will be
+    retried from scratch."""
     assert ctx.meta
+    meta = ctx.meta.as_dict()
     roles = ["general", *ctx.selection]
-    outputs: dict[str, ReviewerOutput] = {}
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
-    for role in roles:
-        prompt = reviewer_prompt(
-            ctx.cfg,
-            repo=ctx.repo,
-            number=ctx.number,
-            head_sha=ctx.sha,
-            phase=expected_phase,
-            role=role,
-            meta=ctx.meta.as_dict(),
-            coverage_from=ctx.coverage_from,
-            evidence=ctx.evidence,
-            prior=review_prior,
-            prior_sha=review_prior_sha,
-            fresh=fresh,
+    abandon = threading.Event()
+
+    def stopped() -> bool:
+        return ctx.cancel_flag.is_set() or abandon.is_set()
+
+    def review(role: str) -> ReviewerOutput:
+        try:
+            prompt = reviewer_prompt(
+                ctx.cfg,
+                repo=ctx.repo,
+                number=ctx.number,
+                head_sha=ctx.sha,
+                phase=expected_phase,
+                role=role,
+                meta=meta,
+                coverage_from=ctx.coverage_from,
+                evidence=ctx.evidence,
+                prior=review_prior,
+                prior_sha=review_prior_sha,
+                fresh=fresh,
+            )
+            raw = _reviewer_lane(
+                ctx, phase=phase, role=role, lm=lm, prompt=prompt, fresh=fresh, should_stop=stopped
+            )
+            return parse_reviewer_output(
+                raw,
+                expected_phase=expected_phase,
+                head_sha=ctx.sha,
+                source=f"{phase}:{role}",
+                prior_hashes=prior_hashes,
+            )
+        finally:
+            ctx.close_lane_conn()
+
+    first = len(ctx.reviewers)
+    results: dict[str, ReviewerOutput] = {}
+    errors: list[BaseException] = []
+    workers = max(1, min(len(roles), ctx.cfg.phase_parallelism))
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"{phase}-lane") as pool:
+        futures = {pool.submit(review, role): role for role in roles}
+        try:
+            for fut in as_completed(futures):
+                try:
+                    results[futures[fut]] = fut.result()
+                except BaseException as exc:  # Cancelled included: it must stop the siblings
+                    errors.append(exc)
+                    abandon.set()
+                    for f in futures:
+                        f.cancel()  # roles not started yet never start
+        finally:
+            if len(results) < len(roles):
+                abandon.set()  # however we leave (an interrupt too), no lane outlives the phase
+    if errors:
+        # a cancelled run wins; else the failure that stopped the others, never a stopped lane
+        raise next(
+            (e for e in errors if isinstance(e, Cancelled)),
+            next((e for e in errors if not isinstance(e, LaneStopped)), errors[0]),
         )
-        raw, lm = _reviewer_lane(ctx, phase=phase, role=role, lm=lm, prompt=prompt, fresh=fresh)
-        outputs[role] = parse_reviewer_output(
-            raw,
-            expected_phase=expected_phase,
-            head_sha=ctx.sha,
-            source=f"{phase}:{role}",
-            prior_hashes=prior_hashes,
-        )
-        _record_findings(ctx, phase, "lane", outputs[role].findings)
+    if len(results) < len(roles):
+        ctx.check_cancel()
+        raise ReviewError(FailKind.INFRA, f"{phase}: a reviewer lane never ran")
+    # provenance and finding rows in role order, as if the lanes had run one after another
+    ctx.reviewers[first:] = sorted(ctx.reviewers[first:], key=lambda r: roles.index(r["role"]))
+    outputs = {role: results[role] for role in roles}
+    with tx(ctx.conn):
+        for output in outputs.values():
+            _insert_findings(ctx, phase, "lane", output.findings)
     return outputs
 
 
@@ -1139,7 +1271,13 @@ def _enter_degraded(ctx: RunContext, state: degraded.State, kind: str, detail: s
 
 
 def _flip_to_degraded(
-    ctx: RunContext, model: str, *, error: str, upstream: str, detail: str
+    ctx: RunContext,
+    model: str,
+    *,
+    error: str,
+    upstream: str,
+    detail: str,
+    already_counts: bool = False,
 ) -> bool:
     """`model` just failed with `error` (a lane's stderr, never model output): when that says
     the pool is out of quota and the policy has a stand-in, switch this run into degraded
@@ -1147,23 +1285,26 @@ def _flip_to_degraded(
     the mode is already on, no stand-in applies, or the error is not about quota.
 
     The published reason is a sanitised version of `upstream`; the full `detail` only reaches
-    the events table."""
+    the events table. `already_counts`: True as well when a parallel sibling lane flipped the
+    run first (this lane was already running on the primary and died on the same dry pool)."""
     pol = ctx.cfg.policy.degraded
-    if (
-        pol is None
-        or ctx.is_degraded
-        or model not in pol.substitutes
-        or not degraded.looks_like_quota_failure(error)
-    ):
-        return False
-    reason = degraded.publishable_reason(model, upstream)
-    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
-    _enter_degraded(
-        ctx,
-        degraded.State(True, reason, "lane", since=now()),
-        "degraded.entered_midrun",
-        detail[:1000],
-    )
+    with ctx.state_lock:  # parallel lanes on the same dry pool must flip the run only once
+        if (
+            pol is None
+            or model not in pol.substitutes
+            or not degraded.looks_like_quota_failure(error)
+        ):
+            return False
+        if ctx.is_degraded:
+            return already_counts
+        reason = degraded.publishable_reason(model, upstream)
+        degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
+        _enter_degraded(
+            ctx,
+            degraded.State(True, reason, "lane", since=now()),
+            "degraded.entered_midrun",
+            detail[:1000],
+        )
     log.warning("lane on %s hit a quota failure; switching to stand-in models", model)
     return True
 
@@ -1187,6 +1328,7 @@ def _degrade_on_quota_failure(
         error=res.infra_error,
         upstream=res.first_stderr_line,
         detail=f"{lm.model} lane: {exc.message}",
+        already_counts=True,
     ):
         return None
     return pol.resolve(lm)
@@ -1569,7 +1711,10 @@ def _rung(ctx: RunContext, choice: quota.Choice, kind: str) -> LaneModel:
                 detail=choice.log_line(),
             )
     cap = choice.model.effort
-    return ctx.lane_model(_with_effort(choice.model, min_effort(ctx.phase1_effort or cap, cap)))
+    ctx.phase1_lm = ctx.lane_model(
+        _with_effort(choice.model, min_effort(ctx.phase1_effort or cap, cap))
+    )
+    return ctx.phase1_lm
 
 
 def _choose_phase1(ctx: RunContext, effort: str) -> LaneModel:
@@ -1590,19 +1735,23 @@ def _choose_phase1(ctx: RunContext, effort: str) -> LaneModel:
 def _phase1_fallback(ctx: RunContext, failed: LaneModel, exc: ReviewError) -> LaneModel | None:
     """A Phase-1 lane died on its rung (rate limit, dead upstream, malformed output twice):
     move down the ladder for this and the remaining roles. None when there is nowhere to go."""
-    pol, choice = ctx.cfg.policy, ctx.phase1_choice
-    if choice is None:
-        return None
-    lower = choice.remaining(pol.phase1_candidates)
-    if not lower:
-        return None
-    log.warning("phase1 lane on %s failed (%s); falling down the ladder", failed.model, exc)
-    skipped = (*choice.skipped, quota.Skipped(failed.model, "lane failed", str(exc)[:600]))
-    reader = ctx.quota_reader or quota.cached_reader(ctx.conn)
-    nxt = quota.choose(
-        lower, pol.quota_reserve, reader=reader, skipped=skipped, effort=ctx.phase1_effort
-    )
-    return _rung(ctx, nxt, "phase1.model_fallback")
+    with ctx.state_lock:
+        if ctx.phase1_lm is not None and ctx.phase1_lm != failed:
+            # a parallel sibling already moved the run off this rung: follow it there
+            return ctx.phase1_lm
+        pol, choice = ctx.cfg.policy, ctx.phase1_choice
+        if choice is None:
+            return None
+        lower = choice.remaining(pol.phase1_candidates)
+        if not lower:
+            return None
+        log.warning("phase1 lane on %s failed (%s); falling down the ladder", failed.model, exc)
+        skipped = (*choice.skipped, quota.Skipped(failed.model, "lane failed", str(exc)[:600]))
+        reader = ctx.quota_reader or quota.cached_reader(ctx.conn)
+        nxt = quota.choose(
+            lower, pol.quota_reserve, reader=reader, skipped=skipped, effort=ctx.phase1_effort
+        )
+        return _rung(ctx, nxt, "phase1.model_fallback")
 
 
 def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool:
@@ -1624,7 +1773,7 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     queued = live_queued_count(ctx.conn)
     if queued <= limit:
         return False
-    reason = f"skipped for throughput: {queued} PRs queued, above the {limit} limit"
+    reason = f"{github.PHASE1_BACKLOG} {queued} PRs queued, above the {limit} limit"
     ctx.phase1_skipped = reason
     _step_start(ctx, StepName.PHASE1)
     _step_end(ctx, StepName.PHASE1, "skipped", {"reason": reason, "queued": queued, "limit": limit})
@@ -1642,6 +1791,7 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
 
 
 LIGHT_AUDIT_TIER = "trivial"  # the policy tier a light audit reviews at (Phase 1 only)
+PHASE1_FAILED = github.PHASE1_FAILED
 
 
 # ---- conversation mode: answer replies on an already-reviewed commit ----
@@ -1986,42 +2136,26 @@ def run(ctx: RunContext) -> RunStatus:
         return RunStatus.DONE
     effort = pol.tier_effort(ctx.tier)
     if _backlog_skips_phase1(ctx, phase2_effort=effort.phase2):
-        ctx.phase2_outputs = _reviewer_step(
+        return _phase2_only(ctx, effort)
+    try:
+        ctx.phase1_outputs = _reviewer_step(
             ctx,
-            step=StepName.PHASE2,
-            phase="phase2",
-            lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
-            expected_phase="final",
+            step=StepName.PHASE1,
+            phase="phase1",
+            lm=lambda: _choose_phase1(ctx, effort.phase1),
+            expected_phase="preliminary",
         )
-        ctx.verify2 = _verify_step(
+        ctx.verify1 = _verify_step(
             ctx,
-            step=StepName.VERIFY2,
-            phase="verify2",
-            lm=ctx.lane_model(pol.phase2_verifier),
-            expected_phase="final",
+            step=StepName.VERIFY1,
+            phase="verify1",
+            lm=ctx.lane_model(pol.phase1_verifier),
+            expected_phase="preliminary",
         )
-        ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
-        _publish_step(
-            ctx,
-            phase="final",
-            verified=ctx.verify2,
-            verifier_lm=ctx.lane_model(pol.phase2_verifier),
-        )
-        return RunStatus.DONE
-    ctx.phase1_outputs = _reviewer_step(
-        ctx,
-        step=StepName.PHASE1,
-        phase="phase1",
-        lm=lambda: _choose_phase1(ctx, effort.phase1),
-        expected_phase="preliminary",
-    )
-    ctx.verify1 = _verify_step(
-        ctx,
-        step=StepName.VERIFY1,
-        phase="verify1",
-        lm=ctx.lane_model(pol.phase1_verifier),
-        expected_phase="preliminary",
-    )
+    except ReviewError as exc:
+        if not _phase1_failure_falls_through(ctx, exc, phase2_effort=effort.phase2):
+            raise
+        return _phase2_only(ctx, effort)
     _step_start(ctx, StepName.GATE)
     tier_allows = effort.phase2 is not None
     admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled, tier_allows=tier_allows)
@@ -2071,6 +2205,73 @@ def run(ctx: RunContext) -> RunStatus:
     return RunStatus.DONE
 
 
+def _phase2_only(ctx: RunContext, effort: Any) -> RunStatus:
+    """Phase 2 and the final verifier on their own, when Phase 1 did not run (a deep queue)
+    or did not finish (every rung of its ladder failed)."""
+    pol = ctx.cfg.policy
+    ctx.phase2_outputs = _reviewer_step(
+        ctx,
+        step=StepName.PHASE2,
+        phase="phase2",
+        lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
+        expected_phase="final",
+    )
+    ctx.verify2 = _verify_step(
+        ctx,
+        step=StepName.VERIFY2,
+        phase="verify2",
+        lm=ctx.lane_model(pol.phase2_verifier),
+        expected_phase="final",
+    )
+    ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
+    _publish_step(
+        ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
+    )
+    return RunStatus.DONE
+
+
+def _phase1_failure_falls_through(
+    ctx: RunContext, exc: ReviewError, *, phase2_effort: str | None
+) -> bool:
+    """Phase 1 failed (a reviewer lane died on every rung of the ladder, the gate verifier
+    died twice, or either returned output that breaks the contract): rather than failing the
+    run and retrying it from scratch, review with Phase 2 alone, exactly like the backlog rule
+    does. Whatever Phase 1 produced is dropped: unverified, it must not reach the final
+    verifier as if it had been gated. The error text stays in the step and the event; the
+    review only says Phase 1 failed.
+
+    Not when there is no Phase 2 to fall through to (disabled, or the tier skips it), not for
+    an audit (it needs the complete finding set and has no one waiting on it: it fails and is
+    retried, like the backlog rule leaves audits alone), and not for a FATAL error (a broken
+    prompt template would only fail Phase 2 the same way, after spending it)."""
+    ctx.check_cancel()
+    if (
+        not ctx.cfg.policy.phase2_enabled
+        or phase2_effort is None
+        or ctx.is_audit
+        or exc.kind is FailKind.FATAL
+    ):
+        return False
+    log.warning("phase1 failed (%s); continuing with Phase 2 only", exc)
+    ctx.phase1_skipped = PHASE1_FAILED
+    ctx.phase1_outputs, ctx.verify1 = {}, None
+    ctx.reviewers[:] = [r for r in ctx.reviewers if r["phase"] != "phase1"]
+    row = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (ctx.run_id,)).fetchone()
+    step = StepName(row["phase"]) if row and row["phase"] else StepName.PHASE1
+    _step_end(ctx, step, "failed", {"error": exc.message[:1000], "fell_through": True})
+    with tx(ctx.conn):
+        event(
+            ctx.conn,
+            "phase1.failed_fallthrough",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=exc.message[:500],
+        )
+    _gate_comment(ctx, "in_progress")
+    return True
+
+
 def cleanup(ctx: RunContext, status: RunStatus) -> None:
     if ctx.worktree and ctx.mirror and (status == RunStatus.DONE or ctx.is_audit):
         wt.remove_worktree(ctx.mirror, ctx.worktree)
@@ -2090,7 +2291,7 @@ def main(
     prober: Prober | None = None,
 ) -> RunStatus:
     row = conn.execute(
-        "SELECT r.*, h.repo, h.number, h.sha, h.trigger, h.queue FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
+        "SELECT r.*, h.repo, h.number, h.sha, h.trigger, h.queue, h.priority FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
         (run_id,),
     ).fetchone()
     if row is None:
@@ -2099,7 +2300,7 @@ def main(
         return RunStatus(row["status"])
     ctx = RunContext(
         cfg=cfg,
-        conn=conn,
+        main_conn=conn,
         gh=gh or Gh(cfg.gh_bin),
         run_id=run_id,
         head_id=int(row["head_id"]),
@@ -2115,8 +2316,21 @@ def main(
         ctx.audit = audit.load(conn, ctx.head_id)
         if ctx.audit is None:
             raise SystemExit(f"run {run_id}: audit head without an audits row")
-    if lane_runner:
-        ctx.lane_runner = lane_runner
+    # every lane of this run, parallel reviewers and side lanes alike, first takes a slot in
+    # its model's machine-wide pool (lanepool.py)
+    if ctx.is_audit:
+        rank = lanepool.RANK_AUDIT
+    elif row["priority"]:
+        rank = lanepool.RANK_PRIORITY
+    else:
+        rank = lanepool.RANK_LIVE
+    ctx.lane_runner = lanepool.gated(
+        lane_runner or run_claude_lane,
+        lambda: ctx.conn,
+        cfg,
+        run_stopped=ctx.cancel_flag.is_set,
+        reviewer_rank=rank,
+    )
     ctx.quota_reader = quota_reader
     ctx.prober = prober
     with tx(conn):

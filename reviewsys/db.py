@@ -157,6 +157,18 @@ def connect(path: Path | str) -> sqlite3.Connection:
     return conn
 
 
+def connect_existing(path: Path | str) -> sqlite3.Connection:
+    """Another connection to a database `connect` already opened and migrated in this
+    process: same settings, no migration pass. One per thread (sqlite3 connections must not
+    be shared between threads that use them at the same time)."""
+    conn = sqlite3.connect(str(path), timeout=30, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
 def _retry_locked(fn: Callable[[], None], attempts: int = 50) -> None:
     for attempt in range(attempts):
         try:

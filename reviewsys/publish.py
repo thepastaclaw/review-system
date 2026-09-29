@@ -193,7 +193,9 @@ class Provenance:
     policy_fingerprint: str
     triage: dict[str, Any] | None = None  # {tier, model, effort, method, reasoning, error}
     phase2_skipped: str | None = None  # set when a final review was published from Phase 1 only
-    phase1_skipped: str | None = None  # set when the run went straight to Phase 2 (queue backlog)
+    phase1_skipped: str | None = (
+        None  # set when the run went straight to Phase 2 (backlog / failure)
+    )
     phase1_choice: dict[str, Any] | None = None  # {model, reason, skipped:[{model, reason}]}
     adhoc: bool = False  # repo has no skills entry: generic guidance, all specialists offered
     fresh_final: bool = False  # an independent Phase-2 gate ran after iterative reconciliation
@@ -362,7 +364,8 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     if p.triage:
         lines.append(_triage_line(p.triage))
     if p.phase1_skipped:
-        p1_line = f"- Phase 1 reviewers: **not run ({p.phase1_skipped})**"
+        state = "failed" if p.phase1_skipped == github.PHASE1_FAILED else "not run"
+        p1_line = f"- Phase 1 reviewers: **{state} ({p.phase1_skipped})**"
     else:
         p1_line = "- Phase 1 reviewers: " + (", ".join(p1) if p1 else "provenance missing")
     lines.append(p1_line)
@@ -428,7 +431,7 @@ def render(m: ReviewModel) -> str:
         tier = (m.provenance.triage or {}).get("tier", "trivial")
         title = f"Final review — Phase 1 only ({tier} change)"
     elif m.provenance.phase1_skipped:
-        title = "Final validation — Phase 2 only (queue backlog)"
+        title = f"Final validation — Phase 2 only ({github.phase2_only_label(m.provenance.phase1_skipped)})"
     else:
         title = "Final validation — Phase 1 + Phase 2"
     summary = "\n".join(

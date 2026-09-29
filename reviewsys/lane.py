@@ -17,6 +17,8 @@ from .contract import parse_json_object
 from .models import FailKind, ReviewError
 
 LaneRunner = Callable[["LaneSpec", Path, Path], "LaneResult"]
+STOP_POLL_SECONDS = 5  # how often a running lane checks `LaneSpec.should_stop`
+PIPE_GRACE_SECONDS = 10  # after claude exits, how long a child may hold its pipes open
 LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is never starved
 # Plan mode otherwise enables Claude Code's separate LLM permission classifier.
 # Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
@@ -35,6 +37,10 @@ class LaneSpec:
     timeout_seconds: int
     claude_bin: str
     max_budget_usd: float | None = None
+    # polled while the lane runs: True stops it (the run was cancelled, or a sibling lane of
+    # the same phase failed and the phase is being abandoned)
+    should_stop: Callable[[], bool] | None = None
+    parallel: bool = False  # a reviewer lane running beside its siblings (lanepool lines these up)
 
 
 @dataclass(slots=True)
@@ -50,10 +56,12 @@ class LaneResult:
     cost_usd: float | None = None
     turns: int | None = None
     subtype: str | None = None
+    cancelled: bool = False  # stopped by `LaneSpec.should_stop`, not by the model or a timeout
+    started: bool = True  # False: stopped while waiting for a lane slot, never ran
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0 and not self.timed_out
+        return self.exit_code == 0 and not self.timed_out and not self.cancelled
 
     @property
     def api_error(self) -> str:
@@ -87,7 +95,13 @@ class LaneResult:
 
 
 def argv_for(spec: LaneSpec) -> list[str]:
+    """The lane's command line, under `nice`: review lanes are batch work and the proxies they
+    talk to must win the CPU. (Not `preexec_fn=os.nice`: that runs Python in the forked child,
+    which can deadlock now that a worker starts lanes from several threads.)"""
     argv = [
+        "nice",
+        "-n",
+        str(LANE_NICE),
         spec.claude_bin,
         "--bare",
         "--settings",
@@ -125,20 +139,34 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
         stderr=subprocess.PIPE,
         text=True,
         env=env,
-        # review lanes are batch work; the proxies they talk to must win the CPU
-        preexec_fn=lambda: os.nice(LANE_NICE),
     )
-    timed_out = False
-    try:
-        out, err = proc.communicate(spec.prompt, timeout=spec.timeout_seconds)
-    except subprocess.TimeoutExpired:
-        timed_out = True
-        proc.send_signal(signal.SIGTERM)
+    timed_out = cancelled = False
+    deadline = t0 + spec.timeout_seconds
+    stdin: str | None = spec.prompt
+    exited_at: float | None = None
+    while True:
         try:
-            out, err = proc.communicate(timeout=15)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            out, err = proc.communicate()
+            # a retried communicate() loses no output; the input is only sent the first time
+            out, err = proc.communicate(
+                stdin, timeout=max(0.0, min(STOP_POLL_SECONDS, deadline - time.monotonic()))
+            )
+            break
+        except subprocess.TimeoutExpired as exc:
+            stdin = None
+            if proc.poll() is not None:
+                # claude is done but a tool it started still holds the pipes: keep what it
+                # wrote rather than waiting out the deadline for an EOF that is not coming
+                exited_at = exited_at or time.monotonic()
+                if time.monotonic() - exited_at >= PIPE_GRACE_SECONDS:
+                    out, err = _decoded(exc)
+                    _close_pipes(proc)
+                    break
+                continue
+            cancelled = bool(spec.should_stop and spec.should_stop())
+            timed_out = not cancelled and time.monotonic() >= deadline
+            if cancelled or timed_out:
+                out, err = _terminate(proc, exc)
+                break
     dur = time.monotonic() - t0
     (artifact_dir / "stdout.json").write_text(out or "", encoding="utf-8")
     (artifact_dir / "stderr.txt").write_text(err or "", encoding="utf-8")
@@ -148,6 +176,7 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
         stderr=err or "",
         duration_s=dur,
         timed_out=timed_out,
+        cancelled=cancelled,
     )
     _extract_result(res)
     (artifact_dir / "lane-meta.json").write_text(
@@ -156,6 +185,7 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
                 "exit_code": res.exit_code,
                 "duration_s": round(dur, 1),
                 "timed_out": timed_out,
+                "cancelled": cancelled,
                 "tokens_in": res.tokens_in,
                 "tokens_out": res.tokens_out,
                 "cost_usd": res.cost_usd,
@@ -167,6 +197,39 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
         )
     )
     return res
+
+
+def _decoded(exc: subprocess.TimeoutExpired) -> tuple[str, str]:
+    """The output a timed-out communicate() had collected so far (it is cumulative)."""
+
+    def text(b: bytes | str | None) -> str:
+        return b.decode("utf-8", "replace") if isinstance(b, bytes) else (b or "")
+
+    return text(exc.output), text(exc.stderr)
+
+
+def _close_pipes(proc: subprocess.Popen[str]) -> None:
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe is not None:
+            pipe.close()
+    proc.wait()
+
+
+def _terminate(proc: subprocess.Popen[str], last: subprocess.TimeoutExpired) -> tuple[str, str]:
+    """SIGTERM, then SIGKILL, and whatever output there is. A tool the lane started (a build,
+    a test run) can outlive it and keep the pipes open, so the last wait is bounded too:
+    the lane is stopped either way, its partial output is only diagnostics."""
+    proc.send_signal(signal.SIGTERM)
+    try:
+        return proc.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    try:
+        return proc.communicate(timeout=15)
+    except subprocess.TimeoutExpired as exc:
+        _close_pipes(proc)
+        (out, err), (last_out, last_err) = _decoded(exc), _decoded(last)
+        return out or last_out, err or last_err
 
 
 def _extract_result(res: LaneResult) -> None:
@@ -204,6 +267,8 @@ def _extract_result(res: LaneResult) -> None:
 
 
 def lane_output(res: LaneResult) -> dict[str, Any]:
+    if res.cancelled:
+        raise ReviewError(FailKind.INFRA, "lane stopped before it finished")
     if res.timed_out:
         raise ReviewError(FailKind.INFRA, "lane timed out")
     if res.exit_code != 0:

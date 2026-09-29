@@ -410,3 +410,12 @@ class FakeNotifier(Notifier):
 @pytest.fixture
 def notifier(cfg: cfg_mod.Config) -> FakeNotifier:
     return FakeNotifier(cfg)
+
+
+@pytest.fixture(autouse=True)
+def _fast_lane_slots(monkeypatch):
+    """A lane waiting for a pool slot re-checks every second in production; tests would
+    spend most of their time asleep."""
+    from reviewsys import lanepool
+
+    monkeypatch.setattr(lanepool, "POLL_SECONDS", 0.005)
