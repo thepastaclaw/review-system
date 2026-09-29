@@ -23,6 +23,12 @@ Two rules keep a busy run from starving the others:
   (audits only ever use capacity live review leaves idle), then first come first served.
   Without the line, a run whose lane just finished takes the freed slot straight back for
   its next reviewer, before any other run's waiter wakes up.
+
+Comparison lanes (a second model beside Phase 2, see `ComparisonPolicy`) take slots in a
+pool of their own, `compare`, never the model family's: a slot is held for the whole lane
+and cannot be taken back, so a comparison lane in a production pool could make a primary
+lane (its own run's retry included) wait behind it. The pool bounds the extra load those
+lanes put on the provider (`[scheduling] lane_pools.compare`, default COMPARE_POOL_SLOTS).
 """
 
 from __future__ import annotations
@@ -44,6 +50,9 @@ POLL_SECONDS = 1.0
 # a reviewer lane's place in line; lanes that are not parallel reviewers do not line up
 RANK_PRIORITY, RANK_LIVE, RANK_AUDIT = 1, 2, 3
 
+COMPARE_POOL = "compare"
+COMPARE_POOL_SLOTS = 4
+
 
 def pool_of(model: str) -> str:
     return model.split("-", 1)[0]
@@ -53,6 +62,8 @@ def limit(conn: sqlite3.Connection, cfg: Config, pool: str) -> int | None:
     """The pool's slot count right now; None = not gated."""
     if pool == "gpt":
         return slots.capacity(conn, cfg).ceiling
+    if pool == COMPARE_POOL:  # always bounded, even when config.toml lists other pools only
+        return cfg.lane_pools.get(pool, COMPARE_POOL_SLOTS)
     return cfg.lane_pools.get(pool)
 
 
@@ -151,7 +162,7 @@ def gated(
     slot_dir = cfg.work_dir / "lane-slots"
 
     def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
-        pool = pool_of(spec.model)
+        pool = spec.pool or pool_of(spec.model)
         if limit(conn(), cfg, pool) is None:
             return runner(spec, artifact_dir, worktree)
         fd = acquire(

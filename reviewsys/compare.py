@@ -1,11 +1,16 @@
 """Model comparison report: on sampled runs every Phase-2 reviewer lane also ran on a second
-model (see `ComparisonPolicy`). The final verifier weighed both sets blind, so the findings
-it kept show what each model contributes.
+model (see `ComparisonPolicy`). The final verifier weighed both sets under neutral labels, so
+the findings it kept show what each model contributes.
 
 A kept finding is credited to a model when one of that model's Phase-2 lanes raised it: the
 same `finding_hash` (file + category + title), or, when the verifier retitled it, the same
-file with overlapping lines. Kept = every finding the final verifier(s) of the run kept
-(`verify2` / `verified`), before cross-round dedupe.
+file and category with overlapping lines. Kept = every finding the run's final verifier(s)
+kept (`verify2` / `verified`), before cross-round dedupe.
+
+Only runs that really compared the two count: finished, never degraded (stand-ins would be
+credited to the primary), at least one comparison lane kept (event `compare.lanes`), and
+every Phase-2 lane on one of the two models. A run the Phase-1 gate stopped has no Phase 2
+and is left out.
 """
 
 from __future__ import annotations
@@ -14,11 +19,14 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Any
 
+STATS = ("raised", "kept", "kept_blockers", "only", "only_blockers", "tokens_out")
 
-@dataclass(slots=True)
+
+@dataclass(frozen=True, slots=True)
 class _Finding:
     hash: str
     file: str
+    category: str
     lo: int | None
     hi: int | None
     severity: str
@@ -26,7 +34,9 @@ class _Finding:
     def matches(self, other: _Finding) -> bool:
         if self.hash == other.hash:
             return True
-        if not self.file or self.file != other.file or self.lo is None or other.lo is None:
+        if not self.file or (self.file, self.category) != (other.file, other.category):
+            return False
+        if self.lo is None or other.lo is None:
             return False
         return self.lo <= (other.hi or other.lo) and other.lo <= (self.hi or self.lo)
 
@@ -39,90 +49,111 @@ class RunComparison:
     tier: str
     primary: str
     second: str
-    raised: dict[str, int] = field(default_factory=dict)  # model -> Phase-2 findings raised
-    kept_by: dict[str, int] = field(default_factory=dict)  # model -> kept findings it raised
-    blockers_by: dict[str, int] = field(default_factory=dict)  # model -> kept blockers it raised
     kept: int = 0
-    only: dict[str, int] = field(default_factory=dict)  # model -> kept findings only it raised
-    blockers_only: dict[str, int] = field(default_factory=dict)
-    tokens_out: dict[str, int] = field(default_factory=dict)
     dropped_lanes: int = 0
+    models: dict[str, dict[str, int]] = field(default_factory=dict)  # model -> STATS
 
 
 def _findings(conn: sqlite3.Connection, run_id: int, phase: str, stage: str) -> list[_Finding]:
-    return [
-        _Finding(str(r["hash"]), r["file"] or "", r["line_start"], r["line_end"], r["severity"])
-        for r in conn.execute(
-            "SELECT hash, file, line_start, line_end, severity FROM findings "
-            "WHERE run_id=? AND phase=? AND stage=?",
-            (run_id, phase, stage),
-        )
-    ]
-
-
-def _unique(findings: list[_Finding]) -> list[_Finding]:
+    """The run's findings at one phase/stage, one per `finding_hash`."""
     seen: dict[str, _Finding] = {}
-    for f in findings:
-        seen.setdefault(f.hash, f)
+    for r in conn.execute(
+        "SELECT hash, file, category, line_start, line_end, severity FROM findings "
+        "WHERE run_id=? AND phase=? AND stage=? ORDER BY id",
+        (run_id, phase, stage),
+    ):
+        seen.setdefault(
+            str(r["hash"]),
+            _Finding(
+                str(r["hash"]),
+                r["file"] or "",
+                r["category"] or "",
+                r["line_start"],
+                r["line_end"],
+                r["severity"],
+            ),
+        )
     return list(seen.values())
 
 
+def _fields(detail: str | None) -> dict[str, str]:
+    """`k=v` pairs of an event detail."""
+    return dict(p.split("=", 1) for p in str(detail or "").split() if "=" in p)
+
+
+def _compared(conn: sqlite3.Connection, run_id: int, primary: str, second: str) -> bool:
+    """Did this run's Phase 2 really run both models, and only those?"""
+    ran = {
+        str(r["model"])
+        for r in conn.execute(
+            "SELECT DISTINCT model FROM lanes WHERE run_id=? AND phase='phase2' "
+            "AND status IN ('completed','repaired')",
+            (run_id,),
+        )
+    }
+    return second in ran and ran <= {primary, second}
+
+
 def compare_runs(conn: sqlite3.Connection, *, since: str | None = None) -> list[RunComparison]:
-    """Every finished comparison run (newest first), optionally only those started at or after
-    `since` (ISO timestamp)."""
+    """Every comparison run that really compared the two models (newest first), optionally
+    only those started at or after `since` (ISO timestamp)."""
     rows = conn.execute(
-        "SELECT e.run_id, e.detail, r.tier, h.repo, h.number FROM events e "
-        "JOIN runs r ON r.id=e.run_id JOIN heads h ON h.id=r.head_id "
-        "WHERE e.kind='compare.selected' AND r.status='done' AND r.started_at >= ? "
-        "ORDER BY e.run_id DESC",
+        "SELECT e.run_id, e.detail, r.tier, h.repo, h.number, "
+        "(SELECT l.detail FROM events l WHERE l.run_id=e.run_id "
+        "AND l.kind='compare.lanes' ORDER BY l.id LIMIT 1) lanes "
+        "FROM events e JOIN runs r ON r.id=e.run_id JOIN heads h ON h.id=r.head_id "
+        "WHERE e.kind='compare.selected' AND r.status='done' AND r.degraded=0 "
+        "AND r.started_at >= ? ORDER BY e.run_id DESC",
         (since or "",),
     ).fetchall()
     out: list[RunComparison] = []
     for row in rows:
-        detail = dict(p.split("=", 1) for p in str(row["detail"]).split() if "=" in p)
+        detail = _fields(row["detail"])
         primary, second = detail.get("primary", "?"), detail.get("second", "?")
+        lanes = _fields(row["lanes"])
         run_id = int(row["run_id"])
-        c = RunComparison(
-            run_id=run_id,
-            repo=str(row["repo"]),
-            number=int(row["number"]),
-            tier=str(row["tier"] or ""),
-            primary=primary,
-            second=second,
-        )
+        if not int(lanes.get("kept", 0)) or not _compared(conn, run_id, primary, second):
+            continue
         by_model = {
-            primary: _unique(_findings(conn, run_id, "phase2", "lane")),
-            second: _unique(_findings(conn, run_id, "phase2", "compare")),
+            primary: _findings(conn, run_id, "phase2", "lane"),
+            second: _findings(conn, run_id, "phase2", "compare"),
         }
-        kept = _unique(_findings(conn, run_id, "verify2", "verified"))
-        c.kept = len(kept)
-        for model, raised in by_model.items():
-            c.raised[model] = len(raised)
-            hits = [k for k in kept if any(k.matches(f) for f in raised)]
-            c.kept_by[model] = len(hits)
-            c.blockers_by[model] = sum(1 for k in hits if k.severity == "blocking")
-        for model, other in ((primary, second), (second, primary)):
-            solo = [
-                k
-                for k in kept
-                if any(k.matches(f) for f in by_model[model])
-                and not any(k.matches(f) for f in by_model[other])
-            ]
-            c.only[model] = len(solo)
-            c.blockers_only[model] = sum(1 for k in solo if k.severity == "blocking")
-        for lane in conn.execute(
-            "SELECT model, SUM(tokens_out) tokens FROM lanes "
-            "WHERE run_id=? AND phase='phase2' GROUP BY model",
-            (run_id,),
-        ):
-            c.tokens_out[str(lane["model"])] = int(lane["tokens"] or 0)
-        c.dropped_lanes = int(
-            conn.execute(
-                "SELECT COUNT(*) FROM events WHERE run_id=? AND kind='compare.lane_dropped'",
+        kept = _findings(conn, run_id, "verify2", "verified")
+        # which models raised each kept finding
+        raisers = [{m for m, fs in by_model.items() if any(k.matches(f) for f in fs)} for k in kept]
+        tokens = {
+            str(r["model"]): int(r["tokens"] or 0)
+            for r in conn.execute(
+                "SELECT model, SUM(tokens_out) tokens FROM lanes "
+                "WHERE run_id=? AND phase='phase2' GROUP BY model",
                 (run_id,),
-            ).fetchone()[0]
+            )
+        }
+        models: dict[str, dict[str, int]] = {}
+        for m, raised in by_model.items():
+            hits = [k for k, r in zip(kept, raisers, strict=True) if m in r]
+            solo = [k for k, r in zip(kept, raisers, strict=True) if r == {m}]
+            models[m] = {
+                "raised": len(raised),
+                "kept": len(hits),
+                "kept_blockers": sum(k.severity == "blocking" for k in hits),
+                "only": len(solo),
+                "only_blockers": sum(k.severity == "blocking" for k in solo),
+                "tokens_out": tokens.get(m, 0),
+            }
+        out.append(
+            RunComparison(
+                run_id=run_id,
+                repo=str(row["repo"]),
+                number=int(row["number"]),
+                tier=str(row["tier"] or ""),
+                primary=primary,
+                second=second,
+                kept=len(kept),
+                dropped_lanes=int(lanes.get("dropped", 0)),
+                models=models,
+            )
         )
-        out.append(c)
     return out
 
 
@@ -130,24 +161,10 @@ def summarize(runs: list[RunComparison]) -> dict[str, Any]:
     """Totals per model over `runs`."""
     models: dict[str, dict[str, int]] = {}
     for c in runs:
-        for model in (c.primary, c.second):
-            m = models.setdefault(
-                model,
-                {
-                    "raised": 0,
-                    "kept": 0,
-                    "kept_blockers": 0,
-                    "only": 0,
-                    "only_blockers": 0,
-                    "tokens_out": 0,
-                },
-            )
-            m["raised"] += c.raised.get(model, 0)
-            m["kept"] += c.kept_by.get(model, 0)
-            m["kept_blockers"] += c.blockers_by.get(model, 0)
-            m["only"] += c.only.get(model, 0)
-            m["only_blockers"] += c.blockers_only.get(model, 0)
-            m["tokens_out"] += c.tokens_out.get(model, 0)
+        for model, stats in c.models.items():
+            m = models.setdefault(model, dict.fromkeys(STATS, 0))
+            for s in STATS:
+                m[s] += stats[s]
     return {
         "runs": len(runs),
         "kept_findings": sum(c.kept for c in runs),
@@ -173,8 +190,7 @@ def render(runs: list[RunComparison]) -> str:
     lines += ["", "only = kept findings no lane of the other model raised; 🔴 = blocking", ""]
     for c in runs:
         per = "  ".join(
-            f"{m}: kept {c.kept_by.get(m, 0)}/{c.raised.get(m, 0)} only {c.only.get(m, 0)}"
-            for m in (c.primary, c.second)
+            f"{m}: kept {st['kept']}/{st['raised']} only {st['only']}" for m, st in c.models.items()
         )
         lines.append(f"run {c.run_id} {c.repo}#{c.number} [{c.tier}] kept {c.kept}  {per}")
     return "\n".join(lines) + "\n"

@@ -12,13 +12,14 @@ import contextlib
 import dataclasses
 import json
 import logging
+import random
 import shutil
 import sqlite3
 import threading
 import time
 import uuid
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -556,7 +557,6 @@ def _run_lane(
     is_verifier: bool,
     fresh: bool = False,
     should_stop: Callable[[], bool] | None = None,
-    key: str | None = None,
     comparison: bool = False,
 ) -> dict[str, Any]:
     """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output.
@@ -566,13 +566,14 @@ def _run_lane(
     stand-in, so one exhausted pool does not fail the review.
 
     `should_stop` (default: the run was cancelled) is polled while the lane runs; a stopped
-    lane raises Cancelled when the run was cancelled, else LaneStopped. `key` names the lane
-    among its phase's outputs when it differs from `role` (a comparison lane). A `comparison`
-    lane never runs on a stand-in and never flips the run: it fails instead."""
+    lane raises Cancelled when the run was cancelled, else LaneStopped. A `comparison` lane
+    (keyed `<role>#2`) gets one attempt, takes its slot in the `compare` pool (never a
+    production one), never runs on a stand-in and never flips the run: it fails instead."""
     assert ctx.worktree
     stop = should_stop or ctx.cancel_flag.is_set
+    key = f"{role}{COMPARE_SUFFIX}" if comparison else role
     last: str = ""
-    attempt, budget = 0, 2
+    attempt, budget = 0, 1 if comparison else 2
     while attempt < budget:
         attempt += 1
         if stop():
@@ -599,7 +600,8 @@ def _run_lane(
             claude_bin=ctx.cfg.claude_bin,
             max_budget_usd=ctx.cfg.lane_budget_usd,
             should_stop=stop,
-            parallel=not is_verifier,
+            parallel=not is_verifier and not comparison,
+            pool=lanepool.COMPARE_POOL if comparison else None,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)
@@ -618,6 +620,8 @@ def _run_lane(
                     psha=psha,
                     reason="run cancelled"
                     if ctx.cancel_flag.is_set()
+                    else "stopped: comparison lane"
+                    if comparison
                     else "another lane of this phase failed",
                 )
             ctx.check_cancel()
@@ -640,6 +644,8 @@ def _run_lane(
                         artifact_dir=art,
                         psha=psha,
                     )
+                    if not is_verifier:
+                        _record_reviewer(ctx, phase, role, key, lm, fresh, attempt_id)
                     return repaired
             _lane_row(
                 ctx,
@@ -672,25 +678,40 @@ def _run_lane(
             psha=psha,
         )
         if not is_verifier:
-            ctx.reviewers.append(
-                {
-                    "model": lm.model,
-                    "agent": lm.agent,
-                    "role": role,
-                    "key": key or role,
-                    "effort": lm.effort,
-                    "status": "completed",
-                    "phase": phase,
-                    "fresh": fresh,
-                    "attempt_id": attempt_id,
-                    "substitute_for": lm.substitute_for,
-                }
-            )
+            _record_reviewer(ctx, phase, role, key, lm, fresh, attempt_id)
         return out
     raise ReviewError(
         FailKind.INFRA if "timed out" in last or "exit" in last else FailKind.CONTRACT,
         f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}",
     )
+
+
+def _record_reviewer(
+    ctx: RunContext,
+    phase: str,
+    role: str,
+    key: str,
+    lm: LaneModel,
+    fresh: bool,
+    attempt_id: str,
+) -> None:
+    """A reviewer lane's provenance entry. Lanes of a phase finish on parallel threads, and
+    a dropped comparison lane takes its entry back out, so both go through the state lock."""
+    with ctx.state_lock:
+        ctx.reviewers.append(
+            {
+                "model": lm.model,
+                "agent": lm.agent,
+                "role": role,
+                "key": key,
+                "effort": lm.effort,
+                "status": "completed",
+                "phase": phase,
+                "fresh": fresh,
+                "attempt_id": attempt_id,
+                "substitute_for": lm.substitute_for,
+            }
+        )
 
 
 def _repair(
@@ -728,7 +749,6 @@ def _reviewer_lane(
     prompt: str,
     fresh: bool = False,
     should_stop: Callable[[], bool] | None = None,
-    key: str | None = None,
     comparison: bool = False,
 ) -> dict[str, Any]:
     """One reviewer lane, retried down the Phase-1 ladder when its rung dies. A Phase-1 lane
@@ -747,7 +767,6 @@ def _reviewer_lane(
                 is_verifier=False,
                 fresh=fresh,
                 should_stop=should_stop,
-                key=key,
                 comparison=comparison,
             )
         except ReviewError as exc:
@@ -775,74 +794,96 @@ def _reviewer_lanes(
     retried from scratch.
 
     On a comparison run (`ctx.compare_model`) every Phase-2 role also runs on that model,
-    keyed `<role>#2` beside the primary lane. A comparison lane that fails is dropped with an
-    event; it never fails the phase."""
+    keyed `<role>#2`, on a pool of its own so the primary lanes keep their parallelism. Not on
+    the fresh final pass (it would double an already large verifier prompt). A comparison lane
+    never holds the review up or fails it: it takes its slot in a pool of its own (see
+    lanepool.py), one that fails is dropped with an event, and one still running
+    `COMPARE_GRACE_MINUTES` after the last primary lane finished is stopped and dropped the
+    same way."""
     assert ctx.meta
     meta = ctx.meta.as_dict()
     roles = ["general", *ctx.selection]
-    # (output key, role, lane model, comparison?) -- primary lanes first, so they start first
-    lanes: list[tuple[str, str, LaneModel, bool]] = [(r, r, lm, False) for r in roles]
-    if phase == "phase2" and ctx.compare_model:
-        twin = dataclasses.replace(lm, model=ctx.compare_model, substitute_for=None)
-        lanes += [(f"{r}{COMPARE_SUFFIX}", r, twin, True) for r in roles]
-    keys = [k for k, *_ in lanes]
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
-    abandon = threading.Event()
+    prompts = {
+        role: reviewer_prompt(
+            ctx.cfg,
+            repo=ctx.repo,
+            number=ctx.number,
+            head_sha=ctx.sha,
+            phase=expected_phase,
+            role=role,
+            meta=meta,
+            coverage_from=ctx.coverage_from,
+            evidence=ctx.evidence,
+            prior=review_prior,
+            prior_sha=review_prior_sha,
+            fresh=fresh,
+        )
+        for role in roles
+    }
+    # (output key, role, lane model, comparison?)
+    lanes: list[tuple[str, str, LaneModel, bool]] = [(r, r, lm, False) for r in roles]
+    if phase == "phase2" and ctx.compare_model and not fresh:
+        twin = dataclasses.replace(lm, model=ctx.compare_model, substitute_for=None)
+        lanes += [(f"{r}{COMPARE_SUFFIX}", r, twin, True) for r in roles]
+    keys = [k for k, *_ in lanes]
+    abandon = threading.Event()  # the phase failed: every lane stops
+    twins_stop = threading.Event()  # the comparison lanes ran out of grace
 
     def stopped() -> bool:
         return ctx.cancel_flag.is_set() or abandon.is_set()
 
-    def review(key: str, role: str, lane_lm: LaneModel, comparison: bool) -> ReviewerOutput | None:
-        try:
-            prompt = reviewer_prompt(
-                ctx.cfg,
+    def twin_stopped() -> bool:
+        return stopped() or twins_stop.is_set()
+
+    def drop(key: str, model: str, why: str) -> None:
+        """A comparison lane is out: its provenance entry (if it got that far) goes too."""
+        log.warning("comparison lane %s on %s dropped: %s", key, model, why)
+        with ctx.state_lock:
+            ctx.reviewers[:] = [
+                r for r in ctx.reviewers if not (r["phase"] == phase and r["key"] == key)
+            ]
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "compare.lane_dropped",
                 repo=ctx.repo,
                 number=ctx.number,
-                head_sha=ctx.sha,
-                phase=expected_phase,
-                role=role,
-                meta=meta,
-                coverage_from=ctx.coverage_from,
-                evidence=ctx.evidence,
-                prior=review_prior,
-                prior_sha=review_prior_sha,
-                fresh=fresh,
+                run_id=ctx.run_id,
+                detail=f"{phase}/{key} {model}: {why[:400]}",
             )
-            try:
-                raw = _reviewer_lane(
-                    ctx,
-                    phase=phase,
-                    role=role,
-                    lm=lane_lm,
-                    prompt=prompt,
-                    fresh=fresh,
-                    should_stop=stopped,
-                    key=key,
-                    comparison=comparison,
-                )
-                return parse_reviewer_output(
-                    raw,
-                    expected_phase=expected_phase,
-                    head_sha=ctx.sha,
-                    source=f"{phase}:{key}",
-                    prior_hashes=prior_hashes,
-                )
-            except ReviewError as exc:
-                if not comparison:
-                    raise
-                log.warning("comparison lane %s on %s dropped: %s", key, lane_lm.model, exc)
-                with tx(ctx.conn):
-                    event(
-                        ctx.conn,
-                        "compare.lane_dropped",
-                        repo=ctx.repo,
-                        number=ctx.number,
-                        run_id=ctx.run_id,
-                        detail=f"{phase}/{key} {lane_lm.model}: {exc.message[:400]}",
-                    )
-                return None
+
+    def review(key: str, role: str, lane_lm: LaneModel, comparison: bool) -> ReviewerOutput | None:
+        try:
+            raw = _reviewer_lane(
+                ctx,
+                phase=phase,
+                role=role,
+                lm=lane_lm,
+                prompt=prompts[role],
+                fresh=fresh,
+                should_stop=twin_stopped if comparison else stopped,
+                comparison=comparison,
+            )
+            return parse_reviewer_output(
+                raw,
+                expected_phase=expected_phase,
+                head_sha=ctx.sha,
+                source=f"{phase}:{key}",
+                prior_hashes=prior_hashes,
+            )
+        except (ReviewError, LaneStopped) as exc:
+            if not comparison or abandon.is_set():
+                raise  # (a comparison lane stopped because the phase failed says nothing)
+            why = (
+                exc.message
+                if isinstance(exc, ReviewError)
+                else f"still running {COMPARE_GRACE_MINUTES} min after the primary lanes finished"
+            )
+            drop(key, lane_lm.model, why)
+            return None
         finally:
             ctx.close_lane_conn()
 
@@ -850,19 +891,37 @@ def _reviewer_lanes(
     results: dict[str, ReviewerOutput | None] = {}
     errors: list[BaseException] = []
     workers = max(1, min(len(roles), ctx.cfg.phase_parallelism))
-    if len(lanes) > len(roles):
-        workers *= 2  # the comparison lanes must not hold the primary ones back
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"{phase}-lane") as pool:
-        futures = {pool.submit(review, *lane): lane[0] for lane in lanes}
+    with contextlib.ExitStack() as stack:
+        pools = [
+            stack.enter_context(
+                ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"{phase}-{name}")
+            )
+            for name in ("lane", "compare")
+        ]
+        futures = {pools[lane[3]].submit(review, *lane): lane[0] for lane in lanes}
+        primaries = {f for f, k in futures.items() if not k.endswith(COMPARE_SUFFIX)}
+        pending = set(futures)
+        grace_until: float | None = None  # set once every primary lane is done
         try:
-            for fut in as_completed(futures):
-                try:
-                    results[futures[fut]] = fut.result()
-                except BaseException as exc:  # Cancelled included: it must stop the siblings
-                    errors.append(exc)
-                    abandon.set()
-                    for f in futures:
-                        f.cancel()  # roles not started yet never start
+            while pending:
+                timeout = (
+                    None
+                    if grace_until is None or twins_stop.is_set()
+                    else max(0.0, grace_until - time.monotonic())
+                )
+                done, pending = wait(pending, timeout=timeout, return_when=FIRST_COMPLETED)
+                for fut in done:
+                    try:
+                        results[futures[fut]] = fut.result()
+                    except BaseException as exc:  # Cancelled included: it must stop the siblings
+                        errors.append(exc)
+                        abandon.set()
+                        for f in futures:
+                            f.cancel()  # roles not started yet never start
+                if grace_until is None and primaries.isdisjoint(pending):
+                    grace_until = time.monotonic() + COMPARE_GRACE_MINUTES * 60
+                if grace_until is not None and time.monotonic() >= grace_until:
+                    twins_stop.set()
         finally:
             if len(results) < len(lanes):
                 abandon.set()  # however we leave (an interrupt too), no lane outlives the phase
@@ -876,10 +935,20 @@ def _reviewer_lanes(
         ctx.check_cancel()
         raise ReviewError(FailKind.INFRA, f"{phase}: a reviewer lane never ran")
     # provenance and finding rows in lane order, as if the lanes had run one after another
-    ctx.reviewers[first:] = sorted(
-        ctx.reviewers[first:], key=lambda r: keys.index(r.get("key", r["role"]))
-    )
+    ctx.reviewers[first:] = sorted(ctx.reviewers[first:], key=lambda r: keys.index(r["key"]))
     outputs = {k: out for k in keys if (out := results[k]) is not None}
+    twins = [k for k in keys if k.endswith(COMPARE_SUFFIX)]
+    if twins:
+        kept = sum(k in outputs for k in twins)
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "compare.lanes",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"phase={phase} kept={kept} dropped={len(twins) - kept}",
+            )
     with tx(ctx.conn):
         for k, output in outputs.items():
             # comparison lanes' own findings are kept apart so `reviewsys compare` can tell
@@ -906,7 +975,7 @@ def _verifier_lane(
         head_sha=ctx.sha,
         phase=expected_phase,
         phase1_outputs={r: o.raw for r, o in ctx.phase1_outputs.items()},
-        phase2_outputs={r: o.raw for r, o in all_phase2.items()},
+        phase2_outputs=_blind({r: o.raw for r, o in all_phase2.items()}, seed=ctx.run_id),
         coderabbit=ctx.coderabbit,
         coderabbit_ids=ctx.coderabbit_ids,
         evidence=ctx.evidence,
@@ -939,6 +1008,25 @@ def _verifier_lane(
     )
     _record_findings(ctx, phase, "verified", out.findings)
     return out
+
+
+def _blind(outputs: dict[str, Any], *, seed: int) -> dict[str, Any]:
+    """Phase-2 outputs as the verifier sees them on a comparison run: each role's pair gets
+    the neutral labels `<role>/a` and `<role>/b`, which one is the comparison model decided
+    per run, so neither the `#2` key nor the order gives the second model away. Unchanged
+    when no comparison lane ran. Attribution does not depend on these labels (it matches
+    each lane's own findings by hash)."""
+    twins = {k.removesuffix(COMPARE_SUFFIX) for k in outputs if k.endswith(COMPARE_SUFFIX)}
+    if not twins:
+        return outputs
+    second_is_a = random.Random(seed).random() < 0.5
+    out: dict[str, Any] = {}
+    for key, value in outputs.items():
+        base = key.removesuffix(COMPARE_SUFFIX)
+        if base in twins:
+            key = f"{base}/{'a' if key.endswith(COMPARE_SUFFIX) == second_is_a else 'b'}"
+        out[key] = value
+    return dict(sorted(out.items()))
 
 
 def _backfill_posted(
@@ -1236,7 +1324,9 @@ def _reconciliation(
         merged.setdefault(str(row["finding_hash"]), row)
     outputs = ctx.phase1_outputs if phase == "preliminary" else ctx.phase2_outputs
     outputs = outputs or ctx.phase1_outputs or ctx.phase2_outputs
-    for out in outputs.values():
+    for key, out in outputs.items():
+        if key.endswith(COMPARE_SUFFIX):
+            continue  # a comparison lane never answers or resolves a thread
         for row in out.prior_reconciliation:
             h = str(row.get("finding_hash") or "")
             if not h:
@@ -1256,6 +1346,8 @@ def _build_review(
     rereview: bool = False,
 ) -> publish.ReviewModel:
     diff = github.pr_diff(ctx.gh, ctx.repo, ctx.number)
+    # comparison lanes are dropped on failure: disclose the comparison only when one finished
+    compared = any(r["key"].endswith(COMPARE_SUFFIX) for r in ctx.reviewers)
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
         verifier=_lane_provenance(
@@ -1269,10 +1361,7 @@ def _build_review(
         adhoc=ctx.adhoc,
         fresh_final=ctx.fresh_final,
         degraded=_degraded_provenance(ctx),
-        # only when a comparison lane actually finished (they are dropped on failure)
-        compare_model=ctx.compare_model
-        if any(str(r.get("key", "")).endswith(COMPARE_SUFFIX) for r in ctx.reviewers)
-        else None,
+        compare_model=ctx.compare_model if compared else None,
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -1848,15 +1937,13 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
 
 
 def _choose_comparison(ctx: RunContext) -> None:
-    """Sample this run for a model comparison (see ComparisonPolicy). Never on an audit, in
-    degraded mode (both sets would run on the same stand-in), or when the comparison model
-    is the primary one."""
+    """Sample this run for a model comparison (see ComparisonPolicy). Never on an audit or in
+    degraded mode (both sets would run on the same stand-in)."""
     cmp = ctx.cfg.policy.comparison
     if (
         cmp is None
         or ctx.is_audit
         or ctx.is_degraded
-        or cmp.model == ctx.cfg.policy.phase2_reviewer.model
         or not cmp.selects(ctx.repo, ctx.number, ctx.sha, ctx.tier)
     ):
         return
@@ -1873,6 +1960,8 @@ def _choose_comparison(ctx: RunContext) -> None:
 
 
 COMPARE_SUFFIX = "#2"  # output key of a comparison lane: `<role>#2`
+# how long comparison lanes may still run once every primary lane of their phase is done
+COMPARE_GRACE_MINUTES = 20
 LIGHT_AUDIT_TIER = "trivial"  # the policy tier a light audit reviews at (Phase 1 only)
 PHASE1_FAILED = github.PHASE1_FAILED
 

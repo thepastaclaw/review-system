@@ -250,26 +250,39 @@ runs):
 
 - **Selection.** After triage, a run whose tier is listed is picked when a stable
   hash of `repo#number@sha` falls under `fraction`, so a retried run makes the same
-  choice. Never on an audit, in degraded mode (both sets would run on the same
-  stand-in), or when the comparison model is the Phase-2 model. Event
-  `compare.selected` records the pair.
-- **What runs.** Every Phase-2 reviewer lane (general and each specialist, including
-  the fresh final pass) also runs on the comparison model at the same effort, keyed
-  `<role>#2`. The verifier gets both sets in the one Phase-2 block with no model
-  names, so it weighs them blind; the primary verifier alone decides the verdict.
-  Comparison lanes do not count against the per-run `phase_parallelism` of the
-  primary lanes, but they do take `gpt` pool slots.
-- **Failure.** A comparison lane that fails is dropped (`compare.lane_dropped`
-  event), never the run, and a quota error on it never flips the run into degraded
-  mode or onto a stand-in.
-- **Disclosure.** The provenance lists the comparison lanes with the other Phase-2
-  reviewers and adds "Model comparison: every Phase-2 reviewer also ran on `…`".
+  choice. Never on an audit or in degraded mode (both sets would run on the same
+  stand-in). The comparison model must differ from the Phase-2 model (checked at
+  load). Event `compare.selected` records the pair.
+- **What runs.** Every Phase-2 reviewer lane (general and each specialist) also runs
+  on the comparison model at the same effort, keyed `<role>#2`, on a thread pool of
+  its own so the primary lanes keep their `phase_parallelism`. Not on the fresh final
+  pass: it would double an already large verifier prompt. The verifier gets both sets
+  in the one Phase-2 block under neutral labels (`general/a`, `general/b`; which one
+  is the comparison model is drawn per run), and the primary verifier alone decides
+  the verdict. Comparison output never answers or resolves a finding thread.
+- **It never holds the review up.** Comparison lanes take their slots in a
+  machine-wide `compare` lane pool (`[scheduling] lane_pools.compare`, default 4),
+  never the production `gpt` one: a slot is held for the whole lane, so a comparison
+  lane in the production pool could make a primary lane (even its own run's retry)
+  wait. Each gets one attempt. A failed one is dropped (`compare.lane_dropped`), and
+  one still running 20 minutes (`COMPARE_GRACE_MINUTES`) after the last primary lane
+  of its phase finished is stopped and dropped the same way. A quota error on one
+  never flips the run into degraded mode or onto a stand-in. A phase that fails
+  stops its comparison lanes too. Per phase, `compare.lanes` records `kept=N
+  dropped=M`.
+- **Disclosure.** Only when a comparison lane finished: the provenance lists it with
+  the other Phase-2 reviewers and adds "Model comparison: every Phase-2 reviewer also
+  ran on `…`". Inline footers name the model whose lane actually raised the finding.
 - **Reading it.** Each comparison lane's own findings are stored with
   `findings.stage='compare'` (primary lanes stay `lane`). `reviewsys compare
   [--since ISO] [--json]` credits every finding the final verifier kept to the
-  model(s) whose lanes raised it (same `finding_hash`, or same file with overlapping
-  lines when the verifier retitled), and reports per model: raised, kept, kept
-  blockers, kept findings *only* that model raised, and output tokens.
+  model(s) whose lanes raised it (same `finding_hash`, or same file and category with
+  overlapping lines when the verifier retitled), and reports per model: raised, kept,
+  kept blockers, kept findings *only* that model raised, and output tokens. Only runs
+  that really compared count: finished, never degraded, at least one comparison lane
+  kept, every Phase-2 lane on one of the two models (a run the Phase-1 gate stopped
+  has no Phase 2). Caveat: the verifier is the primary model itself, so a preference
+  for its own model's wording cannot be ruled out.
 
 ## Final approval after an iterative review
 

@@ -41,6 +41,8 @@ class LaneSpec:
     # the same phase failed and the phase is being abandoned)
     should_stop: Callable[[], bool] | None = None
     parallel: bool = False  # a reviewer lane running beside its siblings (lanepool lines these up)
+    # the lane-slot pool when it is not the model family's (comparison lanes: lanepool.COMPARE_POOL)
+    pool: str | None = None
 
 
 @dataclass(slots=True)
