@@ -261,28 +261,36 @@ runs):
   is the comparison model is drawn per run), and the primary verifier alone decides
   the verdict. Comparison output never answers or resolves a finding thread.
 - **It never holds the review up.** Comparison lanes take their slots in a
-  machine-wide `compare` lane pool (`[scheduling] lane_pools.compare`, default 4),
+  machine-wide `compare` lane pool (`[scheduling] lane_pools.compare`, default 2),
   never the production `gpt` one: a slot is held for the whole lane, so a comparison
   lane in the production pool could make a primary lane (even its own run's retry)
-  wait. Each gets one attempt. A failed one is dropped (`compare.lane_dropped`), and
-  one still running 20 minutes (`COMPARE_GRACE_MINUTES`) after the last primary lane
-  of its phase finished is stopped and dropped the same way. A quota error on one
+  wait. They still use the same OpenAI accounts, whose stream budget the `gpt`
+  ceiling is, so one only starts while the `gpt` pool has an idle reviewer slot at
+  that moment; the `compare` pool bounds how far they can overshoot when production
+  picks up after they started. Each gets one attempt. A failed one is dropped (`compare.lane_dropped`), and
+  one still running (or still waiting for a slot) 20 minutes (`COMPARE_GRACE_MINUTES`)
+  after the last primary lane of its phase finished is stopped and dropped the same
+  way, with a reason saying which. A quota error on one
   never flips the run into degraded mode or onto a stand-in. A phase that fails
   stops its comparison lanes too. Per phase, `compare.lanes` records `kept=N
   dropped=M`.
 - **Disclosure.** Only when a comparison lane finished: the provenance lists it with
   the other Phase-2 reviewers and adds "Model comparison: every Phase-2 reviewer also
   ran on `…`". Inline footers name the model whose lane actually raised the finding.
-- **Reading it.** Each comparison lane's own findings are stored with
-  `findings.stage='compare'` (primary lanes stay `lane`). `reviewsys compare
-  [--since ISO] [--json]` credits every finding the final verifier kept to the
-  model(s) whose lanes raised it (same `finding_hash`, or same file and category with
-  overlapping lines when the verifier retitled), and reports per model: raised, kept,
-  kept blockers, kept findings *only* that model raised, and output tokens. Only runs
-  that really compared count: finished, never degraded, at least one comparison lane
-  kept, every Phase-2 lane on one of the two models (a run the Phase-1 gate stopped
-  has no Phase 2). Caveat: the verifier is the primary model itself, so a preference
-  for its own model's wording cannot be ruled out.
+- **Reading it.** Reviewer-lane findings are stored with the role in the stage:
+  `lane:<role>` (primary), `compare:<role>` (comparison), `fresh:<role>` (fresh final
+  pass); the fresh final verifier writes `verified-fresh`, the first one `verified`.
+  `reviewsys compare [--since ISO] [--json]` compares per role and first round only: a
+  role counts when both its lanes finished and the comparison lane was not dropped.
+  Every finding the first final verifier kept is credited to the model(s) whose paired
+  lanes raised it (same `finding_hash`, or same file and category with overlapping
+  lines when the verifier retitled); one only an unpaired role raised is left out. Per
+  model: raised, kept, kept blockers, kept findings *only* that model raised, output
+  tokens. Runs count when finished, never degraded, only the two models in the first
+  Phase 2, and at least one paired role (a run the Phase-1 gate stopped has no Phase
+  2). Caveats: the verifier is the primary model itself, so a preference for its own
+  model's wording cannot be ruled out; and comparison lanes dropped for time or slots
+  skew towards large PRs, so the report says how many roles were left out.
 
 ## Final approval after an iterative review
 

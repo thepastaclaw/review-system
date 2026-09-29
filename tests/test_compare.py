@@ -182,8 +182,10 @@ def test_selected_run_doubles_phase2_lanes_and_verifier_sees_both(cfg, conn, gh,
             "SELECT stage, title FROM findings WHERE run_id=? AND phase='phase2'", (rid,)
         )
     }
-    assert ("compare", "Astra only") in stages and ("lane", "Sol only") in stages
-    assert ("lane", "Astra only") not in stages
+    # stages carry the role, so the report can pair each role's two lanes
+    assert ("compare:general", "Astra only") in stages
+    assert ("lane:general", "Sol only") in stages
+    assert not any(st.startswith("lane:") and t == "Astra only" for st, t in stages)
 
     body = gh.posted_reviews[-1]["body"]
     assert f"every Phase-2 reviewer also ran on `{SECOND}`" in body
@@ -197,13 +199,14 @@ def test_selected_run_doubles_phase2_lanes_and_verifier_sees_both(cfg, conn, gh,
     assert _events(conn, rid, "compare.lanes") == ["phase=phase2 kept=3 dropped=0"]
 
     (c,) = compare.compare_runs(conn)
-    assert (c.primary, c.second, c.tier, c.kept, c.dropped_lanes) == (
+    assert (c.primary, c.second, c.tier, c.kept, c.unpaired) == (
         PRIMARY,
         SECOND,
         "critical",
         3,
-        0,
+        [],
     )
+    assert c.roles == sorted(ROLES)
     assert {m: (st["kept"], st["only"], st["only_blockers"]) for m, st in c.models.items()} == {
         PRIMARY: (2, 1, 1),
         SECOND: (2, 1, 0),
@@ -293,7 +296,10 @@ def test_slow_twin_is_stopped_after_the_grace_period(cfg, conn, gh, lanes, monke
     rid, status = _run(cfg, conn, gh, runner)
     assert status == RunStatus.DONE and runner.stopped.is_set()
     dropped = _events(conn, rid, "compare.lane_dropped")
-    assert len(dropped) == 3 and all("after the primary lanes finished" in d for d in dropped)
+    # every twin is dropped: out of grace, or never got one of the 2 compare slots
+    assert len(dropped) == 3
+    assert all("still running" in d or "no compare slot" in d for d in dropped)
+    assert sum("still running" in d for d in dropped) <= 2
     assert "Model comparison" not in gh.posted_reviews[-1]["body"]
 
 
@@ -367,3 +373,102 @@ def test_policy_block_is_parsed_and_validated(skills_dir):
         load({"model": "gpt-5.6-sol", "tiers": [], "fraction": 1.5})
     with pytest.raises(ValueError, match="Phase-2 model"):
         load({"model": "gpt-6-astra", "tiers": ["critical"], "fraction": 0.25})
+
+
+def test_partial_comparison_counts_paired_roles_only(cfg, conn, gh, lanes):
+    """One role's comparison lane is dropped: that role's primary findings must not count as
+    findings only the primary model found."""
+    cfg = _with_comparison(cfg)
+    general_only = _finding("Primary general only", line=11)
+    shared = _finding("Shared", line=12)
+    _base(lanes, final=[general_only, shared])
+
+    class OneTwinDies(ByModel):
+        def __call__(self, spec, art, worktree):
+            if spec.model == SECOND and spec.role == "general" and _is_phase2_reviewer(spec):
+                return LaneResult(exit_code=1, stdout="", stderr="boom", duration_s=1)
+            if _is_phase2_reviewer(spec) and spec.model == PRIMARY and spec.role == "general":
+                return ByModel(self.inner, {PRIMARY: {"summary": "s", "findings": [general_only]}})(
+                    spec, art, worktree
+                )
+            return super().__call__(spec, art, worktree)
+
+    both = {"summary": "s", "findings": [shared]}
+    _run(cfg, conn, gh, OneTwinDies(lanes, {PRIMARY: both, SECOND: both}))
+    (c,) = compare.compare_runs(conn)
+    assert c.roles == ["always-on", "security-auditor"] and c.unpaired == ["general"]
+    assert c.kept == 1  # `Primary general only` is not comparable
+    assert {m: (st["kept"], st["only"]) for m, st in c.models.items()} == {
+        PRIMARY: (1, 0),
+        SECOND: (1, 0),
+    }
+    assert "1 left out" in compare.render([c])
+
+
+def test_fresh_pass_findings_are_kept_apart(cfg, conn, gh, lanes):
+    """A re-review's fresh final pass re-runs the primary alone: its lanes and its verifier
+    write their own stages, so the report still compares the first Phase 2 only."""
+    cfg = _with_comparison(cfg)
+    seen = _finding("Seen")
+    _base(lanes)  # the first review posts nothing, so the re-review has nothing to reconcile
+    lanes.reviewer["default"] = {"summary": "s", "findings": [seen]}
+
+    class FreshGateKeeps:
+        def __call__(self, spec, art, worktree):
+            if spec.role == "verifier" and "This is the fresh final gate" in spec.prompt:
+                text = json.dumps({**_verifier([seen]), "review_phase": "final"})
+                return LaneResult(0, json.dumps({"result": text}), "", 1, result_text=text)
+            return lanes(spec, art, worktree)
+
+    runner = FreshGateKeeps()
+    _run(cfg, conn, gh, runner)
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=runner, heartbeat=False) == RunStatus.DONE
+    stages = {
+        r[0] for r in conn.execute("SELECT DISTINCT stage FROM findings WHERE run_id=?", (rid,))
+    }
+    assert {"lane:general", "compare:general", "fresh:general", "verified-fresh"} <= stages
+    # the first verifier kept nothing; the fresh gate's finding must not be credited
+    runs = {c.run_id: c for c in compare.compare_runs(conn)}
+    assert runs[rid].kept == 0
+    assert runs[rid].models[PRIMARY]["raised"] == runs[rid].models[SECOND]["raised"] == 1
+
+
+def test_compare_slot_needs_idle_production_headroom(tmp_path):
+    from reviewsys import lanepool
+
+    stop = threading.Event()
+    admitted = []
+
+    def admit():
+        admitted.append(True)
+        if len(admitted) >= 3:
+            stop.set()
+        return False  # production is saturated
+
+    assert lanepool.acquire(tmp_path, "compare", lambda: 2, stop.is_set, admit=admit) is None
+    assert len(admitted) >= 3
+    fd = lanepool.acquire(tmp_path, "compare", lambda: 2, lambda: False, admit=lambda: True)
+    assert fd is not None
+    lanepool.release(fd)
+
+
+def test_twin_that_never_got_a_slot_says_so(cfg, conn, gh, lanes, monkeypatch):
+    monkeypatch.setattr(worker, "COMPARE_GRACE_MINUTES", 0.001)
+    cfg = _with_comparison(cfg)
+    _base(lanes)
+
+    class NoSlot:
+        def __call__(self, spec, art, worktree):
+            if spec.model == SECOND and _is_phase2_reviewer(spec):
+                while not spec.should_stop():
+                    time.sleep(0.01)
+                return LaneResult(None, "", "", 0, cancelled=True, started=False)
+            return lanes(spec, art, worktree)
+
+    rid, status = _run(cfg, conn, gh, NoSlot())
+    assert status == RunStatus.DONE
+    dropped = _events(conn, rid, "compare.lane_dropped")
+    assert len(dropped) == 3 and all("no compare slot" in d for d in dropped)

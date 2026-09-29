@@ -55,7 +55,12 @@ class Cancelled(Exception):
 
 class LaneStopped(Exception):
     """A lane stopped before it finished because its phase is being abandoned (a sibling lane
-    failed). Never a failure of its own: the sibling's error is what the run reports."""
+    failed). Never a failure of its own: the sibling's error is what the run reports.
+    `started` False: it never ran (stopped while it waited for a pool slot)."""
+
+    def __init__(self, *, started: bool = True) -> None:
+        super().__init__()
+        self.started = started
 
 
 @dataclass(slots=True)
@@ -578,7 +583,7 @@ def _run_lane(
         attempt += 1
         if stop():
             ctx.check_cancel()  # a cancelled run is Cancelled, never just a stopped lane
-            raise LaneStopped()
+            raise LaneStopped(started=attempt > 1)
         if comparison and ctx.is_degraded:
             raise ReviewError(FailKind.INFRA, f"{phase}/{key}: the run went degraded")
         # re-resolved per attempt: a parallel sibling may have flipped the run to degraded
@@ -625,12 +630,14 @@ def _run_lane(
                     else "another lane of this phase failed",
                 )
             ctx.check_cancel()
-            raise LaneStopped()
+            raise LaneStopped(started=res.started)
         try:
             out = lane_output(res)
         except ReviewError as exc:
             if exc.kind == FailKind.CONTRACT and res.ok and res.result_text.strip():
-                repaired = _repair(ctx, res.result_text, art, stop)
+                repaired = _repair(
+                    ctx, res.result_text, art, stop, lanepool.COMPARE_POOL if comparison else None
+                )
                 if repaired is not None:
                     _lane_row(
                         ctx,
@@ -715,7 +722,7 @@ def _record_reviewer(
 
 
 def _repair(
-    ctx: RunContext, raw: str, art: Path, stop: Callable[[], bool]
+    ctx: RunContext, raw: str, art: Path, stop: Callable[[], bool], pool: str | None = None
 ) -> dict[str, Any] | None:
     if len(raw) > 200_000 or not ctx.worktree:
         return None
@@ -730,6 +737,7 @@ def _repair(
         timeout_seconds=300,
         claude_bin=ctx.cfg.claude_bin,
         should_stop=stop,
+        pool=pool,  # a comparison lane's repair stays out of the production pool too
     )
     try:
         res = ctx.lane_runner(spec, art / "repair", ctx.worktree)
@@ -845,15 +853,18 @@ def _reviewer_lanes(
             ctx.reviewers[:] = [
                 r for r in ctx.reviewers if not (r["phase"] == phase and r["key"] == key)
             ]
-        with tx(ctx.conn):
-            event(
-                ctx.conn,
-                "compare.lane_dropped",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=f"{phase}/{key} {model}: {why[:400]}",
-            )
+        try:
+            with tx(ctx.conn):
+                event(
+                    ctx.conn,
+                    "compare.lane_dropped",
+                    repo=ctx.repo,
+                    number=ctx.number,
+                    run_id=ctx.run_id,
+                    detail=f"{phase}/{key} {model}: {why[:400]}",
+                )
+        except sqlite3.Error as exc:  # bookkeeping for a comparison must not fail the review
+            log.warning("could not record dropped comparison lane %s: %s", key, exc)
 
     def review(key: str, role: str, lane_lm: LaneModel, comparison: bool) -> ReviewerOutput | None:
         try:
@@ -874,14 +885,19 @@ def _reviewer_lanes(
                 source=f"{phase}:{key}",
                 prior_hashes=prior_hashes,
             )
-        except (ReviewError, LaneStopped) as exc:
-            if not comparison or abandon.is_set():
+        except Exception as exc:  # a comparison lane never fails the phase, whatever broke
+            if not comparison or abandon.is_set() or isinstance(exc, Cancelled):
                 raise  # (a comparison lane stopped because the phase failed says nothing)
-            why = (
-                exc.message
-                if isinstance(exc, ReviewError)
-                else f"still running {COMPARE_GRACE_MINUTES} min after the primary lanes finished"
-            )
+            if isinstance(exc, ReviewError):
+                why = exc.message
+            elif isinstance(exc, LaneStopped):
+                why = (
+                    f"still running {COMPARE_GRACE_MINUTES} min after the primary lanes finished"
+                    if exc.started
+                    else f"no compare slot within {COMPARE_GRACE_MINUTES} min of the primary lanes"
+                )
+            else:
+                why = f"{type(exc).__name__}: {exc}"
             drop(key, lane_lm.model, why)
             return None
         finally:
@@ -951,9 +967,12 @@ def _reviewer_lanes(
             )
     with tx(ctx.conn):
         for k, output in outputs.items():
-            # comparison lanes' own findings are kept apart so `reviewsys compare` can tell
-            # which model raised what; nothing else reads that stage
-            stage = "compare" if k.endswith(COMPARE_SUFFIX) else "lane"
+            # `<kind>:<role>` so `reviewsys compare` can pair each role's primary and
+            # comparison lane, first round only; nothing else reads these stages
+            if k.endswith(COMPARE_SUFFIX):
+                stage = f"compare:{k.removesuffix(COMPARE_SUFFIX)}"
+            else:
+                stage = f"{'fresh' if fresh else 'lane'}:{k}"
             _insert_findings(ctx, phase, stage, output.findings)
     return outputs
 
@@ -1006,7 +1025,7 @@ def _verifier_lane(
         ctx.reviewers,
         lane_findings,
     )
-    _record_findings(ctx, phase, "verified", out.findings)
+    _record_findings(ctx, phase, "verified-fresh" if fresh_final else "verified", out.findings)
     return out
 
 

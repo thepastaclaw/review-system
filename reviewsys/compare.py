@@ -2,15 +2,21 @@
 model (see `ComparisonPolicy`). The final verifier weighed both sets under neutral labels, so
 the findings it kept show what each model contributes.
 
-A kept finding is credited to a model when one of that model's Phase-2 lanes raised it: the
-same `finding_hash` (file + category + title), or, when the verifier retitled it, the same
-file and category with overlapping lines. Kept = every finding the run's final verifier(s)
-kept (`verify2` / `verified`), before cross-round dedupe.
+The comparison is per role and first round only. A role counts when both its primary lane
+and its comparison lane finished and the comparison lane was not dropped; a comparison lane
+can be dropped (failed, out of grace, no slot) while its primary ran, and crediting that
+role's findings to the primary alone would tilt the result. Only the first Phase 2 and its
+verifier count: a fresh final pass (stages `fresh:*` / `verified-fresh`) re-runs the primary
+alone.
 
-Only runs that really compared the two count: finished, never degraded (stand-ins would be
-credited to the primary), at least one comparison lane kept (event `compare.lanes`), and
-every Phase-2 lane on one of the two models. A run the Phase-1 gate stopped has no Phase 2
-and is left out.
+A kept finding is credited to a model when one of that model's paired lanes raised it: the
+same `finding_hash` (file + category + title), or, when the verifier retitled it, the same
+file and category with overlapping lines. A kept finding only an unpaired primary role
+raised is left out.
+
+A run counts when it finished, never went degraded (stand-ins would be credited to the
+primary), ran nothing but the two models in its first Phase 2, and has at least one paired
+role. A run the Phase-1 gate stopped has no Phase 2 and is left out.
 """
 
 from __future__ import annotations
@@ -49,18 +55,23 @@ class RunComparison:
     tier: str
     primary: str
     second: str
-    kept: int = 0
-    dropped_lanes: int = 0
+    roles: list[str] = field(default_factory=list)  # the paired roles
+    unpaired: list[str] = field(default_factory=list)  # primary roles without a comparison
+    kept: int = 0  # comparable findings the final verifier kept
     models: dict[str, dict[str, int]] = field(default_factory=dict)  # model -> STATS
 
 
-def _findings(conn: sqlite3.Connection, run_id: int, phase: str, stage: str) -> list[_Finding]:
-    """The run's findings at one phase/stage, one per `finding_hash`."""
+def _findings(
+    conn: sqlite3.Connection, run_id: int, phase: str, stages: list[str]
+) -> list[_Finding]:
+    """The run's findings at one phase in any of `stages`, one per `finding_hash`."""
+    if not stages:
+        return []
     seen: dict[str, _Finding] = {}
     for r in conn.execute(
         "SELECT hash, file, category, line_start, line_end, severity FROM findings "
-        "WHERE run_id=? AND phase=? AND stage=? ORDER BY id",
-        (run_id, phase, stage),
+        f"WHERE run_id=? AND phase=? AND stage IN ({','.join('?' * len(stages))}) ORDER BY id",
+        (run_id, phase, *stages),
     ):
         seen.setdefault(
             str(r["hash"]),
@@ -81,80 +92,85 @@ def _fields(detail: str | None) -> dict[str, str]:
     return dict(p.split("=", 1) for p in str(detail or "").split() if "=" in p)
 
 
-def _compared(conn: sqlite3.Connection, run_id: int, primary: str, second: str) -> bool:
-    """Did this run's Phase 2 really run both models, and only those?"""
-    ran = {
-        str(r["model"])
-        for r in conn.execute(
-            "SELECT DISTINCT model FROM lanes WHERE run_id=? AND phase='phase2' "
-            "AND status IN ('completed','repaired')",
-            (run_id,),
+def _compare_run(conn: sqlite3.Connection, row: sqlite3.Row) -> RunComparison | None:
+    run_id = int(row["run_id"])
+    detail = _fields(row["detail"])
+    primary, second = detail.get("primary", "?"), detail.get("second", "?")
+    first_verify = conn.execute(
+        "SELECT MIN(id) FROM lanes WHERE run_id=? AND phase='verify2'", (run_id,)
+    ).fetchone()[0]
+    if first_verify is None:
+        return None
+    done: dict[str, dict[str, int]] = {}  # model -> role -> tokens out (first Phase 2 only)
+    for r in conn.execute(
+        "SELECT role, model, tokens_out FROM lanes WHERE run_id=? AND phase='phase2' "
+        "AND id < ? AND status IN ('completed','repaired')",
+        (run_id, first_verify),
+    ):
+        done.setdefault(str(r["model"]), {})[str(r["role"])] = int(r["tokens_out"] or 0)
+    if not set(done) <= {primary, second}:
+        return None
+    dropped = {
+        str(d["detail"]).split(" ", 1)[0].removeprefix("phase2/").removesuffix("#2")
+        for d in conn.execute(
+            "SELECT detail FROM events WHERE run_id=? AND kind='compare.lane_dropped'", (run_id,)
         )
     }
-    return second in ran and ran <= {primary, second}
+    ran, twins = done.get(primary, {}), done.get(second, {})
+    roles = sorted(r for r in ran if r in twins and r not in dropped)
+    if not roles:
+        return None
+    unpaired = sorted(set(ran) - set(roles))
+    by_model = {
+        primary: _findings(conn, run_id, "phase2", [f"lane:{r}" for r in roles]),
+        second: _findings(conn, run_id, "phase2", [f"compare:{r}" for r in roles]),
+    }
+    elsewhere = _findings(conn, run_id, "phase2", [f"lane:{r}" for r in unpaired])
+    kept: list[_Finding] = []
+    raisers: list[set[str]] = []
+    for k in _findings(conn, run_id, "verify2", ["verified"]):
+        who = {m for m, fs in by_model.items() if any(k.matches(f) for f in fs)}
+        if not who and any(k.matches(f) for f in elsewhere):
+            continue  # only an unpaired role raised it: nothing to compare
+        kept.append(k)
+        raisers.append(who)
+    models: dict[str, dict[str, int]] = {}
+    for m, raised in by_model.items():
+        hits = [k for k, r in zip(kept, raisers, strict=True) if m in r]
+        solo = [k for k, r in zip(kept, raisers, strict=True) if r == {m}]
+        models[m] = {
+            "raised": len(raised),
+            "kept": len(hits),
+            "kept_blockers": sum(k.severity == "blocking" for k in hits),
+            "only": len(solo),
+            "only_blockers": sum(k.severity == "blocking" for k in solo),
+            "tokens_out": sum(done.get(m, {}).get(r, 0) for r in roles),
+        }
+    return RunComparison(
+        run_id=run_id,
+        repo=str(row["repo"]),
+        number=int(row["number"]),
+        tier=str(row["tier"] or ""),
+        primary=primary,
+        second=second,
+        roles=roles,
+        unpaired=unpaired,
+        kept=len(kept),
+        models=models,
+    )
 
 
 def compare_runs(conn: sqlite3.Connection, *, since: str | None = None) -> list[RunComparison]:
-    """Every comparison run that really compared the two models (newest first), optionally
-    only those started at or after `since` (ISO timestamp)."""
+    """Every comparison run with at least one paired role (newest first), optionally only
+    those started at or after `since` (ISO timestamp)."""
     rows = conn.execute(
-        "SELECT e.run_id, e.detail, r.tier, h.repo, h.number, "
-        "(SELECT l.detail FROM events l WHERE l.run_id=e.run_id "
-        "AND l.kind='compare.lanes' ORDER BY l.id LIMIT 1) lanes "
+        "SELECT e.run_id, e.detail, r.tier, h.repo, h.number "
         "FROM events e JOIN runs r ON r.id=e.run_id JOIN heads h ON h.id=r.head_id "
         "WHERE e.kind='compare.selected' AND r.status='done' AND r.degraded=0 "
         "AND r.started_at >= ? ORDER BY e.run_id DESC",
         (since or "",),
     ).fetchall()
-    out: list[RunComparison] = []
-    for row in rows:
-        detail = _fields(row["detail"])
-        primary, second = detail.get("primary", "?"), detail.get("second", "?")
-        lanes = _fields(row["lanes"])
-        run_id = int(row["run_id"])
-        if not int(lanes.get("kept", 0)) or not _compared(conn, run_id, primary, second):
-            continue
-        by_model = {
-            primary: _findings(conn, run_id, "phase2", "lane"),
-            second: _findings(conn, run_id, "phase2", "compare"),
-        }
-        kept = _findings(conn, run_id, "verify2", "verified")
-        # which models raised each kept finding
-        raisers = [{m for m, fs in by_model.items() if any(k.matches(f) for f in fs)} for k in kept]
-        tokens = {
-            str(r["model"]): int(r["tokens"] or 0)
-            for r in conn.execute(
-                "SELECT model, SUM(tokens_out) tokens FROM lanes "
-                "WHERE run_id=? AND phase='phase2' GROUP BY model",
-                (run_id,),
-            )
-        }
-        models: dict[str, dict[str, int]] = {}
-        for m, raised in by_model.items():
-            hits = [k for k, r in zip(kept, raisers, strict=True) if m in r]
-            solo = [k for k, r in zip(kept, raisers, strict=True) if r == {m}]
-            models[m] = {
-                "raised": len(raised),
-                "kept": len(hits),
-                "kept_blockers": sum(k.severity == "blocking" for k in hits),
-                "only": len(solo),
-                "only_blockers": sum(k.severity == "blocking" for k in solo),
-                "tokens_out": tokens.get(m, 0),
-            }
-        out.append(
-            RunComparison(
-                run_id=run_id,
-                repo=str(row["repo"]),
-                number=int(row["number"]),
-                tier=str(row["tier"] or ""),
-                primary=primary,
-                second=second,
-                kept=len(kept),
-                dropped_lanes=int(lanes.get("dropped", 0)),
-                models=models,
-            )
-        )
-    return out
+    return [c for row in rows if (c := _compare_run(conn, row)) is not None]
 
 
 def summarize(runs: list[RunComparison]) -> dict[str, Any]:
@@ -167,8 +183,9 @@ def summarize(runs: list[RunComparison]) -> dict[str, Any]:
                 m[s] += stats[s]
     return {
         "runs": len(runs),
+        "paired_roles": sum(len(c.roles) for c in runs),
+        "unpaired_roles": sum(len(c.unpaired) for c in runs),
         "kept_findings": sum(c.kept for c in runs),
-        "dropped_comparison_lanes": sum(c.dropped_lanes for c in runs),
         "models": models,
     }
 
@@ -177,8 +194,9 @@ def render(runs: list[RunComparison]) -> str:
     """A plain-text table: totals, then one line per run."""
     s = summarize(runs)
     lines = [
-        f"{s['runs']} comparison runs, {s['kept_findings']} findings kept by the final verifier, "
-        f"{s['dropped_comparison_lanes']} comparison lanes dropped",
+        f"{s['runs']} comparison runs, {s['paired_roles']} paired reviewer roles "
+        f"({s['unpaired_roles']} left out: comparison lane dropped), "
+        f"{s['kept_findings']} comparable findings kept by the final verifier",
         "",
         f"{'model':<28} {'raised':>7} {'kept':>6} {'kept🔴':>7} {'only':>6} {'only🔴':>7} {'tok out':>10}",
     ]
@@ -192,5 +210,8 @@ def render(runs: list[RunComparison]) -> str:
         per = "  ".join(
             f"{m}: kept {st['kept']}/{st['raised']} only {st['only']}" for m, st in c.models.items()
         )
-        lines.append(f"run {c.run_id} {c.repo}#{c.number} [{c.tier}] kept {c.kept}  {per}")
+        lines.append(
+            f"run {c.run_id} {c.repo}#{c.number} [{c.tier}] {len(c.roles)} roles, "
+            f"kept {c.kept}  {per}"
+        )
     return "\n".join(lines) + "\n"
