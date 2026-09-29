@@ -1310,6 +1310,56 @@ def test_conversation_conceding_every_blocker_lifts_request_changes(cfg, conn, g
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
 
 
+def test_conversation_accepting_a_deferral_lifts_request_changes(cfg, conn, gh, lanes):
+    """dashpay/dash#7769: the author showed the blocker is a pre-existing race outside the PR's
+    narrower guarantee, and the lane answered "I will not press it further". Keeping
+    REQUEST_CHANGES after that contradicts our own reply, and a full re-review would already
+    drop a deferred finding from the kept set."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    human = {
+        "id": 901,
+        "author": "knst",
+        "body": "the race predates this PR; draining the queue here would stall mainnet",
+        "created_at": "x",
+        "association": "COLLABORATOR",
+    }
+    t = _prior_thread(bh, replies=[human])
+    t["comments"]["nodes"][0]["body"] = (
+        f"<!-- thepastaclaw-review v1 finding={bh} dedupe=x -->\n**🔴 Blocking: {blocker['title']}**\n\nblocker body"
+    )
+    gh.threads = [t]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [
+            {
+                "finding_hash": bh,
+                "status": "INTENTIONALLY_DEFERRED",
+                "reply": "Agreed, the race predates this PR; leaving it for a follow-up.",
+            }
+        ]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert gh.replies[0]["body"].endswith("I will not press it further here._")
+    # the thread stays open as the record of the deferral; only the verdict moves
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    assert len(gh.posted_reviews) == 2
+    upd = gh.posted_reviews[1]
+    assert upd["event"] == "COMMENT" and f"- {blocker['title']}" in upd["body"]
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
+
+
 def test_conversation_concession_is_remembered_across_runs(cfg, conn, gh, lanes):
     """Two blockers, conceded in two separate conversations: the second run must see the first
     concession (a `conceded` findings row) or the verdict could never be lifted."""

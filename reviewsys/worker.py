@@ -2113,7 +2113,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     posted_ok = {a["finding_hash"] for a in answered if a.get("action") == "replied"}
     considered = {a["finding_hash"] for a in answered}
     # only an outcome that actually reached the thread lifts a blocker or counts as silence
-    lifted = {h for h in posted_ok if out.outcomes[h].status in {"WITHDRAWN", "FIXED"}}
+    lifted = {h for h in posted_ok if out.outcomes[h].status in converse.LIFTING_STATUSES}
     silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
     with tx(ctx.conn):
         for a in answered:
@@ -2148,9 +2148,9 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
 
 
 def _record_conceded(ctx: RunContext, phase: str, lifted: set[str]) -> None:
-    """A finding the conversation withdrew or confirmed fixed gets a `conceded` findings row
-    for this run (and so this sha), which `_open_blockers` honours on every later run. Caller
-    holds the write transaction."""
+    """A finding the conversation withdrew, confirmed fixed or accepted as deferred gets a
+    `conceded` findings row for this run (and so this sha), which `_open_blockers` honours on
+    every later run. Caller holds the write transaction."""
     if not lifted:
         return
     rows = []
@@ -2217,7 +2217,7 @@ def _conversation_verdict_update(
     remaining: int,
     lifted: set[str],
 ) -> publish.PublishResult | None:
-    """When the discussion withdrew or resolved every blocking finding on this commit, the
+    """When the discussion withdrew, resolved or deferred every blocking finding on this commit, the
     standing REQUEST_CHANGES is stale: post the same short follow-up review a re-review
     would, disclosing that no code was re-reviewed. A conversation never approves and never
     adds blockers, so this is the only direction it can move a verdict."""
@@ -2286,7 +2286,7 @@ def _conversation_verdict_update(
             repo=ctx.repo,
             number=ctx.number,
             run_id=ctx.run_id,
-            detail=f"{state} -> {result.event} on {ctx.sha[:8]} (conversation: every blocker withdrawn or resolved)",
+            detail=f"{state} -> {result.event} on {ctx.sha[:8]} (conversation: every blocker withdrawn, resolved or deferred)",
         )
     return result
 

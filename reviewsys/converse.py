@@ -14,7 +14,8 @@ so the model can read them). It returns one outcome per replied thread:
   WITHDRAWN            the human is right (or the finding no longer holds): concede and resolve
   FIXED                the code now addresses it (a linked or pushed commit): confirm and resolve
   STILL_VALID          the finding still holds and there is something NEW to say: say it
-  INTENTIONALLY_DEFERRED  the maintainers chose not to act; acknowledge and stop
+  INTENTIONALLY_DEFERRED  the maintainers chose not to act and the finding need not block this
+                       PR (pre-existing, out of scope, a follow-up): acknowledge and stop
   NO_REPLY             nothing useful to add (a question addressed to someone else, an
                        acknowledgement, a repeat of a point already answered): stay silent
 
@@ -39,6 +40,8 @@ CONVERSATION_STATUSES = (
     "INTENTIONALLY_DEFERRED",
     "NO_REPLY",
 )
+# outcomes after which a blocking finding no longer holds up the verdict on this commit
+LIFTING_STATUSES = frozenset({"WITHDRAWN", "FIXED", "INTENTIONALLY_DEFERRED"})
 # 'https://github.com/<owner>/<repo>/commit/<sha>' or '/pull/<n>/commits/<sha>' links in a reply
 COMMIT_LINK_RE = re.compile(
     r"https?://github\.com/([\w.-]+)/([\w.-]+)/(?:commit|pull/\d+/commits)/([0-9a-f]{7,40})"
@@ -194,8 +197,13 @@ def prompt(
         "answer a concrete proposal with a restatement of the original concern.\n"
         "- If you were wrong, or the finding was overstated, say so and WITHDRAW it. Conceding "
         "a point costs nothing; digging in costs the maintainers' trust.\n"
-        "- If the maintainers have made a deliberate call not to act, mark it "
-        "INTENTIONALLY_DEFERRED, acknowledge it in one sentence, and stop.\n"
+        "- If the maintainers have made a deliberate call not to act and you accept that the "
+        "finding need not block this pull request (it predates the change, is out of scope, or "
+        "belongs in a follow-up), mark it INTENTIONALLY_DEFERRED, acknowledge it in one "
+        "sentence, and stop. This lifts the finding's blocking status on this commit. If you "
+        "still believe the pull request must not merge as it stands, do not use "
+        "INTENTIONALLY_DEFERRED: use STILL_VALID when you have something new to say, "
+        "otherwise NO_REPLY.\n"
         "- If a reply is addressed to someone else, is a bare acknowledgement, or asks a "
         "question you cannot usefully answer from the code, mark NO_REPLY. Silence is better "
         "than noise. In particular, if a human explicitly asked someone else to weigh in, do not "

@@ -1078,7 +1078,7 @@ def render_verdict_update(
     ]
     parts += [_counts_line(list(verified.findings), include_zero=True), ""]
     if withdrawn_blockers:
-        parts += ["Withdrawn blocking finding(s):", *(f"- {t}" for t in withdrawn_blockers), ""]
+        parts += ["No longer blocking:", *(f"- {t}" for t in withdrawn_blockers), ""]
     if summary:
         parts += [summary, ""]
     parts += [
