@@ -394,14 +394,18 @@ verifier lanes):
   waiting for an answer, and the router does not queue a `review_reply` head for them at
   all, so no bot-to-bot loop can start.
 - Verdict: a conversation never adds blockers and never approves. When every blocking
-  finding on the commit has been withdrawn or resolved and the standing review is
+  finding on the commit has been withdrawn, resolved or deferred and the standing review is
   `CHANGES_REQUESTED`, the same short "Re-review after discussion" follow-up moves it to
   COMMENT, with provenance stating that no code was re-reviewed. A concession is
   persisted as a `conceded`-stage `findings` row for the sha, so blockers conceded in
   earlier conversations stay lifted; the standing set is the latest *final* publication's
   blockers for the sha plus unresolved blocking threads this database has no row for
   (legacy findings). A blocking thread a maintainer resolved by hand, without the bot
-  conceding it, still counts. Known gap: if the worker dies between posting a concession
+  conceding it, still counts. A deferral lifts a blocker only when a maintainer (OWNER,
+  MEMBER or COLLABORATOR) replied on the thread, and its thread stays open as the record;
+  an outside contributor declining a fix gets the reply but the blocker stands. A later
+  full review of the same sha voids earlier concessions (it re-adjudicated them).
+  Known gap: if the worker dies between posting a concession
   and recording it, that blocker keeps counting until the next push is reviewed.
 - A conversation posts no "Re-review" summary review and never runs the fresh final
   gate: nothing about the code was re-reviewed, so there is nothing to summarise. The

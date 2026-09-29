@@ -1274,15 +1274,15 @@ def _verdict_update(
                 detail=f"APPROVED stands on {ctx.sha[:8]}: degraded re-review found no blockers",
             )
         return None
-    withdrawn = [
+    lifted = [
         str(r.get("finding_hash"))
         for r in _reconciliation(ctx, phase, verified).values()
-        if r.get("status") in {"WITHDRAWN", "FIXED", "OUTDATED"}
+        if r.get("status") in {"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED"}
     ]
     titles = [
         t["title"]
         for h, t in ctx.open_threads.items()
-        if h in withdrawn and t.get("title") and t.get("severity") == "blocking"
+        if h in lifted and t.get("title") and t.get("severity") == "blocking"
     ]
     result = publish.publish_verdict_update(
         ctx.gh,
@@ -1293,7 +1293,7 @@ def _verdict_update(
         verified=verified,
         provenance=prov,
         previous_event=state,
-        withdrawn_blockers=titles,
+        lifted_blockers=titles,
         bot_login=ctx.cfg.bot_login,
     )
     with tx(ctx.conn):
@@ -2113,7 +2113,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     posted_ok = {a["finding_hash"] for a in answered if a.get("action") == "replied"}
     considered = {a["finding_hash"] for a in answered}
     # only an outcome that actually reached the thread lifts a blocker or counts as silence
-    lifted = {h for h in posted_ok if out.outcomes[h].status in converse.LIFTING_STATUSES}
+    lifted = {h for h in posted_ok if converse.lifts_blocker(out.outcomes[h].status, threads[h])}
     silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
     with tx(ctx.conn):
         for a in answered:
@@ -2194,9 +2194,15 @@ def _open_blockers(ctx: RunContext, phase: str, *, lifted: set[str] | None = Non
         (ctx.repo, ctx.number, ctx.sha, phase),
     ).fetchall()
     known = {str(r["hash"]) for r in rows}
-    conceded = {str(r["hash"]) for r in rows if r["stage"] == "conceded"}
     posted = [r for r in rows if r["stage"] == "posted"]
     latest_posted_run = max((int(r["run_id"]) for r in posted), default=None)
+    # a later full review of this sha re-adjudicated everything: older concessions are void
+    conceded = {
+        str(r["hash"])
+        for r in rows
+        if r["stage"] == "conceded"
+        and (latest_posted_run is None or int(r["run_id"]) > latest_posted_run)
+    }
     standing = {
         str(r["hash"])
         for r in posted
@@ -2260,7 +2266,7 @@ def _conversation_verdict_update(
         verified=verified,
         provenance=prov,
         previous_event=state,
-        withdrawn_blockers=titles,
+        lifted_blockers=titles,
         bot_login=ctx.cfg.bot_login,
     )
     with tx(ctx.conn):

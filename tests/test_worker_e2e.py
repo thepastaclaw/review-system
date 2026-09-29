@@ -1360,6 +1360,44 @@ def test_conversation_accepting_a_deferral_lifts_request_changes(cfg, conn, gh, 
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
 
 
+def test_conversation_deferral_by_an_outside_contributor_keeps_the_blocker(cfg, conn, gh, lanes):
+    """A contributor declining to fix a blocker is not a maintainer decision to defer it: the
+    reply is posted, but REQUEST_CHANGES stands."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    human = {
+        "id": 901,
+        "author": "drive-by",
+        "body": "out of scope, will do it in a follow-up",
+        "created_at": "x",
+        "association": "CONTRIBUTOR",
+    }
+    t = _prior_thread(bh, replies=[human])
+    t["comments"]["nodes"][0]["body"] = (
+        f"<!-- thepastaclaw-review v1 finding={bh} dedupe=x -->\n**🔴 Blocking: {blocker['title']}**\n\nblocker body"
+    )
+    gh.threads = [t]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [{"finding_hash": bh, "status": "INTENTIONALLY_DEFERRED", "reply": "ok"}]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.replies) == 1 and len(gh.posted_reviews) == 1
+    assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
 def test_conversation_concession_is_remembered_across_runs(cfg, conn, gh, lanes):
     """Two blockers, conceded in two separate conversations: the second run must see the first
     concession (a `conceded` findings row) or the verdict could never be lifted."""
@@ -2629,3 +2667,47 @@ def test_fatal_phase1_error_still_fails_the_run(cfg, conn, gh, lanes, monkeypatc
         "SELECT name, status FROM steps WHERE run_id=? AND name='verify1'", (rid,)
     ).fetchone()
     assert step["status"] == "failed"
+
+
+def test_a_later_full_review_voids_older_concessions(conn):
+    """Conversation run 1 conceded X; full review run 2 of the same sha re-posted X. A later
+    concession of Y must not count X as lifted: the full review re-adjudicated it."""
+    from types import SimpleNamespace
+
+    with tx(conn):
+        hid = conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
+            ("dashpay/platform", 1, HEAD, "new_pr", 0, "done", "2026-09-07", "2026-09-07"),
+        ).lastrowid
+        runs = [
+            conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,1,'done','t','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z')",
+                (hid,),
+            ).lastrowid
+            for _ in range(3)
+        ]
+        rows = [
+            (runs[0], "posted", "xxx"),
+            (runs[0], "posted", "yyy"),
+            (runs[1], "conceded", "xxx"),
+            (runs[2], "posted", "xxx"),
+            (runs[2], "posted", "yyy"),
+        ]
+        for rid, stage, h in rows:
+            conn.execute(
+                worker._FINDINGS_INSERT,
+                (rid, "final", stage, h, "f.rs", 1, 1, "blocking", None, "general", h, ""),
+            )
+    ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1, sha=HEAD, open_threads={})
+    assert worker._open_blockers(ctx, "final", lifted={"yyy"}) == 1  # type: ignore[arg-type]
+    # a concession made after that full review counts again
+    with tx(conn):
+        rid = conn.execute(
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,1,'done','t','2026-09-07T00:00:00Z','2026-09-07T00:00:00Z')",
+            (hid,),
+        ).lastrowid
+        conn.execute(
+            worker._FINDINGS_INSERT,
+            (rid, "final", "conceded", "xxx", "f.rs", 1, 1, "blocking", None, "general", "x", ""),
+        )
+    assert worker._open_blockers(ctx, "final", lifted={"yyy"}) == 0  # type: ignore[arg-type]

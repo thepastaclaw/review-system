@@ -40,8 +40,10 @@ CONVERSATION_STATUSES = (
     "INTENTIONALLY_DEFERRED",
     "NO_REPLY",
 )
-# outcomes after which a blocking finding no longer holds up the verdict on this commit
+# outcomes after which a blocking finding no longer holds up the verdict on this commit; a
+# deferral only counts when a maintainer made the call on the thread (`deferral_accepted`)
 LIFTING_STATUSES = frozenset({"WITHDRAWN", "FIXED", "INTENTIONALLY_DEFERRED"})
+MAINTAINER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # 'https://github.com/<owner>/<repo>/commit/<sha>' or '/pull/<n>/commits/<sha>' links in a reply
 COMMIT_LINK_RE = re.compile(
     r"https?://github\.com/([\w.-]+)/([\w.-]+)/(?:commit|pull/\d+/commits)/([0-9a-f]{7,40})"
@@ -89,6 +91,17 @@ def linked_commits(threads: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
                     }
                 )
     return out
+
+
+def lifts_blocker(status: str, thread: dict[str, Any]) -> bool:
+    """Whether this outcome takes the finding out of the blocker count. An outside
+    contributor declining to fix a blocker is not a maintainer decision to defer it."""
+    if status != "INTENTIONALLY_DEFERRED":
+        return status in LIFTING_STATUSES
+    return any(
+        not c.get("is_bot") and c.get("association") in MAINTAINER_ASSOCIATIONS
+        for c in thread.get("transcript") or []
+    )
 
 
 def _thread_for_prompt(h: str, t: dict[str, Any]) -> dict[str, Any]:
@@ -190,20 +203,22 @@ def prompt(
         "- Never repeat a point you already made. If your previous answer already said it and "
         "the human did not engage with it, either find a *new* way to make it concrete (a "
         "specific interleaving, a specific line, a specific command that would demonstrate it) "
-        "or accept that it did not persuade and stop pressing.\n"
+        "or accept that it did not persuade and stop pressing (NO_REPLY: the finding keeps "
+        "its severity).\n"
         "- If a human proposes a change (a linked commit, a sketch, an alternative test), "
         "evaluate the proposal on its merits and say whether it resolves your concern. If it "
         "does, say so plainly and mark the finding FIXED or WITHDRAWN as appropriate. Do not "
         "answer a concrete proposal with a restatement of the original concern.\n"
         "- If you were wrong, or the finding was overstated, say so and WITHDRAW it. Conceding "
         "a point costs nothing; digging in costs the maintainers' trust.\n"
-        "- If the maintainers have made a deliberate call not to act and you accept that the "
-        "finding need not block this pull request (it predates the change, is out of scope, or "
-        "belongs in a follow-up), mark it INTENTIONALLY_DEFERRED, acknowledge it in one "
-        "sentence, and stop. This lifts the finding's blocking status on this commit. If you "
-        "still believe the pull request must not merge as it stands, do not use "
-        "INTENTIONALLY_DEFERRED: use STILL_VALID when you have something new to say, "
-        "otherwise NO_REPLY.\n"
+        "- If a maintainer (association OWNER, MEMBER or COLLABORATOR) has made a deliberate "
+        "call not to act and you accept that the finding need not block this pull request "
+        "(it predates the change, or lies outside what the pull request claims to do), mark "
+        "it INTENTIONALLY_DEFERRED, acknowledge it in one sentence, and stop. This lifts the "
+        "finding's blocking status on this commit. A defect this diff introduces or makes "
+        "worse is not deferrable because someone prefers a follow-up. If you still believe "
+        "the pull request must not merge as it stands, do not use INTENTIONALLY_DEFERRED: "
+        "use STILL_VALID when you have something new to say, otherwise NO_REPLY.\n"
         "- If a reply is addressed to someone else, is a bare acknowledgement, or asks a "
         "question you cannot usefully answer from the code, mark NO_REPLY. Silence is better "
         "than noise. In particular, if a human explicitly asked someone else to weigh in, do not "
