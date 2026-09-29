@@ -289,8 +289,11 @@ runs):
   tokens. Runs count when finished, never degraded, only the two models in the first
   Phase 2, and at least one paired role (a run the Phase-1 gate stopped has no Phase
   2). Caveats: the verifier is the primary model itself, so a preference for its own
-  model's wording cannot be ruled out; and comparison lanes dropped for time or slots
-  skew towards large PRs, so the report says how many roles were left out.
+  model's wording cannot be ruled out; comparison lanes dropped for time or slots skew
+  towards large PRs; and with 2 compare slots admitted only on idle production
+  capacity, runs with many specialists mostly pair `general` and one or two of them,
+  so the numbers lean towards the general reviewer. The report says how many roles
+  were left out.
 
 ## Final approval after an iterative review
 

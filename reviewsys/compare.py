@@ -130,8 +130,10 @@ def _compare_run(conn: sqlite3.Connection, row: sqlite3.Row) -> RunComparison | 
     raisers: list[set[str]] = []
     for k in _findings(conn, run_id, "verify2", ["verified"]):
         who = {m for m, fs in by_model.items() if any(k.matches(f) for f in fs)}
-        if not who and any(k.matches(f) for f in elsewhere):
-            continue  # only an unpaired role raised it: nothing to compare
+        if any(k.matches(f) for f in elsewhere):
+            if not who:
+                continue  # only an unpaired role raised it: nothing to compare
+            who.add(primary)  # the primary found it too, in a role the second model skipped
         kept.append(k)
         raisers.append(who)
     models: dict[str, dict[str, int]] = {}

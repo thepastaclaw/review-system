@@ -173,7 +173,11 @@ def gated(
             return runner(spec, artifact_dir, worktree)
 
         def gpt_idle() -> bool:
-            """A production reviewer slot is free right now (probed, not kept)."""
+            """No production reviewer is waiting and one of their slots is free right now
+            (probed, not kept): a waiter may be about to take the free slot."""
+            wait_dir = slot_dir / "gpt.wait"
+            if wait_dir.is_dir() and _line(wait_dir):
+                return False
             n = limit(conn(), cfg, "gpt") or 1
             fd = _try_slots(slot_dir, "gpt", range(max(1, n - 1)))
             if fd is None:

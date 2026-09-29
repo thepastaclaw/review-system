@@ -894,7 +894,8 @@ def _reviewer_lanes(
                 why = (
                     f"still running {COMPARE_GRACE_MINUTES} min after the primary lanes finished"
                     if exc.started
-                    else f"no compare slot within {COMPARE_GRACE_MINUTES} min of the primary lanes"
+                    else f"never started within {COMPARE_GRACE_MINUTES} min of the primary lanes "
+                    "(no compare slot, or no idle production slot)"
                 )
             else:
                 why = f"{type(exc).__name__}: {exc}"

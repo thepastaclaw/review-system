@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import threading
 import time
 
@@ -15,7 +16,7 @@ from reviewsys import compare, worker
 from reviewsys import config as cfg_mod
 from reviewsys.db import tx
 from reviewsys.ingest import enqueue_head
-from reviewsys.lane import LaneResult
+from reviewsys.lane import LaneResult, LaneSpec
 from reviewsys.models import RunStatus, Trigger
 from reviewsys.scheduler import schedule
 from reviewsys.steps import worktree as wt
@@ -296,9 +297,9 @@ def test_slow_twin_is_stopped_after_the_grace_period(cfg, conn, gh, lanes, monke
     rid, status = _run(cfg, conn, gh, runner)
     assert status == RunStatus.DONE and runner.stopped.is_set()
     dropped = _events(conn, rid, "compare.lane_dropped")
-    # every twin is dropped: out of grace, or never got one of the 2 compare slots
+    # every twin is dropped: out of grace, or never started (only 2 compare slots)
     assert len(dropped) == 3
-    assert all("still running" in d or "no compare slot" in d for d in dropped)
+    assert all("still running" in d or "never started" in d for d in dropped)
     assert sum("still running" in d for d in dropped) <= 2
     assert "Model comparison" not in gh.posted_reviews[-1]["body"]
 
@@ -471,4 +472,68 @@ def test_twin_that_never_got_a_slot_says_so(cfg, conn, gh, lanes, monkeypatch):
     rid, status = _run(cfg, conn, gh, NoSlot())
     assert status == RunStatus.DONE
     dropped = _events(conn, rid, "compare.lane_dropped")
-    assert len(dropped) == 3 and all("no compare slot" in d for d in dropped)
+    assert len(dropped) == 3 and all("never started" in d for d in dropped)
+
+
+def test_unpaired_primary_role_is_credited_on_a_shared_finding(cfg, conn, gh, lanes):
+    """X is raised by the paired twin `general#2` and by the primary `security-auditor` lane,
+    whose twin was dropped: both models found X, not the second one alone."""
+    cfg = _with_comparison(cfg)
+    x = _finding("X")
+    _base(lanes, final=[x])
+
+    class Runner(ByModel):
+        def __call__(self, spec, art, worktree):
+            if _is_phase2_reviewer(spec):
+                if spec.model == SECOND and spec.role == "security-auditor":
+                    return LaneResult(exit_code=1, stdout="", stderr="boom", duration_s=1)
+                raised = (spec.model == SECOND and spec.role == "general") or (
+                    spec.model == PRIMARY and spec.role == "security-auditor"
+                )
+                out = {"summary": "s", "findings": [x] if raised else []}
+                return ByModel(self.inner, {spec.model: out})(spec, art, worktree)
+            return super().__call__(spec, art, worktree)
+
+    _run(cfg, conn, gh, Runner(lanes, {}))
+    (c,) = compare.compare_runs(conn)
+    assert c.unpaired == ["security-auditor"] and c.kept == 1
+    assert {m: (st["kept"], st["only"]) for m, st in c.models.items()} == {
+        PRIMARY: (1, 0),
+        SECOND: (1, 0),
+    }
+
+
+def test_twins_wait_while_production_reviewers_are_in_line(cfg, conn, tmp_path):
+    from reviewsys import lanepool
+
+    slot_dir = cfg.work_dir / "lane-slots"
+    (slot_dir / "gpt.wait").mkdir(parents=True)
+    ticket = slot_dir / "gpt.wait" / f"{lanepool.RANK_LIVE}-{0:020d}-{os.getpid()}-1"
+    ticket.touch()
+    ran = []
+
+    def runner(spec, art, worktree):
+        ran.append(spec.role)
+        return LaneResult(0, "{}", "", 0)
+
+    gated = lanepool.gated(runner, lambda: conn, cfg, lambda: False, lanepool.RANK_LIVE)
+    stop = threading.Event()
+    threading.Timer(0.1, stop.set).start()
+    spec = LaneSpec(
+        role="general",
+        agent="a",
+        model=SECOND,
+        effort="high",
+        prompt="",
+        cwd=tmp_path,
+        add_dir=tmp_path,
+        timeout_seconds=1,
+        claude_bin="x",
+        should_stop=stop.is_set,
+        pool=lanepool.COMPARE_POOL,
+    )
+    res = gated(spec, tmp_path / "art", tmp_path)
+    assert res.cancelled and not res.started and ran == []
+    ticket.unlink()
+    spec = dataclasses.replace(spec, should_stop=lambda: False)
+    assert gated(spec, tmp_path / "art", tmp_path).exit_code == 0 and ran == ["general"]
