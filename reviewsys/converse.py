@@ -25,6 +25,7 @@ short status word; the model writes the rest.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 from dataclasses import dataclass
@@ -41,9 +42,11 @@ CONVERSATION_STATUSES = (
     "NO_REPLY",
 )
 # outcomes after which a blocking finding no longer holds up the verdict on this commit; a
-# deferral only counts when a maintainer made the call on the thread (`deferral_accepted`)
+# deferral only counts when a maintainer made the call (`accept_deferrals`)
 LIFTING_STATUSES = frozenset({"WITHDRAWN", "FIXED", "INTENTIONALLY_DEFERRED"})
 MAINTAINER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+# posted-only status: the lane chose INTENTIONALLY_DEFERRED but no maintainer made that call
+DEFERRAL_PENDING = "DEFERRAL_PENDING"
 # 'https://github.com/<owner>/<repo>/commit/<sha>' or '/pull/<n>/commits/<sha>' links in a reply
 COMMIT_LINK_RE = re.compile(
     r"https?://github\.com/([\w.-]+)/([\w.-]+)/(?:commit|pull/\d+/commits)/([0-9a-f]{7,40})"
@@ -93,15 +96,28 @@ def linked_commits(threads: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
     return out
 
 
-def lifts_blocker(status: str, thread: dict[str, Any]) -> bool:
-    """Whether this outcome takes the finding out of the blocker count. An outside
-    contributor declining to fix a blocker is not a maintainer decision to defer it."""
-    if status != "INTENTIONALLY_DEFERRED":
-        return status in LIFTING_STATUSES
-    return any(
-        not c.get("is_bot") and c.get("association") in MAINTAINER_ASSOCIATIONS
-        for c in thread.get("transcript") or []
-    )
+def _maintainer_spoke_last(thread: dict[str, Any]) -> bool:
+    """A maintainer is among the human replies since our last answer on the thread."""
+    transcript = list(thread.get("transcript") or [])
+    last_bot = max((i for i, c in enumerate(transcript) if c.get("is_bot")), default=-1)
+    return any(c.get("association") in MAINTAINER_ASSOCIATIONS for c in transcript[last_bot + 1 :])
+
+
+def accept_deferrals(
+    out: ConversationOutput, threads: dict[str, dict[str, Any]]
+) -> ConversationOutput:
+    """An outside contributor declining to fix a blocker is not a maintainer decision to defer
+    it: such a deferral is posted as DEFERRAL_PENDING (the blocker stands, and the note says
+    so) instead of claiming we will stop pressing while REQUEST_CHANGES stays up."""
+    outcomes = {
+        h: (
+            dataclasses.replace(o, status=DEFERRAL_PENDING)
+            if o.status == "INTENTIONALLY_DEFERRED" and not _maintainer_spoke_last(threads[h])
+            else o
+        )
+        for h, o in out.outcomes.items()
+    }
+    return ConversationOutput(outcomes=outcomes)
 
 
 def _thread_for_prompt(h: str, t: dict[str, Any]) -> dict[str, Any]:

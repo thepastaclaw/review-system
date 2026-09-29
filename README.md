@@ -401,9 +401,11 @@ verifier lanes):
   earlier conversations stay lifted; the standing set is the latest *final* publication's
   blockers for the sha plus unresolved blocking threads this database has no row for
   (legacy findings). A blocking thread a maintainer resolved by hand, without the bot
-  conceding it, still counts. A deferral lifts a blocker only when a maintainer (OWNER,
-  MEMBER or COLLABORATOR) replied on the thread, and its thread stays open as the record;
-  an outside contributor declining a fix gets the reply but the blocker stands. A later
+  conceding it, still counts. In this lane a deferral lifts a blocker only when a
+  maintainer (OWNER, MEMBER or COLLABORATOR, the PR author included) is among the replies
+  since the bot's last answer, and its thread stays open as the record; otherwise the
+  reply is posted with a note that the blocker stands. (The full re-review path does not
+  apply this check yet: a reviewer's deferral drops the finding from the kept set.) A later
   full review of the same sha voids earlier concessions (it re-adjudicated them).
   Known gap: if the worker dies between posting a concession
   and recording it, that blocker keeps counting until the next push is reviewed.

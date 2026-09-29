@@ -210,3 +210,31 @@ def test_answer_conversation_posts_once_resolves_and_defuses(monkeypatch):
         "ddd": "already_answered",
     }
     assert len(gh.replies) == 2 and gh.resolved == ["T1"]
+
+
+def test_a_deferral_counts_only_when_a_maintainer_spoke_since_our_last_answer():
+    """A maintainer who agreed the blocker was real before our last answer does not make a
+    later contributor's "follow-up" a maintainer call; the PR author as MEMBER does count."""
+    member = {"is_bot": False, "association": "MEMBER"}
+    contributor = {"is_bot": False, "association": "CONTRIBUTOR"}
+    bot = {"is_bot": True, "association": None}
+    threads = {
+        "old": {"transcript": [member, bot, contributor]},
+        "new": {"transcript": [contributor, bot, member]},
+        "none": {"transcript": [contributor]},
+    }
+    out = converse.ConversationOutput(
+        outcomes={
+            h: converse.ThreadOutcome(h, "INTENTIONALLY_DEFERRED", "ok")
+            for h in ("old", "new", "none")
+        }
+        | {"kept": converse.ThreadOutcome("kept", "STILL_VALID", "still")}
+    )
+    threads["kept"] = {"transcript": [contributor]}
+    got = {h: o.status for h, o in converse.accept_deferrals(out, threads).outcomes.items()}
+    assert got == {
+        "old": converse.DEFERRAL_PENDING,
+        "new": "INTENTIONALLY_DEFERRED",
+        "none": converse.DEFERRAL_PENDING,
+        "kept": "STILL_VALID",
+    }

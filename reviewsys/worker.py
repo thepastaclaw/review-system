@@ -2100,6 +2100,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         raise ReviewError(
             FailKind.FATAL, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
         )
+    out = converse.accept_deferrals(out, threads)
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
         answered = publish.answer_conversation(
@@ -2113,7 +2114,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     posted_ok = {a["finding_hash"] for a in answered if a.get("action") == "replied"}
     considered = {a["finding_hash"] for a in answered}
     # only an outcome that actually reached the thread lifts a blocker or counts as silence
-    lifted = {h for h in posted_ok if converse.lifts_blocker(out.outcomes[h].status, threads[h])}
+    lifted = {h for h in posted_ok if out.outcomes[h].status in converse.LIFTING_STATUSES}
     silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
     with tx(ctx.conn):
         for a in answered:

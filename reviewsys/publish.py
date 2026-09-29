@@ -795,6 +795,10 @@ _CONVERSATION_NOTE = {
     "INTENTIONALLY_DEFERRED": (
         "\n\n_Noted as intentionally deferred; I will not press it further here._"
     ),
+    "DEFERRAL_PENDING": (
+        "\n\n_Deferring this needs a maintainer's call; until then it still blocks this pull "
+        "request._"
+    ),
 }
 
 

@@ -1394,6 +1394,7 @@ def test_conversation_deferral_by_an_outside_contributor_keeps_the_blocker(cfg, 
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
     assert len(gh.replies) == 1 and len(gh.posted_reviews) == 1
+    assert gh.replies[0]["body"].endswith("it still blocks this pull request._")
     assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
     assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
 
