@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 
@@ -11,6 +12,13 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 Runner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
+
+EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+
+
+def redact_emails(text: str) -> str:
+    """Account emails replaced by `<account>`: for anything posted where others can read it."""
+    return EMAIL_RE.sub("<account>", text)
 
 
 def _run(argv: Sequence[str]) -> subprocess.CompletedProcess[str]:
@@ -37,7 +45,8 @@ class Notifier:
     def page(self, text: str, *, resolved: bool = False) -> bool:
         """An outage a person has to fix: posted to the shared page channel with the on-call
         users @-mentioned, and to the operator DM as well. `resolved=True` is the all-clear:
-        same places, no mentions. True if either copy landed."""
+        same places, no mentions. Account emails reach the operator DM only. True if either
+        copy landed."""
         self.sent.append(("resolved" if resolved else "page", text))
         if resolved:
             loud = f":white_check_mark: reviewsys: {text}"
@@ -46,7 +55,8 @@ class Notifier:
         delivered = False
         if self.cfg.page_target:
             mentions = "" if resolved else " ".join(f"<@{u}>" for u in self.cfg.page_mentions)
-            delivered = self._send(self.cfg.page_target, f"{mentions} {loud}".strip())
+            shared = redact_emails(f"{mentions} {loud}".strip())
+            delivered = self._send(self.cfg.page_target, shared)
         if self.cfg.slack_target and self.cfg.slack_target != self.cfg.page_target:
             delivered = self._send(self.cfg.slack_target, loud) or delivered
         if not delivered:

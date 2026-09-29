@@ -38,6 +38,7 @@ from typing import Any
 
 from .config import Config
 from .db import fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
+from .notify import redact_emails
 
 log = logging.getLogger(__name__)
 
@@ -84,7 +85,6 @@ def looks_like_quota_failure(text: str) -> bool:
     return any(p.search(text) for p in QUOTA_PATTERNS)
 
 
-_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
 _PATH_RE = re.compile(r"(?:/[\w.-]+){2,}")
 _URL_RE = re.compile(r"https?://\S+")
 
@@ -93,7 +93,7 @@ def publishable_reason(model: str, text: str) -> str:
     """A reason that is safe in a public review body: the upstream's short message with
     account emails, filesystem paths and URLs removed, capped. Full text stays in events."""
     msg = _URL_RE.sub("<url>", text)
-    msg = _EMAIL_RE.sub("<account>", msg)
+    msg = redact_emails(msg)
     msg = _PATH_RE.sub("<path>", msg)
     msg = " ".join(msg.split())
     for lead in ("API Error: ", "[infra] ", "lane exit 1: "):

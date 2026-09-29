@@ -254,6 +254,24 @@ def test_page_mentions_on_call_in_the_channel_and_dms_the_operator(cfg):
     assert all("<@" not in argv[argv.index("-m") + 1] for argv in sent), "all-clear pings nobody"
 
 
+def test_page_keeps_account_emails_out_of_the_shared_channel(cfg):
+    sent: list[list[str]] = []
+
+    def runner(argv):
+        sent.append(list(argv))
+        return subprocess.CompletedProcess(list(argv), 0, "", "")
+
+    n = Notifier(cfg, runner=runner)
+    text = "entering DEGRADED mode\n• OUT  alice.b+codex@example.co.uk: cooling down"
+    for resolved in (False, True):
+        sent.clear()
+        assert n.page(text, resolved=resolved)
+        (channel, dm) = sent
+        body = channel[channel.index("-m") + 1]
+        assert "@example" not in body and "• OUT  <account>: cooling down" in body
+        assert "alice.b+codex@example.co.uk" in dm[dm.index("-m") + 1], "the operator DM keeps it"
+
+
 def test_page_survives_one_target_failing(cfg):
     def runner(argv):
         rc = 1 if "channel:C0AEQ5D7SJ3" in argv else 0
