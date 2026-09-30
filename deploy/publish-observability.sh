@@ -8,6 +8,8 @@ if [ ! -d .git ]; then git init -q; git checkout -q -b observability-data; git r
 mkdir -p .github/workflows
 cp "${BASE}/src/.github/workflows/pages.yml" .github/workflows/pages.yml
 git add status.json
+# stages new, changed and aged-out (deleted) day files alike
+[ -d days ] && git add --all days
 git add .github/workflows/pages.yml
 git diff --cached --quiet && exit 0
 git -c user.name=reviewsys -c user.email=reviewsys@thepastaclaw.ai commit -q -m "chore: publish review status"

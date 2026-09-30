@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import timedelta
 
 from reviewsys import degraded
 from reviewsys.db import fmt_ts, now_dt, tx
-from reviewsys.exporter import build_export
+from reviewsys.exporter import build_day_runs, build_export, write_export
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import Trigger
 from reviewsys.queue_status import queued_order
@@ -100,3 +101,156 @@ def test_export_marks_audit_runs(cfg, conn):
     active = {a["number"]: a for a in build_export(conn, cfg)["live"]["active"]}
     assert active[7]["queue"] == "audit" and active[7]["title"] == "feat: merged earlier"
     assert active[8]["queue"] == "live" and active[8]["title"] is None
+
+
+def _finished_run(conn, number, *, status="done", finished="2026-09-30T12:00:00Z"):
+    done = status == "done"
+    hid = conn.execute(
+        "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (
+            "dashpay/platform",
+            number,
+            f"{number}" * 40,
+            "new_push",
+            "done",
+            "2026-09-30T09:00:00Z",
+            "2026-09-30T09:30:00Z",
+        ),
+    ).lastrowid
+    return conn.execute(
+        "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at, finished_at, "
+        "fail_kind, reason, tier, blocker_count, review_url) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            hid,
+            1,
+            status,
+            f"t{number}",
+            "2026-09-30T10:00:00Z",
+            "2026-09-30T20:00:00Z",
+            finished,
+            None if done else "infra",
+            None if done else "proxy said no to someone@example.com",
+            "normal",
+            1 if done else None,
+            f"https://github.com/dashpay/platform/pull/{number}#pullrequestreview-9"
+            if done
+            else None,
+        ),
+    ).lastrowid
+
+
+def _step(conn, run_id, name, finished, kept):
+    conn.execute(
+        "INSERT INTO steps (run_id, name, status, started_at, finished_at, detail) "
+        "VALUES (?,?,?,?,?,?)",
+        (run_id, name, "ok", finished, finished, json.dumps({"findings": kept})),
+    )
+
+
+def _finding(conn, run_id, phase, stage, hash_, severity):
+    conn.execute(
+        "INSERT INTO findings (run_id, phase, stage, hash, severity, title, body) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (run_id, phase, stage, hash_, severity, "secret title", "secret body"),
+    )
+
+
+def test_day_runs_carry_timing_tokens_findings_and_links(conn):
+    with tx(conn):
+        run = _finished_run(conn, 20)
+        for phase, tin, tout in (("phase1", 1000, 100), ("verify2", 500, 50)):
+            conn.execute(
+                "INSERT INTO lanes (run_id, phase, role, agent, model, effort, attempt, attempt_id, "
+                "status, tokens_in, tokens_out, started_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+                (run, phase, "general", "a", "glm", "high", 1, "x", "completed", tin, tout, "t"),
+            )
+        # a carried-over blocker the verifier re-asserted but the review did not post again,
+        # a verifier retry repeating one hash, and one new suggestion
+        _finding(conn, run, "verify1", "verified", "old", "blocking")
+        for _ in range(2):
+            _finding(conn, run, "verify2", "verified", "b1", "blocking")
+        _finding(conn, run, "verify2", "verified", "s1", "suggestion")
+        _finding(conn, run, "final", "posted", "s1", "suggestion")
+        _step(conn, run, "verify1", "2026-09-30T10:30:00Z", 1)
+        _step(conn, run, "verify2", "2026-09-30T11:30:00Z", 2)
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (run, "dashpay/platform", 20, "2" * 40, "final", 9, "REQUEST_CHANGES", "t"),
+        )
+        _finished_run(conn, 21, status="failed", finished="2026-09-30T13:00:00Z")
+        _finished_run(conn, 22, status="cancelled")
+        _finished_run(conn, 23, finished="2026-09-29T23:59:59Z")
+    days = build_day_runs(conn, ["2026-09-30"])
+    runs = days["2026-09-30"]
+    assert [r["number"] for r in runs] == [21, 20], "newest first; cancelled runs left out"
+    done = runs[1]
+    assert done["wait_seconds"] == 3600 and done["slot_wait_seconds"] == 1800
+    assert done["duration_seconds"] == 7200
+    assert (done["tokens_in"], done["tokens_out"], len(done["lanes"])) == (1500, 150, 2)
+    assert done["findings"] == {"blocking": 1, "suggestion": 1, "nitpick": 0}
+    assert done["new_findings"] == {"blocking": 0, "suggestion": 1, "nitpick": 0}
+    assert done["verdict"] == "REQUEST_CHANGES"
+    assert done["review_url"].endswith("#pullrequestreview-9")
+    failed = runs[0]
+    assert failed["review_url"] == failed["pr_url"] == "https://github.com/dashpay/platform/pull/21"
+    assert failed["fail_kind"] == "infra"
+    blob = json.dumps(days)
+    assert "example.com" not in blob and "secret" not in blob, "no reasons or finding text"
+
+
+def test_write_export_writes_day_files_and_drops_aged_out_days(cfg, conn, tmp_path):
+    with tx(conn):
+        _finished_run(conn, 30)
+    out = tmp_path / "out"
+    (out / "days").mkdir(parents=True)
+    (out / "days" / "2020-01-01.json").write_text("{}")
+    write_export(conn, cfg, out)
+    assert sorted(p.name for p in (out / "days").iterdir()) == ["2026-09-30.json"]
+    day = json.loads((out / "days" / "2026-09-30.json").read_text())
+    assert day["day"] == "2026-09-30" and [r["number"] for r in day["runs"]] == [30]
+
+
+def test_day_runs_count_an_empty_last_pass_as_clean(conn):
+    """Phase 2 dropped everything verify1 kept: the final review is clean, and must not show
+    the preliminary pass's findings."""
+    with tx(conn):
+        run = _finished_run(conn, 40)
+        _finding(conn, run, "verify1", "verified", "a", "suggestion")
+        _finding(conn, run, "verify2", "verified", "b", "blocking")
+        _step(conn, run, "verify1", "2026-09-30T10:10:00Z", 1)
+        _step(conn, run, "verify2", "2026-09-30T10:20:00Z", 1)
+        _step(conn, run, "fresh_verify2", "2026-09-30T10:40:00Z", 0)  # kept nothing
+        # before the `verified-fresh` stage: the fresh pass's findings sit under `verified`
+        legacy = _finished_run(conn, 41)
+        _finding(conn, legacy, "verify2", "verified", "c", "blocking")
+        _step(conn, legacy, "verify2", "2026-09-30T10:20:00Z", 0)
+        _step(conn, legacy, "fresh_verify2", "2026-09-30T10:40:00Z", 1)
+    by_number = {r["number"]: r for r in build_day_runs(conn, ["2026-09-30"])["2026-09-30"]}
+    assert by_number[40]["findings"] == {"blocking": 0, "suggestion": 0, "nitpick": 0}
+    assert by_number[41]["findings"] == {"blocking": 1, "suggestion": 0, "nitpick": 0}
+
+
+def test_day_runs_measure_a_retry_from_its_predecessor_and_normalize_backfilled_verdicts(conn):
+    with tx(conn):
+        first = _finished_run(conn, 50, status="failed", finished="2026-09-30T10:30:00Z")
+        head = conn.execute("SELECT head_id FROM runs WHERE id=?", (first,)).fetchone()[0]
+        retry = conn.execute(
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at, "
+            "finished_at) VALUES (?,?,?,?,?,?,?)",
+            (head, 2, "done", "t50b", "2026-09-30T10:45:00Z", "t", "2026-09-30T11:00:00Z"),
+        ).lastrowid
+        conn.execute("UPDATE heads SET eligible_at='2026-09-30T10:35:00Z' WHERE id=?", (head,))
+        # a retry that found its publication already on GitHub records the review *state*
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (retry, "dashpay/platform", 50, "5" * 40, "final", "CHANGES_REQUESTED", "t"),
+        )
+    by_id = {r["id"]: r for r in build_day_runs(conn, ["2026-09-30"])["2026-09-30"]}
+    assert by_id[retry]["wait_seconds"] == 900, "from the failed attempt's end, not queued_at"
+    assert by_id[retry]["slot_wait_seconds"] == 600
+    assert by_id[first]["wait_seconds"] == 3600
+    assert by_id[first]["slot_wait_seconds"] is None, "eligible_at now belongs to the retry"
+    assert by_id[retry]["verdict"] == "REQUEST_CHANGES"
