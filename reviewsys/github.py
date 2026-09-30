@@ -359,6 +359,7 @@ def upsert_gate_comment(gh: Gh, repo: str, number: int, bot_login: str, body: st
 # why a run reviewed with Phase 2 alone (RunContext.phase1_skipped starts with one of these)
 PHASE1_BACKLOG = "skipped for throughput:"
 PHASE1_FAILED = "failed on every model; its output was dropped"
+PHASE1_REPO_OFF = "disabled for this repository"
 
 
 def phase2_only_label(phase1_skipped: str) -> str:
@@ -367,6 +368,8 @@ def phase2_only_label(phase1_skipped: str) -> str:
         return "queue backlog"
     if phase1_skipped == PHASE1_FAILED:
         return "Phase 1 failed"
+    if phase1_skipped == PHASE1_REPO_OFF:
+        return "no Phase 1 for this repository"
     return "Phase 1 not run"
 
 
@@ -383,6 +386,8 @@ def gate_body(
     phase1_skipped: str | None = None,
     adhoc: bool = False,
     degraded: bool = False,
+    points: int | None = None,
+    block_above: int | None = None,
 ) -> str:
     s = sha[:8]
     t = f" · triage: {tier}" if tier else ""
@@ -401,7 +406,13 @@ def gate_body(
         return f"{GATE_MARKER}\n{warn or '🔍'} Review in progress — actively reviewing now (commit {s}){t}"
     if status == "done":
         if phase == "preliminary":
-            return f"{GATE_MARKER}\n{warn or '⛔'} Blockers found — Phase 2 deferred (commit {s}){t}\n_Canonical validated blockers: {blocker_count or 0}_"
+            what = "Blockers found" if blocker_count else "Phase-1 findings over the gate"
+            score = (
+                f" · gate points: {points} (Phase 2 deferred above {block_above})"
+                if points is not None and block_above is not None
+                else ""
+            )
+            return f"{GATE_MARKER}\n{warn or '⛔'} {what} — Phase 2 deferred (commit {s}){t}\n_Canonical validated blockers: {blocker_count or 0}{score}_"
         n = blocker_count or 0
         head = warn or ("⛔" if n else "✅")
         scope = " — Phase 1 only" if phase2_skipped else ""

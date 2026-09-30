@@ -205,6 +205,8 @@ class Provenance:
     degraded: dict[str, Any] | None = None
     # the second model the Phase-2 reviewers also ran on for a model comparison
     compare_model: str | None = None
+    # Phase 1 ran beside Phase 2 with no blocker gate (a `single_stage` tier)
+    single_stage: bool = False
 
 
 @dataclass(slots=True)
@@ -373,6 +375,11 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     lines.append(p1_line)
     if p.phase1_choice and not p.phase1_skipped:
         lines.append(_phase1_choice_line(p.phase1_choice))
+    if p.single_stage:
+        lines.append(
+            "- Single stage: Phase 1 and Phase 2 reviewed this head side by side, with no "
+            "blocker gate between them (triage tier)"
+        )
     if p.fresh_final:
         lines.append(
             "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"

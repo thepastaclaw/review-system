@@ -58,10 +58,33 @@ def min_effort(a: str, b: str) -> str:
 
 @dataclass(frozen=True, slots=True)
 class TierEffort:
-    """Reviewer effort for one triage tier. `phase2=None` means Phase 2 is skipped."""
+    """Reviewer effort for one triage tier. `phase2=None` means Phase 2 is skipped.
+
+    `single_stage`: no blocker gate between the phases. The Phase-1 reviewers (on their
+    ladder model) run beside the Phase-2 reviewers and the final verifier weighs both, for
+    changes whose authors are expected to have reviewed them closely already, where the
+    gate only adds latency. Needs a Phase 2 (`phase2` set)."""
 
     phase1: str
     phase2: str | None
+    single_stage: bool = False
+
+
+# severity -> points; nitpicks never count toward the gate
+DEFAULT_GATE_WEIGHTS = {"blocking": 3, "suggestion": 1, "nitpick": 0}
+
+
+@dataclass(frozen=True, slots=True)
+class GatePolicy:
+    """When Phase 1 holds Phase 2 back: the verified Phase-1 findings are scored by severity
+    and Phase 2 is deferred only when the total is above `block_above`. Without a gate
+    policy, any verified blocker defers Phase 2 (the pre-v0.21 rule)."""
+
+    block_above: int
+    weights: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_GATE_WEIGHTS))
+
+    def points(self, severities: list[str]) -> int:
+        return sum(self.weights.get(s, 0) for s in severities)
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +176,11 @@ class ModelPolicy:
     degraded: DegradedPolicy | None = None
     # a second model run beside the primary on a sample of runs; None = never
     comparison: ComparisonPolicy | None = None
+    # specialists Phase 1 runs beside `general` (when the selector picked them); None = every
+    # selected specialist. Phase 2 always runs every selected specialist.
+    phase1_specialists: tuple[str, ...] | None = None
+    # how many verified Phase-1 findings defer Phase 2; None = any blocker does
+    phase1_gate: GatePolicy | None = None
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -176,6 +204,9 @@ class RepoConfig:
     skill_path: str
     enabled: bool
     disabled_reason: str | None = None
+    # False: reviews of this repo skip Phase 1 and go straight to Phase 2 (measured to add
+    # next to nothing there); disclosed in the review like the backlog rule
+    phase1: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,7 +269,8 @@ class Config:
     watchdog_minutes: int
     comment_budget: int
     backlog_skip_phase1_above: int  # queued heads above this -> runs skip Phase 1 (0 disables)
-    # reviewer lanes one phase of one run runs at once (1 = sequential, the pre-v0.19 flow)
+    # reviewer lanes one phase of one run runs at once (1 = sequential, the pre-v0.19 flow;
+    # 0 = every lane of the phase at once). Model pools (lanepool.py) still bound the machine.
     phase_parallelism: int
     # machine-wide lane slots per non-gpt model family (see lanepool.py); unlisted = ungated
     lane_pools: dict[str, int]
@@ -252,7 +284,7 @@ class Config:
     page_mentions: tuple[str, ...]
     agent_session_key: str
     trusted_reviewers: tuple[str, ...]
-    # retention
+    # retention; 0 = run artifacts (lane outputs) are never deleted
     artifact_retention_days: int
     worktree_budget_gb: int
     # from skills config
@@ -351,8 +383,9 @@ comment_budget = 10
 # straight to Phase 2; 0 disables. Disclosed in the review and the gate comment.
 backlog_skip_phase1_above = 10
 # the general reviewer and the specialists of one phase run side by side, at most this
-# many at once per run (1 = one after another)
-phase_parallelism = 4
+# many at once per run (1 = one after another, 0 = all of them); the model pools below
+# still bound the machine
+phase_parallelism = 0
 # machine-wide cap on lanes in flight per model family, across every run. gpt lanes are
 # capped by the review slot ceiling instead (the per-account stream budget); a family
 # not listed here is not capped.
@@ -369,7 +402,9 @@ agent_session_key = "agent:main:main"
 trusted_reviewers = ["PastaPastaPasta", "QuantumExplorer", "shumkov", "lklimek", "dustinface", "thephez", "knst", "pauldelucia", "UdjinM6"]
 
 [retention]
-artifact_days = 14
+# run artifacts (every lane's prompt, output and meta); 0 = keep forever. They are small
+# (~1 GB per two weeks) and the only per-lane record older reviews can be analysed from.
+artifact_days = 0
 worktree_budget_gb = 60
 
 [audit]
@@ -515,6 +550,7 @@ def load_skills_config(
             skill_path=str(r["skill_path"]),
             enabled=bool(r.get("enabled", False)),
             disabled_reason=r.get("disabled_reason"),
+            phase1=bool(r.get("phase1", True)),
         )
         for r in raw["repos"]
     )
@@ -557,10 +593,40 @@ def load_skills_config(
         conversation=_lane(pol, "conversation") if pol.get("conversation") else None,
         degraded=_degraded(pol.get("degraded")),
         comparison=_comparison(pol.get("comparison"), tiers, p2.model),
+        phase1_specialists=_phase1_specialists(p1_node, specialists),
+        phase1_gate=_gate(p1_node.get("gate")),
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
     return repos, specialists, policy, settings
+
+
+def _phase1_specialists(
+    node: dict[str, Any], specialists: tuple[Specialist, ...]
+) -> tuple[str, ...] | None:
+    if "specialists" not in node:
+        return None
+    ids = tuple(str(x) for x in node.get("specialists") or ())
+    unknown = sorted(set(ids) - {s.id for s in specialists})
+    if unknown:
+        raise ValueError(f"phase1.specialists {unknown!r} are not configured specialists")
+    return ids
+
+
+def _gate(node: dict[str, Any] | None) -> GatePolicy | None:
+    if not node:
+        return None
+    block_above = int(node["block_above"])
+    if block_above < 0:
+        raise ValueError(f"phase1.gate.block_above {block_above!r} must be >= 0")
+    weights = dict(DEFAULT_GATE_WEIGHTS)
+    for sev, pts in (node.get("weights") or {}).items():
+        if sev not in DEFAULT_GATE_WEIGHTS:
+            raise ValueError(f"phase1.gate.weights: unknown severity {sev!r}")
+        if int(pts) < 0:
+            raise ValueError(f"phase1.gate.weights[{sev!r}] must be >= 0")
+        weights[sev] = int(pts)
+    return GatePolicy(block_above=block_above, weights=weights)
 
 
 def _tiers(node: dict[str, Any], p1_default: str, p2_default: str) -> dict[str, TierEffort]:
@@ -576,7 +642,10 @@ def _tiers(node: dict[str, Any], p1_default: str, p2_default: str) -> dict[str, 
         for level in (p1, p2):
             if level is not None and level not in EFFORT_LEVELS:
                 raise ValueError(f"tier {tier!r}: effort {level!r} not in {EFFORT_LEVELS}")
-        out[str(tier).lower()] = TierEffort(phase1=p1, phase2=p2)
+        single = bool(spec.get("single_stage", False))
+        if single and p2 is None:
+            raise ValueError(f"tier {tier!r}: single_stage needs a phase2 effort")
+        out[str(tier).lower()] = TierEffort(phase1=p1, phase2=p2, single_stage=single)
     return out
 
 
@@ -628,7 +697,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         watchdog_minutes=int(s["watchdog_minutes"]),
         comment_budget=int(s.get("comment_budget", settings.get("comment_budget", 10))),
         backlog_skip_phase1_above=int(s.get("backlog_skip_phase1_above", 10)),
-        phase_parallelism=max(1, int(s.get("phase_parallelism", 4))),
+        phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
         lane_pools={
             str(k): max(1, int(v))
             for k, v in (s.get("lane_pools", DEFAULT_LANE_POOLS) or {}).items()
@@ -641,7 +710,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         page_mentions=_mentions(i.get("page_mentions", DEFAULT_PAGE_MENTIONS)),
         agent_session_key=str(i.get("agent_session_key", "agent:main:main")),
         trusted_reviewers=tuple(i.get("trusted_reviewers", [])),
-        artifact_retention_days=int(r["artifact_days"]),
+        artifact_retention_days=max(0, int(r["artifact_days"])),
         worktree_budget_gb=int(r["worktree_budget_gb"]),
         repos=repos,
         specialists=specialists,

@@ -11,6 +11,10 @@ from pathlib import Path
 from .config import Config
 from .db import event, fmt_ts, now_dt, tx
 
+# how long a conversation "chose silence" marker outlives its PR's last queued head when run
+# artifacts are kept forever (otherwise it follows the artifact retention)
+SILENCE_RETENTION_DAYS = 14
+
 
 def _dir_size(path: Path) -> int:
     total = 0
@@ -37,7 +41,9 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             "SELECT worktree FROM runs WHERE status IN ('spawned','running') AND worktree IS NOT NULL"
         )
     }
-    cutoff = now_dt() - timedelta(days=cfg.artifact_retention_days)
+    # 0 keeps run artifacts forever; the conversation silence markers below still expire
+    keep_runs = cfg.artifact_retention_days <= 0
+    cutoff = now_dt() - timedelta(days=cfg.artifact_retention_days or SILENCE_RETENTION_DAYS)
     # worktrees not tied to an active run and older than 24h
     if cfg.worktrees_dir.exists():
         for wt in sorted(cfg.worktrees_dir.iterdir(), key=lambda p: p.stat().st_mtime):
@@ -57,7 +63,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             total -= _dir_size(victim)
             shutil.rmtree(victim, ignore_errors=True)
             stats["worktrees_removed"] += 1
-    if cfg.runs_dir.exists():
+    if cfg.runs_dir.exists() and not keep_runs:
         for rd in cfg.runs_dir.iterdir():
             try:
                 if now_dt() - timedelta(seconds=time.time() - rd.stat().st_mtime) < cutoff:

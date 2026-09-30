@@ -180,6 +180,7 @@ def verifier_prompt(
     prior_sha: str | None,
     phase1_skipped: str | None = None,
     fresh_final: bool = False,
+    single_stage: bool = False,
 ) -> str:
     project_skill, review_skill = skill_texts(cfg, repo)
     template = read_template(cfg, "prompts/verifier-agent.md")
@@ -202,6 +203,8 @@ def verifier_prompt(
         + (
             f"- There is no Phase-1 evidence for this head (Phase 1 {phase1_skipped}); the 'Codex' block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
             if phase1_skipped
+            else "- Phase 1 ran beside Phase 2 on this head with no gate between them: no earlier verifier has seen the 'Codex' findings. Weigh them as unverified reviewer claims, exactly like the Phase-2 ones.\n"
+            if single_stage
             else ""
         )
         + prior_findings_block(prior, prior_sha)

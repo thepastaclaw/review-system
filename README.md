@@ -62,6 +62,38 @@ effort is stored in `lanes.effort`, the tier in `runs.tier`, and both are printe
 in the review's provenance block and the gate comment. Without a `triage` block the
 policy behaves as a single `normal` tier at the configured reasoning levels.
 
+### Phase-1 roster, points gate, single-stage tiers, repos without Phase 1
+
+Four policy knobs trade Phase-1 latency for value. They were set from the 2026-09-30
+per-agent audit: across 14 days, the Phase-1 specialists produced almost nothing no
+other lane found, only 10-18% of Phase-2 findings had been raised in Phase 1, and
+Phase 1 scored 4-10x lower value per token than Phase 2. All four are off when absent.
+
+- `phase1.specialists` (list of specialist ids): Phase 1 runs `general` plus only these,
+  when the selector picked them. Always-run specialists are not exempt. Phase 2 still
+  runs every selected specialist.
+- `phase1.gate` (`{"block_above": N, "weights": {...}}`): the verified Phase-1 findings
+  are scored (default weights `blocking` 3, `suggestion` 1, `nitpick` 0), and Phase 2 is
+  deferred only when the total is **above** `block_above`. Under the budget, Phase 2 runs
+  and the final verifier re-adjudicates the Phase-1 findings with everything else. A
+  preliminary review held back by suggestions alone is published as COMMENT, never
+  APPROVE. A tier without Phase 2 (`trivial`) still publishes a verified blocker as a
+  preliminary REQUEST_CHANGES. The `gate` step records `points` and `block_above`, and
+  the gate comment prints them. Without a gate, any verified blocker defers Phase 2.
+- `triage.tiers.<tier>.single_stage: true`: no gate for that tier. The Phase-1 reviewers
+  (on their ladder model) run *beside* the Phase-2 reviewers, and the final verifier
+  weighs both sets. The verifier is told the Phase-1 claims are unverified. There is no
+  `verify1` or `gate` step. It is meant for `critical` changes, whose authors are expected
+  to have reviewed them closely already, so a gate only adds latency. Phase 1 is extra
+  coverage here: if it fails on every rung its output is dropped (`phase1.failed_single_stage`,
+  disclosed as for a Phase-1 failure), never the review. If Phase 2 fails, the Phase-1
+  lanes are stopped and the run fails as usual. Disclosed as "Single stage: Phase 1 and
+  Phase 2 reviewed this head side by side".
+- `repos[].phase1: false` in the skills config: reviews of that repo skip Phase 1 and go
+  straight to Phase 2 (`phase1` step `skipped`, event `phase1.skipped_repo`), titled
+  "Final validation — Phase 2 only (no Phase 1 for this repository)". A `trivial` change
+  there reviews in Phase 2 at `low` effort. Audits keep their own flow.
+
 CLIProxyAPI clamps `--effort` to the `thinking.levels` declared per model in its
 config; the zai GLM entries must declare `[low, high, max]` or `max` reaches z.ai
 as `high` (fixed on the box 2026-09-08).
@@ -515,7 +547,8 @@ effective `slots:` line.
 ### Parallel reviewer lanes
 
 Within a phase the general reviewer and the selected specialists run side by side
-(`phase_parallelism`, default 4, per run; 1 restores the one-after-another flow). They
+(`phase_parallelism` per run: default 0 = every lane of the phase at once; 1 restores
+the one-after-another flow). They
 never read each other's output, so only the verifier after them waits for all of them;
 the phases themselves still run in order. Measured 2026-09-23..27 (193 two-phase
 reviews, 2–6 reviewers per phase), this cuts a full review from ~65 to a projected
@@ -618,11 +651,14 @@ Config knobs (`~/.reviewsys/config.toml`, restart the daemon after editing):
 `max_concurrent` / `priority_overflow` (slots per usable OpenAI account),
 `account_scale_max` (1 = static slots), `account_reserves`, `page_target` / `page_mentions`
 (`[identity]`, degraded-mode pages), `debounce_minutes`,
-`phase_parallelism` (reviewer lanes per phase per run), `lane_pools` (lanes in flight per
+`phase_parallelism` (reviewer lanes per phase per run, 0 = all), `lane_pools` (lanes in flight per
 model family across all runs; `gpt` always follows the slot ceiling),
 `lane_timeout_minutes` (wall-clock bound per lane), `lane_budget_usd` (runaway
 guard passed as `claude --max-budget-usd`; it is the CLI's list-price estimate,
 not real spend, so keep it well above a normal $3–10 lane).
+
+`[retention] artifact_days` (0 = keep run artifacts forever, the default: they are the
+only per-lane record for later analysis and grow ~1 GB per two weeks), `worktree_budget_gb`.
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
