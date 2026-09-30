@@ -205,6 +205,8 @@ class Provenance:
     degraded: dict[str, Any] | None = None
     # the second model the Phase-2 reviewers also ran on for a model comparison
     compare_model: str | None = None
+    # Phase 1 ran beside Phase 2 with no blocker gate (a `single_stage` tier)
+    single_stage: bool = False
 
 
 @dataclass(slots=True)
@@ -373,6 +375,11 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     lines.append(p1_line)
     if p.phase1_choice and not p.phase1_skipped:
         lines.append(_phase1_choice_line(p.phase1_choice))
+    if p.single_stage:
+        lines.append(
+            "- Single stage: Phase 1 and Phase 2 reviewed this head side by side, with no "
+            "blocker gate between them (triage tier)"
+        )
     if p.fresh_final:
         lines.append(
             "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"
@@ -381,7 +388,9 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
         f"- Fresh verifier: {_model_label(p.verifier)} — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]
     if phase == "preliminary":
-        lines.append("- Phase 2 reviewers: **not run (deferred by blocker gate)**")
+        lines.append(
+            f"- Phase 2 reviewers: **not run ({p.phase2_skipped or 'deferred by blocker gate'})**"
+        )
     elif p.phase2_skipped:
         lines.append(
             f"- Phase 2 reviewers: **not run ({p.phase2_skipped})**; this review comments and never approves"
@@ -459,7 +468,10 @@ def render(m: ReviewModel) -> str:
     parts += [summary, ""]
     if m.phase == "preliminary":
         parts += [
-            "Validated blockers were found by the Phase-1 review and confirmed by a fresh verifier. Phase 2 is deferred until a fresh same-head revalidation clears the blocker gate.",
+            "Validated blockers were found by the Phase-1 review and confirmed by a fresh verifier. Phase 2 is deferred until a fresh same-head revalidation clears the blocker gate."
+            # phase2_skipped on a preliminary: the points gate deferred on suggestions alone
+            if m.verified.blocker_count or not m.provenance.phase2_skipped
+            else "The Phase-1 findings confirmed by a fresh verifier are above the gate budget. Phase 2 is deferred until a fresh same-head revalidation brings them under it.",
             "",
         ]
     if m.superseded_note:

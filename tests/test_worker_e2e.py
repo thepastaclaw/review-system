@@ -481,7 +481,14 @@ def test_tier_scales_effort_and_is_disclosed(cfg, conn, gh, lanes):
             "detail"
         ]
     )
-    assert gate == {"admit_phase2": True, "tier": "critical", "phase2_effort": "xhigh"}
+    assert gate == {
+        "admit_phase2": True,
+        "tier": "critical",
+        "phase2_effort": "xhigh",
+        "blockers": 0,
+        "points": None,
+        "block_above": None,
+    }
 
 
 def test_low_tier_uses_medium_phase2(cfg, conn, gh, lanes):

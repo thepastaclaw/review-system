@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import audit, converse, degraded, github, labels, lanepool, publish, quota
-from .config import Config, DegradedPolicy, LaneModel, min_effort
+from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
 from .contract import (
     Finding,
     ReviewerOutput,
@@ -36,7 +36,7 @@ from .contract import (
 )
 from .db import connect_existing, event, kv_get, kv_set, now, tx
 from .degraded import Prober
-from .gate import admit_phase2
+from .gate import gate_score, phase1_blocks
 from .gh import Gh
 from .lane import LaneResult, LaneRunner, LaneSpec, lane_output, prompt_sha, run_claude_lane
 from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
@@ -103,6 +103,11 @@ class RunContext:
     prior_sha: str | None = None
     has_prior_review: bool = False
     fresh_final: bool = False
+    # Phase 1 ran beside Phase 2 with no blocker gate between them (a `single_stage` tier)
+    single_stage: bool = False
+    # a Phase 2 is planned for this run (the tier has one and it is enabled): only then does
+    # Phase 1 slim down to `phase1_specialists`; a Phase-1-only review keeps every specialist
+    phase2_follows: bool = True
     # finding_hash -> {comment_id, thread_id, replies} for prior findings with human replies
     prior_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     # finding_hash -> thread facts for every unresolved bot finding thread on the PR
@@ -208,12 +213,16 @@ def _heartbeat_loop(ctx: RunContext, stop: threading.Event) -> None:
 
 
 def _step_start(ctx: RunContext, name: StepName) -> None:
+    """Record a step as running. `runs.phase` (the step a failure is charged to, and what
+    status shows) only follows the worker's own thread: on a single-stage run Phase 1 runs
+    on a second thread beside Phase 2, which owns it."""
     with tx(ctx.conn):
         ctx.conn.execute(
             "INSERT OR REPLACE INTO steps (run_id, name, status, started_at) VALUES (?,?,?,?)",
             (ctx.run_id, name.value, "running", now()),
         )
-        ctx.conn.execute("UPDATE runs SET phase=? WHERE id=?", (name.value, ctx.run_id))
+        if threading.get_ident() == ctx.owner_thread:
+            ctx.conn.execute("UPDATE runs SET phase=? WHERE id=?", (name.value, ctx.run_id))
 
 
 def _step_end(
@@ -784,6 +793,16 @@ def _reviewer_lane(
             lm = nxt
 
 
+def _phase_roles(ctx: RunContext, phase: str) -> list[str]:
+    """The reviewer roles of a phase: `general` plus the selected specialists. Phase 1 runs
+    only the specialists the policy lists for it (`phase1_specialists`), when it lists any."""
+    allowed = ctx.cfg.policy.phase1_specialists
+    picked = ctx.selection
+    if phase == "phase1" and allowed is not None and ctx.phase2_follows:
+        picked = [s for s in picked if s in allowed]
+    return ["general", *picked]
+
+
 def _reviewer_lanes(
     ctx: RunContext,
     *,
@@ -791,11 +810,13 @@ def _reviewer_lanes(
     lm: LaneModel,
     expected_phase: str,
     fresh: bool = False,
+    abort: threading.Event | None = None,
 ) -> dict[str, ReviewerOutput]:
-    """The general reviewer and every selected specialist, side by side (at most
-    `phase_parallelism` at once; each lane also waits for a slot in its model's pool, see
-    lanepool.py). The reviewers of a phase never read each other's output, so only the
-    verifier after them has to wait for all of them.
+    """The general reviewer and the phase's specialists (`_phase_roles`), side by side (at
+    most `phase_parallelism` at once, all of them when it is 0; each lane also waits for a
+    slot in its model's pool, see lanepool.py). The reviewers of a phase never read each
+    other's output, so only the verifier after them has to wait for all of them. `abort`,
+    when set by the caller, stops every lane (a single-stage run whose other phase failed).
 
     One lane failing for good fails the phase, exactly as it did when they ran one after
     another: its siblings are stopped rather than left to spend quota on a run that will be
@@ -810,7 +831,9 @@ def _reviewer_lanes(
     same way."""
     assert ctx.meta
     meta = ctx.meta.as_dict()
-    roles = ["general", *ctx.selection]
+    if abort is None:
+        abort = threading.Event()
+    roles = _phase_roles(ctx, phase)
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
@@ -841,7 +864,7 @@ def _reviewer_lanes(
     twins_stop = threading.Event()  # the comparison lanes ran out of grace
 
     def stopped() -> bool:
-        return ctx.cancel_flag.is_set() or abandon.is_set()
+        return ctx.cancel_flag.is_set() or abandon.is_set() or abort.is_set()
 
     def twin_stopped() -> bool:
         return stopped() or twins_stop.is_set()
@@ -904,10 +927,9 @@ def _reviewer_lanes(
         finally:
             ctx.close_lane_conn()
 
-    first = len(ctx.reviewers)
     results: dict[str, ReviewerOutput | None] = {}
     errors: list[BaseException] = []
-    workers = max(1, min(len(roles), ctx.cfg.phase_parallelism))
+    workers = min(len(roles), ctx.cfg.phase_parallelism or len(roles))
     with contextlib.ExitStack() as stack:
         pools = [
             stack.enter_context(
@@ -951,8 +973,18 @@ def _reviewer_lanes(
     if len(results) < len(lanes):
         ctx.check_cancel()
         raise ReviewError(FailKind.INFRA, f"{phase}: a reviewer lane never ran")
-    # provenance and finding rows in lane order, as if the lanes had run one after another
-    ctx.reviewers[first:] = sorted(ctx.reviewers[first:], key=lambda r: keys.index(r["key"]))
+    # provenance and finding rows in lane order, as if the lanes had run one after another.
+    # Only this call's own entries move: on a single-stage run the other phase is appending
+    # to the same list at the same time.
+    with ctx.state_lock:
+        mine = [
+            i
+            for i, r in enumerate(ctx.reviewers)
+            if r["phase"] == phase and r["fresh"] == fresh and r["key"] in keys
+        ]
+        ordered = sorted((ctx.reviewers[i] for i in mine), key=lambda r: keys.index(r["key"]))
+        for i, r in zip(mine, ordered, strict=True):
+            ctx.reviewers[i] = r
     outputs = {k: out for k in keys if (out := results[k]) is not None}
     twins = [k for k in keys if k.endswith(COMPARE_SUFFIX)]
     if twins:
@@ -1003,6 +1035,7 @@ def _verifier_lane(
         prior_sha=ctx.prior_sha,
         phase1_skipped=ctx.phase1_skipped,
         fresh_final=fresh_final,
+        single_stage=ctx.single_stage,
     )
     raw = _run_lane(ctx, phase=phase, role="verifier", lm=lm, prompt=prompt, is_verifier=True)
     out = parse_verifier_output(
@@ -1382,6 +1415,7 @@ def _build_review(
         fresh_final=ctx.fresh_final,
         degraded=_degraded_provenance(ctx),
         compare_model=ctx.compare_model if compared else None,
+        single_stage=ctx.single_stage and not ctx.phase1_skipped,
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -1598,11 +1632,14 @@ def _reviewer_step(
     lm: LaneModel | Callable[[], LaneModel],
     expected_phase: str,
     fresh: bool = False,
+    abort: threading.Event | None = None,
 ) -> dict[str, ReviewerOutput]:
     _step_start(ctx, step)
     if callable(lm):
         lm = lm()  # Phase 1 picks its model inside the step, so a slow lookup shows there
-    outputs = _reviewer_lanes(ctx, phase=phase, lm=lm, expected_phase=expected_phase, fresh=fresh)
+    outputs = _reviewer_lanes(
+        ctx, phase=phase, lm=lm, expected_phase=expected_phase, fresh=fresh, abort=abort
+    )
     _step_end(ctx, step, "ok", {"roles": list(outputs)})
     return outputs
 
@@ -1637,7 +1674,9 @@ def _publish_step(
     verified: VerifierOutput,
     verifier_lm: LaneModel,
     phase2_skipped: str | None = None,
+    gate_deferred: bool = False,
 ) -> None:
+    """`gate_deferred`: the points gate held Phase 2 back; the gate comment shows the score."""
     if ctx.is_audit:
         _audit_publish(
             ctx,
@@ -1657,12 +1696,14 @@ def _publish_step(
         "ok",
         {"posted": res.posted, "event": res.event, "skipped": res.skipped_reason},
     )
+    score = gate_score(verified, ctx.cfg.policy.phase1_gate) if gate_deferred else {}
     _gate_comment(
         ctx,
         "done",
         phase=phase,
         blocker_count=verified.blocker_count,
         phase2_skipped=phase2_skipped,
+        **score,
     )
 
 
@@ -1940,20 +1981,19 @@ def _backlog_skips_phase1(ctx: RunContext, *, phase2_effort: str | None) -> bool
     if queued <= limit:
         return False
     reason = f"{github.PHASE1_BACKLOG} {queued} PRs queued, above the {limit} limit"
+    _skip_phase1(ctx, reason, "phase1.skipped_backlog", queued=queued, limit=limit)
+    return True
+
+
+def _skip_phase1(ctx: RunContext, reason: str, kind: str, **detail: Any) -> None:
+    """Record a Phase 1 that will not run: a `skipped` phase1 step, an event, and the gate
+    comment; `ctx.phase1_skipped` carries the reason into the verifier prompt and the review."""
     ctx.phase1_skipped = reason
     _step_start(ctx, StepName.PHASE1)
-    _step_end(ctx, StepName.PHASE1, "skipped", {"reason": reason, "queued": queued, "limit": limit})
+    _step_end(ctx, StepName.PHASE1, "skipped", {"reason": reason, **detail})
     with tx(ctx.conn):
-        event(
-            ctx.conn,
-            "phase1.skipped_backlog",
-            repo=ctx.repo,
-            number=ctx.number,
-            run_id=ctx.run_id,
-            detail=reason,
-        )
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=reason)
     _gate_comment(ctx, "in_progress")
-    return True
 
 
 def _choose_comparison(ctx: RunContext) -> None:
@@ -1984,6 +2024,11 @@ COMPARE_SUFFIX = "#2"  # output key of a comparison lane: `<role>#2`
 COMPARE_GRACE_MINUTES = 20
 LIGHT_AUDIT_TIER = "trivial"  # the policy tier a light audit reviews at (Phase 1 only)
 PHASE1_FAILED = github.PHASE1_FAILED
+PHASE1_REPO_OFF = github.PHASE1_REPO_OFF
+# the preliminary review's Phase-2 note when the gate deferred on suggestions alone
+PHASE2_DEFERRED = "deferred by the Phase-1 gate"
+# Phase-2 effort for a tier without a Phase 2 (trivial) on a repo that has no Phase 1
+NO_PHASE1_TRIVIAL_EFFORT = "low"
 
 
 # ---- conversation mode: answer replies on an already-reviewed commit ----
@@ -2334,9 +2379,14 @@ def run(ctx: RunContext) -> RunStatus:
         _step_end(ctx, StepName.CONVERSE, "ok", detail)
         return RunStatus.DONE
     effort = pol.tier_effort(ctx.tier)
+    ctx.phase2_follows = pol.phase2_enabled and effort.phase2 is not None
     _choose_comparison(ctx)
+    if _repo_skips_phase1(ctx):
+        return _phase2_only(ctx, _without_phase1(effort))
     if _backlog_skips_phase1(ctx, phase2_effort=effort.phase2):
         return _phase2_only(ctx, effort)
+    if effort.single_stage and pol.phase2_enabled and effort.phase2 and not ctx.is_audit:
+        return _single_stage(ctx, effort)
     try:
         ctx.phase1_outputs = _reviewer_step(
             ctx,
@@ -2358,7 +2408,15 @@ def run(ctx: RunContext) -> RunStatus:
         return _phase2_only(ctx, effort)
     _step_start(ctx, StepName.GATE)
     tier_allows = effort.phase2 is not None
-    admit = admit_phase2(ctx.verify1, phase2_enabled=pol.phase2_enabled, tier_allows=tier_allows)
+    # the gate only defers a Phase 2 that would run; a head whose final review already stands
+    # (a same-sha re-review) is never held back, nor its verdict retracted, by suggestions alone
+    blocks = (
+        pol.phase2_enabled
+        and tier_allows
+        and phase1_blocks(ctx.verify1, pol.phase1_gate)
+        and not (ctx.verify1.blocker_count == 0 and _final_review_stands(ctx))
+    )
+    admit = pol.phase2_enabled and tier_allows and not blocks
     if ctx.audit and ctx.audit["mode"] != audit.MODE_LIGHT:
         # nobody will push a fix and re-run the gate on a merged PR: an audit needs the
         # complete finding set, so Phase 2 runs whether or not Phase 1 found blockers
@@ -2367,13 +2425,30 @@ def run(ctx: RunContext) -> RunStatus:
         ctx,
         StepName.GATE,
         "ok",
-        {"admit_phase2": admit, "tier": ctx.tier, "phase2_effort": effort.phase2},
+        {
+            "admit_phase2": admit,
+            "tier": ctx.tier,
+            "phase2_effort": effort.phase2,
+            "blockers": ctx.verify1.blocker_count,
+            **gate_score(ctx.verify1, pol.phase1_gate),
+        },
     )
     if not admit:
         ctx.check_cancel()
         verifier1 = ctx.lane_model(pol.phase1_verifier)
-        if ctx.verify1.blocker_count or not pol.phase2_enabled:
-            _publish_step(ctx, phase="preliminary", verified=ctx.verify1, verifier_lm=verifier1)
+        if blocks or ctx.verify1.blocker_count or not pol.phase2_enabled:
+            # a preliminary review never approves: Phase 2 has not seen this head. Held back
+            # by suggestions alone, it would otherwise carry the gate verifier's APPROVE.
+            _publish_step(
+                ctx,
+                phase="preliminary",
+                verified=ctx.verify1,
+                verifier_lm=verifier1,
+                phase2_skipped=PHASE2_DEFERRED
+                if blocks and not ctx.verify1.blocker_count
+                else None,
+                gate_deferred=blocks,
+            )
         else:
             # no blockers and the tier says a second round adds nothing: final from Phase 1
             _publish_step(
@@ -2384,38 +2459,32 @@ def run(ctx: RunContext) -> RunStatus:
                 phase2_skipped=f"triage rated this change {ctx.tier}",
             )
         return RunStatus.DONE
-    ctx.phase2_outputs = _reviewer_step(
-        ctx,
-        step=StepName.PHASE2,
-        phase="phase2",
-        lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
-        expected_phase="final",
-    )
-    ctx.verify2 = _verify_step(
-        ctx,
-        step=StepName.VERIFY2,
-        phase="verify2",
-        lm=ctx.lane_model(pol.phase2_verifier),
-        expected_phase="final",
-    )
-    ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
-    _publish_step(
-        ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
-    )
-    return RunStatus.DONE
+    return _phase2_only(ctx, effort)
 
 
-def _phase2_only(ctx: RunContext, effort: Any) -> RunStatus:
+def _phase2_only(ctx: RunContext, effort: TierEffort) -> RunStatus:
     """Phase 2 and the final verifier on their own, when Phase 1 did not run (a deep queue)
     or did not finish (every rung of its ladder failed)."""
-    pol = ctx.cfg.policy
+    _phase2_reviewers(ctx, effort)
+    return _final_review(ctx, effort)
+
+
+def _phase2_reviewers(
+    ctx: RunContext, effort: TierEffort, abort: threading.Event | None = None
+) -> None:
     ctx.phase2_outputs = _reviewer_step(
         ctx,
         step=StepName.PHASE2,
         phase="phase2",
-        lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
+        lm=ctx.lane_model(_with_effort(ctx.cfg.policy.phase2_reviewer, effort.phase2)),
         expected_phase="final",
+        abort=abort,
     )
+
+
+def _final_review(ctx: RunContext, effort: TierEffort) -> RunStatus:
+    """The final verifier over the Phase-2 (and any Phase-1) output, then the final review."""
+    pol = ctx.cfg.policy
     ctx.verify2 = _verify_step(
         ctx,
         step=StepName.VERIFY2,
@@ -2428,6 +2497,111 @@ def _phase2_only(ctx: RunContext, effort: Any) -> RunStatus:
         ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
     )
     return RunStatus.DONE
+
+
+def _final_review_stands(ctx: RunContext) -> bool:
+    """A final review for this exact head is already on the PR (a same-sha re-review)."""
+    if ctx.dry_run:
+        return False
+    try:
+        return (
+            github.existing_review_for_sha(
+                ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
+            )
+            is not None
+        )
+    except ReviewError as exc:  # unknown: gate as usual; step_publish re-checks before posting
+        log.warning("could not look up a standing final review: %s", exc)
+        return False
+
+
+def _repo_skips_phase1(ctx: RunContext) -> bool:
+    """The repo is configured without Phase 1 (`phase1: false` in its skills entry): its
+    reviews go straight to Phase 2, recorded and disclosed like the backlog rule. Not for an
+    audit (it keeps its own flow) or when there is no Phase 2 to go to."""
+    repo = ctx.cfg.repo(ctx.repo)
+    if repo is None or repo.phase1 or ctx.is_audit or not ctx.cfg.policy.phase2_enabled:
+        return False
+    _skip_phase1(ctx, PHASE1_REPO_OFF, "phase1.skipped_repo")
+    return True
+
+
+def _without_phase1(effort: TierEffort) -> TierEffort:
+    """The tier's efforts for a run that has no Phase 1: a tier that skips Phase 2 (trivial)
+    reviews in Phase 2 at the lowest effort instead, since Phase 2 is all there is."""
+    if effort.phase2 is not None:
+        return effort
+    return dataclasses.replace(effort, phase2=NO_PHASE1_TRIVIAL_EFFORT)
+
+
+def _single_stage(ctx: RunContext, effort: TierEffort) -> RunStatus:
+    """One stage, no blocker gate (a tier with `single_stage`): the Phase-1 reviewers on their
+    ladder model run beside the Phase-2 reviewers, and the final verifier weighs both sets,
+    so the review gets both models' view in the time of the slower phase. Phase 1 is extra
+    coverage here: when it fails on every rung its output is dropped and disclosed, never the
+    review. When Phase 2 fails, Phase 1 is stopped and the run fails as it would have."""
+    ctx.single_stage = True
+    abort = threading.Event()
+    p1: dict[str, Any] = {}
+
+    def phase1() -> None:
+        try:
+            p1["out"] = _reviewer_step(
+                ctx,
+                step=StepName.PHASE1,
+                phase="phase1",
+                lm=lambda: _choose_phase1(ctx, effort.phase1),
+                expected_phase="preliminary",
+                abort=abort,
+            )
+        except BaseException as exc:  # handed to the main thread below
+            p1["exc"] = exc
+            stopped = isinstance(exc, (Cancelled, LaneStopped)) or abort.is_set()
+            try:  # a failed Phase 2 is charged to `phase2`; this step must not stay running
+                _step_end(ctx, StepName.PHASE1, "cancelled" if stopped else "failed")
+            except sqlite3.Error as db_exc:
+                log.warning("could not close the single-stage phase1 step: %s", db_exc)
+        finally:
+            ctx.close_lane_conn()
+
+    t = threading.Thread(target=phase1, name="single-stage-phase1", daemon=True)
+    t.start()
+    try:
+        _phase2_reviewers(ctx, effort)
+    except BaseException:
+        abort.set()
+        raise
+    finally:
+        t.join()
+    exc = p1.get("exc")
+    if exc is None:
+        ctx.phase1_outputs = p1["out"]
+    elif isinstance(exc, Cancelled) or not isinstance(exc, Exception):
+        raise exc
+    else:
+        _drop_single_stage_phase1(ctx, exc)
+    ctx.check_cancel()
+    return _final_review(ctx, effort)
+
+
+def _drop_single_stage_phase1(ctx: RunContext, exc: Exception) -> None:
+    """Phase 1 of a single-stage run failed while Phase 2 finished: review on Phase 2 alone."""
+    msg = exc.message if isinstance(exc, ReviewError) else f"{type(exc).__name__}: {exc}"
+    log.warning("single-stage phase1 failed (%s); publishing from Phase 2 alone", msg)
+    _drop_phase1(ctx, msg, StepName.PHASE1, "phase1.failed_single_stage", dropped=True)
+
+
+def _drop_phase1(ctx: RunContext, msg: str, step: StepName, kind: str, **detail: Any) -> None:
+    """Phase 1 failed and the run goes on without it: whatever it produced is dropped (never
+    handed to the final verifier unverified), the failed step and an event keep the error, and
+    the review only says Phase 1 failed (`PHASE1_FAILED`)."""
+    ctx.phase1_skipped = PHASE1_FAILED
+    ctx.phase1_outputs, ctx.verify1 = {}, None
+    with ctx.state_lock:
+        ctx.reviewers[:] = [r for r in ctx.reviewers if r["phase"] != "phase1"]
+    _step_end(ctx, step, "failed", {"error": msg[:1000], **detail})
+    with tx(ctx.conn):
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=msg[:500])
 
 
 def _phase1_failure_falls_through(
@@ -2453,21 +2627,9 @@ def _phase1_failure_falls_through(
     ):
         return False
     log.warning("phase1 failed (%s); continuing with Phase 2 only", exc)
-    ctx.phase1_skipped = PHASE1_FAILED
-    ctx.phase1_outputs, ctx.verify1 = {}, None
-    ctx.reviewers[:] = [r for r in ctx.reviewers if r["phase"] != "phase1"]
     row = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (ctx.run_id,)).fetchone()
     step = StepName(row["phase"]) if row and row["phase"] else StepName.PHASE1
-    _step_end(ctx, step, "failed", {"error": exc.message[:1000], "fell_through": True})
-    with tx(ctx.conn):
-        event(
-            ctx.conn,
-            "phase1.failed_fallthrough",
-            repo=ctx.repo,
-            number=ctx.number,
-            run_id=ctx.run_id,
-            detail=exc.message[:500],
-        )
+    _drop_phase1(ctx, exc.message, step, "phase1.failed_fallthrough", fell_through=True)
     _gate_comment(ctx, "in_progress")
     return True
 
