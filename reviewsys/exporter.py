@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from . import lanepool
 from .config import Config
-from .db import now, now_dt, parse_ts
+from .db import fmt_ts, now, now_dt, parse_ts
 from .queue_status import queued_order
 from .status import snapshot
 
@@ -69,18 +70,16 @@ def _review_findings(
     return _severity_counts(standing), _severity_counts(new)
 
 
-def build_day_runs(conn: sqlite3.Connection, days: list[str]) -> dict[str, list[dict[str, Any]]]:
-    """Every finished run of each UTC day in `days`, newest first, for the dashboard drill-down.
-
-    Only public-safe fields: `runs.reason` is left out because failure text can carry proxy
-    and account details, and findings are counted, never quoted."""
-    if not days:
-        return {}
-    scope = (
-        f"r.status IN ({','.join('?' * len(_DAY_STATUSES))}) AND r.finished_at IS NOT NULL "
-        f"AND substr(r.finished_at,1,10) IN ({','.join('?' * len(days))})"
-    )
-    params = (*_DAY_STATUSES, *days)
+def _run_facts(
+    conn: sqlite3.Connection, scope: str, params: tuple[Any, ...]
+) -> tuple[
+    dict[int, list[dict[str, Any]]],
+    dict[int, dict[tuple[str, str], dict[str, str]]],
+    dict[int, tuple[str, int | None]],
+    dict[int, str],
+]:
+    """Finished lanes, findings passes, last verification step and verdict of every run
+    matching `scope` (a WHERE clause over `runs r`)."""
     lanes: dict[int, list[dict[str, Any]]] = {}
     for row in conn.execute(
         "SELECT l.run_id,l.phase,l.role,l.model,l.effort,l.status,l.attempt,"
@@ -121,6 +120,22 @@ def build_day_runs(conn: sqlite3.Connection, days: list[str]) -> dict[str, list[
         params,
     ):
         verdicts[row["run_id"]] = _STATE_EVENTS.get(row["event"], row["event"])
+    return lanes, passes, last_verify, verdicts
+
+
+def build_day_runs(conn: sqlite3.Connection, days: list[str]) -> dict[str, list[dict[str, Any]]]:
+    """Every finished run of each UTC day in `days`, newest first, for the dashboard drill-down.
+
+    Only public-safe fields: `runs.reason` is left out because failure text can carry proxy
+    and account details, and findings are counted, never quoted."""
+    if not days:
+        return {}
+    scope = (
+        f"r.status IN ({','.join('?' * len(_DAY_STATUSES))}) AND r.finished_at IS NOT NULL "
+        f"AND substr(r.finished_at,1,10) IN ({','.join('?' * len(days))})"
+    )
+    params = (*_DAY_STATUSES, *days)
+    lanes, passes, last_verify, verdicts = _run_facts(conn, scope, params)
     out: dict[str, list[dict[str, Any]]] = {day: [] for day in days}
     for row in conn.execute(
         "SELECT r.id,r.status,r.fail_kind,r.attempt,r.tier,r.degraded,r.blocker_count,r.review_url,"
@@ -180,6 +195,221 @@ def build_day_runs(conn: sqlite3.Connection, days: list[str]) -> dict[str, list[
     return out
 
 
+# event kinds whose detail is safe on the public page. Failure, degraded and lane-drop details
+# quote lane errors (proxy and quota text), and any kind not listed here is withheld too.
+_PUBLIC_EVENT_DETAIL = frozenset(
+    {
+        "head.queued",
+        "head.superseded",
+        "head.closed",
+        "head.priority_requested",
+        "run.spawned",
+        "run.done",
+        "phase1.skipped_backlog",
+        "compare.selected",
+        "compare.lanes",
+    }
+)
+# step detail keys that are safe and useful on the public page; `error` and free-form failure
+# text are not (they can carry proxy and account details)
+_STEP_KEYS = (
+    "roles",
+    "selection",
+    "tier",
+    "method",
+    "model",
+    "effort",
+    "reasoning",
+    "admit_phase2",
+    "phase2_effort",
+    "blockers",
+    "findings",
+    "event",
+    "posted",
+    "fell_through",
+)
+
+
+def _step_info(status: str, detail: str | None) -> dict[str, Any]:
+    try:
+        raw = json.loads(detail or "{}")
+    except ValueError:
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    info = {k: raw[k] for k in _STEP_KEYS if k in raw}
+    if isinstance(info.get("reasoning"), str):
+        info["reasoning"] = info["reasoning"][:400]
+    if status == "skipped" and isinstance(raw.get("reason"), str):
+        info["reason"] = raw["reason"][:200]  # e.g. "skipped for throughput: 22 PRs queued"
+    return info
+
+
+def _live_lanes(run_dir: str | None, slot_dir: Path, at: datetime) -> list[dict[str, Any]]:
+    """The lanes of a run that are waiting for a pool slot or running right now: the ones
+    with a lanepool state file and no lane-meta.json yet (that one is written when a lane
+    ends, and the lane's row is in the DB from then on)."""
+    if not run_dir:
+        return []
+    out = []
+    lines: dict[str, list[str]] = {}
+    root = Path(run_dir)
+    # a repair lane runs in its parent lane's `repair/` subdirectory
+    found = [
+        *root.glob(f"*/*/{lanepool.LANE_STATE}"),
+        *root.glob(f"attempts/*/repair/{lanepool.LANE_STATE}"),
+    ]
+    for state_file in sorted(found):
+        lane_dir = state_file.parent
+        meta = lane_dir / "lane-meta.json"
+        try:
+            # a stand-in retry of triage/selection reuses attempt-1, whose first lane-meta.json
+            # is already there: only a state file older than it belongs to an ended lane
+            if meta.exists() and meta.stat().st_mtime_ns >= state_file.stat().st_mtime_ns:
+                continue
+        except OSError:
+            continue
+        try:
+            st = json.loads(state_file.read_text())
+        except (OSError, ValueError):
+            continue
+        repair = lane_dir.name == "repair"
+        # attempts/<phase>-<role>-<id> for phase lanes, <step>/attempt-N for selector/triage
+        named = lane_dir.parent if repair else lane_dir
+        phase = (
+            named.name.split("-", 1)[0] if named.parent.name == "attempts" else named.parent.name
+        )
+        lane = {
+            "phase": phase,
+            "role": f"{st.get('role')} (repair)" if repair else st.get("role"),
+            "model": st.get("model"),
+            "effort": st.get("effort"),
+            "pool": st.get("pool"),
+            "state": st.get("state"),
+            "since_seconds": _age(st.get("since"), at),
+            "line_position": None,
+        }
+        if lane["state"] == "waiting" and st.get("parallel"):
+            pool = str(st.get("pool"))
+            line = lines.setdefault(pool, lanepool.waiting_line(slot_dir, pool))
+            mine = [i for i, t in enumerate(line) if t.endswith(f"-{st.get('waiter')}")]
+            if mine:
+                lane["line_position"], lane["line_length"] = mine[0] + 1, len(line)
+        out.append(lane)
+    return out
+
+
+def _typical_minutes_by_tier(conn: sqlite3.Connection, at: datetime) -> dict[str, float]:
+    """Median minutes of the week's completed runs per tier: what an active run is measured
+    against."""
+    by_tier: dict[str, list[float]] = {}
+    for row in conn.execute(
+        # live reviews only, as status.median_run_minutes: an audit forces Phase 2 and more
+        "SELECT COALESCE(r.tier,'unknown') tier,r.started_at,r.finished_at FROM runs r "
+        "JOIN heads h ON h.id=r.head_id WHERE r.status='done' AND h.queue='live' AND r.finished_at>=?",
+        (fmt_ts(at - timedelta(days=7)),),
+    ):
+        minutes = (parse_ts(row["finished_at"]) - parse_ts(row["started_at"])).total_seconds()
+        by_tier.setdefault(row["tier"], []).append(minutes / 60)
+    return {t: round(sorted(v)[len(v) // 2], 1) for t, v in by_tier.items()}
+
+
+def build_active_runs(conn: sqlite3.Connection, cfg: Config, at: datetime) -> list[dict[str, Any]]:
+    """Every run in flight with everything the page can say about it: steps so far, finished
+    and live lanes, tokens and findings so far, and how long it waited to start."""
+    scope = "r.status IN ('spawned','running')"
+    lanes, passes, last_verify, _ = _run_facts(conn, scope, ())
+    steps: dict[int, list[dict[str, Any]]] = {}
+    for row in conn.execute(
+        "SELECT s.run_id,s.name,s.status,s.started_at,s.finished_at,s.detail FROM steps s "
+        f"JOIN runs r ON r.id=s.run_id WHERE {scope} ORDER BY s.started_at, s.rowid"
+    ):
+        steps.setdefault(row["run_id"], []).append(
+            {
+                "name": row["name"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "seconds": _span(row["started_at"], row["finished_at"])
+                if row["finished_at"]
+                else _age(row["started_at"], at),
+                "info": _step_info(row["status"], row["detail"]),
+            }
+        )
+    slot_dir = cfg.work_dir / "lane-slots"
+    runs = []
+    # `queue` tells a post-merge audit (of a PR that is merged by definition) apart from a live
+    # review; without it an audit reads as a review stuck on a PR that closed hours ago
+    for row in conn.execute(
+        "SELECT r.id,r.status,r.phase,r.attempt,r.tier,r.degraded,r.started_at,r.heartbeat_at,"
+        "r.deadline_at,r.run_dir,h.repo,h.number,h.sha,h.queue,h.trigger,h.priority,h.queued_at,"
+        "p.title,p.author,"
+        "(SELECT MAX(o.finished_at) FROM runs o WHERE o.head_id=r.head_id AND o.id<r.id) prev_end "
+        "FROM runs r JOIN heads h ON h.id=r.head_id "
+        "LEFT JOIN prs p ON p.repo=h.repo AND p.number=h.number "
+        f"WHERE {scope} ORDER BY r.started_at"
+    ):
+        run_lanes = lanes.get(row["id"], [])
+        findings, _ = _review_findings(passes.get(row["id"], {}), last_verify.get(row["id"]))
+        waited_from = max(filter(None, (row["queued_at"], row["prev_end"])), default=None)
+        run = dict(row)
+        for internal in ("run_dir", "prev_end"):
+            del run[internal]
+        run.update(
+            {
+                "degraded": bool(row["degraded"]),
+                "priority": bool(row["priority"]),
+                "pr_url": f"https://github.com/{row['repo']}/pull/{row['number']}",
+                "elapsed_seconds": _age(row["started_at"], at),
+                "heartbeat_age_seconds": _age(row["heartbeat_at"], at),
+                "deadline_in_seconds": int((parse_ts(row["deadline_at"]) - at).total_seconds())
+                if row["deadline_at"]
+                else None,
+                "wait_seconds": _span(waited_from, row["started_at"]),
+                "steps": steps.get(row["id"], []),
+                "lanes": run_lanes,
+                "live_lanes": _live_lanes(row["run_dir"], slot_dir, at),
+                "tokens_in": sum(x["tokens_in"] for x in run_lanes),
+                "tokens_out": sum(x["tokens_out"] for x in run_lanes),
+                # the last finished verification's findings; None before any verifier ran
+                "findings": findings if row["id"] in last_verify else None,
+            }
+        )
+        runs.append(run)
+    return runs
+
+
+def build_lane_pools(
+    conn: sqlite3.Connection, cfg: Config, active: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Per model pool: its slot count now, lanes running and lanes waiting in line. A run that
+    looks stalled is usually a run whose reviewers are waiting here."""
+    slot_dir = cfg.work_dir / "lane-slots"
+    live = [lane for run in active for lane in run["live_lanes"]]
+    out = []
+    for pool in sorted({"gpt", lanepool.COMPARE_POOL, *cfg.lane_pools}):
+        mine = [x for x in live if x["pool"] == pool]
+        out.append(
+            {
+                "pool": pool,
+                "slots": lanepool.limit(conn, cfg, pool),
+                "running": sum(1 for x in mine if x["state"] == "running"),
+                # reviewers wait in the ticket line; verifiers, triage and other short lanes
+                # wait without a ticket (they take the reserved top slot first)
+                "waiting": len(lanepool.waiting_line(slot_dir, pool))
+                + sum(1 for x in mine if x["state"] == "waiting" and x["line_position"] is None),
+            }
+        )
+    return out
+
+
+def _queue_reason(head: sqlite3.Row, ts: str) -> str:
+    if head["eligible_at"] <= ts:
+        return "waiting for a review slot"
+    if head["attempts"]:
+        return f"retry backoff after attempt {head['attempts']}"
+    return "debounce (more pushes may follow)"
+
+
 def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     at = now_dt()
     live = snapshot(conn, cfg)
@@ -213,31 +443,30 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
                 "eligible_at": row["eligible_at"],
                 "age_seconds": _age(row["queued_at"], at),
                 "eligible": row["eligible_at"] <= ts,
-                "reason": "waiting for debounce/backoff"
-                if row["eligible_at"] > ts
-                else "waiting for a review slot",
+                "attempts": row["attempts"],
+                "eligible_in_seconds": max(
+                    0, int((parse_ts(row["eligible_at"]) - at).total_seconds())
+                ),
+                "reason": _queue_reason(row, ts),
                 "pr_url": f"https://github.com/{row['repo']}/pull/{row['number']}",
                 "prioritize_url": f"https://github.com/{row['repo']}/issues/{row['number']}#issuecomment-{comment[0]}"
                 if comment
                 else f"https://github.com/{row['repo']}/pull/{row['number']}#issuecomment-new",
             }
         )
-    runs = []
-    # `queue` tells a post-merge audit (of a PR that is merged by definition) apart from a live
-    # review; without it an audit reads as a review stuck on a PR that closed hours ago
-    for row in conn.execute(
-        "SELECT r.id,r.status,r.phase,r.attempt,r.started_at,r.heartbeat_at,r.deadline_at,h.repo,h.number,h.sha,"
-        "h.queue,p.title FROM runs r JOIN heads h ON h.id=r.head_id "
-        "LEFT JOIN prs p ON p.repo=h.repo AND p.number=h.number "
-        "WHERE r.status IN ('spawned','running') ORDER BY r.started_at"
-    ):
-        runs.append(
-            {
-                **dict(row),
-                "elapsed_seconds": _age(row["started_at"], at),
-                "heartbeat_age_seconds": _age(row["heartbeat_at"], at),
-            }
-        )
+    runs = build_active_runs(conn, cfg, at)
+    today = ts[:10]
+    today_row = conn.execute(
+        "SELECT COUNT(*) FILTER (WHERE status='done') reviews,"
+        "COUNT(*) FILTER (WHERE status IN ('failed','timed_out')) failed FROM runs "
+        "WHERE finished_at>=?",
+        (today,),
+    ).fetchone()
+    today_tokens = conn.execute(
+        "SELECT COALESCE(SUM(COALESCE(tokens_in,0)+COALESCE(tokens_out,0)),0) FROM lanes l "
+        "JOIN runs r ON r.id=l.run_id WHERE r.finished_at>=? AND r.status='done'",
+        (today,),
+    ).fetchone()[0]
     daily = [
         dict(r)
         for r in conn.execute(
@@ -276,13 +505,15 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "SELECT severity, COUNT(*) count FROM findings GROUP BY severity ORDER BY severity"
         )
     ]
-    recent = [
-        dict(r)
-        for r in conn.execute(
-            "SELECT ts,kind,repo,number,run_id,detail FROM events WHERE kind NOT LIKE 'audit.%' "
-            "ORDER BY id DESC LIMIT 40"
-        )
-    ]
+    recent = []
+    for r in conn.execute(
+        "SELECT ts,kind,repo,number,run_id,detail FROM events WHERE kind NOT LIKE 'audit.%' "
+        "ORDER BY id DESC LIMIT 40"
+    ):
+        event = dict(r)
+        if event["kind"] not in _PUBLIC_EVENT_DETAIL:
+            event["detail"] = None
+        recent.append(event)
     cap = live.pop("capacity")
     live["capacity"] = {
         "typical": cap["normal"],
@@ -290,8 +521,21 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         "maximum": cap["ceiling"],
         "scale": cap["scale"],
         "usable_accounts": cap["usable"],
+        "reason": cap["reason"],
+        "live_in_flight": sum(1 for r in runs if r["queue"] != "audit"),
     }
     live["priority_queued"] = sum(1 for q in queued if q["priority"])
+    live["lane_pools"] = build_lane_pools(conn, cfg, runs)
+    live["typical_minutes_by_tier"] = _typical_minutes_by_tier(conn, at)
+    live["today"] = {
+        "day": today,
+        "reviews": today_row["reviews"],
+        "failed": today_row["failed"],
+        "tokens": today_tokens,
+        "findings_posted": conn.execute(
+            "SELECT COUNT(*) FROM posted_findings WHERE posted_at>=?", (today,)
+        ).fetchone()[0],
+    }
     return {
         "schema_version": 1,
         "generated_at": now(),
@@ -303,6 +547,13 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "recent_events": recent,
             "totals": {
                 "findings": conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0],
+                # `findings` counts every lane's and verifier's raw rows; this is what reached GitHub
+                "findings_posted": conn.execute("SELECT COUNT(*) FROM posted_findings").fetchone()[
+                    0
+                ],
+                "reviews_imported": conn.execute(
+                    "SELECT COUNT(*) FROM reviews WHERE imported=1"
+                ).fetchone()[0],
                 "reviews": conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0],
                 "runs": conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0],
                 "tokens_in": token_totals["tokens_in"],

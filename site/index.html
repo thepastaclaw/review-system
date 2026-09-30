@@ -22,17 +22,20 @@ h1{font-size:34px;line-height:1.1;margin:7px 0}
 .card{padding:18px}.label{color:var(--muted);font-size:12px}
 .value{font-size:30px;font-weight:760;letter-spacing:-.04em;margin-top:6px}
 .value small{font-size:13px;font-weight:500;letter-spacing:0;color:var(--muted);margin-left:4px}
-.layout{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}
+.csub{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* minmax(0,…): a long unbreakable line must not widen a column past the page */
+.layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:16px}
 .panel{padding:20px;margin-bottom:16px}
 .panel h2{font-size:17px;margin:0 0 15px}
 .panel h2 span{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px}
 .panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 7px}
 .panel h3 small{font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0}
-.queue{display:grid;gap:9px}
+.queue{display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
 .item{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px 14px;background:var(--item);border:1px solid var(--item-line);border-radius:10px}
 .repo{font-weight:700}.repo a{color:inherit}.repo a:hover{color:var(--blue);text-decoration:none}
 .actions{font-size:11px;margin-top:5px}
-.title{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:480px}
+.item>div:first-child{min-width:0;flex:1}
+.title{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pill{display:inline-block;font-size:11px;line-height:1.5;border-radius:999px;padding:1px 8px;background:var(--pill);color:var(--pill-text);white-space:nowrap;font-weight:600}
 .pill.priority,.pill.warn{background:#4c3820;color:var(--amber)}
 .pill.bad{background:#401d2b;color:var(--red)}
@@ -90,9 +93,39 @@ tr.lanes td{padding:0 10px 14px;background:var(--hover)}
 .lanemeta{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:8px 2px 0}
 .lanemeta b{color:var(--text);font-weight:600}
 .empty{padding:28px;text-align:center;color:var(--muted)}
+
+/* active runs */
+.aruns{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.arun{padding:14px 16px;background:var(--item);border:1px solid var(--item-line);border-radius:12px;min-width:0}
+.arun-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+.arun-head>div:first-child{min-width:0;flex:1}
+.arun .repo{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.arun .elapsed{text-align:right;white-space:nowrap}.arun .elapsed strong{font-size:20px;letter-spacing:-.02em}
+.prog{height:4px;background:var(--rule);border-radius:2px;margin-top:6px;width:170px;overflow:hidden}
+.prog i{display:block;height:100%;background:var(--blue)}.prog.over i{background:var(--amber)}
+.facts{display:flex;flex-wrap:wrap;gap:3px 18px;font-size:12px;color:var(--muted);margin-top:8px}
+.facts b{color:var(--text);font-weight:600}
+.steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.step{font-size:11px;border-radius:6px;padding:2px 8px;border:1px solid var(--item-line);color:var(--muted);white-space:nowrap}
+.step b{color:var(--text);font-weight:600}
+.step.running{border-color:var(--blue);color:var(--text);animation:pulse 2s ease-in-out infinite}
+.step.failed{border-color:var(--red);color:var(--red)}.step.skipped{opacity:.6;text-decoration:line-through}
+@keyframes pulse{50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 25%,transparent)}}
+.why{font-size:12px;color:var(--muted);margin-top:8px;font-style:italic;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.live{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:4px 14px;font-size:12px;margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--item-line)}
+.live .dot{width:8px;height:8px;border-radius:50%;background:var(--green);align-self:center}.live .dot.wait{background:transparent;border:2px solid var(--amber)}
+.live .r{text-align:right;white-space:nowrap}
+details.done-lanes{margin-top:8px;font-size:12px}details.done-lanes summary{cursor:pointer;color:var(--blue)}
+details.done-lanes .lanegrid{margin-top:6px;overflow-x:auto}
+.pool{display:grid;grid-template-columns:70px minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 0;border-bottom:1px solid var(--rule);color:var(--muted);font-size:13px}
+.pool b{color:var(--text)}.pool .bar{margin:0}.pool .bar i.w{background:var(--amber)}
+.ev{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;padding:7px 0;border-bottom:1px solid var(--rule);font-size:13px}
+.ev .when{color:var(--muted);font-size:12px;text-align:right}.ev .what b{font-weight:600}
+.ev .d{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hidden{display:none!important}
 @media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}
-@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:flex-start;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
+@media(max-width:700px){.arun-head{flex-direction:column;align-items:stretch}.arun .elapsed{text-align:left}.live{grid-template-columns:auto minmax(0,1fr) auto}.live .m{display:none}}
+@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:stretch;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
 </style>
 </head>
 <body>
@@ -103,13 +136,14 @@ tr.lanes td{padding:0 10px 14px;background:var(--hover)}
     <div id="status" class="status">● CONNECTING</div>
   </header>
   <section id="cards" class="cards"></section>
+  <section class="panel"><h2>Active runs <span id="active-count"></span></h2><div id="active" class="aruns"></div></section>
   <div class="layout">
     <div>
       <section class="panel"><h2>Queue <span id="queue-count"></span></h2><div id="queue" class="queue"></div></section>
       <section class="panel"><h2>Recent throughput <span>click a day for every review it ran</span></h2><div id="daily"></div></section>
     </div>
     <div>
-      <section class="panel"><h2>Active runs <span id="active-count"></span></h2><div id="active" class="queue"></div></section>
+      <section class="panel"><h2>Lane pools <span>model sessions running · waiting for a slot</span></h2><div id="pools"></div></section>
       <section class="panel"><h2>System health</h2><div id="health"></div></section>
       <section class="panel"><h2>Recent events</h2><div id="events"></div></section>
       <section class="panel"><h2>Token usage</h2><div id="tokens"></div></section>
@@ -162,6 +196,49 @@ const $=s=>document.querySelector(s),
   publishedDays=()=>(status?.history?.daily||[]).map(x=>x.day);
 
 let status=null,showAllDays=false;
+const openLanes=new Set();  // active runs whose finished-lane list is expanded; survives refresh
+const STEP_LABELS={worktree:'checkout',select:'lanes chosen',triage:'triage',context:'context',phase1:'Phase 1',verify1:'verify 1',gate:'gate',phase2:'Phase 2',verify2:'verify 2',fresh_phase2:'fresh Phase 2',fresh_verify2:'fresh verify',publish:'publish',persistence:'persistence',converse:'conversation'};
+const STEP_MARKS={ok:'✓ ',failed:'✗ ',running:'● '};
+const EVENT_LABELS={'run.spawned':'Run started','run.done':'Review finished','run.failed':'Run failed','run.timed_out':'Run timed out','run.cancelled':'Run cancelled','run.cancel_requested':'Cancel requested','head.queued':'Queued','head.requeued':'Re-queued','head.superseded':'Superseded by a newer push','head.failed':'Gave up on head','head.closed':'PR closed','head.review_reply':'Reply on a review','head.priority_requested':'Priority requested','thread.answered':'Answered a review thread','phase1.model_selected':'Phase 1 model chosen','phase1.skipped_backlog':'Phase 1 skipped (backlog)','phase1.failed_fallthrough':'Phase 1 failed, fell through','degraded.transition':'Mode changed','degraded.run':'Run on stand-in models','degraded.entered_midrun':'Went degraded mid-run','compare.selected':'Comparison lane added','account.disabled':'Account parked','daemon.start':'Daemon started','daemon.stop':'Daemon stopped'};
+// bookkeeping that says nothing about reviews
+const EVENT_NOISE=new Set(['label.synced','label.sync_failed','gc.run','router.batch']);
+
+function stepChip(st){
+  const i=st.info||{},bits=[];
+  if(st.name==='triage'&&i.tier)bits.push(i.tier);
+  if(st.name==='select'&&i.selection)bits.push(`${i.selection.length+1} lanes`);
+  if(/^(fresh_)?phase[12]$/.test(st.name)&&i.roles)bits.push(`${i.roles.length} reviewers`);
+  if(/verify/.test(st.name)&&i.findings!=null)bits.push(`${i.findings} findings${i.blockers?` · ${i.blockers} blocking`:''}`);
+  if(st.name==='gate'&&i.admit_phase2!=null)bits.push(i.admit_phase2?`Phase 2 at ${i.phase2_effort||'?'}`:'no Phase 2');
+  if(st.name==='publish'&&i.event)bits.push(i.event.toLowerCase().replace('_',' '));
+  return `<span class="step ${esc(st.status)}" title="${esc(i.reason||'')}">${STEP_MARKS[st.status]||''}<b>${esc(STEP_LABELS[st.name]||st.name)}</b> ${dur(st.seconds)}${bits.length?' · '+esc(bits.join(' · ')):''}</span>`;
+}
+
+function activeCard(a,l){
+  const typical=(l.typical_minutes_by_tier||{})[a.tier||'unknown'],pct=typical?a.elapsed_seconds/60/typical*100:0,
+    triage=(a.steps||[]).find(s=>s.name==='triage')?.info,f=a.findings,lanes=a.lanes||[],live=a.live_lanes||[];
+  const tags=[a.tier?`<span class=pill>${esc(a.tier)}</span>`:'',a.priority?'<span class="pill priority">priority</span>':'',a.queue==='audit'?'<span class="pill priority">post-merge audit</span>':'',a.attempt>1?`<span class="pill warn">attempt ${a.attempt}</span>`:'',a.degraded?'<span class="pill warn">stand-in models</span>':'',`<span class=pill>${esc((a.trigger||'').replace(/_/g,' '))}</span>`].join(' ');
+  const liveRows=live.map(x=>`<span class="dot${x.state==='waiting'?' wait':''}"></span><span>${x.state==='waiting'?`waiting for a <b>${esc(x.pool)}</b> slot`:'<b>running</b>'}</span><span class=m>${esc(STEP_LABELS[x.phase]||x.phase)} · ${esc(x.role)} · ${esc(x.model)}${x.effort?' · '+esc(x.effort):''}${x.line_position?` · #${x.line_position} of ${x.line_length} in line`:''}</span><span class=r>${dur(x.since_seconds)}</span>`).join('');
+  return `<div class=arun>
+    <div class=arun-head><div>
+      <div class=repo><a href="${esc(a.pr_url)}" target=_blank rel=noopener>${esc(a.repo)} #${a.number}</a> ${tags}</div>
+      <div class=title title="${esc(a.title)}">${esc(a.title||a.sha.slice(0,10))}${a.author?` <span class=muted>· ${esc(a.author)}</span>`:''}</div>
+    </div><div class=elapsed><strong>${dur(a.elapsed_seconds)}</strong><div class=muted style="font-size:12px">${typical?`typical ${esc(a.tier)} ≈ ${Math.round(typical)}m`:'running'}</div>${typical?`<div class="prog${pct>100?' over':''}"><i style="width:${Math.min(100,pct)}%"></i></div>`:''}</div></div>
+    <div class=steps>${(a.steps||[]).map(stepChip).join('')||`<span class="step running">● <b>${esc(a.phase||'starting')}</b></span>`}</div>
+    ${triage?.reasoning?`<div class=why title="${esc(triage.reasoning)}">Triage: ${esc(triage.reasoning)}</div>`:''}
+    ${live.length?`<div class=live>${liveRows}</div>`:''}
+    <div class=facts>
+      <span>Tokens so far <b>${tok(a.tokens_in+a.tokens_out)}</b> in ${lanes.length} finished lane${lanes.length===1?'':'s'}</span>
+      ${f?`<span>Findings so far <b>${f.blocking}</b> blocking · <b>${f.suggestion}</b> suggestions · <b>${f.nitpick}</b> nits</span>`:''}
+      <span>Waited <b>${dur(a.wait_seconds)}</b> to start</span>
+      <span>Started <b>${esc(a.started_at.slice(11,16))}</b> UTC</span>
+      <span>Heartbeat <b>${dur(a.heartbeat_age_seconds)}</b> ago</span>
+      ${a.deadline_in_seconds!=null?`<span>Deadline in <b>${dur(Math.max(0,a.deadline_in_seconds))}</b></span>`:''}
+      <span>Run <b>${a.id}</b> · <code>${esc(a.sha.slice(0,10))}</code></span>
+    </div>
+    ${lanes.length?`<details class=done-lanes data-run="${a.id}"${openLanes.has(a.id)?' open':''}><summary>${lanes.length} finished lanes</summary><div class=lanegrid><span class=h>Phase</span><span class=h>Lane</span><span class=h>Model · effort</span><span class="h r">Input</span><span class="h r">Output</span><span class=h>Status</span>${lanes.map(x=>`<span>${esc(x.phase)}</span><span>${esc(x.role)}${x.attempt>1?` <span class=muted>#${x.attempt}</span>`:''}</span><span>${esc(x.model)}${x.effort?` <span class=muted>· ${esc(x.effort)}</span>`:''}</span><span class=r>${x.tokens_in.toLocaleString()}</span><span class=r>${x.tokens_out.toLocaleString()}</span><span class=${x.status==='completed'?'muted':''}>${esc(x.status)}</span>`).join('')}</div></details>`:''}
+  </div>`;
+}
 const dayCache={},view={day:null,runs:[],sort:{k:'finished_at',dir:-1},status:'done',text:'',repo:'',open:new Set()};
 
 function renderOverview(d){
@@ -169,22 +246,28 @@ function renderOverview(d){
   $('#meta').innerHTML=`Live as of <code>${esc(d.data_as_of)}</code> · ${dg.active?'⚠️ degraded: primary models out of quota, reviews run on stand-in models':attn?'attention required':'all systems nominal'}`;
   $('#status').textContent=dg.active?'● DEGRADED · STAND-IN MODELS':attn?'● ATTENTION':'● OPERATIONAL';
   $('#status').className='status'+(dg.active||attn?' bad':'');
-  const cs=[['Queued',h.queued||0],['Running',h.running||0],['Completed',h.done||0],['Failed',h.failed||0],['Findings',d.history?.totals?.findings||0],['Reviews',d.history?.totals?.reviews||0]];
-  $('#cards').innerHTML=cs.map(x=>`<div class=card><div class=label>${x[0]}</div><div class=value>${x[1].toLocaleString()}</div></div>`).join('');
-  $('#queue-count').textContent=`${h.queued||0} waiting`;
-  $('#queue').innerHTML=rows(l.queued,(q,i)=>`<div class=item><div><div class=repo><span class=muted>${q.position||i+1}.</span> <a href="${q.pr_url}">${esc(q.repo)} #${q.number}</a> <span class=pill>${esc(q.trigger)}</span></div><div class=title>${esc(q.title||q.sha.slice(0,8))}</div><div class=actions><a href="${q.pr_url}">Open PR</a> · <a href="${q.prioritize_url}">Prioritize</a></div></div><div class=time><strong>${age(q.age_seconds)}</strong><span class=muted>${q.eligible?q.priority?'<span class="pill priority">priority</span>':'ready':'<span class="pill">'+esc(q.reason)+'</span>'}</span></div></div>`);
-  $('#active-count').textContent=`${l.active?.length||0} in flight · typical ${l.capacity?.typical||0}`+(l.capacity?.priority_overflow?` + ${l.capacity.priority_overflow} priority`:'');
-  $('#active').innerHTML=rows(l.active,a=>`<div class=item><div><div class=repo><a href="https://github.com/${a.repo}/pull/${a.number}">${esc(a.repo)} #${a.number}</a> ${a.queue==='audit'?'<span class="pill priority">post-merge audit</span> ':''}<span class=pill>${esc(a.phase)}</span></div><div class=title>${a.title?esc(a.title)+' · ':''}run ${a.id}</div></div><div class=time><strong>${age(a.elapsed_seconds)}</strong><span class=muted>heartbeat ${age(a.heartbeat_age_seconds)} ago</span></div></div>`,'No active reviews');
+  const t=d.history?.totals||{},td=l.today||{},cap=l.capacity||{},queued=l.queued||[],ready=queued.filter(q=>q.eligible).length,
+    active=l.active||[],liveIn=cap.live_in_flight??active.length;
+  const cs=[['Queued',h.queued||0,`${ready} ready · ${queued.length-ready} in debounce`],['Running',active.length,`${cap.maximum??'?'} slots now`],['Reviewed today',td.reviews??'—',td.failed?`${td.failed} failed runs`:''],['Findings posted today',td.findings_posted??'—',''],['Tokens today',tok(td.tokens),td.reviews?`${tok(Math.round(td.tokens/td.reviews))}/review`:''],['Median review',`${Math.round(l.median_run_minutes||0)}m`,'last 20']];
+  $('#cards').innerHTML=cs.map(x=>`<div class=card><div class=label>${x[0]}</div><div class=value>${typeof x[1]==='number'?x[1].toLocaleString():x[1]}</div><div class=csub title="${esc(x[2])}">${esc(x[2])||'&nbsp;'}</div></div>`).join('');
+  $('#queue-count').textContent=`${h.queued||0} waiting · ${ready} ready`;
+  $('#queue').innerHTML=rows(queued,(q,i)=>`<div class=item><div><div class=repo><span class=muted>${q.position||i+1}.</span> <a href="${esc(q.pr_url)}">${esc(q.repo)} #${q.number}</a> <span class=pill>${esc((q.trigger||'').replace(/_/g,' '))}</span>${q.attempts?` <span class="pill warn">retry · attempt ${q.attempts+1}</span>`:''}</div><div class=title title="${esc(q.title)}">${esc(q.title||q.sha.slice(0,8))}${q.author?` <span class=muted>· ${esc(q.author)}</span>`:''}</div><div class=actions><a href="${esc(q.pr_url)}">Open PR</a> · <a href="${esc(q.prioritize_url)}">Prioritize</a></div></div><div class=time><strong>${age(q.age_seconds)}</strong><span class=muted>${q.eligible?q.priority?'<span class="pill priority">priority · next</span>':'ready · needs a slot':`<span class=pill title="${esc(q.reason)}">${q.attempts?'backoff':'debounce'} · starts in ${dur(q.eligible_in_seconds)}</span>`}</span></div></div>`);
+  $('#active-count').innerHTML=`${active.length} in flight · ${cap.maximum??'?'} slots now (${cap.typical??'?'} + ${cap.priority_overflow??0} priority${cap.reason?'; '+esc(cap.reason):''})`+(liveIn>cap.maximum?` · <span class="pill warn" title="Slots scale with usable OpenAI accounts; runs that started before they shrank keep going">over by ${liveIn-cap.maximum}: capacity shrank after they started</span>`:'');
+  $('#active').innerHTML=rows(active,a=>activeCard(a,l),'No active reviews');
   renderDaily(d.history?.daily||[]);
-  $('#health').innerHTML=`<div class=metric><span>Mode</span><b>${dg.configured?dg.active?'degraded'+(dg.forced?' (forced '+esc(dg.forced)+')':''):'normal':'—'}</b></div>${dg.active?`<div class=metric><span>Stand-ins</span><b>${esc(Object.entries(dg.substitutes||{}).map(([k,v])=>k+' → '+v).join(', '))}</b></div><div class=metric><span>Reason</span><b>${esc((dg.last_probe||{}).reason||'')}</b></div>`:''}<div class=metric><span>Ingest</span><b>${w.ingest_stale?'stale':'fresh'}</b></div><div class=metric><span>Eligible work</span><b>${w.eligible??0}</b></div><div class=metric><span>Active slots</span><b>${w.active??0}</b></div><div class=metric><span>Median run</span><b>${Math.round(l.median_run_minutes||0)}m</b></div>`;
-  $('#events').innerHTML=rows((d.history?.recent_events||[]).slice(0,6),e=>`<div class=metric><span>${esc(e.kind)}</span><b>${esc(e.repo||'system')} ${e.number?'#'+e.number:''}</b></div>`);
-  const t=d.history?.totals||{},models=d.history?.tokens_by_model||[],efforts=d.history?.tokens_by_effort||[],totalTok=t.tokens_total||0,
+  const pools=l.lane_pools||[];
+  $('#pools').innerHTML=rows(pools,p=>{const n=p.slots||0,busy=p.running;return `<div class=pool><b>${esc(p.pool)}</b><div class=bar title="${busy} running of ${n}">${n?`<i style="width:${Math.min(100,busy/n*100)}%"></i>`:''}</div><span><b>${busy}</b> of ${n} running${p.waiting?` · <b style="color:var(--amber)">${p.waiting}</b> waiting`:''}</span></div>`},'No pools configured')
+    +`<div class=foot style="margin-top:8px">A pool's top slot is kept for verifiers, triage and other short lanes; reviewers line up for the rest.</div>`;
+  $('#health').innerHTML=`<div class=metric><span>Mode</span><b>${dg.configured?dg.active?'degraded'+(dg.forced?' (forced '+esc(dg.forced)+')':''):'normal':'—'}</b></div>${dg.active?`<div class=metric><span>Stand-ins</span><b>${esc(Object.entries(dg.substitutes||{}).map(([k,v])=>k+' → '+v).join(', '))}</b></div><div class=metric><span>Reason</span><b>${esc((dg.last_probe||{}).reason||'')}</b></div>`:''}<div class=metric><span>Review slots</span><b>${cap.maximum??'—'} (${esc(cap.reason||'')})</b></div><div class=metric><span>Ingest</span><b>${w.ingest_stale?'stale':'fresh'}</b></div><div class=metric><span>Ready to start</span><b>${w.eligible??0}</b></div><div class=metric><span>Median run</span><b>${Math.round(l.median_run_minutes||0)}m</b></div><div class=metric><span>All time</span><b>${(t.completed_reviews||0).toLocaleString()} reviews run · ${(t.findings_posted??0).toLocaleString()} findings posted</b></div>`;
+  const asOf=Date.parse(d.generated_at);
+  $('#events').innerHTML=rows((d.history?.recent_events||[]).filter(e=>!EVENT_NOISE.has(e.kind)).slice(0,10),e=>`<div class=ev><span class=when title="${esc(e.ts)}">${dur(Math.max(0,Math.round((asOf-Date.parse(e.ts))/1000)))}</span><div class=what><b>${esc(EVENT_LABELS[e.kind]||e.kind)}</b> ${e.repo?`<a href="https://github.com/${esc(e.repo)}/pull/${e.number}">${esc(e.repo)} #${e.number}</a>`:'<span class=muted>system</span>'}${e.detail&&!/^[{\[]/.test(e.detail)?`<div class=d title="${esc(e.detail)}">${esc(e.detail)}</div>`:''}</div></div>`);
+  const models=d.history?.tokens_by_model||[],efforts=d.history?.tokens_by_effort||[],totalTok=t.tokens_total||0,
     share=n=>totalTok?((n/totalTok)*100).toFixed(1)+'%':'—',
     maxModel=Math.max(1,...models.map(x=>(x.tokens_in||0)+(x.tokens_out||0))),maxEffort=Math.max(1,...efforts.map(x=>(x.tokens_in||0)+(x.tokens_out||0)));
   $('#tokens').innerHTML=`<div class=metric><span>Total tokens</span><b>${totalTok.toLocaleString()}</b></div><div class=metric><span>Average per completed review</span><b>${(t.avg_tokens_per_completed_review||0).toLocaleString()}</b></div><div class=metric><span>Input / output</span><b>${(t.tokens_in||0).toLocaleString()} / ${(t.tokens_out||0).toLocaleString()}</b></div><h3>Usage by model <small>share · total · avg lane</small></h3>`
     +rows(models,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.model)} <em>${share(n)}</em></span><b>${n.toLocaleString()} · ${Number(x.avg_tokens_per_lane||0).toLocaleString()} avg</b></div><div class=bar><i style="width:${n/maxModel*100}%"></i></div>`})
     +`<h3>Usage by thinking level <small>share · total</small></h3>`
-    +rows(efforts,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.effort)} <em>${share(n)}</em></span><b>${n.toLocaleString()}</b></div><div class=bar><i style="width:${n/maxEffort*100}%"></i></div>`});
+    +rows(efforts,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.effort==='unknown'?'not recorded':x.effort)} <em>${share(n)}</em></span><b>${n.toLocaleString()}</b></div><div class=bar><i style="width:${n/maxEffort*100}%"></i></div>`});
 }
 
 function renderDaily(daily){
@@ -318,6 +401,7 @@ document.addEventListener('keydown',e=>{
   if(!view.day||e.altKey||e.metaKey||e.ctrlKey||e.target.matches('input,select'))return;
   if(e.key==='Escape')location.hash='';else if(e.key==='ArrowLeft')step(1);else if(e.key==='ArrowRight')step(-1);
 });
+$('#active').addEventListener('toggle',e=>{const r=+e.target.dataset?.run;if(r)e.target.open?openLanes.add(r):openLanes.delete(r)},true);
 window.addEventListener('hashchange',()=>route());
 route();load();setInterval(load,60000);
 </script>
