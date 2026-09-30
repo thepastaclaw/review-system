@@ -1,2 +1,325 @@
-<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PastaClaw · Review Operations</title><style>:root{--bg:#0b1020;--panel:#131b31;--line:#263252;--text:#eef2ff;--muted:#91a0c2;--blue:#7c9cff;--green:#43d19e;--red:#ff6f86;--amber:#ffc86b}@media(prefers-color-scheme:light){:root{--bg:#f4f7fb;--panel:#fff;--line:#d9e1ef;--text:#182033;--muted:#63708a;--blue:#4263c5;--green:#087f5b;--red:#c92a2a;--amber:#9a6400}body{background:linear-gradient(140deg,#e8efff,#f8fafc 55%,#eef3fb)}.card,.panel{background:#fff;box-shadow:0 10px 28px #25385818}.item{background:#f8faff;border-color:#e2e8f5}.pill{background:#e8edff;color:#334a9a}}*{box-sizing:border-box}body{margin:0;background:radial-gradient(900px 420px at 15% -10%,#1e315f 0%,transparent 65%),var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}main{max-width:1280px;margin:auto;padding:42px 28px 72px}.top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:30px}.eyebrow{color:var(--blue);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:11px}h1{font-size:34px;line-height:1.1;margin:7px 0}.sub,.muted{color:var(--muted)}.status{border:1px solid #2e6d5b;background:#12372f;color:var(--green);padding:8px 13px;border-radius:999px;font-weight:700}.status.bad{border-color:#703346;background:#401d2b;color:var(--red)}.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:26px}.card,.panel{background:linear-gradient(145deg,#182340,#11192e);border:1px solid var(--line);border-radius:14px;box-shadow:0 16px 40px #05091455}.card{padding:18px}.label{color:var(--muted);font-size:12px}.value{font-size:30px;font-weight:760;letter-spacing:-.04em;margin-top:6px}.layout{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}.panel{padding:20px;margin-bottom:16px}.panel h2{font-size:17px;margin:0 0 15px}.panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 7px}.panel h2 span{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px}.queue{display:grid;gap:9px}.item{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px 14px;background:#0f172b;border:1px solid #202c4a;border-radius:10px}.repo{font-weight:700}.repo a{color:inherit;text-decoration:none}.repo a:hover{color:var(--blue)}.actions{font-size:11px;margin-top:5px}.actions a{color:var(--blue);text-decoration:none}.title{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:480px}.pill{font-size:11px;border-radius:999px;padding:4px 8px;background:#24345d;color:#b7c8ff;white-space:nowrap}.pill.priority{background:#4c3820;color:var(--amber)}.time{text-align:right;white-space:nowrap}.time strong{display:block}.metric{display:flex;justify-content:space-between;color:var(--muted);padding:7px 0;border-bottom:1px solid #202b47}.metric b{color:var(--text)}.metric em{font-style:normal;color:var(--blue);font-size:11px;margin-left:5px}.panel h3 small{font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0}code{color:#b7c8ff;font-size:12px}.foot{color:var(--muted);font-size:12px;margin-top:10px}@media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:flex-start;flex-direction:column;gap:6px}.time{text-align:left}}
-@media(prefers-color-scheme:light){body{color:var(--text)}.card,.panel{background:#ffffff!important;border-color:#d8e0ee!important;box-shadow:0 10px 26px rgba(37,56,88,.12)!important}.item{background:#f8faff!important;border-color:#dbe4f2!important}.value,.panel h2,.panel h3,.repo,.metric b{color:var(--text)!important}.label,.muted,.sub,.title,.metric{color:var(--muted)!important}.pill{background:#e7edff!important;color:#3853a0!important}.pill.priority{background:#fff0d2!important;color:#8a5a00!important}.bar{background:#e5eaf4!important}.actions a,.repo a{color:#4263c5!important}.status{background:#dff7ee!important;border-color:#9bdcc6!important;color:#087f5b!important}.status.bad{background:#ffe3e8!important;border-color:#f0a7b5!important;color:#b4233d!important}code{color:#3853a0!important}th{color:#63708a!important;border-color:#d8e0ee!important}td{border-color:#e5eaf2!important}}</style><main><header class="top"><div><div class="eyebrow">PastaClaw · Review operations</div><h1>Review control room</h1><div id="meta" class="sub">Loading live telemetry…</div></div><div id="status" class="status">● CONNECTING</div></header><section id="cards" class="cards"></section><div class="layout"><div><section class="panel"><h2>Queue <span id="queue-count"></span></h2><div id="queue" class="queue"></div></section><section class="panel"><h2>Recent throughput</h2><div id="daily"></div></section></div><div><section class="panel"><h2>Active runs <span id="active-count"></span></h2><div id="active" class="queue"></div></section><section class="panel"><h2>System health</h2><div id="health"></div></section><section class="panel"><h2>Recent events</h2><div id="events"></div></section><section class="panel"><h2>Token usage</h2><div id="tokens"></div></section></div></div><div class="foot">Auto-refreshes every 60 seconds · Derived from the private review database · <span id="updated"></span></div></main><script>const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),age=s=>{if(s==null)return'—';let m=Math.floor(s/60);return m<60?m+'m':Math.floor(m/60)+'h '+m%60+'m'},rows=(a,fn,empty='Nothing to show')=>a?.length?a.map((x,i)=>fn(x,i)).join(''):`<div class="muted">${empty}</div>`;async function load(){try{const d=await fetch('data/status.json?t='+Date.now(),{cache:'no-store'}).then(r=>r.json()),l=d.live||{},h=l.heads||{},w=l.watchdog||{};const dg=l.degraded||{},attn=w.ingest_stale||w.stuck;$('#meta').innerHTML=`Live as of <code>${esc(d.data_as_of)}</code> · ${dg.active?'⚠️ degraded: primary models out of quota, reviews run on stand-in models':attn?'attention required':'all systems nominal'}`;$('#status').textContent=dg.active?'● DEGRADED · STAND-IN MODELS':attn?'● ATTENTION':'● OPERATIONAL';$('#status').className='status'+(dg.active||attn?' bad':'');const cs=[['Queued',h.queued||0],['Running',h.running||0],['Completed',h.done||0],['Failed',h.failed||0],['Findings',d.history?.totals?.findings||0],['Reviews',d.history?.totals?.reviews||0]];$('#cards').innerHTML=cs.map(x=>`<div class=card><div class=label>${x[0]}</div><div class=value>${x[1].toLocaleString()}</div></div>`).join('');$('#queue-count').textContent=`${h.queued||0} waiting`;$('#queue').innerHTML=rows(l.queued,(q,i)=>`<div class=item><div><div class=repo><span class=muted>${q.position||i+1}.</span> <a href="${q.pr_url}">${esc(q.repo)} #${q.number}</a> <span class=pill>${esc(q.trigger)}</span></div><div class=title>${esc(q.title||q.sha.slice(0,8))}</div><div class=actions><a href="${q.pr_url}">Open PR</a> · <a href="${q.prioritize_url}">Prioritize</a></div></div><div class=time><strong>${age(q.age_seconds)}</strong><span class=muted>${q.eligible?q.priority?'<span class="pill priority">priority</span>':'ready':'<span class="pill">'+esc(q.reason)+'</span>'}</span></div></div>`);$('#active-count').textContent=`${l.active?.length||0} in flight · typical ${l.capacity?.typical||0}`+(l.capacity?.priority_overflow?` + ${l.capacity.priority_overflow} priority`:'' );$('#active').innerHTML=rows(l.active,a=>`<div class=item><div><div class=repo><a href="https://github.com/${a.repo}/pull/${a.number}">${esc(a.repo)} #${a.number}</a> ${a.queue==='audit'?'<span class="pill priority">post-merge audit</span> ':''}<span class=pill>${esc(a.phase)}</span></div><div class=title>${a.title?esc(a.title)+' · ':''}run ${a.id}</div></div><div class=time><strong>${age(a.elapsed_seconds)}</strong><span class=muted>heartbeat ${age(a.heartbeat_age_seconds)} ago</span></div></div>`,'No active reviews');$('#daily').innerHTML=rows((d.history?.daily||[]).slice(0,8),x=>`<div class=metric><span>${esc(x.day)}</span><b>${x.reviews} reviews · ${Math.round(x.avg_seconds/60)}m avg</b></div>`);$('#health').innerHTML=`<div class=metric><span>Mode</span><b>${dg.configured?dg.active?'degraded'+(dg.forced?' (forced '+esc(dg.forced)+')':''):'normal':'—'}</b></div>${dg.active?`<div class=metric><span>Stand-ins</span><b>${esc(Object.entries(dg.substitutes||{}).map(([k,v])=>k+' → '+v).join(', '))}</b></div><div class=metric><span>Reason</span><b>${esc((dg.last_probe||{}).reason||'')}</b></div>`:''}<div class=metric><span>Ingest</span><b>${w.ingest_stale?'stale':'fresh'}</b></div><div class=metric><span>Eligible work</span><b>${w.eligible??0}</b></div><div class=metric><span>Active slots</span><b>${w.active??0}</b></div><div class=metric><span>Median run</span><b>${Math.round(l.median_run_minutes||0)}m</b></div>`;$('#events').innerHTML=rows((d.history?.recent_events||[]).slice(0,6),e=>`<div class=metric><span>${esc(e.kind)}</span><b>${esc(e.repo||'system')} ${e.number?'#'+e.number:''}</b></div>`);const t=d.history?.totals||{};const models=d.history?.tokens_by_model||[],efforts=d.history?.tokens_by_effort||[],totalTok=t.tokens_total||0,share=n=>totalTok?((n/totalTok)*100).toFixed(1)+'%':'—',maxModel=Math.max(1,...models.map(x=>(x.tokens_in||0)+(x.tokens_out||0))),maxEffort=Math.max(1,...efforts.map(x=>(x.tokens_in||0)+(x.tokens_out||0)));$('#tokens').innerHTML=`<div class=metric><span>Total tokens</span><b>${totalTok.toLocaleString()}</b></div><div class=metric><span>Average per completed review</span><b>${(t.avg_tokens_per_completed_review||0).toLocaleString()}</b></div><div class=metric><span>Input / output</span><b>${(t.tokens_in||0).toLocaleString()} / ${(t.tokens_out||0).toLocaleString()}</b></div><h3>Usage by model <small>share · total · avg lane</small></h3>`+rows(models,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.model)} <em>${share(n)}</em></span><b>${n.toLocaleString()} · ${Number(x.avg_tokens_per_lane||0).toLocaleString()} avg</b></div><div class=bar><i style="width:${n/maxModel*100}%"></i></div>`})+`<h3>Usage by thinking level <small>share · total</small></h3>`+rows(efforts,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.effort)} <em>${share(n)}</em></span><b>${n.toLocaleString()}</b></div><div class=bar><i style="width:${n/maxEffort*100}%"></i></div>`});$('#updated').textContent='Last generated '+d.generated_at}catch(e){$('#status').textContent='● DATA UNAVAILABLE';$('#status').className='status bad';$('#meta').textContent='Unable to load live telemetry'}}load();setInterval(load,60000)</script>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PastaClaw · Review Operations</title>
+<style>
+:root{--bg:#0b1020;--panel:#131b31;--panel2:#11192e;--item:#0f172b;--item-line:#202c4a;--line:#263252;--rule:#202b47;--text:#eef2ff;--muted:#91a0c2;--blue:#7c9cff;--green:#43d19e;--red:#ff6f86;--amber:#ffc86b;--pill:#24345d;--pill-text:#b7c8ff;--hover:#16213d;--shadow:0 16px 40px #05091455}
+@media(prefers-color-scheme:light){:root{--bg:#f4f7fb;--panel:#fff;--panel2:#fff;--item:#f8faff;--item-line:#dbe4f2;--line:#d8e0ee;--rule:#e5eaf2;--text:#182033;--muted:#63708a;--blue:#4263c5;--green:#087f5b;--red:#c92a2a;--amber:#9a6400;--pill:#e7edff;--pill-text:#3853a0;--hover:#eef3ff;--shadow:0 10px 26px rgba(37,56,88,.12)}body{background:linear-gradient(140deg,#e8efff,#f8fafc 55%,#eef3fb)!important}.status{background:#dff7ee!important;border-color:#9bdcc6!important}.status.bad{background:#ffe3e8!important;border-color:#f0a7b5!important}.pill.priority,.pill.warn{background:#fff0d2!important}.pill.bad{background:#ffe3e8!important}.pill.good{background:#dff7ee!important}}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(900px 420px at 15% -10%,#1e315f 0%,transparent 65%),var(--bg);color:var(--text);font:14px/1.5 system-ui,sans-serif}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
+main{max-width:1280px;margin:auto;padding:42px 28px 72px}
+.top{display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:30px}
+.eyebrow{color:var(--blue);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:11px}
+h1{font-size:34px;line-height:1.1;margin:7px 0}
+.sub,.muted{color:var(--muted)}
+.status{border:1px solid #2e6d5b;background:#12372f;color:var(--green);padding:8px 13px;border-radius:999px;font-weight:700;white-space:nowrap}
+.status.bad{border-color:#703346;background:#401d2b;color:var(--red)}
+.cards{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:26px}
+.card,.panel{background:linear-gradient(145deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+.card{padding:18px}.label{color:var(--muted);font-size:12px}
+.value{font-size:30px;font-weight:760;letter-spacing:-.04em;margin-top:6px}
+.value small{font-size:13px;font-weight:500;letter-spacing:0;color:var(--muted);margin-left:4px}
+.layout{display:grid;grid-template-columns:1.15fr .85fr;gap:16px}
+.panel{padding:20px;margin-bottom:16px}
+.panel h2{font-size:17px;margin:0 0 15px}
+.panel h2 span{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px}
+.panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 7px}
+.panel h3 small{font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0}
+.queue{display:grid;gap:9px}
+.item{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:12px 14px;background:var(--item);border:1px solid var(--item-line);border-radius:10px}
+.repo{font-weight:700}.repo a{color:inherit}.repo a:hover{color:var(--blue);text-decoration:none}
+.actions{font-size:11px;margin-top:5px}
+.title{color:var(--muted);font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:480px}
+.pill{display:inline-block;font-size:11px;line-height:1.5;border-radius:999px;padding:1px 8px;background:var(--pill);color:var(--pill-text);white-space:nowrap;font-weight:600}
+.pill.priority,.pill.warn{background:#4c3820;color:var(--amber)}
+.pill.bad{background:#401d2b;color:var(--red)}
+.pill.good{background:#12372f;color:var(--green)}
+.time{text-align:right;white-space:nowrap}.time strong{display:block}
+.metric{display:flex;justify-content:space-between;gap:12px;color:var(--muted);padding:7px 0;border-bottom:1px solid var(--rule)}
+.metric b{color:var(--text)}.metric em{font-style:normal;color:var(--blue);font-size:11px;margin-left:5px}
+.bar{height:4px;background:var(--rule);border-radius:2px;margin:3px 0 6px}.bar i{display:block;height:100%;background:var(--blue);border-radius:2px}
+code{color:var(--pill-text);font-size:12px}
+.foot{color:var(--muted);font-size:12px;margin-top:10px}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+
+/* throughput: every day opens its drill-down */
+.day{display:grid;grid-template-columns:auto 1fr auto auto;align-items:center;gap:12px;width:100%;text-align:left;padding:8px 10px;margin:0 -10px;width:calc(100% + 20px);border-radius:8px;border-bottom:1px solid var(--rule);color:var(--muted)}
+.day:hover,.day:focus-visible{background:var(--hover);outline:none}
+.day:hover .chev{color:var(--blue);transform:translateX(2px)}
+.day b{color:var(--text)}.day .spark{height:6px;background:var(--rule);border-radius:3px;overflow:hidden}
+.day .spark i{display:block;height:100%;background:var(--blue);opacity:.75}
+.day .chev{color:var(--muted);transition:transform .12s}
+.more{margin-top:10px;color:var(--blue);font-size:12px}
+
+/* day drill-down */
+.dayhead{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:22px;flex-wrap:wrap}
+.dayhead h1{margin:6px 0 0}
+.nav{display:flex;gap:8px}
+.btn{border:1px solid var(--line);background:var(--panel);border-radius:9px;padding:7px 12px;font-weight:600;font-size:13px;color:var(--text)}
+.btn:hover:not(:disabled){border-color:var(--blue);color:var(--blue)}.btn:disabled{opacity:.4;cursor:default}
+.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:14px}
+.toolbar input,.toolbar select{font:inherit;font-size:13px;color:var(--text);background:var(--item);border:1px solid var(--item-line);border-radius:8px;padding:7px 10px}
+.toolbar input{min-width:240px;flex:1}
+.seg{display:inline-flex;border:1px solid var(--item-line);border-radius:8px;overflow:hidden}
+.seg button{padding:6px 11px;font-size:13px;color:var(--muted)}.seg button+button{border-left:1px solid var(--item-line)}
+.seg button[aria-pressed=true]{background:var(--pill);color:var(--pill-text);font-weight:600}
+.tablewrap{overflow-x:auto;margin:0 -20px;padding:0 20px}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;user-select:none}
+th.sort{cursor:pointer}th.sort:hover{color:var(--text)}th[aria-sort] .arrow{color:var(--blue)}
+th.num,td.num{text-align:right}
+td{padding:9px 10px;border-bottom:1px solid var(--rule);vertical-align:top}
+tr.run{cursor:pointer}tr.run:hover td{background:var(--hover)}
+tr.run.open td{background:var(--hover);border-bottom-color:transparent}
+tr.run.failed td{opacity:.75}
+td .pr{font-weight:700;color:var(--text)}td .pr:hover{color:var(--blue)}
+td .t{color:var(--muted);font-size:12px;max-width:420px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+td .s{display:block;color:var(--muted);font-size:11px;white-space:nowrap}
+.sev{display:inline-flex;gap:4px}
+.sev span{min-width:22px;text-align:center;border-radius:6px;padding:0 5px;font-weight:700;font-size:12px}
+.sev .b{background:#401d2b;color:var(--red)}.sev .g{background:#4c3820;color:var(--amber)}.sev .n{background:var(--pill);color:var(--pill-text)}
+.sev .z{background:transparent;color:var(--muted);font-weight:400;opacity:.5}
+@media(prefers-color-scheme:light){.sev .b{background:#ffe3e8}.sev .g{background:#fff0d2}}
+tr.lanes td{padding:0 10px 14px;background:var(--hover)}
+.lanegrid{display:grid;grid-template-columns:auto auto 1fr auto auto auto;gap:3px 16px;font-size:12px;padding:10px 12px;background:var(--item);border:1px solid var(--item-line);border-radius:8px}
+.lanegrid .h{color:var(--muted);text-transform:uppercase;font-size:10px;letter-spacing:.06em}
+.lanegrid .r{text-align:right}
+.lanemeta{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;margin:8px 2px 0}
+.lanemeta b{color:var(--text);font-weight:600}
+.empty{padding:28px;text-align:center;color:var(--muted)}
+.hidden{display:none!important}
+@media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}
+@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:flex-start;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
+</style>
+</head>
+<body>
+<main>
+<div id="overview">
+  <header class="top">
+    <div><div class="eyebrow">PastaClaw · Review operations</div><h1>Review control room</h1><div id="meta" class="sub">Loading live telemetry…</div></div>
+    <div id="status" class="status">● CONNECTING</div>
+  </header>
+  <section id="cards" class="cards"></section>
+  <div class="layout">
+    <div>
+      <section class="panel"><h2>Queue <span id="queue-count"></span></h2><div id="queue" class="queue"></div></section>
+      <section class="panel"><h2>Recent throughput <span>click a day for every review it ran</span></h2><div id="daily"></div></section>
+    </div>
+    <div>
+      <section class="panel"><h2>Active runs <span id="active-count"></span></h2><div id="active" class="queue"></div></section>
+      <section class="panel"><h2>System health</h2><div id="health"></div></section>
+      <section class="panel"><h2>Recent events</h2><div id="events"></div></section>
+      <section class="panel"><h2>Token usage</h2><div id="tokens"></div></section>
+    </div>
+  </div>
+</div>
+
+<div id="dayview" class="hidden">
+  <header class="dayhead">
+    <div><div class="eyebrow"><a href="#">← Review control room</a></div><h1 id="day-title"></h1><div id="day-sub" class="sub"></div></div>
+    <div class="nav"><button class="btn" id="day-prev">← Older</button><button class="btn" id="day-next">Newer →</button></div>
+  </header>
+  <section id="day-cards" class="cards"></section>
+  <section class="panel">
+    <div class="toolbar">
+      <input id="f-text" type="search" placeholder="Filter by repo, PR number, title or model…" aria-label="Filter reviews">
+      <select id="f-repo" aria-label="Repository"></select>
+      <div class="seg" id="f-status" role="group" aria-label="Run status">
+        <button data-v="done" aria-pressed="true">Completed</button><button data-v="failed" aria-pressed="false">Failed</button><button data-v="all" aria-pressed="false">All</button>
+      </div>
+      <span id="f-count" class="muted"></span>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr>
+        <th class="sort" data-k="finished_at">Finished <small>UTC</small> <span class="arrow"></span></th>
+        <th class="sort" data-k="repo">Pull request <span class="arrow"></span></th>
+        <th class="sort" data-k="tier">Tier <span class="arrow"></span></th>
+        <th class="sort" data-k="verdict">Verdict <span class="arrow"></span></th>
+        <th class="sort num" data-k="duration_seconds">Review time <span class="arrow"></span></th>
+        <th class="sort num" data-k="wait_seconds">Waited <span class="arrow"></span></th>
+        <th class="sort num" data-k="tokens">Tokens <span class="arrow"></span></th>
+        <th class="sort num" data-k="findings_total" title="Findings the published review stands on (carried-over blockers included): blocking · suggestion · nitpick">Findings <span class="arrow"></span></th>
+        <th></th>
+      </tr></thead>
+      <tbody id="day-rows"></tbody>
+    </table></div>
+  </section>
+</div>
+<div class="foot">Auto-refreshes every 60 seconds · Derived from the private review database · <span id="updated"></span></div>
+</main>
+<script>
+const $=s=>document.querySelector(s),
+  esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),
+  age=s=>{if(s==null)return'—';let m=Math.floor(s/60);return m<60?m+'m':Math.floor(m/60)+'h '+m%60+'m'},
+  dur=s=>s==null?'—':s<60?s+'s':age(s),
+  tok=n=>!n?'0':n>=1e9?(n/1e9).toFixed(2)+'B':n>=1e6?(n/1e6).toFixed(n>=1e7?0:1)+'M':n>=1e3?Math.round(n/1e3)+'k':String(n),
+  median=a=>{a=a.filter(x=>x!=null).sort((x,y)=>x-y);return a.length?a[a.length>>1]:null},
+  rows=(a,fn,empty='Nothing to show')=>a?.length?a.map((x,i)=>fn(x,i)).join(''):`<div class="muted">${empty}</div>`,
+  sevTotal=f=>(f?.blocking||0)+(f?.suggestion||0)+(f?.nitpick||0),
+  publishedDays=()=>(status?.history?.daily||[]).map(x=>x.day);
+
+let status=null,showAllDays=false;
+const dayCache={},view={day:null,runs:[],sort:{k:'finished_at',dir:-1},status:'done',text:'',repo:'',open:new Set()};
+
+function renderOverview(d){
+  const l=d.live||{},h=l.heads||{},w=l.watchdog||{},dg=l.degraded||{},attn=w.ingest_stale||w.stuck;
+  $('#meta').innerHTML=`Live as of <code>${esc(d.data_as_of)}</code> · ${dg.active?'⚠️ degraded: primary models out of quota, reviews run on stand-in models':attn?'attention required':'all systems nominal'}`;
+  $('#status').textContent=dg.active?'● DEGRADED · STAND-IN MODELS':attn?'● ATTENTION':'● OPERATIONAL';
+  $('#status').className='status'+(dg.active||attn?' bad':'');
+  const cs=[['Queued',h.queued||0],['Running',h.running||0],['Completed',h.done||0],['Failed',h.failed||0],['Findings',d.history?.totals?.findings||0],['Reviews',d.history?.totals?.reviews||0]];
+  $('#cards').innerHTML=cs.map(x=>`<div class=card><div class=label>${x[0]}</div><div class=value>${x[1].toLocaleString()}</div></div>`).join('');
+  $('#queue-count').textContent=`${h.queued||0} waiting`;
+  $('#queue').innerHTML=rows(l.queued,(q,i)=>`<div class=item><div><div class=repo><span class=muted>${q.position||i+1}.</span> <a href="${q.pr_url}">${esc(q.repo)} #${q.number}</a> <span class=pill>${esc(q.trigger)}</span></div><div class=title>${esc(q.title||q.sha.slice(0,8))}</div><div class=actions><a href="${q.pr_url}">Open PR</a> · <a href="${q.prioritize_url}">Prioritize</a></div></div><div class=time><strong>${age(q.age_seconds)}</strong><span class=muted>${q.eligible?q.priority?'<span class="pill priority">priority</span>':'ready':'<span class="pill">'+esc(q.reason)+'</span>'}</span></div></div>`);
+  $('#active-count').textContent=`${l.active?.length||0} in flight · typical ${l.capacity?.typical||0}`+(l.capacity?.priority_overflow?` + ${l.capacity.priority_overflow} priority`:'');
+  $('#active').innerHTML=rows(l.active,a=>`<div class=item><div><div class=repo><a href="https://github.com/${a.repo}/pull/${a.number}">${esc(a.repo)} #${a.number}</a> ${a.queue==='audit'?'<span class="pill priority">post-merge audit</span> ':''}<span class=pill>${esc(a.phase)}</span></div><div class=title>${a.title?esc(a.title)+' · ':''}run ${a.id}</div></div><div class=time><strong>${age(a.elapsed_seconds)}</strong><span class=muted>heartbeat ${age(a.heartbeat_age_seconds)} ago</span></div></div>`,'No active reviews');
+  renderDaily(d.history?.daily||[]);
+  $('#health').innerHTML=`<div class=metric><span>Mode</span><b>${dg.configured?dg.active?'degraded'+(dg.forced?' (forced '+esc(dg.forced)+')':''):'normal':'—'}</b></div>${dg.active?`<div class=metric><span>Stand-ins</span><b>${esc(Object.entries(dg.substitutes||{}).map(([k,v])=>k+' → '+v).join(', '))}</b></div><div class=metric><span>Reason</span><b>${esc((dg.last_probe||{}).reason||'')}</b></div>`:''}<div class=metric><span>Ingest</span><b>${w.ingest_stale?'stale':'fresh'}</b></div><div class=metric><span>Eligible work</span><b>${w.eligible??0}</b></div><div class=metric><span>Active slots</span><b>${w.active??0}</b></div><div class=metric><span>Median run</span><b>${Math.round(l.median_run_minutes||0)}m</b></div>`;
+  $('#events').innerHTML=rows((d.history?.recent_events||[]).slice(0,6),e=>`<div class=metric><span>${esc(e.kind)}</span><b>${esc(e.repo||'system')} ${e.number?'#'+e.number:''}</b></div>`);
+  const t=d.history?.totals||{},models=d.history?.tokens_by_model||[],efforts=d.history?.tokens_by_effort||[],totalTok=t.tokens_total||0,
+    share=n=>totalTok?((n/totalTok)*100).toFixed(1)+'%':'—',
+    maxModel=Math.max(1,...models.map(x=>(x.tokens_in||0)+(x.tokens_out||0))),maxEffort=Math.max(1,...efforts.map(x=>(x.tokens_in||0)+(x.tokens_out||0)));
+  $('#tokens').innerHTML=`<div class=metric><span>Total tokens</span><b>${totalTok.toLocaleString()}</b></div><div class=metric><span>Average per completed review</span><b>${(t.avg_tokens_per_completed_review||0).toLocaleString()}</b></div><div class=metric><span>Input / output</span><b>${(t.tokens_in||0).toLocaleString()} / ${(t.tokens_out||0).toLocaleString()}</b></div><h3>Usage by model <small>share · total · avg lane</small></h3>`
+    +rows(models,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.model)} <em>${share(n)}</em></span><b>${n.toLocaleString()} · ${Number(x.avg_tokens_per_lane||0).toLocaleString()} avg</b></div><div class=bar><i style="width:${n/maxModel*100}%"></i></div>`})
+    +`<h3>Usage by thinking level <small>share · total</small></h3>`
+    +rows(efforts,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.effort)} <em>${share(n)}</em></span><b>${n.toLocaleString()}</b></div><div class=bar><i style="width:${n/maxEffort*100}%"></i></div>`});
+}
+
+function renderDaily(daily){
+  const shown=showAllDays?daily:daily.slice(0,10),max=Math.max(1,...daily.map(x=>x.reviews));
+  $('#daily').innerHTML=rows(shown,x=>`<button class=day data-day="${esc(x.day)}"><span>${esc(x.day)}</span><span class=spark><i style="width:${x.reviews/max*100}%"></i></span><b>${x.reviews} reviews · ${Math.round(x.avg_seconds/60)}m avg</b><span class=chev>›</span></button>`,'No completed reviews yet')
+    +(daily.length>10?`<button class=more id=days-toggle>${showAllDays?'Show fewer days':`Show all ${daily.length} days`}</button>`:'');
+}
+
+async function loadDay(day,force){
+  if(!force&&dayCache[day])return dayCache[day];
+  const r=await fetch(`data/days/${day}.json?t=${Date.now()}`,{cache:'no-store'});
+  if(!r.ok)throw new Error('HTTP '+r.status);
+  const runs=(await r.json()).runs||[];
+  for(const x of runs){
+    x.tokens=(x.tokens_in||0)+(x.tokens_out||0);
+    x.findings_total=sevTotal(x.findings);
+    x.search=[x.repo,'#'+x.number,x.title,x.tier,x.verdict,x.trigger,x.fail_kind,...(x.lanes||[]).map(l=>l.model+' '+l.role)].join(' ').toLowerCase();
+  }
+  // the newest day is still growing: never serve it from cache
+  if(day!==publishedDays()[0])dayCache[day]=runs;
+  return runs;
+}
+
+const verdictPill=x=>{
+  if(x.status!=='done')return `<span class="pill bad">${esc(x.status==='timed_out'?'timed out':'failed')}${x.fail_kind?' · '+esc(x.fail_kind):''}</span>`;
+  const v=x.verdict;return v==='APPROVE'?'<span class="pill good">approved</span>':v==='REQUEST_CHANGES'?'<span class="pill bad">changes requested</span>':v==='COMMENT'?'<span class=pill>commented</span>':'<span class="muted">not posted</span>';
+};
+// the review's standing findings (carried-over blockers included); the hint says how many it newly posted
+const sevCell=x=>{const f=x.findings||{},n=x.new_findings||{},total=x.findings_total,added=sevTotal(n);
+  return `<span class=sev>${[['b','blocking'],['g','suggestion'],['n','nitpick']].map(([c,k])=>`<span class="${f[k]?c:'z'}" title="${f[k]||0} ${k}${n[k]!==f[k]?` · ${n[k]||0} newly posted`:''}">${f[k]||0}</span>`).join('')}</span>${total&&added!==total?`<span class=s>${added?added+' new · ':''}${total-added} carried</span>`:''}`};
+
+function filtered(){
+  const t=view.text.trim().toLowerCase();
+  return view.runs.filter(x=>(view.status==='all'||(view.status==='done')===(x.status==='done'))&&(!view.repo||x.repo===view.repo)&&(!t||t.split(/\s+/).every(w=>x.search.includes(w))));
+}
+
+function renderDayTable(){
+  const {k,dir}=view.sort,list=filtered().sort((a,b)=>{let x=a[k],y=b[k];if(k==='repo'){x=a.repo+'#'+String(a.number).padStart(7,'0');y=b.repo+'#'+String(b.number).padStart(7,'0')}if(x==null||y==null)return (x==null)-(y==null)||b.id-a.id;return (x<y?-1:x>y?1:0)*dir||b.id-a.id});
+  document.querySelectorAll('th.sort').forEach(th=>{const on=th.dataset.k===k;th.toggleAttribute('aria-sort',on);if(on)th.setAttribute('aria-sort',dir>0?'ascending':'descending');th.querySelector('.arrow').textContent=on?(dir>0?'▲':'▼'):''});
+  $('#f-count').textContent=`${list.length} of ${view.runs.length} runs`;
+  $('#day-rows').innerHTML=list.length?list.map(x=>{
+    const open=view.open.has(x.id),tags=[x.queue==='audit'?'<span class="pill priority">post-merge audit</span>':'',x.degraded?'<span class="pill warn">degraded</span>':'',x.attempt>1?`<span class=pill>attempt ${x.attempt}</span>`:'',x.priority?'<span class="pill priority">priority</span>':''].join(' ');
+    return `<tr class="run${open?' open':''}${x.status!=='done'?' failed':''}" data-id="${x.id}">
+      <td>${esc(x.finished_at.slice(11,16))}<span class=s>run ${x.id}</span></td>
+      <td><a class=pr href="${esc(x.review_url)}" target=_blank rel=noopener title="Open the review on GitHub">${esc(x.repo)} #${x.number}</a> ${tags}<div class=t title="${esc(x.title)}">${esc(x.title||x.sha.slice(0,8))}</div></td>
+      <td>${x.tier?`<span class=pill>${esc(x.tier)}</span>`:'<span class=muted>—</span>'}<span class=s>${esc((x.trigger||'').replace(/_/g,' '))}</span></td>
+      <td>${verdictPill(x)}</td>
+      <td class=num>${dur(x.duration_seconds)}</td>
+      <td class=num title="${x.slot_wait_seconds!=null?`queued ${age(x.wait_seconds)} total · ${age(x.slot_wait_seconds)} waiting for a slot after the debounce`:''}">${dur(x.wait_seconds)}${x.slot_wait_seconds!=null&&x.slot_wait_seconds!==x.wait_seconds?`<span class=s>${age(x.slot_wait_seconds)} for slot</span>`:''}</td>
+      <td class=num title="${x.tokens_in.toLocaleString()} in · ${x.tokens_out.toLocaleString()} out">${tok(x.tokens)}<span class=s>${x.lanes.length} lanes</span></td>
+      <td class=num>${x.status==='done'?sevCell(x):'<span class=muted>—</span>'}</td>
+      <td class=num><a href="${esc(x.review_url)}" target=_blank rel=noopener title="Open the review on GitHub">↗</a></td>
+    </tr>${open?`<tr class=lanes><td colspan=9>${laneDetail(x)}</td></tr>`:''}`}).join(''):`<tr><td colspan=9 class=empty>No runs match</td></tr>`;
+}
+
+function laneDetail(x){
+  const lanes=x.lanes||[];
+  return `<div class=lanegrid><span class=h>Phase</span><span class=h>Lane</span><span class=h>Model · effort</span><span class="h r">Input</span><span class="h r">Output</span><span class=h>Status</span>`
+    +(lanes.length?lanes.map(l=>`<span>${esc(l.phase)}</span><span>${esc(l.role)}${l.attempt>1?` <span class=muted>#${l.attempt}</span>`:''}</span><span>${esc(l.model)}${l.effort?` <span class=muted>· ${esc(l.effort)}</span>`:''}</span><span class=r>${l.tokens_in.toLocaleString()}</span><span class=r>${l.tokens_out.toLocaleString()}</span><span class=${l.status==='completed'?'muted':''}>${esc(l.status)}</span>`).join(''):'<span class=muted style="grid-column:1/-1">No lanes recorded</span>')
+    +`</div><div class=lanemeta><span>Queued <b>${esc(x.queued_at?.slice(11,16)||'—')}</b></span><span>Started <b>${esc(x.started_at.slice(11,16))}</b></span><span>Finished <b>${esc(x.finished_at.slice(11,16))}</b></span><span>Commit <b><code>${esc(x.sha.slice(0,10))}</code></b></span>${x.blockers!=null?`<span>Blockers <b>${x.blockers}</b></span>`:''}<span><a href="${esc(x.pr_url)}" target=_blank rel=noopener>Pull request ↗</a></span><span><a href="${esc(x.review_url)}" target=_blank rel=noopener>Review ↗</a></span></div>`;
+}
+
+function renderDayHeader(){
+  const done=view.runs.filter(x=>x.status==='done'),failed=view.runs.length-done.length,tokens=done.reduce((s,x)=>s+x.tokens,0),
+    f=k=>done.reduce((s,x)=>s+(x.findings?.[k]||0),0),verd=v=>done.filter(x=>x.verdict===v).length,
+    day=new Date(view.day+'T12:00:00Z');
+  $('#day-title').textContent=day.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric',timeZone:'UTC'});
+  $('#day-sub').innerHTML=`${done.length} completed reviews · ${failed} failed runs · ${verd('APPROVE')} approved · ${verd('REQUEST_CHANGES')} changes requested · ${verd('COMMENT')} commented · times in UTC`;
+  const cards=[['Reviews',done.length,failed?`+${failed} failed`:''],['Median review time',dur(median(done.map(x=>x.duration_seconds))),''],['Median wait',dur(median(done.map(x=>x.wait_seconds))),''],['Tokens',tok(tokens),`${tok(Math.round(tokens/Math.max(1,done.length)))}/review`],['Blocking findings',f('blocking'),''],['Suggestions',f('suggestion'),`${f('nitpick')} nits`]];
+  $('#day-cards').innerHTML=cards.map(x=>`<div class=card><div class=label>${x[0]}</div><div class=value>${x[1]}${x[2]?`<small>${x[2]}</small>`:''}</div></div>`).join('');
+  const repos=[...new Set(view.runs.map(x=>x.repo))].sort();
+  if(view.repo&&!repos.includes(view.repo))view.repo='';
+  $('#f-repo').innerHTML=`<option value="">All repositories</option>`+repos.map(r=>`<option${r===view.repo?' selected':''}>${esc(r)}</option>`).join('');
+  const days=publishedDays(),i=days.indexOf(view.day);
+  $('#day-prev').disabled=i<0||i>=days.length-1;$('#day-next').disabled=i<=0;
+}
+
+async function showDay(day,force){
+  $('#overview').classList.add('hidden');$('#dayview').classList.remove('hidden');
+  if(view.day!==day){view.day=day;view.open.clear();view.runs=[];view.missing=false;$('#day-title').textContent=day;$('#day-sub').textContent='';$('#day-cards').innerHTML='';$('#day-rows').innerHTML='<tr><td colspan=9 class=empty>Loading…</td></tr>';window.scrollTo(0,0)}
+  let runs;
+  try{runs=await loadDay(day,force)}catch(e){
+    // a failed refresh keeps what is on screen; only a day never loaded says so
+    if(view.day===day&&!view.runs.length){view.missing=true;$('#day-rows').innerHTML=`<tr><td colspan=9 class=empty>No per-review data published for ${esc(day)}</td></tr>`}
+    return;
+  }
+  if(view.day!==day)return;
+  view.runs=runs;view.missing=false;
+  renderDayHeader();renderDayTable();
+}
+
+function route(force){
+  const m=location.hash.match(/^#day=(\d{4}-\d{2}-\d{2})$/);
+  if(m)return showDay(m[1],force);
+  view.day=null;$('#dayview').classList.add('hidden');$('#overview').classList.remove('hidden');
+}
+
+async function load(){
+  try{
+    status=await fetch('data/status.json?t='+Date.now(),{cache:'no-store'}).then(r=>r.json());
+    renderOverview(status);
+    $('#updated').textContent='Last generated '+status.generated_at;
+    // only the newest day still changes; older days are final once published
+    if(view.day&&view.day===publishedDays()[0])await showDay(view.day,true);
+    else if(view.day&&!view.missing)renderDayHeader();
+  }catch(e){$('#status').textContent='● DATA UNAVAILABLE';$('#status').className='status bad';$('#meta').textContent='Unable to load live telemetry'}
+}
+
+$('#daily').addEventListener('click',e=>{
+  const b=e.target.closest('.day');if(b){location.hash='day='+b.dataset.day;return}
+  if(e.target.closest('#days-toggle')){showAllDays=!showAllDays;renderDaily(status?.history?.daily||[])}
+});
+$('#day-rows').addEventListener('click',e=>{
+  if(e.target.closest('a'))return;
+  const tr=e.target.closest('tr.run');if(!tr)return;
+  const id=+tr.dataset.id;view.open.has(id)?view.open.delete(id):view.open.add(id);renderDayTable();
+});
+document.querySelectorAll('th.sort').forEach(th=>th.addEventListener('click',()=>{
+  const k=th.dataset.k;view.sort=view.sort.k===k?{k,dir:-view.sort.dir}:{k,dir:k==='repo'||k==='tier'||k==='verdict'?1:-1};renderDayTable();
+}));
+$('#f-text').addEventListener('input',e=>{view.text=e.target.value;renderDayTable()});
+$('#f-repo').addEventListener('change',e=>{view.repo=e.target.value;renderDayTable()});
+$('#f-status').addEventListener('click',e=>{
+  const b=e.target.closest('button');if(!b)return;view.status=b.dataset.v;
+  $('#f-status').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',x===b));renderDayTable();
+});
+const step=d=>{const days=publishedDays(),i=days.indexOf(view.day);if(days[i+d])location.hash='day='+days[i+d]};
+$('#day-prev').addEventListener('click',()=>step(1));
+$('#day-next').addEventListener('click',()=>step(-1));
+document.addEventListener('keydown',e=>{
+  if(!view.day||e.altKey||e.metaKey||e.ctrlKey||e.target.matches('input,select'))return;
+  if(e.key==='Escape')location.hash='';else if(e.key==='ArrowLeft')step(1);else if(e.key==='ArrowRight')step(-1);
+});
+window.addEventListener('hashchange',()=>route());
+route();load();setInterval(load,60000);
+</script>
+</body>
+</html>
