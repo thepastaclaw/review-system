@@ -20,10 +20,15 @@ jobs:
       - uses: actions/checkout@v4
         with: {ref: main}
       - name: Overlay current data
+        # explicit bash adds pipefail, so a missing days/ falls back instead of half-extracting
+        shell: bash
         run: |
           mkdir -p site/data
-          git fetch origin observability-data || true
-          git show origin/observability-data:status.json > site/data/status.json 2>/dev/null || echo '{"schema_version":1,"live":{"heads":{},"queued":[],"active":[]},"history":{"daily":[],"totals":{"findings":0,"reviews":0,"runs":0}}}' > site/data/status.json
+          # the branch gets a commit a minute: only its tip is needed
+          git fetch --depth=1 origin observability-data || true
+          # status.json plus days/<date>.json, the per-review drill-down the throughput list opens
+          git archive origin/observability-data status.json days 2>/dev/null | tar -x -C site/data \
+            || git show origin/observability-data:status.json > site/data/status.json 2>/dev/null || echo '{"schema_version":1,"live":{"heads":{},"queued":[],"active":[]},"history":{"daily":[],"totals":{"findings":0,"reviews":0,"runs":0}}}' > site/data/status.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with: {path: site}
