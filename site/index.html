@@ -101,8 +101,15 @@ tr.lanes td{padding:0 10px 14px;background:var(--hover)}
 .arun-head>div:first-child{min-width:0;flex:1}
 .arun .repo{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .arun .elapsed{text-align:right;white-space:nowrap}.arun .elapsed strong{font-size:20px;letter-spacing:-.02em}
-.prog{height:4px;background:var(--rule);border-radius:2px;margin-top:6px;width:170px;overflow:hidden}
-.prog i{display:block;height:100%;background:var(--blue)}.prog.over i{background:var(--amber)}
+.arun .elapsed span{display:block;color:var(--muted);font-size:12px}
+.pbar{position:relative;height:8px;background:var(--rule);border-radius:4px;margin-top:10px;overflow:hidden}
+.pbar i{position:absolute;inset:0 auto 0 0;background:var(--blue);border-radius:4px;transition:width .6s}
+.pbar.unknown i{background:repeating-linear-gradient(45deg,var(--blue) 0 6px,transparent 6px 12px);opacity:.5;width:100%}
+.pline{display:flex;justify-content:space-between;align-items:baseline;gap:12px;font-size:12px;color:var(--muted);margin-top:6px}
+.pline b{color:var(--text);font-weight:600}.pline .next{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.pline .more{font-size:12px;color:var(--blue);margin:0;flex:none}.pline .more:hover{text-decoration:underline}
+.arun.focus{border-color:var(--blue);box-shadow:0 0 0 2px color-mix(in srgb,var(--blue) 35%,transparent)}
+.gone{font-size:13px;margin-bottom:10px;padding:8px 12px;border:1px dashed var(--line);border-radius:8px;color:var(--muted)}
 .facts{display:flex;flex-wrap:wrap;gap:3px 18px;font-size:12px;color:var(--muted);margin-top:8px}
 .facts b{color:var(--text);font-weight:600}
 .steps{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
@@ -197,6 +204,9 @@ const $=s=>document.querySelector(s),
 
 let status=null,showAllDays=false;
 const openLanes=new Set();  // active runs whose finished-lane list is expanded; survives refresh
+const openDetails=new Set();  // active runs showing their full details; survives refresh
+let focusRun=null;  // #run=<id>: the run a PR's progress link points at
+const scrollToFocus=()=>$('#run-'+focusRun)?.scrollIntoView({block:'center'});
 const STEP_LABELS={worktree:'checkout',select:'lanes chosen',triage:'triage',context:'context',phase1:'Phase 1',verify1:'verify 1',gate:'gate',phase2:'Phase 2',verify2:'verify 2',fresh_phase2:'fresh Phase 2',fresh_verify2:'fresh verify',publish:'publish',persistence:'persistence',converse:'conversation'};
 const STEP_MARKS={ok:'✓ ',failed:'✗ ',running:'● '};
 const EVENT_LABELS={'run.spawned':'Run started','run.done':'Review finished','run.failed':'Run failed','run.timed_out':'Run timed out','run.cancelled':'Run cancelled','run.cancel_requested':'Cancel requested','head.queued':'Queued','head.requeued':'Re-queued','head.superseded':'Superseded by a newer push','head.failed':'Gave up on head','head.closed':'PR closed','head.review_reply':'Reply on a review','head.priority_requested':'Priority requested','thread.answered':'Answered a review thread','phase1.model_selected':'Phase 1 model chosen','phase1.skipped_backlog':'Phase 1 skipped (backlog)','phase1.failed_fallthrough':'Phase 1 failed, fell through','degraded.transition':'Mode changed','degraded.run':'Run on stand-in models','degraded.entered_midrun':'Went degraded mid-run','compare.selected':'Comparison lane added','account.disabled':'Account parked','daemon.start':'Daemon started','daemon.stop':'Daemon stopped'};
@@ -215,16 +225,24 @@ function stepChip(st){
 }
 
 function activeCard(a,l){
-  const typical=(l.typical_minutes_by_tier||{})[a.tier||'unknown'],pct=typical?a.elapsed_seconds/60/typical*100:0,
-    triage=(a.steps||[]).find(s=>s.name==='triage')?.info,f=a.findings,lanes=a.lanes||[],live=a.live_lanes||[];
-  const tags=[a.tier?`<span class=pill>${esc(a.tier)}</span>`:'',a.priority?'<span class="pill priority">priority</span>':'',a.queue==='audit'?'<span class="pill priority">post-merge audit</span>':'',a.attempt>1?`<span class="pill warn">attempt ${a.attempt}</span>`:'',a.degraded?'<span class="pill warn">stand-in models</span>':'',`<span class=pill>${esc((a.trigger||'').replace(/_/g,' '))}</span>`].join(' ');
+  const typical=(l.typical_minutes_by_tier||{})[a.tier||'unknown'],open=openDetails.has(a.id),
+    running=(a.steps||[]).filter(s=>s.status==='running'),
+    pct=a.progress!=null?Math.round(a.progress*100):null,
+    triage=(a.steps||[]).find(s=>s.name==='triage')?.info,f=a.findings,lanes=a.lanes||[],live=a.live_lanes||[],
+    waiting=live.filter(x=>x.state==='waiting');
+  const tags=[a.tier?`<span class=pill>${esc(a.tier)}</span>`:'',a.priority?'<span class="pill priority">priority</span>':'',a.queue==='audit'?'<span class="pill priority">post-merge audit</span>':'',a.attempt>1?`<span class="pill warn">attempt ${a.attempt}</span>`:'',a.degraded?'<span class="pill warn">stand-in models</span>':'',open?`<span class=pill>${esc((a.trigger||'').replace(/_/g,' '))}</span>`:''].join(' ');
+  const now=running.length?running.map(s=>`<b>${esc(STEP_LABELS[s.name]||s.name)}</b> ${dur(s.seconds)}`).join(' + '):`<b>${esc(STEP_LABELS[a.phase]||a.phase||'starting')}</b>`,
+    next=(a.upcoming||[]).filter(n=>!['worktree','select','context'].includes(n)).map(n=>esc(STEP_LABELS[n]||n)).join(' → ');
   const liveRows=live.map(x=>`<span class="dot${x.state==='waiting'?' wait':''}"></span><span>${x.state==='waiting'?`waiting for a <b>${esc(x.pool)}</b> slot`:'<b>running</b>'}</span><span class=m>${esc(STEP_LABELS[x.phase]||x.phase)} · ${esc(x.role)} · ${esc(x.model)}${x.effort?' · '+esc(x.effort):''}${x.line_position?` · #${x.line_position} of ${x.line_length} in line`:''}</span><span class=r>${dur(x.since_seconds)}</span>`).join('');
-  return `<div class=arun>
+  return `<div class="arun${focusRun===a.id?' focus':''}" id="run-${a.id}">
     <div class=arun-head><div>
       <div class=repo><a href="${esc(a.pr_url)}" target=_blank rel=noopener>${esc(a.repo)} #${a.number}</a> ${tags}</div>
       <div class=title title="${esc(a.title)}">${esc(a.title||a.sha.slice(0,10))}${a.author?` <span class=muted>· ${esc(a.author)}</span>`:''}</div>
-    </div><div class=elapsed><strong>${dur(a.elapsed_seconds)}</strong><div class=muted style="font-size:12px">${typical?`typical ${esc(a.tier)} ≈ ${Math.round(typical)}m`:'running'}</div>${typical?`<div class="prog${pct>100?' over':''}"><i style="width:${Math.min(100,pct)}%"></i></div>`:''}</div></div>
-    <div class=steps>${(a.steps||[]).map(stepChip).join('')||`<span class="step running">● <b>${esc(a.phase||'starting')}</b></span>`}</div>
+    </div><div class=elapsed><strong>${dur(a.elapsed_seconds)}</strong><span>${a.overdue?'<span style="color:var(--amber)">longer than usual</span>':a.remaining_seconds!=null?(a.remaining_seconds<180?'finishing up':`~${dur(a.remaining_seconds)} left`):a.tier?`typical ≈ ${Math.round(typical||0)}m`:'estimating after triage'}</span></div></div>
+    <div class="pbar${pct==null?' unknown':''}" title="Estimated from the step durations of recent ${esc(a.tier||'')} reviews"><i style="width:${pct??100}%"></i></div>
+    <div class=pline><span class=next>${pct!=null?`<b>${pct}%</b> · `:''}${now}${next?` · next: ${next}`:''}${waiting.length?` · <span style="color:var(--amber)">${waiting.length} lane${waiting.length===1?'':'s'} waiting for a slot</span>`:''}</span>
+      <button class=more data-run="${a.id}" aria-expanded="${open}">${open?'Fewer details ▴':'More details ▾'}</button></div>
+    ${open?`<div class=steps>${(a.steps||[]).map(stepChip).join('')||`<span class="step running">● <b>${esc(a.phase||'starting')}</b></span>`}</div>
     ${triage?.reasoning?`<div class=why title="${esc(triage.reasoning)}">Triage: ${esc(triage.reasoning)}</div>`:''}
     ${live.length?`<div class=live>${liveRows}</div>`:''}
     <div class=facts>
@@ -236,7 +254,7 @@ function activeCard(a,l){
       ${a.deadline_in_seconds!=null?`<span>Deadline in <b>${dur(Math.max(0,a.deadline_in_seconds))}</b></span>`:''}
       <span>Run <b>${a.id}</b> · <code>${esc(a.sha.slice(0,10))}</code></span>
     </div>
-    ${lanes.length?`<details class=done-lanes data-run="${a.id}"${openLanes.has(a.id)?' open':''}><summary>${lanes.length} finished lanes</summary><div class=lanegrid><span class=h>Phase</span><span class=h>Lane</span><span class=h>Model · effort</span><span class="h r">Input</span><span class="h r">Output</span><span class=h>Status</span>${lanes.map(x=>`<span>${esc(x.phase)}</span><span>${esc(x.role)}${x.attempt>1?` <span class=muted>#${x.attempt}</span>`:''}</span><span>${esc(x.model)}${x.effort?` <span class=muted>· ${esc(x.effort)}</span>`:''}</span><span class=r>${x.tokens_in.toLocaleString()}</span><span class=r>${x.tokens_out.toLocaleString()}</span><span class=${x.status==='completed'?'muted':''}>${esc(x.status)}</span>`).join('')}</div></details>`:''}
+    ${lanes.length?`<details class=done-lanes data-run="${a.id}"${openLanes.has(a.id)?' open':''}><summary>${lanes.length} finished lanes</summary><div class=lanegrid><span class=h>Phase</span><span class=h>Lane</span><span class=h>Model · effort</span><span class="h r">Input</span><span class="h r">Output</span><span class=h>Status</span>${lanes.map(x=>`<span>${esc(x.phase)}</span><span>${esc(x.role)}${x.attempt>1?` <span class=muted>#${x.attempt}</span>`:''}</span><span>${esc(x.model)}${x.effort?` <span class=muted>· ${esc(x.effort)}</span>`:''}</span><span class=r>${x.tokens_in.toLocaleString()}</span><span class=r>${x.tokens_out.toLocaleString()}</span><span class=${x.status==='completed'?'muted':''}>${esc(x.status)}</span>`).join('')}</div></details>`:''}`:''}
   </div>`;
 }
 const dayCache={},view={day:null,runs:[],sort:{k:'finished_at',dir:-1},status:'done',text:'',repo:'',open:new Set()};
@@ -253,7 +271,10 @@ function renderOverview(d){
   $('#queue-count').textContent=`${h.queued||0} waiting · ${ready} ready`;
   $('#queue').innerHTML=rows(queued,(q,i)=>`<div class=item><div><div class=repo><span class=muted>${q.position||i+1}.</span> <a href="${esc(q.pr_url)}">${esc(q.repo)} #${q.number}</a> <span class=pill>${esc((q.trigger||'').replace(/_/g,' '))}</span>${q.attempts?` <span class="pill warn">retry · attempt ${q.attempts+1}</span>`:''}</div><div class=title title="${esc(q.title)}">${esc(q.title||q.sha.slice(0,8))}${q.author?` <span class=muted>· ${esc(q.author)}</span>`:''}</div><div class=actions><a href="${esc(q.pr_url)}">Open PR</a> · <a href="${esc(q.prioritize_url)}">Prioritize</a></div></div><div class=time><strong>${age(q.age_seconds)}</strong><span class=muted>${q.eligible?q.priority?'<span class="pill priority">priority · next</span>':'ready · needs a slot':`<span class=pill title="${esc(q.reason)}">${q.attempts?'backoff':'debounce'} · starts in ${dur(q.eligible_in_seconds)}</span>`}</span></div></div>`);
   $('#active-count').innerHTML=`${active.length} in flight · ${cap.maximum??'?'} slots now (${cap.typical??'?'} + ${cap.priority_overflow??0} priority${cap.reason?'; '+esc(cap.reason):''})`+(liveIn>cap.maximum?` · <span class="pill warn" title="Slots scale with usable OpenAI accounts; runs that started before they shrank keep going">over by ${liveIn-cap.maximum}: capacity shrank after they started</span>`:'');
-  $('#active').innerHTML=rows(active,a=>activeCard(a,l),'No active reviews');
+  // the PR's progress link is written as the run starts; the snapshot can be a minute or two behind
+  const gone=focusRun!=null&&!active.some(a=>a.id===focusRun),
+    starting=gone&&!active.some(a=>a.id>focusRun)&&!(d.history?.recent_events||[]).some(e=>e.run_id===focusRun&&/^run\.(done|failed|timed_out|cancelled)$/.test(e.kind));
+  $('#active').innerHTML=(gone?`<div class=gone>${starting?`Run ${focusRun} is starting — it shows up here within a minute or two.`:`Run ${focusRun} is no longer running — its review is in <a href="#day=${esc(publishedDays()[0]||'')}">today's reviews</a>.`}</div>`:'')+rows(active,a=>activeCard(a,l),'No active reviews');
   renderDaily(d.history?.daily||[]);
   const pools=l.lane_pools||[];
   $('#pools').innerHTML=rows(pools,p=>{const n=p.slots||0,busy=p.running;return `<div class=pool><b>${esc(p.pool)}</b><div class=bar title="${busy} running of ${n}">${n?`<i style="width:${Math.min(100,busy/n*100)}%"></i>`:''}</div><span><b>${busy}</b> of ${n} running${p.waiting?` · <b style="color:var(--amber)">${p.waiting}</b> waiting`:''}</span></div>`},'No pools configured')
@@ -363,12 +384,17 @@ function route(force){
   const m=location.hash.match(/^#day=(\d{4}-\d{2}-\d{2})$/);
   if(m)return showDay(m[1],force);
   view.day=null;$('#dayview').classList.add('hidden');$('#overview').classList.remove('hidden');
+  const r=location.hash.match(/^#run=(\d+)$/);
+  focusRun=r?+r[1]:null;
+  if(focusRun!=null){openDetails.add(focusRun);if(status)renderOverview(status);scrollToFocus()}
 }
 
 async function load(){
   try{
     status=await fetch('data/status.json?t='+Date.now(),{cache:'no-store'}).then(r=>r.json());
+    const first=!$('#active').children.length;
     renderOverview(status);
+    if(first&&focusRun!=null)scrollToFocus();
     $('#updated').textContent='Last generated '+status.generated_at;
     // only the newest day still changes; older days are final once published
     if(view.day&&view.day===publishedDays()[0])await showDay(view.day,true);
@@ -400,6 +426,10 @@ $('#day-next').addEventListener('click',()=>step(-1));
 document.addEventListener('keydown',e=>{
   if(!view.day||e.altKey||e.metaKey||e.ctrlKey||e.target.matches('input,select'))return;
   if(e.key==='Escape')location.hash='';else if(e.key==='ArrowLeft')step(1);else if(e.key==='ArrowRight')step(-1);
+});
+$('#active').addEventListener('click',e=>{
+  const b=e.target.closest('button.more');if(!b)return;
+  const r=+b.dataset.run;openDetails.has(r)?openDetails.delete(r):openDetails.add(r);renderOverview(status);
 });
 $('#active').addEventListener('toggle',e=>{const r=+e.target.dataset?.run;if(r)e.target.open?openLanes.add(r):openLanes.delete(r)},true);
 window.addEventListener('hashchange',()=>route());

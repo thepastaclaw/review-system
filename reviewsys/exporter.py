@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import lanepool
+from . import lanepool, progress
 from .config import Config
 from .db import fmt_ts, now, now_dt, parse_ts
 from .queue_status import queued_order
@@ -336,6 +336,7 @@ def build_active_runs(conn: sqlite3.Connection, cfg: Config, at: datetime) -> li
             }
         )
     slot_dir = cfg.work_dir / "lane-slots"
+    profiles: dict[str, dict[str, progress.StepStat]] = {}
     runs = []
     # `queue` tells a post-merge audit (of a PR that is merged by definition) apart from a live
     # review; without it an audit reads as a review stuck on a PR that closed hours ago
@@ -374,6 +375,11 @@ def build_active_runs(conn: sqlite3.Connection, cfg: Config, at: datetime) -> li
                 "findings": findings if row["id"] in last_verify else None,
             }
         )
+        est = progress.estimate(conn, row["id"], at, profiles)
+        run["progress"] = est.progress if est else None
+        run["remaining_seconds"] = est.remaining_seconds if est else None
+        run["upcoming"] = est.upcoming if est else []
+        run["overdue"] = bool(est and est.overdue)
         runs.append(run)
     return runs
 

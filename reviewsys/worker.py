@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from . import audit, converse, degraded, github, labels, lanepool, publish, quota
+from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
 from .contract import (
     Finding,
@@ -34,7 +35,7 @@ from .contract import (
     parse_reviewer_output,
     parse_verifier_output,
 )
-from .db import connect_existing, event, kv_get, kv_set, now, tx
+from .db import connect_existing, event, kv_get, kv_set, now, now_dt, tx
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
@@ -126,6 +127,15 @@ class RunContext:
     state_lock: threading.Lock = field(default_factory=threading.Lock)
     lane_conns: threading.local = field(default_factory=threading.local)
     owner_thread: int = field(default_factory=threading.get_ident)  # the one using main_conn
+    # live progress in the PR's gate comment: while "in progress" is the latest status posted,
+    # `gate_live_kw` holds its arguments and the heartbeat re-renders it (see
+    # `_refresh_gate_progress`). `gate_lock` orders those edits against a final status, so a
+    # refresh can never overwrite "done" or "failed".
+    gate_lock: threading.Lock = field(default_factory=threading.Lock)
+    gate_live_kw: dict[str, Any] | None = None
+    gate_comment_id: int | None = None
+    gate_steps_seen: tuple[tuple[str, str], ...] = ()
+    gate_refreshed_at: float = 0.0  # time.monotonic() of the last progress edit
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -206,7 +216,94 @@ def _heartbeat_loop(ctx: RunContext, stop: threading.Event) -> None:
             )
         except sqlite3.Error as exc:
             log.warning("heartbeat error: %s", exc)
+            continue
+        _refresh_gate_progress(ctx, conn, stop)
     conn.close()
+
+
+# a step change shows within a heartbeat or two; otherwise the bar and time left move every
+# 10 minutes (edits notify nobody, but each one is an API write)
+GATE_PROGRESS_EVERY_SECONDS = 600
+GATE_PROGRESS_MIN_GAP_SECONDS = 30
+
+
+def _run_steps(conn: sqlite3.Connection, run_id: int) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (str(r[0]), str(r[1]))
+        for r in conn.execute(
+            "SELECT name,status FROM steps WHERE run_id=? ORDER BY started_at, rowid", (run_id,)
+        )
+    )
+
+
+def _gate_progress(ctx: RunContext, conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """The progress block of the in-progress gate comment; None if it cannot be estimated.
+    Never raises: the gate comment is bookkeeping, not the review."""
+    try:
+        at = now_dt()
+        est = progress_mod.estimate(conn, ctx.run_id, at)
+        if est is None:
+            return None
+        return {
+            "fraction": est.progress,
+            "overdue": est.overdue,
+            "remaining_seconds": est.remaining_seconds,
+            "elapsed_seconds": est.elapsed_seconds,
+            "steps": [*_run_steps(conn, ctx.run_id), *((n, "upcoming") for n in est.upcoming)],
+            "run_id": ctx.run_id,
+            "updated_at": at.strftime("%H:%M"),
+        }
+    except Exception as exc:
+        log.warning("gate progress estimate failed: %s", exc)
+        return None
+
+
+def _refresh_gate_progress(
+    ctx: RunContext, conn: sqlite3.Connection, stop: threading.Event | None = None
+) -> None:
+    """Re-render the in-progress gate comment when the run's steps changed, or every
+    GATE_PROGRESS_EVERY_SECONDS. Runs on the heartbeat thread, with its own connection.
+
+    Never waits: if the main thread is writing the gate comment (it holds `gate_lock` across a
+    GitHub call), this pass is skipped, so a slow GitHub never delays the heartbeat or its
+    cancel check. Stops for good once the head is no longer `running`: a superseded head's
+    comment belongs to the queue now (queue_status.py writes the new commit's status there)."""
+    if ctx.gate_live_kw is None or ctx.gate_comment_id is None:
+        return
+    try:
+        steps = _run_steps(conn, ctx.run_id)
+        head = conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
+    except sqlite3.Error:
+        return
+    if head is None or head[0] != "running":
+        return
+    since = time.monotonic() - ctx.gate_refreshed_at
+    if since < GATE_PROGRESS_MIN_GAP_SECONDS or (
+        steps == ctx.gate_steps_seen and since < GATE_PROGRESS_EVERY_SECONDS
+    ):
+        return
+    if not ctx.gate_lock.acquire(blocking=False):
+        return
+    try:
+        kw = ctx.gate_live_kw
+        # a final status landed meanwhile, or the worker is shutting down
+        if kw is None or ctx.gate_comment_id is None or (stop is not None and stop.is_set()):
+            return
+        body = github.gate_body(
+            "in_progress", ctx.sha, **_gate_defaults(ctx, kw), progress=_gate_progress(ctx, conn)
+        )
+        ctx.gate_steps_seen, ctx.gate_refreshed_at = steps, time.monotonic()
+        try:
+            ctx.gh.api(
+                f"repos/{ctx.repo}/issues/comments/{ctx.gate_comment_id}",
+                method="PATCH",
+                body={"body": body},
+                timeout=30,
+            )
+        except ReviewError as exc:
+            log.warning("gate progress update failed: %s", exc)
+    finally:
+        ctx.gate_lock.release()
 
 
 # ---- step bookkeeping ----
@@ -316,9 +413,9 @@ def _set_run_review(
     )
 
 
-def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
-    if ctx.dry_run or ctx.is_audit:
-        return
+def _gate_defaults(ctx: RunContext, kw: dict[str, Any]) -> dict[str, Any]:
+    """`kw` plus what the run knows by now (tier, Phase-2-only, ad hoc, degraded)."""
+    kw = dict(kw)
     if ctx.triage is not None:
         kw.setdefault("tier", ctx.tier)
     if ctx.phase1_skipped:
@@ -327,12 +424,33 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
         kw.setdefault("adhoc", True)
     if ctx.is_degraded:
         kw.setdefault("degraded", True)
-    try:
-        github.upsert_gate_comment(
-            ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, github.gate_body(status, ctx.sha, **kw)
-        )
-    except ReviewError as exc:
-        log.warning("gate comment update failed: %s", exc)
+    return kw
+
+
+def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
+    if ctx.dry_run or ctx.is_audit:
+        return
+    with ctx.gate_lock:
+        live = status == "in_progress"
+        ctx.gate_live_kw = kw if live else None
+        full = _gate_defaults(ctx, kw)
+        if live:
+            full["progress"] = _gate_progress(ctx, ctx.conn)
+        try:
+            cid = github.upsert_gate_comment(
+                ctx.gh,
+                ctx.repo,
+                ctx.number,
+                ctx.cfg.bot_login,
+                github.gate_body(status, ctx.sha, **full),
+            )
+            ctx.gate_comment_id = cid or ctx.gate_comment_id
+        except ReviewError as exc:
+            log.warning("gate comment update failed: %s", exc)
+        if live:
+            ctx.gate_refreshed_at = time.monotonic()
+            with contextlib.suppress(sqlite3.Error):
+                ctx.gate_steps_seen = _run_steps(ctx.conn, ctx.run_id)
 
 
 # ---- steps ----
@@ -2733,6 +2851,8 @@ def main(
         status, reason, kind = RunStatus.FAILED, f"{type(exc).__name__}: {exc}", FailKind.INFRA
         log.exception("worker crashed")
     finally:
+        with ctx.gate_lock:  # no progress edit may follow the run's end (requeue, cancel)
+            ctx.gate_live_kw = None
         stop.set()
         if hb:
             hb.join(timeout=5)
