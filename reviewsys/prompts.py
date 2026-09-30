@@ -196,17 +196,17 @@ def verifier_prompt(
         "comment_budget": str(cfg.comment_budget),
     }
     rendered = fill(template, values)
+    if phase1_skipped:
+        phase1_note = f"- There is no Phase-1 evidence for this head (Phase 1 {phase1_skipped}); the 'Codex' block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
+    elif single_stage:
+        phase1_note = "- Phase 1 ran beside Phase 2 on this head with no gate between them: no earlier verifier has seen the 'Codex' findings. Weigh them as unverified reviewer claims, exactly like the Phase-2 ones.\n"
+    else:
+        phase1_note = ""
     requirements = (
         "\n\n## Exact evidence, source-of-truth, phase, adjudication, and provenance requirements\n\n"
         f"- `review_phase` must be `{phase}`.\n- Exact head: `{head_sha}`.\n"
         "- In the template above, 'Codex' findings are the Phase-1 reviewer lanes and 'Claude' findings are the Phase-2 reviewer lanes; the model names are historical.\n"
-        + (
-            f"- There is no Phase-1 evidence for this head (Phase 1 {phase1_skipped}); the 'Codex' block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
-            if phase1_skipped
-            else "- Phase 1 ran beside Phase 2 on this head with no gate between them: no earlier verifier has seen the 'Codex' findings. Weigh them as unverified reviewer claims, exactly like the Phase-2 ones.\n"
-            if single_stage
-            else ""
-        )
+        + phase1_note
         + prior_findings_block(prior, prior_sha)
         + "- Independently verify every supplied reviewer claim against the exact source range and the PR evidence below.\n"
         "```json\n" + json.dumps(evidence, indent=2) + "\n```\n"

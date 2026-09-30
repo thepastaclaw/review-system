@@ -13,16 +13,13 @@ from pathlib import Path
 import pytest
 
 from reviewsys import config as cfg_mod
-from reviewsys import gc, worker
-from reviewsys.db import tx
-from reviewsys.ingest import enqueue_head
+from reviewsys import gc
+from reviewsys.contract import parse_verifier_output
+from reviewsys.gate import gate_score, phase1_blocks
 from reviewsys.lane import LaneResult, LaneSpec
-from reviewsys.models import RunStatus, Trigger
-from reviewsys.scheduler import schedule
+from reviewsys.models import RunStatus
 from reviewsys.steps import worktree as wt
-
-HEAD = "a" * 40
-REVIEWER_ROLES = {"general", "always-on", "security-auditor"}
+from tests.test_parallel_lanes import HEAD, REVIEWER_ROLES, Overlap, _run
 
 
 @pytest.fixture(autouse=True)
@@ -82,13 +79,6 @@ def _gate(raw, block_above=5):
     raw["review_model_policy"]["phase1"]["gate"] = {"block_above": block_above}
 
 
-def _run(cfg, conn, gh, runner):
-    with tx(conn):
-        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
-    (rid,) = schedule(conn, cfg, spawn=False)
-    return rid, worker.main(cfg, conn, rid, gh=gh, lane_runner=runner, heartbeat=False)
-
-
 def _steps(conn, rid) -> dict[str, str]:
     return {
         r["name"]: r["status"]
@@ -141,6 +131,12 @@ def test_policy_knobs_parse_and_default_off(cfg, skills_dir, tmp_path):
             lambda p: p["triage"]["tiers"]["trivial"].update(single_stage=True),
             "single_stage needs a phase2 effort",
         ),
+        (lambda p: p["phase1"].update(gate={}), "needs `block_above`"),
+        (lambda p: p["phase1"].update(specialists="rust-quality"), "must be a list"),
+        (
+            lambda p: p["triage"]["tiers"]["critical"].update(single_stage="false"),
+            "must be true or false",
+        ),
     ],
 )
 def test_bad_policy_knobs_are_rejected(skills_dir, tmp_path, cfg, mutate, message):
@@ -166,6 +162,21 @@ def test_phase1_runs_only_its_allowlisted_specialists(cfg, conn, gh, lanes, skil
     assert {s.role for s in _reviewers(lanes, "gpt-6-astra")} == REVIEWER_ROLES
     body = gh.posted_reviews[0]["body"]
     assert "Phase 1 + Phase 2" in body
+
+
+def test_phase1_only_review_keeps_every_specialist(cfg, conn, gh, lanes, skills_dir, tmp_path):
+    """No Phase 2 follows a trivial tier, so nothing else would cover the specialists."""
+    cfg = _policy(
+        skills_dir,
+        tmp_path,
+        lambda raw: raw["review_model_policy"]["phase1"].update(specialists=[]),
+    )
+    lanes.triage = {"tier": "trivial", "reasoning": "typo"}
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    _, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    assert {s.role for s in _reviewers(lanes)} == REVIEWER_ROLES
 
 
 # ---- points gate ----
@@ -214,6 +225,24 @@ def test_findings_over_the_budget_hold_phase2(gated, conn, gh, lanes):
     assert "Blockers found" in gh.gate_bodies[-1]
 
 
+def test_carried_forward_suggestions_never_count_but_carried_blockers_do():
+    gate = cfg_mod.GatePolicy(block_above=5)
+
+    def verified(findings):
+        return parse_verifier_output(
+            {**_verifier(findings), "review_phase": "preliminary"},
+            expected_phase="preliminary",
+            expected_coderabbit_ids=[],
+        )
+
+    carried = [{**f, "finding_hash": f"{i:012x}"} for i, f in enumerate(_findings(suggestion=6))]
+    v = verified(carried)
+    assert not phase1_blocks(v, gate) and gate_score(v, gate)["points"] == 0
+    assert phase1_blocks(verified(carried + _findings(suggestion=6)), gate)
+    blockers = [{**f, "finding_hash": f"b{i:011x}"} for i, f in enumerate(_findings(blocking=2))]
+    assert phase1_blocks(verified(blockers), gate), "an unfixed blocker still counts"
+
+
 def test_suggestions_alone_over_the_budget_defer_but_never_approve(gated, conn, gh, lanes):
     lanes.reviewer["default"] = {
         "summary": "ok",
@@ -227,7 +256,37 @@ def test_suggestions_alone_over_the_budget_defer_but_never_approve(gated, conn, 
     (review,) = gh.posted_reviews
     assert "phase=preliminary" in review["body"]
     assert review["event"] == "COMMENT", "Phase 2 has not seen this head: never APPROVE"
+    assert "are above the gate budget" in review["body"]
+    assert "Validated blockers were found" not in review["body"]
+    assert "- Phase 2 reviewers: **not run (deferred by the Phase-1 gate)**" in review["body"]
     assert "Phase-1 findings over the gate" in gh.gate_bodies[-1]
+    assert "gate points: 6 (Phase 2 deferred above 5)" in gh.gate_bodies[-1]
+
+
+def test_suggestions_never_hold_back_a_head_whose_final_review_stands(gated, conn, gh, lanes):
+    """A same-sha re-review: Phase 2 already reviewed this exact head, so suggestions from the
+    cheap Phase-1 model neither defer it nor retract the standing verdict."""
+    gh.posted_reviews.append(
+        {"id": 1, "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->"}
+    )
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier(_findings(suggestion=6))
+    lanes.verifier["final"] = _verifier([])
+    rid, status = _run(gated, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    assert _steps(conn, rid)["phase2"] == "ok"
+
+
+def test_trivial_tier_over_the_budget_still_publishes_phase1_only(gated, conn, gh, lanes):
+    """No Phase 2 to defer: the gate does not apply, so it is the usual Phase-1-only final."""
+    lanes.triage = {"tier": "trivial", "reasoning": "typo"}
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier(_findings(suggestion=6))
+    _, status = _run(gated, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    (review,) = gh.posted_reviews
+    assert "## Final review — Phase 1 only (trivial change)" in review["body"]
+    assert "gate points" not in gh.gate_bodies[-1]
 
 
 def test_nitpicks_never_count_toward_the_gate(gated, conn, gh, lanes):
@@ -296,30 +355,6 @@ def test_trivial_change_on_a_repo_without_phase1_reviews_at_low_effort(
 # ---- single stage ----
 
 
-class Overlap:
-    """Reviewer lanes wait at a barrier, so the test only passes when they are really in
-    flight together."""
-
-    def __init__(self, inner, parties: int) -> None:
-        self.inner = inner
-        self.barrier = threading.Barrier(parties)
-        self.lock = threading.Lock()
-        self.live = self.peak = 0
-
-    def __call__(self, spec: LaneSpec, art: Path, worktree: Path) -> LaneResult:
-        if spec.role not in REVIEWER_ROLES:
-            return self.inner(spec, art, worktree)
-        with self.lock:
-            self.live += 1
-            self.peak = max(self.peak, self.live)
-        try:
-            self.barrier.wait(timeout=10)
-            return self.inner(spec, art, worktree)
-        finally:
-            with self.lock:
-                self.live -= 1
-
-
 def _single_stage(raw):
     raw["review_model_policy"]["triage"]["tiers"]["critical"]["single_stage"] = True
     _gate(raw)
@@ -340,7 +375,7 @@ def test_single_stage_runs_both_phases_side_by_side_without_a_gate(single, conn,
         "out_of_scope_findings": [],
     }
     lanes.verifier["final"] = _verifier(_findings(blocking=1))
-    runner = Overlap(lanes, parties=6)  # 3 Phase-1 + 3 Phase-2 lanes, all at once
+    runner = Overlap(lanes, barrier=6)  # 3 Phase-1 + 3 Phase-2 lanes, all at once
     rid, status = _run(single, conn, gh, runner)
     assert status == RunStatus.DONE
     assert runner.peak == 6
@@ -403,10 +438,14 @@ def test_single_stage_phase2_failure_stops_phase1_and_fails_the_run(single, conn
                 time.sleep(0.01)
         return lanes(spec, art, worktree)
 
-    _, status = _run(single, conn, gh, runner)
-    assert status != RunStatus.DONE
+    rid, status = _run(single, conn, gh, runner)
+    assert status == RunStatus.FAILED
     assert stopped.is_set(), "Phase-1 lanes are stopped when Phase 2 fails"
     assert not gh.posted_reviews
+    # the failure is charged to Phase 2; the stopped Phase 1 does not stay `running`
+    assert _steps(conn, rid)["phase2"] == "failed"
+    assert _steps(conn, rid)["phase1"] == "cancelled"
+    assert conn.execute("SELECT phase FROM runs WHERE id=?", (rid,)).fetchone()["phase"] == "phase2"
 
 
 # ---- retention ----

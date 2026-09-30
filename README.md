@@ -74,12 +74,19 @@ Phase 1 scored 4-10x lower value per token than Phase 2. All four are off when a
   runs every selected specialist.
 - `phase1.gate` (`{"block_above": N, "weights": {...}}`): the verified Phase-1 findings
   are scored (default weights `blocking` 3, `suggestion` 1, `nitpick` 0), and Phase 2 is
-  deferred only when the total is **above** `block_above`. Under the budget, Phase 2 runs
-  and the final verifier re-adjudicates the Phase-1 findings with everything else. A
-  preliminary review held back by suggestions alone is published as COMMENT, never
-  APPROVE. A tier without Phase 2 (`trivial`) still publishes a verified blocker as a
-  preliminary REQUEST_CHANGES. The `gate` step records `points` and `block_above`, and
-  the gate comment prints them. Without a gate, any verified blocker defers Phase 2.
+  deferred only when the total is **above** `block_above`. Scored are the findings new to
+  this head plus carried-forward (STILL_VALID) blockers; carried suggestions are not, or an
+  earlier round's unaddressed suggestions would hold every later head at Phase 1. Under the
+  budget, Phase 2 runs and the final verifier re-adjudicates the Phase-1 findings with
+  everything else. A preliminary review held back by suggestions alone is published as
+  COMMENT, never APPROVE, and a head whose final review already stands (a same-sha
+  re-review) is never held back by suggestions alone. The gate only defers a Phase 2 that
+  would run: a tier without Phase 2 (`trivial`) publishes Phase-1-only as before, a verified
+  blocker still as a preliminary REQUEST_CHANGES. The `gate` step records `points` and
+  `block_above`; the gate comment prints them when the gate deferred. Without a gate, any
+  verified blocker defers Phase 2.
+- The Phase-1 roster only slims down when a Phase 2 follows; a Phase-1-only review (the
+  `trivial` tier, light audits) keeps every selected specialist.
 - `triage.tiers.<tier>.single_stage: true`: no gate for that tier. The Phase-1 reviewers
   (on their ladder model) run *beside* the Phase-2 reviewers, and the final verifier
   weighs both sets. The verifier is told the Phase-1 claims are unverified. There is no
@@ -550,7 +557,7 @@ Within a phase the general reviewer and the selected specialists run side by sid
 (`phase_parallelism` per run: default 0 = every lane of the phase at once; 1 restores
 the one-after-another flow). They
 never read each other's output, so only the verifier after them waits for all of them;
-the phases themselves still run in order. Measured 2026-09-23..27 (193 two-phase
+the phases themselves run in order, except on a `single_stage` tier. Measured 2026-09-23..27 (193 two-phase
 reviews, 2–6 reviewers per phase), this cuts a full review from ~65 to a projected
 ~38 min; a cap of 3 already gets ~95% of that.
 

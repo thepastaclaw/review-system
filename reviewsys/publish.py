@@ -388,7 +388,9 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
         f"- Fresh verifier: {_model_label(p.verifier)} — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]
     if phase == "preliminary":
-        lines.append("- Phase 2 reviewers: **not run (deferred by blocker gate)**")
+        lines.append(
+            f"- Phase 2 reviewers: **not run ({p.phase2_skipped or 'deferred by blocker gate'})**"
+        )
     elif p.phase2_skipped:
         lines.append(
             f"- Phase 2 reviewers: **not run ({p.phase2_skipped})**; this review comments and never approves"
@@ -466,7 +468,9 @@ def render(m: ReviewModel) -> str:
     parts += [summary, ""]
     if m.phase == "preliminary":
         parts += [
-            "Validated blockers were found by the Phase-1 review and confirmed by a fresh verifier. Phase 2 is deferred until a fresh same-head revalidation clears the blocker gate.",
+            "Validated blockers were found by the Phase-1 review and confirmed by a fresh verifier. Phase 2 is deferred until a fresh same-head revalidation clears the blocker gate."
+            if m.verified.blocker_count
+            else "The Phase-1 findings confirmed by a fresh verifier are above the gate budget. Phase 2 is deferred until a fresh same-head revalidation brings them under it.",
             "",
         ]
     if m.superseded_note:

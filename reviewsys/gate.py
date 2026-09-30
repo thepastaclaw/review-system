@@ -6,9 +6,12 @@ from .config import GatePolicy
 from .contract import VerifierOutput
 
 
-def gate_points(verified: VerifierOutput, gate: GatePolicy | None) -> int | None:
-    """The verified Phase-1 findings scored by the gate policy; None without one."""
-    return gate.points([f.severity for f in verified.findings]) if gate else None
+def _scored(verified: VerifierOutput) -> list[str]:
+    """Severities the gate scores: every finding new to this head, plus carried-forward
+    (STILL_VALID) blockers. Carried suggestions are left out: they were posted by an earlier
+    round, often by Phase 2, and would otherwise hold every later head at Phase 1 until the
+    author acted on them."""
+    return [f.severity for f in verified.findings if not f.prior_hash or f.severity == "blocking"]
 
 
 def phase1_blocks(verified: VerifierOutput, gate: GatePolicy | None) -> bool:
@@ -16,16 +19,12 @@ def phase1_blocks(verified: VerifierOutput, gate: GatePolicy | None) -> bool:
     or (without a gate policy) any verified blocker."""
     if gate is None:
         return verified.blocker_count > 0
-    return gate.points([f.severity for f in verified.findings]) > gate.block_above
+    return gate.points(_scored(verified)) > gate.block_above
 
 
-def admit_phase2(
-    verified: VerifierOutput,
-    *,
-    phase2_enabled: bool,
-    tier_allows: bool = True,
-    gate: GatePolicy | None = None,
-) -> bool:
-    """Phase 2 runs when the triage tier calls for a second round (trivial changes stop after
-    Phase 1) and Phase 1's verified findings do not block it (see `phase1_blocks`)."""
-    return phase2_enabled and tier_allows and not phase1_blocks(verified, gate)
+def gate_score(verified: VerifierOutput, gate: GatePolicy | None) -> dict[str, int | None]:
+    """`points` and `block_above` for the gate step detail and the gate comment; both None
+    without a gate policy."""
+    if gate is None:
+        return {"points": None, "block_above": None}
+    return {"points": gate.points(_scored(verified)), "block_above": gate.block_above}

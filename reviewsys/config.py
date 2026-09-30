@@ -604,9 +604,12 @@ def load_skills_config(
 def _phase1_specialists(
     node: dict[str, Any], specialists: tuple[Specialist, ...]
 ) -> tuple[str, ...] | None:
-    if "specialists" not in node:
+    raw = node.get("specialists")
+    if raw is None:
         return None
-    ids = tuple(str(x) for x in node.get("specialists") or ())
+    if not isinstance(raw, list):
+        raise ValueError("phase1.specialists must be a list of specialist ids")
+    ids = tuple(str(x) for x in raw)
     unknown = sorted(set(ids) - {s.id for s in specialists})
     if unknown:
         raise ValueError(f"phase1.specialists {unknown!r} are not configured specialists")
@@ -614,8 +617,10 @@ def _phase1_specialists(
 
 
 def _gate(node: dict[str, Any] | None) -> GatePolicy | None:
-    if not node:
+    if node is None:
         return None
+    if not isinstance(node, dict) or "block_above" not in node:
+        raise ValueError("phase1.gate needs `block_above`")
     block_above = int(node["block_above"])
     if block_above < 0:
         raise ValueError(f"phase1.gate.block_above {block_above!r} must be >= 0")
@@ -642,7 +647,9 @@ def _tiers(node: dict[str, Any], p1_default: str, p2_default: str) -> dict[str, 
         for level in (p1, p2):
             if level is not None and level not in EFFORT_LEVELS:
                 raise ValueError(f"tier {tier!r}: effort {level!r} not in {EFFORT_LEVELS}")
-        single = bool(spec.get("single_stage", False))
+        single = spec.get("single_stage", False)
+        if not isinstance(single, bool):
+            raise ValueError(f"tier {tier!r}: single_stage must be true or false")
         if single and p2 is None:
             raise ValueError(f"tier {tier!r}: single_stage needs a phase2 effort")
         out[str(tier).lower()] = TierEffort(phase1=p1, phase2=p2, single_stage=single)
