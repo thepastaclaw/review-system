@@ -469,7 +469,8 @@ def render(m: ReviewModel) -> str:
     if m.phase == "preliminary":
         parts += [
             "Validated blockers were found by the Phase-1 review and confirmed by a fresh verifier. Phase 2 is deferred until a fresh same-head revalidation clears the blocker gate."
-            if m.verified.blocker_count
+            # phase2_skipped on a preliminary: the points gate deferred on suggestions alone
+            if m.verified.blocker_count or not m.provenance.phase2_skipped
             else "The Phase-1 findings confirmed by a fresh verifier are above the gate budget. Phase 2 is deferred until a fresh same-head revalidation brings them under it.",
             "",
         ]

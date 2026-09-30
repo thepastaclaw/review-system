@@ -406,7 +406,12 @@ def gate_body(
         return f"{GATE_MARKER}\n{warn or '🔍'} Review in progress — actively reviewing now (commit {s}){t}"
     if status == "done":
         if phase == "preliminary":
-            what = "Blockers found" if blocker_count else "Phase-1 findings over the gate"
+            # the score is only passed when the points gate deferred Phase 2
+            what = (
+                "Phase-1 findings over the gate"
+                if points is not None and not blocker_count
+                else "Blockers found"
+            )
             score = (
                 f" · gate points: {points} (Phase 2 deferred above {block_above})"
                 if points is not None and block_above is not None
