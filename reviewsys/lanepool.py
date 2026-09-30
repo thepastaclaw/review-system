@@ -37,6 +37,7 @@ over the budget when production picks up after they started.
 from __future__ import annotations
 
 import fcntl
+import json
 import os
 import sqlite3
 import threading
@@ -46,6 +47,7 @@ from pathlib import Path
 
 from . import slots
 from .config import Config
+from .db import now
 from .lane import LaneResult, LaneRunner, LaneSpec
 
 POLL_SECONDS = 1.0
@@ -55,6 +57,10 @@ RANK_PRIORITY, RANK_LIVE, RANK_AUDIT = 1, 2, 3
 
 COMPARE_POOL = "compare"
 COMPARE_POOL_SLOTS = 2
+# what a lane is doing right now, for the public status export (exporter.py): `waiting` for a
+# pool slot or `running`. Written into the lane's artifact dir; the runner's lane-meta.json
+# supersedes it once the lane ends.
+LANE_STATE = "lane-state.json"
 
 
 def pool_of(model: str) -> str:
@@ -92,8 +98,9 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _line(wait_dir: Path) -> list[str]:
-    """The waiting tickets in order, dropping those of processes that died waiting."""
+def _line(wait_dir: Path, prune: bool = True) -> list[str]:
+    """The waiting tickets in order, skipping (and with `prune`, deleting) those of processes
+    that died waiting."""
     line = []
     for name in sorted(os.listdir(wait_dir)):
         try:
@@ -101,10 +108,25 @@ def _line(wait_dir: Path) -> list[str]:
         except (IndexError, ValueError):
             continue
         if pid != os.getpid() and not _alive(pid):
-            (wait_dir / name).unlink(missing_ok=True)
+            if prune:
+                (wait_dir / name).unlink(missing_ok=True)
             continue
         line.append(name)
     return line
+
+
+def waiting_line(slot_dir: Path, pool: str) -> list[str]:
+    """The pool's waiting tickets in order, without `_line`'s cleanup: for readers that are
+    not waiters themselves (the status export)."""
+    try:
+        return _line(slot_dir / f"{pool}.wait", prune=False)
+    except OSError:
+        return []
+
+
+def waiter_key() -> str:
+    """The `<pid>-<thread>` suffix of the ticket `acquire` takes on this thread."""
+    return f"{os.getpid()}-{threading.get_ident()}"
 
 
 def acquire(
@@ -133,7 +155,7 @@ def acquire(
             time.sleep(POLL_SECONDS)
     wait_dir = slot_dir / f"{pool}.wait"
     wait_dir.mkdir(exist_ok=True)
-    ticket = wait_dir / f"{rank}-{time.time_ns():020d}-{os.getpid()}-{threading.get_ident()}"
+    ticket = wait_dir / f"{rank}-{time.time_ns():020d}-{waiter_key()}"
     ticket.touch()
     try:
         while True:
@@ -147,6 +169,35 @@ def acquire(
             time.sleep(POLL_SECONDS)
     finally:
         ticket.unlink(missing_ok=True)
+
+
+def _mark(artifact_dir: Path, spec: LaneSpec, pool: str, state: str | None) -> None:
+    """Record the lane's state (None: it never started, forget it). Best effort: a lane never
+    fails over its own bookkeeping."""
+    target = artifact_dir / LANE_STATE
+    try:
+        if state is None:
+            target.unlink(missing_ok=True)
+            return
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        tmp = artifact_dir / f"{LANE_STATE}.tmp"
+        tmp.write_text(
+            json.dumps(
+                {
+                    "state": state,
+                    "since": now(),
+                    "pool": pool,
+                    "role": spec.role,
+                    "model": spec.model,
+                    "effort": spec.effort,
+                    "parallel": spec.parallel,
+                    "waiter": waiter_key(),
+                }
+            )
+        )
+        tmp.replace(target)
+    except Exception:  # bookkeeping for the status page, never the lane's problem
+        pass
 
 
 def release(fd: int) -> None:
@@ -169,7 +220,17 @@ def gated(
 
     def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
         pool = spec.pool or pool_of(spec.model)
+        try:
+            return _run(spec, artifact_dir, worktree, pool)
+        except BaseException:
+            # a lane that raised never writes lane-meta.json: without this the status page
+            # would show it running for the rest of the run
+            _mark(artifact_dir, spec, pool, None)
+            raise
+
+    def _run(spec: LaneSpec, artifact_dir: Path, worktree: Path, pool: str) -> LaneResult:
         if limit(conn(), cfg, pool) is None:
+            _mark(artifact_dir, spec, pool, "running")
             return runner(spec, artifact_dir, worktree)
 
         def gpt_idle() -> bool:
@@ -185,6 +246,7 @@ def gated(
             release(fd)
             return True
 
+        _mark(artifact_dir, spec, pool, "waiting")
         fd = acquire(
             slot_dir,
             pool,
@@ -198,10 +260,12 @@ def gated(
             release(fd)  # stopped while it waited: a lane no longer wanted must not start
             fd = None
         if fd is None:
+            _mark(artifact_dir, spec, pool, None)
             return LaneResult(
                 exit_code=None, stdout="", stderr="", duration_s=0, cancelled=True, started=False
             )
         try:
+            _mark(artifact_dir, spec, pool, "running")
             return runner(spec, artifact_dir, worktree)
         finally:
             release(fd)

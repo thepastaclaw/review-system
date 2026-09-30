@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import timedelta
 
-from reviewsys import degraded
-from reviewsys.db import fmt_ts, now_dt, tx
-from reviewsys.exporter import build_day_runs, build_export, write_export
+from reviewsys import degraded, lanepool
+from reviewsys.db import event, fmt_ts, now_dt, tx
+from reviewsys.exporter import _live_lanes, build_day_runs, build_export, write_export
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import Trigger
 from reviewsys.queue_status import queued_order
@@ -46,7 +47,7 @@ def test_export_queue_order_matches_the_scheduler(cfg, conn):
     assert [h["number"] for h in eligible_heads(conn, ts=fmt_ts(now_dt()))] == [12, 10, 11], (
         "same order as the scheduler picks"
     )
-    assert export["live"]["queued"][-1]["reason"] == "waiting for debounce/backoff"
+    assert export["live"]["queued"][-1]["reason"] == "debounce (more pushes may follow)"
     assert export["live"]["queued"][0]["priority"] is True
     assert export["live"]["degraded"] == {"configured": False, "active": False}
 
@@ -254,3 +255,135 @@ def test_day_runs_measure_a_retry_from_its_predecessor_and_normalize_backfilled_
     assert by_id[first]["wait_seconds"] == 3600
     assert by_id[first]["slot_wait_seconds"] is None, "eligible_at now belongs to the retry"
     assert by_id[retry]["verdict"] == "REQUEST_CHANGES"
+
+
+def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
+    """An active run shows its steps (safe detail only), finished lanes and tokens so far, and
+    the lanes waiting or running right now from their lanepool state files."""
+    ts = fmt_ts(now_dt() - timedelta(minutes=30))
+    run_dir = tmp_path / "run-60"
+    with tx(conn):
+        hid = conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at) "
+            "VALUES ('dashpay/platform', 60, ?, 'new_push', 'running', ?, ?)",
+            ("6" * 40, fmt_ts(now_dt() - timedelta(minutes=45)), ts),
+        ).lastrowid
+        run = conn.execute(
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, heartbeat_at, "
+            "deadline_at, phase, tier, run_dir) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (
+                hid,
+                1,
+                "running",
+                "t60",
+                ts,
+                ts,
+                fmt_ts(now_dt() + timedelta(hours=5)),
+                "phase1",
+                "critical",
+                str(run_dir),
+            ),
+        ).lastrowid
+        for name, status, detail in (
+            ("triage", "ok", {"tier": "critical", "reasoning": "big diff", "error": "a@b.c"}),
+            ("phase1", "running", {}),
+            ("context", "failed", {"error": "token for someone@example.com"}),
+        ):
+            conn.execute(
+                "INSERT INTO steps (run_id, name, status, started_at, detail) VALUES (?,?,?,?,?)",
+                (run, name, status, ts, json.dumps(detail)),
+            )
+        conn.execute(
+            "INSERT INTO lanes (run_id, phase, role, agent, model, effort, attempt, attempt_id, "
+            "status, tokens_in, tokens_out, started_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (run, "triage", "triage", "a", "gpt-6.1-sol", "low", 1, "x", "completed", 900, 100, ts),
+        )
+    slot_dir = cfg.work_dir / "lane-slots"
+    (slot_dir / "glm.wait").mkdir(parents=True)
+    me = f"{os.getpid()}-7"
+    for name in (f"2-{1:020d}-{os.getpid()}-1", f"2-{2:020d}-{me}"):
+        (slot_dir / "glm.wait" / name).touch()
+
+    def lane(dirname, **state):
+        d = run_dir / "attempts" / dirname
+        d.mkdir(parents=True)
+        (d / lanepool.LANE_STATE).write_text(json.dumps({"since": ts, "pool": "glm", **state}))
+        return d
+
+    lane("phase1-general-aa", state="running", role="general", model="glm-5.3-flash", effort="max")
+    lane(
+        "phase1-ffi-bb",
+        state="waiting",
+        role="ffi",
+        model="glm-5.3-flash",
+        effort="max",
+        parallel=True,
+        waiter=me,
+    )
+    done = lane("phase1-old-cc", state="running", role="old", model="glm-5.3-flash", effort="max")
+    (done / "lane-meta.json").write_text("{}")  # ended: its row is in the DB, not live
+
+    export = build_export(conn, cfg)
+    (active,) = export["live"]["active"]
+    assert active["wait_seconds"] == 900 and active["tokens_in"] == 900
+    assert [s["name"] for s in active["steps"]] == ["triage", "phase1", "context"]
+    assert active["steps"][0]["info"] == {"tier": "critical", "reasoning": "big diff"}
+    assert active["steps"][2]["info"] == {}
+    assert "example.com" not in json.dumps(export) and "a@b.c" not in json.dumps(export)
+    live = {x["role"]: x for x in active["live_lanes"]}
+    assert set(live) == {"general", "ffi"}
+    assert live["general"]["state"] == "running" and live["general"]["since_seconds"] >= 1800
+    assert (live["ffi"]["line_position"], live["ffi"]["line_length"]) == (2, 2)
+    assert "run_dir" not in active
+    pools = {p["pool"]: p for p in export["live"]["lane_pools"]}
+    assert (pools["glm"]["running"], pools["glm"]["waiting"]) == (1, 2)
+
+
+def test_queue_says_why_a_head_waits(cfg, conn):
+    _queue(conn, cfg, 70, queued_ago_min=5, eligible_in_min=25)
+    _queue(conn, cfg, 71, queued_ago_min=60, eligible_in_min=10)
+    _queue(conn, cfg, 72, queued_ago_min=60, eligible_in_min=-1)
+    with tx(conn):
+        conn.execute("UPDATE heads SET attempts=1 WHERE number=71")
+    queued = {q["number"]: q for q in build_export(conn, cfg)["live"]["queued"]}
+    assert queued[70]["reason"].startswith("debounce")
+    assert 1400 <= queued[70]["eligible_in_seconds"] <= 1500
+    assert queued[71]["reason"] == "retry backoff after attempt 1"
+    assert queued[72]["reason"] == "waiting for a review slot"
+    assert queued[72]["eligible_in_seconds"] == 0
+
+
+def test_events_withhold_details_that_can_quote_lane_errors(cfg, conn):
+    with tx(conn):
+        event(conn, "run.done", repo="dashpay/platform", number=1, detail="ok in 970s")
+        event(conn, "run.failed", repo="dashpay/platform", number=1, detail="503 auth_unavailable")
+        event(conn, "degraded.transition", detail="degraded (usage_limit_reached)")
+        event(conn, "some.future_kind", detail="anything")
+    details = {e["kind"]: e["detail"] for e in build_export(conn, cfg)["history"]["recent_events"]}
+    assert details["run.done"] == "ok in 970s"
+    assert details["run.failed"] is None
+    assert details["degraded.transition"] is None and details["some.future_kind"] is None
+
+
+def test_live_lanes_see_stand_in_retries_and_repairs(tmp_path):
+    """A stand-in retry of triage reuses attempt-1 (its first lane-meta.json already there),
+    and a repair lane runs in its parent's `repair/` dir: both are live while they run."""
+    ts = fmt_ts(now_dt())
+    triage = tmp_path / "triage" / "attempt-1"
+    triage.mkdir(parents=True)
+    (triage / "lane-meta.json").write_text("{}")
+    state = triage / lanepool.LANE_STATE
+    state.write_text(json.dumps({"state": "running", "role": "triage", "since": ts}))
+    meta_ns = (triage / "lane-meta.json").stat().st_mtime_ns
+    os.utime(state, ns=(meta_ns + 10**9, meta_ns + 10**9))
+    repair = tmp_path / "attempts" / "phase1-general-aa" / "repair"
+    repair.mkdir(parents=True)
+    (repair.parent / "lane-meta.json").write_text("{}")
+    (repair / lanepool.LANE_STATE).write_text(
+        json.dumps({"state": "waiting", "role": "general", "since": ts, "pool": "gpt"})
+    )
+    lanes = {x["role"]: x for x in _live_lanes(str(tmp_path), tmp_path / "slots", now_dt())}
+    assert lanes["triage"]["phase"] == "triage"
+    assert lanes["general (repair)"]["phase"] == "phase1"
+    os.utime(state, ns=(meta_ns - 10**9, meta_ns - 10**9))  # the lane-meta.json is newer: ended
+    assert "triage" not in {x["role"] for x in _live_lanes(str(tmp_path), tmp_path, now_dt())}

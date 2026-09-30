@@ -207,14 +207,17 @@ def test_pool_slots_bound_lanes_across_workers(tmp_path):
         lanepool.release(f)
 
 
-def test_gated_runner_waits_for_a_slot_and_honours_cancel(cfg, conn):
+def test_gated_runner_waits_for_a_slot_and_honours_cancel(cfg, conn, tmp_path):
     cfg = dataclasses.replace(cfg, lane_pools={"muse": 1})
     slot_dir = cfg.work_dir / "lane-slots"
     held = lanepool.acquire(slot_dir, "muse", lambda: 1, lambda: False)
     ran: list[str] = []
+    art = tmp_path / "art"
+    states: list[dict] = []
 
     def inner(spec, art, worktree):
         ran.append(spec.role)
+        states.append(json.loads((art / lanepool.LANE_STATE).read_text()))
         return LaneResult(exit_code=0, stdout="", stderr="", duration_s=1)
 
     stop = threading.Event()
@@ -233,13 +236,73 @@ def test_gated_runner_waits_for_a_slot_and_honours_cancel(cfg, conn):
         claude_bin="claude",
     )
     stop.set()  # the run is cancelled while the lane waits for the only slot
-    res = gated(spec, Path("."), Path("."))
+    res = gated(spec, art, tmp_path)
     assert res.cancelled and not res.started and ran == []
+    assert not (art / lanepool.LANE_STATE).exists(), "a lane that never started leaves no state"
     lanepool.release(held)
     stop.clear()
-    assert not gated(spec, Path("."), Path(".")).cancelled and ran == ["general"]
-    # an ungated family never touches the slot files
-    assert gated(dataclasses.replace(spec, model="other-model"), Path("."), Path(".")).ok
+    assert not gated(spec, art, tmp_path).cancelled and ran == ["general"]
+    assert states[-1]["state"] == "running" and states[-1]["pool"] == "muse"
+    assert (states[-1]["model"], states[-1]["effort"]) == ("muse-spark-1.3-contributor", "high")
+    # an ungated family never touches the slot files, but still says it is running
+    assert gated(dataclasses.replace(spec, model="other-model"), tmp_path / "b", tmp_path).ok
+    assert states[-1]["state"] == "running" and states[-1]["pool"] == "other"
+
+
+def _muse_spec(tmp_path, **kw):
+    return LaneSpec(
+        agent="a",
+        model="muse-spark-1.3-contributor",
+        prompt="p",
+        cwd=tmp_path,
+        add_dir=tmp_path,
+        timeout_seconds=5,
+        claude_bin="claude",
+        **kw,
+    )
+
+
+def test_gated_lane_that_raises_leaves_no_running_state(cfg, conn, tmp_path):
+    """A runner that raises never writes lane-meta.json; its state file must not keep saying
+    `running` for the rest of the run."""
+
+    def boom(spec, art, worktree):
+        raise OSError("claude binary missing")
+
+    gated = lanepool.gated(boom, lambda: conn, cfg, lambda: False, lanepool.RANK_LIVE)
+    with pytest.raises(OSError):
+        gated(_muse_spec(tmp_path, role="triage", effort="low"), tmp_path / "art", tmp_path)
+    assert not (tmp_path / "art" / lanepool.LANE_STATE).exists()
+
+
+def test_waiting_lane_says_so_with_its_place_in_line(cfg, conn, tmp_path):
+    """While a reviewer lane waits for a slot its state file says `waiting`, and its waiter key
+    finds its ticket in the pool's line (what the status export shows as the place in line)."""
+    cfg = dataclasses.replace(cfg, lane_pools={"muse": 2})
+    slot_dir = cfg.work_dir / "lane-slots"
+    held = lanepool.acquire(slot_dir, "muse", lambda: 2, lambda: False, rank=lanepool.RANK_LIVE)
+    art = tmp_path / "art"
+    spec = _muse_spec(tmp_path, role="general", effort="high", parallel=True)
+    gated = lanepool.gated(
+        lambda *_: LaneResult(exit_code=0, stdout="", stderr="", duration_s=1),
+        lambda: conn,
+        cfg,
+        run_stopped=lambda: False,
+        reviewer_rank=lanepool.RANK_LIVE,
+    )
+    t = threading.Thread(target=gated, args=(spec, art, tmp_path))
+    t.start()
+    for _ in range(50):
+        if lanepool.waiting_line(slot_dir, "muse"):
+            break
+        time.sleep(0.05)
+    state = json.loads((art / lanepool.LANE_STATE).read_text())
+    assert state["state"] == "waiting" and state["parallel"] is True
+    line = lanepool.waiting_line(slot_dir, "muse")
+    assert len(line) == 1 and line[0].endswith("-" + state["waiter"])
+    lanepool.release(held)
+    t.join(5)
+    assert json.loads((art / lanepool.LANE_STATE).read_text())["state"] == "running"
 
 
 def test_gpt_pool_follows_the_review_slot_ceiling(cfg, conn):
