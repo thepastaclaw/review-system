@@ -524,13 +524,18 @@ def test_slot_waits_push_the_run_deadline_out(cfg, conn, tmp_path, monkeypatch):
         held = lanepool.acquire(slot_dir, "muse", lambda: 1, lambda: False)
 
         def other_run_finishes():
+            # only once our lane is in line: a fixed delay raced a slow runner, which let the
+            # clock jump before the lane started waiting (no stall, no credit)
+            deadline_at = time.monotonic() + 10
+            while not lanepool.waiting_line(slot_dir, "muse") and time.monotonic() < deadline_at:
+                time.sleep(0.005)
             t[0] += seconds
             lanepool.release(held)
 
-        timer = threading.Timer(0.1, other_run_finishes)
-        timer.start()
+        other = threading.Thread(target=other_run_finishes)
+        other.start()
         assert gated(spec, tmp_path, tmp_path).ok
-        timer.join()
+        other.join()
 
     lane_waits(600)  # ten minutes in which the lane only waited
     assert (deadline() - before).total_seconds() == 600
