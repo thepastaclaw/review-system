@@ -833,7 +833,12 @@ model family across all runs; `gpt` always follows the per-account budget),
 guard passed as `claude --max-budget-usd`; it is the CLI's list-price estimate,
 not real spend, so keep it well above a normal $3–10 lane). `[lanes] deny_exec` (see
 [Reviews are static](#reviews-are-static-lanes-never-build)), `[lanes] correction_turns`
-(default 2, 0..5; see [Output contract](#output-contract-normalization-correction-turns-repair)).
+(default 2, 0..5; see [Output contract](#output-contract-normalization-correction-turns-repair)),
+`[lanes] claude_config_dir` (the Claude Code config dir lanes keep their sessions in; every
+reviewsys process exports it as `CLAUDE_CONFIG_DIR`, so the session cleanup, gc and `doctor` look
+where the lanes write. It must match a launcher that forces its own: the box's
+`~/.openclaw/bin/claude` sets `~/.claude-proxy`, so the box config sets that; unset = inherited,
+else `~/.claude`).
 
 `[retention] artifact_days` (0 = keep run artifacts forever, the default: they are the
 only per-lane record for later analysis and grow ~1 GB per two weeks), `worktree_budget_gb`.

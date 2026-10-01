@@ -629,3 +629,25 @@ def test_a_quota_failure_on_a_correction_turn_flips_the_run_degraded(cfg, conn, 
     assert any(
         s.role == "verifier" and s.model == "muse-spark-1.3-contributor" for s in lanes.calls
     )
+
+
+def test_claude_config_dir_knob_is_exported_by_the_cli(tmp_path, skills_dir, monkeypatch):
+    """The box launcher forces CLAUDE_CONFIG_DIR=~/.claude-proxy; `[lanes] claude_config_dir`
+    makes every reviewsys process (and so its lanes and the session cleanup) use that dir."""
+    import argparse
+
+    from reviewsys import cli
+
+    target = tmp_path / "proxy-config"
+    base = cfg_mod.DEFAULT_TOML.replace('skills = "~/Projects/skills"', f'skills = "{skills_dir}"')
+    unset = tmp_path / "unset.toml"
+    unset.write_text(base)
+    assert cfg_mod.load(unset).lane_claude_config_dir is None
+    p = tmp_path / "config.toml"
+    p.write_text(
+        base.replace('# claude_config_dir = "~/.claude-proxy"', f'claude_config_dir = "{target}"')
+    )
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    cfg = cli._cfg(argparse.Namespace(config=str(p)))
+    assert cfg.lane_claude_config_dir == target
+    assert lane_mod.claude_projects_dir() == target / "projects"

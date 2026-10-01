@@ -286,6 +286,11 @@ class Config:
     # follow-up turns a reviewer/verifier lane gets in its own session when its output breaks
     # the contract (see worker._run_lane); 0 = none, the context-free repair lane only
     lane_correction_turns: int
+    # the Claude Code config dir lanes keep their sessions in ([lanes] claude_config_dir): every
+    # reviewsys process exports it as CLAUDE_CONFIG_DIR (cli._cfg), so the session cleanup, gc
+    # and doctor look where the lanes write. Must match a launcher that forces its own (the
+    # box's ~/.openclaw/bin/claude sets ~/.claude-proxy). None = inherited, else ~/.claude
+    lane_claude_config_dir: Path | None
     # identity / alerting
     bot_login: str
     slack_target: str | None
@@ -467,6 +472,9 @@ lane_pools = { muse = 8, glm = 6, gemini = 6 }
 # its own session (it keeps everything it read), at most this many times; 0 = never, only the
 # context-free repair lane (clamped to 0..5)
 correction_turns = 2
+# the Claude Code config dir lanes keep their sessions in (exported as CLAUDE_CONFIG_DIR to
+# every lane); set it to whatever a wrapping launcher forces, or the cleanup looks elsewhere
+# claude_config_dir = "~/.claude-proxy"
 
 [identity]
 bot_login = "thepastaclaw"
@@ -792,6 +800,11 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         lane_correction_turns=min(
             MAX_CORRECTION_TURNS,
             max(0, int((t.get("lanes") or {}).get("correction_turns", DEFAULT_CORRECTION_TURNS))),
+        ),
+        lane_claude_config_dir=(
+            Path(str(d)).expanduser()
+            if (d := (t.get("lanes") or {}).get("claude_config_dir"))
+            else None
         ),
         bot_login=str(i["bot_login"]),
         slack_target=i.get("slack_target"),
