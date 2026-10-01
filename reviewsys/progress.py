@@ -13,7 +13,8 @@ a review profile. Until triage has set its tier, a review is measured against re
 of every tier (ALL_TIERS) and the estimate says so (`basis`), so the gate comment shows a bar
 from the run's first minute; the tiers differ several-fold, so the figure moves once the tier
 is known. A run queued by a reply is not estimated before triage unless the caller knows it
-is a review (`conversation=False`): it may still turn out to be a conversation. A live review is measured against its own path too (`path_of`:
+is a review (`conversation=False`): it may still turn out to be a conversation. Nor is an
+audit without a tier (a light audit never records one). A live review is measured against its own path too (`path_of`:
 priority or normal), since a priority run's lanes go ahead of normal ones in every model
 pool's line and so spend less of each step waiting for a slot; a path with fewer than
 `MIN_PROFILE_RUNS` recent reviews of the tier borrows the tier's profile of both paths. A
@@ -175,12 +176,14 @@ def estimate(
     ).fetchall()
     seen = {s[0] for s in steps}
     key = CONVERSATION if conversation or "converse" in seen else run[1]
-    if key is None:  # before triage: reviews of every tier, unless it may be a conversation
-        if conversation is None and run[5] == "review_reply":
-            return Estimate(elapsed, None, None)
-        key = ALL_TIERS
     # an audit is measured against live reviews of both paths, as before the path split
     path = run[2] or path_of(run[3], run[4])  # a run started before `runs.path` existed
+    if key is None:
+        # before triage: reviews of every tier, unless it may be a conversation, or it is an
+        # audit (a light one never records a tier and is a fraction of any review)
+        if path == AUDIT or (conversation is None and run[5] == "review_reply"):
+            return Estimate(elapsed, None, None)
+        key = ALL_TIERS
     cached = (key, None if key == CONVERSATION or path == AUDIT else path)
     if profiles is None:
         profiles = {}

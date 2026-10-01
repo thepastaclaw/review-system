@@ -464,7 +464,12 @@ def _refresh_gate_progress(
             "in_progress", ctx.sha, **_gate_defaults(ctx, kw), progress=_gate_progress(ctx, conn)
         )
         ctx.gate_steps_seen = steps  # rendered: re-render on the next change or interval
+        since = time.monotonic() - ctx.gate_refreshed_at  # the main thread may have just edited
         if not _gate_edit_due(ctx, body, since):
+            if github.without_update_time(body) == github.without_update_time(ctx.gate_body_seen):
+                # nothing at all moved (no history, so no bar): wait out another interval
+                # rather than re-render on every heartbeat
+                ctx.gate_refreshed_at = time.monotonic()
             return
         ctx.gate_refreshed_at = time.monotonic()
         try:
@@ -644,6 +649,26 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
                 ctx.gate_steps_seen = tuple(_progress_steps(ctx.conn, ctx.run_id))
 
 
+def _gate_closed(ctx: RunContext, reason: str) -> None:
+    """The PR closed or merged before this run could review it: an existing gate comment says
+    so instead of a stale "queued" / "in progress" status that nothing else would replace (no
+    newer head will be queued). Never creates a comment on a closed PR just to say that."""
+    if ctx.dry_run or ctx.is_audit:
+        return
+    with ctx.gate_lock:
+        ctx.gate_live_kw = None
+        try:
+            existing = github.find_gate_comment(ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login)
+            if existing:
+                ctx.gh.api(
+                    f"repos/{ctx.repo}/issues/comments/{existing['id']}",
+                    method="PATCH",
+                    body={"body": github.gate_body("closed", ctx.sha, reason=reason)},
+                )
+        except ReviewError as exc:
+            log.warning("gate comment update failed: %s", exc)
+
+
 # ---- steps ----
 
 
@@ -726,7 +751,7 @@ def step_prep(ctx: RunContext) -> None:
     )
     ctx.files = [f for f in files_raw if isinstance(f, dict)]
     lane = ctx.cfg.policy.triage
-    if ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
+    if lane is not None and ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
         ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
         lane = None
     if lane is not None and any(not s.always_run for s in ctx.cfg.specialists_for(ctx.repo)):
@@ -2135,7 +2160,10 @@ def _triage_provenance(ctx: RunContext) -> dict[str, Any] | None:
     t, lm = ctx.triage, ctx.cfg.policy.triage
     if t is None or lm is None:
         return None
-    ran = ctx.lane_model(lm)
+    # the lane that answered: a run that went degraded after the primary rated it (a later
+    # lane hit the dry pool, or only the selection half was retried on the stand-in) still
+    # names the primary
+    ran = lm if t.method == f"llm:{lm.model}" else ctx.lane_model(lm)
     return {
         "tier": t.tier,
         "model": ran.model,
@@ -3307,6 +3335,8 @@ def main(
                     (now(), json.dumps({"reason": reason}), run_id, current["phase"]),
                 )
             retire_obsolete_head(ctx.conn, ctx.head_id, exc.status, exc.reason)
+        if exc.status == HeadStatus.CLOSED:
+            _gate_closed(ctx, exc.reason)
     except ReviewError as exc:
         status, reason, kind = RunStatus.FAILED, exc.message, exc.kind
         current = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (run_id,)).fetchone()

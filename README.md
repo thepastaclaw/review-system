@@ -81,6 +81,8 @@ selector's specialist list and rule word for word. It replies with one object,
   (`triage.degraded`), a missing or non-list `selected` to the selector's trigger
   heuristics (`select.degraded`); unknown specialist ids are dropped as before. One broken
   half never discards the other: the second attempt only fills the half still missing.
+  Both attempts run on the triage model; the selector's second attempt used to go to the
+  Phase-2 model, which is the same `gpt-6.1-sol` pool since policy v10.
 - A quota-shaped lane failure (stderr, never model output) flips the run into degraded mode
   and asks the stand-in once more for the half (or both) that fell back, as the two lanes
   did; the event detail reads `prep lane: …`.
@@ -482,8 +484,9 @@ closed or merged. The run ends `cancelled` (reason `head superseded: live head �
 …` or `head closed: PR is closed (merged)`, no `fail_kind`), the head `superseded` / `closed`
 with a `head.superseded` / `head.closed` event, exactly as when ingest notices first. No
 retry, no `head.failed` alert, no "could not complete" gate comment: the first "in progress"
-status is only posted after the checkout check, and the newer head's queue comment takes the
-PR's comment over. Until 2026-10 these ended as "failed · fatal" on the dashboard (7 runs in
+status is only posted after the checkout check, and for a moved head the newer head's queue
+comment takes the PR's comment over. For a closed PR nothing would, so an existing gate
+comment is set to "⏹️ Not reviewed — PR is closed (merged)" (none is created). Until 2026-10 these ended as "failed · fatal" on the dashboard (7 runs in
 5 days for a moved head, 4 for a merged PR, which also paged as `head.failed`). A moved
 *base* still fails `fatal` and re-queues the same head.
 
@@ -685,11 +688,14 @@ While a run is in progress the worker's heartbeat keeps the comment showing a pr
   measured against conversations. A run queued by a reply gets no review estimate before
   triage on the dashboard, which cannot tell yet whether it is a conversation (the worker
   can). Without any history the comment shows the steps and no bar.
-- Edits: a re-rendered body is compared with the one last written. Nothing but the update
-  time moved: no edit at all. The status line, a chip, the estimate's basis or the
-  "taking longer than usual" mark changed: an edit at once, at most one per 30 s
-  (`GATE_PROGRESS_MIN_GAP_SECONDS`). Only the bar and time left moved: an edit every 10 min
-  (`GATE_PROGRESS_EVERY_SECONDS`). Before 2026-10 every step change re-posted the body, and
+- Edits: the heartbeat re-renders the body when the run's steps (or a phase's lane count)
+  changed, at most every 30 s (`GATE_PROGRESS_MIN_GAP_SECONDS`), and otherwise every 10 min
+  (`GATE_PROGRESS_EVERY_SECONDS`), and compares it with the one last written. Nothing but
+  the update time moved: no edit at all. The status line, a chip, the estimate's basis or
+  the "taking longer than usual" mark changed: an edit. Only the bar and time left moved:
+  an edit only at the 10-min interval. Status changes the worker posts itself (the tier
+  after triage, Phase 1 dropped) go out at once, unless they render the same as what is
+  shown. Before 2026-10 every step change re-posted the body, and
   since the early steps were hidden, the comment showed a bare "Review in progress" line
   re-posted two or three times in the first minutes of each run (dashpay/platform#5237).
 

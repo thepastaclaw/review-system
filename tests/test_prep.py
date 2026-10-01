@@ -255,3 +255,37 @@ def test_a_contract_failure_never_flips_the_run(cfg, conn, gh, lanes, skills_dir
     assert MUSE not in {s.model for s in lanes.calls}
     assert "degraded.entered_midrun" not in _events(conn, rid)
     assert _artifacts(c, rid)[1]["method"] == "fallback"
+
+
+def test_triage_provenance_names_the_model_that_answered(cfg, skills_dir, tmp_path):
+    """Rated on the primary, then the run went degraded (a later lane, or a selection-only
+    retry on the stand-in): the provenance still names the primary for the tier."""
+    from reviewsys import degraded
+    from reviewsys.triage import Triage
+
+    c = _reload(
+        skills_dir,
+        tmp_path,
+        lambda raw: raw["review_model_policy"].update(
+            degraded={"sentinel": "gpt-6-astra", "substitutes": {"gpt-6-astra": MUSE}}
+        ),
+    )
+    ctx = worker.RunContext(
+        cfg=c,
+        main_conn=None,
+        gh=None,
+        run_id=1,
+        head_id=1,
+        repo="dashpay/platform",
+        number=1,
+        sha=HEAD,
+        token="t",
+        run_dir=tmp_path,
+    )
+    ctx.degraded = degraded.State(True, "quota", "lane")
+    ctx.triage = Triage(tier="low", method="llm:gpt-6-astra")
+    prov = worker._triage_provenance(ctx)
+    assert prov["model"] == "gpt-6-astra" and prov["substitute_for"] is None
+    ctx.triage = Triage(tier="low", method=f"llm:{MUSE}")
+    prov = worker._triage_provenance(ctx)
+    assert prov["model"] == MUSE and prov["substitute_for"] == "gpt-6-astra"

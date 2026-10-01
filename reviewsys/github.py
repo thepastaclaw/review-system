@@ -559,6 +559,8 @@ def gate_body(
         head = warn or ("⛔" if n else "✅")
         scope = " — Phase 1 only" if phase2_skipped else ""
         return f"{GATE_MARKER}\n{head} Final review complete{scope} — {'no blockers' if not n else f'{n} blocking finding(s)'} (commit {s}){t}"
+    if status == "closed":  # the PR closed or merged before its review finished
+        return f"{GATE_MARKER}\n⏹️ Not reviewed — {reason or 'the PR is closed'} (commit {s})"
     if status == "failed":
         return f"{GATE_MARKER}\n{warn or '⚠️'} Automated review could not complete (commit {s})\n_Reason: {reason or 'unknown'}_"
     head = f"{warn} " if warn else ""

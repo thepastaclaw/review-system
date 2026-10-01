@@ -545,3 +545,17 @@ def test_gate_comment_is_not_edited_when_nothing_visible_changed(cfg, conn, gh, 
     assert worker._gate_edit_due(ctx, moved, worker.GATE_PROGRESS_EVERY_SECONDS) is True
     overdue = body.replace(bar, bar + " · taking longer than usual")
     assert worker._gate_edit_due(ctx, overdue, 0.0) is True, "overdue is news"
+
+
+def test_an_audit_without_a_tier_is_not_estimated(conn):
+    """A light audit never records a tier; measured against reviews of every tier it would
+    show an hour left for a ten-minute pass."""
+    at = now_dt()
+    with tx(conn):
+        _history(conn)
+        hid = _head(conn, 12, "running")
+        conn.execute("UPDATE heads SET queue='audit' WHERE id=?", (hid,))
+        run = _run(conn, hid, status="running", tier=None, started=at - timedelta(minutes=1))
+        _step(conn, run, "phase1", at - timedelta(minutes=1), status="running")
+    est = progress.estimate(conn, run, at)
+    assert est is not None and est.progress is None and est.basis is None

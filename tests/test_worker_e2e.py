@@ -311,6 +311,23 @@ def test_closed_pr_ends_the_head_closed(cfg, conn, gh, lanes, merged):
     assert not lanes.calls
 
 
+def test_closed_pr_replaces_a_stale_queue_comment(cfg, conn, gh, lanes):
+    """No newer head will take the comment over: it says the PR closed instead of "queued"."""
+    gh.issue_comments = [
+        {
+            "id": 77,
+            "user": {"login": "thepastaclaw"},
+            "body": "<!-- thepastaclaw-gate v1 -->\n🕓 Queued",
+        }
+    ]
+    gh.pr = {**gh.pr, "state": "closed", "merged": True}
+    rid, status = _run(cfg, conn, gh, lanes)
+    _obsolete_run_ends_quietly(conn, gh, rid, status, "closed")
+    assert gh.gate_bodies == [
+        f"<!-- thepastaclaw-gate v1 -->\n⏹️ Not reviewed — PR is closed (merged) (commit {HEAD[:8]})"
+    ]
+
+
 def test_head_moved_before_the_run_is_superseded_not_failed(cfg, conn, gh, lanes):
     """dash-wallet#1578 run 2879: a push landed between queueing and start."""
     gh.pr = {**gh.pr, "head": {"sha": "c" * 40}}
