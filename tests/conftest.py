@@ -13,6 +13,7 @@ import pytest
 
 from reviewsys import config as cfg_mod
 from reviewsys import db as db_mod
+from reviewsys import lane as lane_module
 from reviewsys.gh import Gh
 from reviewsys.lane import LaneResult, LaneSpec
 from reviewsys.notify import Notifier
@@ -282,6 +283,10 @@ class FakeGh(Gh):
                 if not self.labels_defined:
                     raise _GhFailure("HTTP 404: Not Found")
                 return {"name": urllib.parse.unquote(ep.rsplit("/labels/", 1)[1])}
+            if "/check-runs" in ep:
+                return {"check_runs": []}
+            if ep.startswith("repos/") and "/commits/" in ep and "/status" in ep:
+                return {"state": "success", "statuses": []}
             if ep.startswith("/notifications"):
                 return self.notifications
             if ep == "user":
@@ -331,6 +336,13 @@ class FakeGh(Gh):
             ):
                 return self.routes.get(ep, {"body": "", "user": {"login": "x"}})
         raise AssertionError(f"unrouted gh call: {args}")
+
+
+@pytest.fixture(autouse=True)
+def _lane_sandbox_starts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lanes here are fakes; whether this host could apply the real sandbox (it cannot from
+    inside another one) must not decide test outcomes. test_static_lanes covers the probe."""
+    monkeypatch.setattr(lane_module, "sandbox_problem", lambda profile: "")
 
 
 @pytest.fixture
