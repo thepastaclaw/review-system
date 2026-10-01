@@ -104,7 +104,7 @@ def _compare_run(conn: sqlite3.Connection, row: sqlite3.Row) -> RunComparison | 
     done: dict[str, dict[str, int]] = {}  # model -> role -> tokens out (first Phase 2 only)
     for r in conn.execute(
         "SELECT role, model, tokens_out FROM lanes WHERE run_id=? AND phase='phase2' "
-        "AND id < ? AND status IN ('completed','repaired')",
+        "AND id < ? AND status IN ('completed','repaired','corrected')",
         (run_id, first_verify),
     ):
         done.setdefault(str(r["model"]), {})[str(r["role"])] = int(r["tokens_out"] or 0)

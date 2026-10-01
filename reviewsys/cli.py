@@ -29,7 +29,11 @@ from .scheduler import request_cancel
 
 
 def _cfg(args: argparse.Namespace) -> cfg_mod.Config:
-    return cfg_mod.load(Path(args.config) if args.config else None)
+    cfg = cfg_mod.load(Path(args.config) if args.config else None)
+    if cfg.lane_claude_config_dir is not None:
+        # lanes inherit it, and lane.claude_projects_dir reads it: one place for both
+        os.environ["CLAUDE_CONFIG_DIR"] = str(cfg.lane_claude_config_dir)
+    return cfg
 
 
 def cmd_daemon(args: argparse.Namespace) -> int:

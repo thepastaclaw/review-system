@@ -252,11 +252,13 @@ def test_twin_dropped_at_parse_leaves_no_provenance(cfg, conn, gh, lanes):
     review must not list it, credit it, or claim a comparison ran."""
     cfg = _with_comparison(cfg)
     _base(lanes, final=[_finding("Retitled by the verifier")])
-    bad = {"summary": "s", "findings": [], "head_sha": "a" * 12}
+    bad = {"summary": "s", "findings": [], "head_sha": "b" * 12}  # another commit
 
     class BadTwins(ByModel):
         def __call__(self, spec, art, worktree):
-            if spec.model == SECOND and _is_phase2_reviewer(spec):
+            # and in every correction turn (`resume`): the twin never fixes it
+            if spec.model == SECOND and (spec.resume or _is_phase2_reviewer(spec)):
+                self.inner.calls.append(spec)
                 text = json.dumps({**bad, "review_phase": "final"})
                 return LaneResult(0, json.dumps({"result": text}), "", 1, result_text=text)
             return super().__call__(spec, art, worktree)
@@ -264,6 +266,10 @@ def test_twin_dropped_at_parse_leaves_no_provenance(cfg, conn, gh, lanes):
     rid, status = _run(cfg, conn, gh, BadTwins(lanes, {}))
     assert status == RunStatus.DONE
     assert len(_events(conn, rid, "compare.lane_dropped")) == 3
+    # each twin was asked to correct it in its own session first, twice, in the compare pool
+    assert len(_events(conn, rid, "lane.correction_failed")) == 3
+    resumed = [s for s in lanes.calls if s.resume]
+    assert len(resumed) == 6 and {s.pool for s in resumed} == {"compare"}
     review = gh.posted_reviews[-1]
     assert SECOND not in review["body"] and "Model comparison" not in review["body"]
     assert all(SECOND not in c["body"] for c in review["comments"])

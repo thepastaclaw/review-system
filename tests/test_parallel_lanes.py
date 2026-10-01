@@ -173,6 +173,14 @@ def test_a_failed_lane_stops_its_siblings_and_fails_the_phase(cfg, conn, gh, lan
         )
     }
     assert rows == {"general": "failed", "always-on": "cancelled", "security-auditor": "cancelled"}
+    # a stopped lane names the lane that failed and how, not just "another lane failed"
+    reasons = {
+        r["reason"]
+        for r in conn.execute(
+            "SELECT reason FROM lanes WHERE run_id=? AND status='cancelled'", (rid,)
+        )
+    }
+    assert reasons == {"stopped: phase2/general failed (lane timed out)"}
     assert not gh.posted_reviews
 
 

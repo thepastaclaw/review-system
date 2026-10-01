@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import statistics
 from datetime import datetime, timedelta
@@ -213,7 +214,8 @@ _PUBLIC_EVENT_DETAIL = frozenset(
     }
 )
 # step detail keys that are safe and useful on the public page; `error` and free-form failure
-# text are not (they can carry proxy and account details)
+# text are not (they can carry proxy and account details): a failed step's `error` is
+# published only as `public_error` rebuilds it
 _STEP_KEYS = (
     "roles",
     "selection",
@@ -232,6 +234,63 @@ _STEP_KEYS = (
 )
 
 
+# A failed step's error, as the public page may show it, is never the error text: that can
+# quote model output about a private PR, upstream replies, proxy hosts, keys or accounts. It is
+# rebuilt from an allowlist: which lane (`phase/role`, ids from our own config), what kind of
+# failure (fixed phrases below, matched in the worker's own messages), and how many attempts
+# and correction turns. Anything unrecognised says only that the step failed.
+# only at the start, where the worker names the lane: never an id out of quoted model output
+_LANE_RE = re.compile(
+    r"(phase1|phase2|verify1|verify2|persistence|converse)/([A-Za-z0-9_.#-]{1,60})\b"
+)
+_ATTEMPTS_RE = re.compile(r"lane failed (?:twice|(\d+) times)")
+_TURNS_RE = re.compile(r"after (\d+) correction turns")
+_SUBTYPE_RE = re.compile(r"\blane (max_turns|max_budget_usd|during_execution)\b")
+# (needle in the worker's message, what the public page says), first match wins
+_FAILURE_KINDS = (
+    ("lane timed out", "timed out"),
+    ("lane stopped before it finished", "stopped"),
+    ("lane sandbox cannot start", "lane sandbox could not start"),
+    ("the run left", "its model was given up for a lower rung"),
+    ("the run went degraded", "the run went to stand-in models"),
+    ("model output is not a JSON object", "answer had no JSON object"),
+    ("empty model output", "answer was empty"),
+    ("is not the assigned head", "answer named another commit"),
+    ("reconciliation", "prior-finding reconciliation broke the output contract"),
+    ("STILL_VALID", "prior-finding reconciliation broke the output contract"),
+    ("severity", "a finding had an invalid severity"),
+    ("findings must be a list", "answer had no findings list"),
+    ("finding has no title", "a finding had no title"),
+    ("adjudication_complete", "verifier answer broke the output contract"),
+    ("coderabbit", "verifier answer broke the output contract"),
+    ("prerequisite_adjudications", "verifier answer broke the output contract"),
+    ("output rejected", "answer broke the output contract"),
+    ("API Error", "upstream error"),
+    ("lane exit", "the lane exited with an error"),
+)
+
+
+def public_error(text: str) -> str:
+    """What failed and how, for the public page, built only from known vocabulary (see
+    above), e.g. "phase1/general: answer had no JSON object (2 attempts, 2 correction turns
+    each)". The full text stays in the step detail and the events."""
+    lane = _LANE_RE.match(text)
+    kind = next((say for needle, say in _FAILURE_KINDS if needle in text), "")
+    if not kind and (m := _SUBTYPE_RE.search(text)):
+        kind = f"stopped by Claude Code ({m.group(1)})"
+    attempts = _ATTEMPTS_RE.search(text)
+    turns = _TURNS_RE.search(text)
+    extra = []
+    if attempts:
+        n = int(attempts.group(1) or 2)
+        extra.append(f"{n} attempt{'s' if n != 1 else ''}")
+    if turns:
+        extra.append(f"{turns.group(1)} correction turns")
+    head = f"{lane.group(1)}/{lane.group(2)}: " if lane else ""
+    tail = " (" + ", ".join(extra) + ")" if extra else ""
+    return f"{head}{kind or 'failed'}{tail}"
+
+
 def _step_info(status: str, detail: str | None) -> dict[str, Any]:
     try:
         raw = json.loads(detail or "{}")
@@ -244,6 +303,10 @@ def _step_info(status: str, detail: str | None) -> dict[str, Any]:
         info["reasoning"] = info["reasoning"][:400]
     if status == "skipped" and isinstance(raw.get("reason"), str):
         info["reason"] = raw["reason"][:200]  # e.g. "skipped for throughput: 22 PRs queued"
+    if status == "failed" and isinstance(raw.get("error"), str):
+        # e.g. a single-stage Phase 1 that failed while Phase 2 goes on: the page shows why
+        # under the red pill right away (allowlisted, never the raw text)
+        info["error"] = public_error(raw["error"])
     return info
 
 
@@ -256,10 +319,12 @@ def _live_lanes(run_dir: str | None, slot_dir: Path, at: datetime) -> list[dict[
     out = []
     lines: dict[str, list[str]] = {}
     root = Path(run_dir)
-    # a repair lane runs in its parent lane's `repair/` subdirectory
+    # a repair lane runs in its parent lane's `repair/` subdirectory, a correction turn (in
+    # the lane's own session and slot) in its `correction-<n>/`
     found = [
         *root.glob(f"*/*/{lanepool.LANE_STATE}"),
         *root.glob(f"attempts/*/repair/{lanepool.LANE_STATE}"),
+        *root.glob(f"attempts/*/correction-*/{lanepool.LANE_STATE}"),
     ]
     for state_file in sorted(found):
         lane_dir = state_file.parent
@@ -276,14 +341,20 @@ def _live_lanes(run_dir: str | None, slot_dir: Path, at: datetime) -> list[dict[
         except (OSError, ValueError):
             continue
         repair = lane_dir.name == "repair"
+        correction = lane_dir.name.startswith("correction-")
         # attempts/<phase>-<role>-<id> for phase lanes, <step>/attempt-N for selector/triage
-        named = lane_dir.parent if repair else lane_dir
+        named = lane_dir.parent if repair or correction else lane_dir
         phase = (
             named.name.split("-", 1)[0] if named.parent.name == "attempts" else named.parent.name
         )
+        role = st.get("role")
+        if repair:
+            role = f"{role} (repair)"
+        elif correction:
+            role = f"{role} (correction {lane_dir.name.removeprefix('correction-')})"
         lane = {
             "phase": phase,
-            "role": f"{st.get('role')} (repair)" if repair else st.get("role"),
+            "role": role,
             "model": st.get("model"),
             "effort": st.get("effort"),
             "pool": st.get("pool"),

@@ -245,12 +245,110 @@ def verifier_prompt(
     return rendered + requirements + RAW_JSON_CONTRACT
 
 
-REPAIR_PROMPT = (
-    "The following text was supposed to be exactly one JSON object matching a code-review schema "
-    "(keys: summary, findings[], out_of_scope_findings[], review_phase, head_sha, optionally prior_finding_reconciliation[]). "
-    "It is malformed or wrapped in prose. Return ONLY the corrected JSON object with the same content. "
-    "Do not add, remove, or reword findings. Do not add fences.\n\n{raw}"
-)
+# The top-level keys of each lane kind's output, for the repair and correction prompts.
+OUTPUT_KEYS = {
+    "reviewer": "summary, findings[], out_of_scope_findings[], review_phase, head_sha, and "
+    "prior_finding_reconciliation[] when prior findings were supplied",
+    "verifier": "summary, review_action, findings[], dropped_findings[], out_of_scope_findings[], "
+    "coderabbit_reactions[], prerequisite_adjudications[], adjudication_complete, review_phase, "
+    "and prior_finding_reconciliation[] when prior findings were supplied",
+}
+
+
+def _echo_facts(kind: str, expected_phase: str, head_sha: str) -> list[str]:
+    facts = [f'`review_phase` is exactly "{expected_phase}"'] if expected_phase else []
+    if kind == "reviewer" and head_sha:
+        facts.append(f'`head_sha` is exactly "{head_sha}"')
+    return facts
+
+
+def repair_prompt(
+    raw: str, *, kind: str, expected_phase: str, head_sha: str, prior_hashes: list[str]
+) -> str:
+    """The context-free repair lane's prompt (the fallback when the lane's own session cannot
+    be resumed). It is told the values it cannot know, so it never has to guess an echo field
+    or a prior hash; the worker normalizes its output the same way as a lane's anyway. `raw`
+    stays the last thing in the prompt."""
+    schema = (
+        f" matching a code-review schema (keys: {OUTPUT_KEYS[kind]})" if kind in OUTPUT_KEYS else ""
+    )
+    facts = _echo_facts(kind, expected_phase, head_sha)
+    if prior_hashes:
+        facts.append(
+            "every `finding_hash` in prior_finding_reconciliation is one of "
+            + ", ".join(f'"{h}"' for h in prior_hashes)
+            + " (full, never shortened)"
+        )
+    known = f" In the corrected object, {'; '.join(facts)}." if facts else ""
+    return (
+        f"The following text was supposed to be exactly one JSON object{schema}. "
+        "It is malformed or wrapped in prose. Return ONLY the corrected JSON object with the same "
+        f"content.{known} Do not add, remove, or reword findings. Do not add fences.\n\n{raw}"
+    )
+
+
+def correction_prompt(
+    *,
+    errors: list[str],
+    kind: str,
+    expected_phase: str,
+    head_sha: str,
+    prior: list[dict[str, Any]],
+    coderabbit_ids: list[int],
+    turn: int,
+    turns: int,
+) -> str:
+    """The follow-up turn sent into a lane's own session when its answer broke the output
+    contract: the exact validation errors, the schema and the values it must echo, and for a
+    reconciliation problem every prior hash with the rules. It asks for the whole object
+    again, because only the last answer of the session is read."""
+    lines = [
+        "Your previous answer was not accepted by the review pipeline: it does not satisfy the "
+        "required output contract. Nothing from it has been used yet.",
+        "",
+        "Validation error(s):",
+        *(f"- {e}" for e in errors),
+        "",
+        "Fix exactly what the errors name. Keep your review as it was (the same findings, "
+        "wording, severities and reasoning) unless an error requires a change; there is no need "
+        "to inspect the code again.",
+        "",
+        f"The answer must be one JSON object with the keys {OUTPUT_KEYS[kind]}, where:",
+        *(f"- {fact}" for fact in _echo_facts(kind, expected_phase, head_sha)),
+    ]
+    if kind == "verifier":
+        lines += [
+            "- `adjudication_complete` is true and `prerequisite_adjudications` is a list "
+            "(`[]` when there are no prerequisite claims)",
+            "- `coderabbit_reactions` has exactly one `agree`, `disagree` or `extend` entry for "
+            f"each of the comment ids {json.dumps(coderabbit_ids)} and no others; `disagree` "
+            "and `extend` need a `reply`",
+        ]
+    if prior:
+        hashes = [
+            {"finding_hash": p["finding_hash"], "original_title": p.get("original_title")}
+            for p in prior
+        ]
+        lines += [
+            "- `prior_finding_reconciliation` has exactly one row per prior finding below, with "
+            "its `finding_hash` copied exactly as listed (never shortened or extended) "
+            f"and a `status` from {' | '.join(REVALIDATION_STATUSES)}. No other hashes, no "
+            "repeats, no other status words.",
+        ]
+        if kind == "reviewer":
+            lines.append(
+                "- every STILL_VALID hash is carried by exactly one entry in `findings` whose "
+                "`finding_hash` is that hash and whose `title` equals its `original_title`; no "
+                "other finding carries a prior hash (FIXED, OUTDATED, WITHDRAWN and "
+                "INTENTIONALLY_DEFERRED ones are not repeated in `findings`)"
+            )
+        lines += ["", "Prior findings:", "```json", json.dumps(hashes, indent=1), "```"]
+    lines += [
+        "",
+        f"(Correction {turn} of at most {turns}.) Reply with the complete corrected JSON object "
+        "only: one raw JSON object, no Markdown fences, no prose before or after it.",
+    ]
+    return "\n".join(lines)
 
 
 def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:

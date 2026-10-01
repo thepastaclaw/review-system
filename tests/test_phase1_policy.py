@@ -6,6 +6,8 @@ from __future__ import annotations
 import dataclasses
 import json
 import os
+import re
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -401,8 +403,34 @@ def test_single_stage_drops_a_failed_phase1_and_still_publishes(single, conn, gh
     lanes.dead_models = {"glm-5.3-flash"}  # the one-rung ladder has nowhere to fall
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["final"] = _verifier([])
-    rid, status = _run(single, conn, gh, lanes)
+    seen_while_phase2_ran: list[tuple[str, str]] = []
+
+    def runner(spec: LaneSpec, art: Path, worktree: Path) -> LaneResult:
+        if spec.role == "general" and spec.model == "gpt-6-astra":
+            # Phase 2 is still going: the Phase-1 failure must already be on record (the
+            # step's error for the status page, and the event), not hours later
+            own = sqlite3.connect(str(single.db_path))
+            try:
+                for _ in range(1000):
+                    row = own.execute(
+                        "SELECT s.detail, (SELECT detail FROM events e WHERE e.run_id=s.run_id "
+                        "AND e.kind='phase1.failed_single_stage') FROM steps s "
+                        "WHERE s.name='phase1' AND s.status='failed'"
+                    ).fetchone()
+                    if row and row[1]:
+                        seen_while_phase2_ran.append(row)
+                        break
+                    time.sleep(0.01)
+            finally:
+                own.close()
+        return lanes(spec, art, worktree)
+
+    rid, status = _run(single, conn, gh, runner)
     assert status == RunStatus.DONE
+    ((detail, ev),) = seen_while_phase2_ran
+    # whichever Phase-1 lane failed first
+    assert re.search(r"phase1/\S+ lane failed twice: \[infra\]", json.loads(detail)["error"])
+    assert re.search(r"phase1/\S+ lane failed twice", ev)
     assert {s.role for s in _reviewers(lanes, "gpt-6-astra")} == REVIEWER_ROLES
     assert _steps(conn, rid)["phase1"] == "failed"
     assert (

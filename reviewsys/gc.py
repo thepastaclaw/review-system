@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import sqlite3
 import time
@@ -10,7 +11,11 @@ from pathlib import Path
 
 from .config import Config
 from .db import event, fmt_ts, now_dt, tx
+from .lane import claude_projects_dir, project_slug
 
+# a lane session (correction turns, lane.run_with_corrections) is deleted when its lane ends;
+# one a dead worker left behind goes once it is this old
+SESSION_RETENTION_HOURS = 24
 # how long a conversation "chose silence" marker outlives its PR's last queued head when run
 # artifacts are kept forever (otherwise it follows the artifact retention)
 SILENCE_RETENTION_DAYS = 14
@@ -27,6 +32,42 @@ def _dir_size(path: Path) -> int:
     return total
 
 
+def sweep_lane_sessions(conn: sqlite3.Connection) -> int:
+    """Claude Code sessions of review lanes that their worker never deleted (it died
+    mid-lane), and the project directories their deletion left empty. Only the project
+    directories of this box's finished runs' worktrees are looked at (`<config dir>/projects/
+    <slug of runs.worktree>`), never any other project; files there older than
+    SESSION_RETENTION_HOURS go, and an emptied directory with them."""
+    projects = claude_projects_dir()
+    if not projects.is_dir():
+        return 0
+    ours = {
+        project_slug(Path(str(r[0])))
+        for r in conn.execute(
+            # a run still in flight keeps its directory, however old its files look
+            "SELECT DISTINCT worktree FROM runs WHERE worktree IS NOT NULL "
+            "AND status NOT IN ('spawned','running')"
+        )
+    }
+    cutoff = time.time() - SESSION_RETENTION_HOURS * 3600
+    removed = 0
+    for d in projects.iterdir():
+        if d.name not in ours or not d.is_dir():
+            continue
+        for p in d.iterdir():
+            with contextlib.suppress(OSError):
+                if p.stat().st_mtime >= cutoff:
+                    continue
+                if p.is_dir():
+                    shutil.rmtree(p, ignore_errors=True)
+                else:
+                    p.unlink()
+                removed += 1
+        with contextlib.suppress(OSError):
+            d.rmdir()  # once empty
+    return removed
+
+
 def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
     stats = {
         "worktrees_removed": 0,
@@ -34,6 +75,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
         "events_pruned": 0,
         "inbox_pruned": 0,
         "silence_pruned": 0,
+        "lane_sessions_removed": 0,
     }
     active_wts = {
         r["worktree"]
@@ -63,6 +105,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             total -= _dir_size(victim)
             shutil.rmtree(victim, ignore_errors=True)
             stats["worktrees_removed"] += 1
+    stats["lane_sessions_removed"] = sweep_lane_sessions(conn)
     if cfg.runs_dir.exists() and not keep_runs:
         for rd in cfg.runs_dir.iterdir():
             try:

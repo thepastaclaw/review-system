@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import threading
 from pathlib import Path
@@ -251,10 +252,11 @@ def test_own_pr_downgrades_to_comment(cfg, conn, gh, lanes):
 
 
 def test_broken_json_is_repaired_once(cfg, conn, gh, lanes):
+    """With correction turns off the context-free repair lane is the only fix."""
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier([])
     lanes.broken_once = {"general"}
-    _rid, status = _run(cfg, conn, gh, lanes)
+    _rid, status = _run(dataclasses.replace(cfg, lane_correction_turns=0), conn, gh, lanes)
     assert status == RunStatus.DONE
     assert any(s.role == "repair" for s in lanes.calls)
     assert (
@@ -2644,7 +2646,8 @@ def test_contract_breaking_phase1_output_falls_through(cfg, conn, gh, lanes):
 
     def runner(spec, art, worktree):
         res = real(spec, art, worktree)
-        if spec.role == "general" and "set to `preliminary`" in spec.prompt:
+        # every Phase-1 general turn, its correction turns included, names another commit
+        if spec.role == "general" and spec.model == "glm-5.3-flash":
             text = res.result_text.replace(HEAD, "f" * 40)
             res.result_text, res.stdout = text, json.dumps({"result": text})
         return res

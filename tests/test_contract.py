@@ -36,15 +36,110 @@ def test_parse_json_object_tolerates_fences_and_prose():
         parse_json_object("no json here")
 
 
-def test_reviewer_output_requires_phase_and_head():
-    raw = {"summary": "s", "findings": [], "review_phase": "final", "head_sha": "x"}
-    with pytest.raises(ReviewError, match="review_phase"):
-        parse_reviewer_output(
-            raw, expected_phase="preliminary", head_sha="x", source="p1", prior_hashes=set()
-        )
-    with pytest.raises(ReviewError, match="head_sha"):
-        parse_reviewer_output(
-            raw, expected_phase="final", head_sha="y", source="p1", prior_hashes=set()
+HEAD = "cff60ad9f4" + "1" * 30
+
+
+def _reviewer(raw, *, phase="preliminary", head=HEAD, prior=frozenset()):
+    return parse_reviewer_output(
+        raw, expected_phase=phase, head_sha=head, source="p1", prior_hashes=set(prior)
+    )
+
+
+@pytest.mark.parametrize(
+    ("given", "note"),
+    [
+        ({}, "review_phase missing -> 'preliminary'"),  # Gemini, run 2883: no echo fields
+        ({"review_phase": "final"}, "review_phase 'final' -> 'preliminary'"),
+        ({"review_phase": "planning"}, "review_phase 'planning' -> 'preliminary'"),
+        ({"review_phase": ""}, "review_phase missing -> 'preliminary'"),
+    ],
+)
+def test_review_phase_is_an_echo_field_set_to_the_expected_phase(given, note):
+    out = _reviewer({"findings": [], "out_of_scope_findings": [], **given})
+    assert out.review_phase == out.raw["review_phase"] == "preliminary"
+    assert note in out.normalized
+    # the verifier is shown the normalized output, with the full head too
+    assert out.raw["head_sha"] == HEAD and out.head_sha == HEAD
+
+
+def test_head_sha_prefix_or_missing_is_expanded_a_foreign_sha_rejected():
+    # repaired outputs on the box came back with the sha cut to 8-14 hex chars
+    out = _reviewer({"findings": [], "review_phase": "preliminary", "head_sha": "cff60ad9f4"})
+    assert out.head_sha == out.raw["head_sha"] == HEAD
+    assert out.normalized == [f"head_sha 'cff60ad9f4' -> {HEAD}"]
+    out = _reviewer({"findings": [], "review_phase": "preliminary", "head_sha": HEAD.upper()})
+    assert out.head_sha == HEAD
+    clean = _reviewer({"findings": [], "review_phase": "preliminary", "head_sha": HEAD})
+    assert clean.normalized == []
+    for foreign in ("a" * 40, "cff60ad9f5", "cff60a", HEAD + "00", "HEAD"):
+        # another commit, too short to be sure, longer than the sha, or not a sha at all
+        with pytest.raises(ReviewError, match="head_sha"):
+            _reviewer({"findings": [], "review_phase": "preliminary", "head_sha": foreign})
+
+
+def test_verifier_review_phase_is_normalized_too():
+    base = {
+        "findings": [],
+        "prerequisite_adjudications": [],
+        "adjudication_complete": True,
+        "coderabbit_reactions": [],
+    }
+    for phase in (None, "preliminary|final", "complete"):
+        raw = {**base, "review_phase": phase} if phase else base
+        out = parse_verifier_output(raw, expected_phase="final", expected_coderabbit_ids=[])
+        assert out.review_phase == out.raw["review_phase"] == "final" and out.normalized
+
+
+PRIOR = {"ccf9a4a010e4", "a265b2d54f12", "0123456789ab"}
+
+
+def _recon_raw(rows, findings=()):
+    return {
+        "findings": list(findings),
+        "review_phase": "final",
+        "head_sha": HEAD,
+        "prior_finding_reconciliation": rows,
+    }
+
+
+def test_reconciliation_hash_prefix_and_overlong_hash_map_to_the_one_prior_hash():
+    rows = [
+        {"finding_hash": "ccf9a4a010e", "status": "FIXED"},  # 11 chars: a prefix
+        {"finding_hash": "a265b2d54f12f", "status": "still valid"},  # 13: prior is its prefix
+        {"finding_hash": "0123456789AB", "status": "Withdrawn"},
+    ]
+    carried = {"file": "f", "title": "T", "body": "b", "finding_hash": "a265b2d54"}
+    out = _reviewer(_recon_raw(rows, [carried]), phase="final", prior=PRIOR)
+    statuses = {r["finding_hash"]: r["status"] for r in out.prior_reconciliation}
+    assert statuses == {
+        "ccf9a4a010e4": "FIXED",
+        "a265b2d54f12": "STILL_VALID",
+        "0123456789ab": "WITHDRAWN",
+    }
+    assert out.findings[0].prior_hash == "a265b2d54f12"
+    assert "reconciliation hash 'ccf9a4a010e' -> 'ccf9a4a010e4'" in out.normalized
+    assert "reconciliation status 'still valid' -> 'STILL_VALID'" in out.normalized
+    assert "carried finding hash 'a265b2d54' -> 'a265b2d54f12'" in out.normalized
+
+
+def test_ambiguous_or_short_hash_and_other_vocabularies_are_left_to_the_correction_turn():
+    prior = {"abcdef012345", "abcdef019999"}
+    rows = [
+        {"finding_hash": "abcdef01", "status": "FIXED"},  # a prefix of both
+        {"finding_hash": "abcdef019999", "status": "REFUTED"},  # verifier vocabulary
+    ]
+    with pytest.raises(ReviewError) as exc:
+        _reviewer(_recon_raw(rows), phase="final", prior=prior)
+    msg = exc.value.message
+    # every problem at once, so one correction turn can fix them all
+    assert "hash='abcdef01' status='FIXED': not a prior hash" in msg
+    assert "status='REFUTED': unknown status" in msg
+    assert "reconciliation missing prior hashes" in msg
+    with pytest.raises(ReviewError, match="not a prior hash"):
+        _reviewer(
+            _recon_raw([{"finding_hash": "abcde", "status": "FIXED"}]),  # under 7 chars
+            phase="final",
+            prior={"abcdef012345"},
         )
 
 

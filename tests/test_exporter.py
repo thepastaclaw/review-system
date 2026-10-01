@@ -6,6 +6,8 @@ import json
 import os
 from datetime import timedelta
 
+import pytest
+
 from reviewsys import degraded, lanepool
 from reviewsys.db import MIGRATIONS, event, fmt_ts, now_dt, parse_ts, tx
 from reviewsys.exporter import (
@@ -13,6 +15,7 @@ from reviewsys.exporter import (
     build_day_runs,
     build_export,
     build_path_timing,
+    public_error,
     write_export,
 )
 from reviewsys.ingest import enqueue_head
@@ -295,6 +298,24 @@ def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
             ("triage", "ok", {"tier": "critical", "reasoning": "big diff", "error": "a@b.c"}),
             ("phase1", "running", {}),
             ("context", "failed", {"error": "token for someone@example.com"}),
+            (
+                "phase2",
+                "failed",
+                {
+                    "error": "phase2/general lane failed twice: [infra] lane exit 1: API Error: "
+                    '429 {"error": {"message": "limit for a@b.c"}} see https://proxy.example/x '
+                    "in /Users/claw/.reviewsys/work/run-60",
+                    "dropped": True,
+                },
+            ),
+            (
+                "verify1",
+                "failed",
+                {
+                    "error": "phase1/general lane failed twice: [contract] model output is not a "
+                    "JSON object: 'Here is my review of the private code and what it does'"
+                },
+            ),
         ):
             conn.execute(
                 "INSERT INTO steps (run_id, name, status, started_at, detail) VALUES (?,?,?,?,?)",
@@ -346,10 +367,18 @@ def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
     export = build_export(conn, cfg)
     (active,) = export["live"]["active"]
     assert active["wait_seconds"] == 900 and active["tokens_in"] == 900
-    assert [s["name"] for s in active["steps"]] == ["triage", "phase1", "context"]
-    assert active["steps"][0]["info"] == {"tier": "critical", "reasoning": "big diff"}
-    assert active["steps"][2]["info"] == {}
-    assert "example.com" not in json.dumps(export) and "a@b.c" not in json.dumps(export)
+    steps = {s["name"]: s for s in active["steps"]}
+    assert list(steps) == ["triage", "phase1", "context", "phase2", "verify1"]
+    assert steps["triage"]["info"] == {"tier": "critical", "reasoning": "big diff"}
+    # a failed step says why on the public page, sanitized: no account, URL, path, upstream
+    # body or model output
+    assert steps["context"]["info"] == {"error": "failed"}
+    assert steps["phase2"]["info"] == {"error": "phase2/general: upstream error (2 attempts)"}
+    assert steps["verify1"]["info"] == {
+        "error": "phase1/general: answer had no JSON object (2 attempts)"
+    }
+    text = json.dumps(export)
+    assert "example.com" not in text and "a@b.c" not in text and "private code" not in text
     live = {x["role"]: x for x in active["live_lanes"]}
     assert set(live) == {"general", "ffi", "verifier"}
     assert live["general"]["state"] == "running" and live["general"]["since_seconds"] >= 1800
@@ -579,3 +608,40 @@ def test_runs_from_before_the_path_column_take_it_from_their_head_when_it_is_kno
         conn.execute(backfill[0])
     paths = dict(conn.execute("SELECT id, path FROM runs").fetchall())
     assert paths == {kept: "priority", requeued: None, audited: "audit", merged: None}
+
+
+@pytest.mark.parametrize(
+    ("text", "public"),
+    [
+        # model output with an apostrophe is repr()'d in double quotes: still never shown
+        (
+            "phase1/general lane failed twice: [contract] model output is not a JSON object: "
+            '"Here\'s my review. The function in src/wallet.rs leaks the seed" '
+            "(after 2 correction turns)",
+            "phase1/general: answer had no JSON object (2 attempts, 2 correction turns)",
+        ),
+        ("connect ECONNREFUSED 100.81.48.28:8318", "failed"),
+        ("invalid x-api-key sk-ant-api03-xyz for claude-proxy.tail6f9cb7.ts.net", "failed"),
+        (
+            "phase2/rust-quality lane failed twice: [contract] bad reconciliation row "
+            "hash='ccf9a4a010e' status='REFUTED': unknown status (after 2 correction turns)",
+            "phase2/rust-quality: prior-finding reconciliation broke the output contract "
+            "(2 attempts, 2 correction turns)",
+        ),
+        (
+            "phase2/general#2 lane failed 1 times: [infra] lane timed out",
+            "phase2/general#2: timed out (1 attempt)",
+        ),
+        # a lane id is only taken from where the worker names it, never out of model output
+        (
+            "model output is not a JSON object: 'see phase2/secret-sauce'",
+            "answer had no JSON object",
+        ),
+        (
+            "phase1/general lane failed twice: [infra] lane max_turns after 80 turns, $3.2",
+            "phase1/general: stopped by Claude Code (max_turns) (2 attempts)",
+        ),
+    ],
+)
+def test_public_step_error_is_rebuilt_from_known_words_only(text, public):
+    assert public_error(text) == public

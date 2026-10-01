@@ -117,6 +117,7 @@ tr.lanes td{padding:0 10px 14px;background:var(--hover)}
 .step b{color:var(--text);font-weight:600}
 .step.running{border-color:var(--blue);color:var(--text);animation:pulse 2s ease-in-out infinite}
 .step.failed{border-color:var(--red);color:var(--red)}.step.skipped{opacity:.6;text-decoration:line-through}
+.fail{font-size:12px;color:var(--red);margin-top:8px;overflow-wrap:anywhere}.fail b{font-weight:600}
 @keyframes pulse{50%{box-shadow:0 0 0 3px color-mix(in srgb,var(--blue) 25%,transparent)}}
 .why{font-size:12px;color:var(--muted);margin-top:8px;font-style:italic;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 .live{display:grid;grid-template-columns:auto auto minmax(0,1fr) auto;gap:4px 14px;font-size:12px;margin-top:10px;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--item-line)}
@@ -217,9 +218,9 @@ let focusRun=null;  // #run=<id>: the run a PR's progress link points at
 const scrollToFocus=()=>$('#run-'+focusRun)?.scrollIntoView({block:'center'});
 const STEP_LABELS={worktree:'checkout',select:'lanes chosen',triage:'triage',context:'context',phase1:'Phase 1',verify1:'verify 1',gate:'gate',phase2:'Phase 2',verify2:'verify 2',fresh_phase2:'fresh Phase 2',fresh_verify2:'fresh verify',publish:'publish',persistence:'persistence',converse:'conversation'};
 const STEP_MARKS={ok:'✓ ',failed:'✗ ',running:'● '};
-const EVENT_LABELS={'run.spawned':'Run started','run.done':'Review finished','run.failed':'Run failed','run.timed_out':'Run timed out','run.cancelled':'Run cancelled','run.cancel_requested':'Cancel requested','head.queued':'Queued','head.requeued':'Re-queued','head.superseded':'Superseded by a newer push','head.failed':'Gave up on head','head.closed':'PR closed','head.review_reply':'Reply on a review','head.priority_requested':'Priority requested','thread.answered':'Answered a review thread','phase1.model_selected':'Phase 1 model chosen','phase1.skipped_backlog':'Phase 1 skipped (backlog)','phase1.failed_fallthrough':'Phase 1 failed, fell through','degraded.transition':'Mode changed','degraded.run':'Run on stand-in models','degraded.entered_midrun':'Went degraded mid-run','compare.selected':'Comparison lane added','account.disabled':'Account parked','daemon.start':'Daemon started','daemon.stop':'Daemon stopped'};
+const EVENT_LABELS={'run.spawned':'Run started','run.done':'Review finished','run.failed':'Run failed','run.timed_out':'Run timed out','run.cancelled':'Run cancelled','run.cancel_requested':'Cancel requested','head.queued':'Queued','head.requeued':'Re-queued','head.superseded':'Superseded by a newer push','head.failed':'Gave up on head','head.closed':'PR closed','head.review_reply':'Reply on a review','head.priority_requested':'Priority requested','thread.answered':'Answered a review thread','phase1.model_selected':'Phase 1 model chosen','phase1.skipped_backlog':'Phase 1 skipped (backlog)','phase1.failed_fallthrough':'Phase 1 failed, fell through','phase1.failed_single_stage':'Phase 1 failed (Phase 2 goes on)','lane.corrected':'Lane corrected its output','lane.correction_failed':'Lane could not correct its output','degraded.transition':'Mode changed','degraded.run':'Run on stand-in models','degraded.entered_midrun':'Went degraded mid-run','compare.selected':'Comparison lane added','account.disabled':'Account parked','daemon.start':'Daemon started','daemon.stop':'Daemon stopped'};
 // bookkeeping that says nothing about reviews
-const EVENT_NOISE=new Set(['label.synced','label.sync_failed','gc.run','router.batch']);
+const EVENT_NOISE=new Set(['label.synced','label.sync_failed','gc.run','router.batch','lane.output_normalized']);
 
 function stepChip(st){
   const i=st.info||{},bits=[];
@@ -231,7 +232,7 @@ function stepChip(st){
   if(/verify/.test(st.name)&&i.findings!=null)bits.push(`${i.findings} findings${i.blockers?` · ${i.blockers} blocking`:''}`);
   if(st.name==='gate'&&i.admit_phase2!=null)bits.push(i.admit_phase2?`Phase 2 at ${i.phase2_effort||'?'}`:'no Phase 2');
   if(st.name==='publish'&&i.event)bits.push(i.event.toLowerCase().replace('_',' '));
-  return `<span class="step ${esc(st.status)}" title="${esc(i.reason||'')}">${STEP_MARKS[st.status]||''}<b>${esc(STEP_LABELS[st.name]||st.name)}</b> ${dur(st.seconds)}${bits.length?' · '+esc(bits.join(' · ')):''}</span>`;
+  return `<span class="step ${esc(st.status)}" title="${esc(i.reason||i.error||'')}">${STEP_MARKS[st.status]||''}<b>${esc(STEP_LABELS[st.name]||st.name)}</b> ${dur(st.seconds)}${bits.length?' · '+esc(bits.join(' · ')):''}</span>`;
 }
 
 function activeCard(a,l){
@@ -239,7 +240,9 @@ function activeCard(a,l){
     running=(a.steps||[]).filter(s=>s.status==='running'),
     pct=a.progress!=null?Math.round(a.progress*100):null,
     triage=(a.steps||[]).find(s=>s.name==='triage')?.info,f=a.findings,lanes=a.lanes||[],live=a.live_lanes||[],
-    waiting=live.filter(x=>x.state==='waiting');
+    waiting=live.filter(x=>x.state==='waiting'),
+    // a failed step says why at once (a single-stage Phase 1 fails while Phase 2 goes on)
+    fails=(a.steps||[]).filter(s=>s.status==='failed'&&s.info?.error).map(s=>`<div class=fail>✗ <b>${esc(STEP_LABELS[s.name]||s.name)}</b> failed: ${esc(s.info.error)}</div>`).join('');
   const tags=[a.tier?`<span class=pill>${esc(a.tier)}</span>`:'',a.priority?'<span class="pill priority">priority</span>':'',a.queue==='audit'?'<span class="pill priority">post-merge audit</span>':'',a.attempt>1?`<span class="pill warn">attempt ${a.attempt}</span>`:'',a.degraded?'<span class="pill warn">stand-in models</span>':'',open?`<span class=pill>${esc((a.trigger||'').replace(/_/g,' '))}</span>`:''].join(' ');
   const lanesOf=s=>s.lanes_total!=null?` · ${s.lanes_done} of ${s.lanes_total} lanes done${s.lanes_left?.length?` (${esc(s.lanes_left.join(', '))} still going)`:s.comparison_left?` (+${s.comparison_left} comparison lane${s.comparison_left===1?'':'s'} still going)`:''}`:s.lanes_done?` · ${s.lanes_done} lanes done`:'';
   const now=running.length?running.map(s=>`<b>${esc(STEP_LABELS[s.name]||s.name)}</b> ${dur(s.seconds)}${lanesOf(s)}`).join(' + '):`<b>${esc(STEP_LABELS[a.phase]||a.phase||'starting')}</b>`,
@@ -253,6 +256,7 @@ function activeCard(a,l){
     <div class="pbar${pct==null?' unknown':''}" title="Estimated from the step durations of recent ${esc(a.tier||'')} reviews"><i style="width:${pct??100}%"></i></div>
     <div class=pline><span class=next>${pct!=null?`<b>${pct}%</b> · `:''}${now}${next?` · next: ${next}`:''}${waiting.length?` · <span style="color:var(--amber)">${waiting.length} lane${waiting.length===1?'':'s'} waiting for a slot</span>`:''}</span>
       <button class=more data-run="${a.id}" aria-expanded="${open}">${open?'Fewer details ▴':'More details ▾'}</button></div>
+    ${fails}
     ${open?`<div class=steps>${(a.steps||[]).map(stepChip).join('')||`<span class="step running">● <b>${esc(a.phase||'starting')}</b></span>`}</div>
     ${triage?.reasoning?`<div class=why title="${esc(triage.reasoning)}">Triage: ${esc(triage.reasoning)}</div>`:''}
     ${live.length?`<div class=live>${liveRows}</div>`:''}
