@@ -220,17 +220,13 @@ def test_scaling_disabled_keeps_static_slots(cfg, conn):
     assert slots.capacity(conn, static).ceiling == 3
 
 
-def test_scheduler_admits_the_scaled_capacity(cfg, conn):
+def test_accounts_scale_the_gpt_lane_pool_not_the_runs(cfg, conn):
+    from reviewsys import lanepool
+
     _refresh(conn, cfg, _Mgmt(_accounts(2)))
-    queue(conn, cfg, 8)  # below the backlog threshold: no lending
-    assert len(schedule(conn, cfg, spawn=False)) == 4, "2 normal x 2 accounts"
-    assert schedule(conn, cfg, spawn=False) == []
-
-
-def test_scheduler_backlog_may_lend_once_there_are_spare_priority_slots(cfg, conn):
-    _refresh(conn, cfg, _Mgmt(_accounts(3)))
-    queue(conn, cfg, 12)
-    assert len(schedule(conn, cfg, spawn=False)) == 7, "6 normal + 1 lent; 2 priority kept"
+    assert lanepool.limit(conn, cfg, "gpt") == 6, "(2 + 1) streams x 2 accounts"
+    queue(conn, cfg, 8)
+    assert len(schedule(conn, cfg, spawn=False)) == 8, "runs are not bounded by the accounts"
 
 
 def test_page_mentions_on_call_in_the_channel_and_dms_the_operator(cfg):

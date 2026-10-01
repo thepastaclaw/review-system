@@ -1,7 +1,7 @@
 """Scheduler: claim eligible heads, spawn workers, retry/supersede policy.
 
-Slot accounting is computed from the DB on every tick. Nothing is cached, so
-no crash can leave a phantom slot occupied.
+The runs in flight are counted from the DB on every tick. Nothing is cached, so no crash
+can leave a phantom run counted.
 """
 
 from __future__ import annotations
@@ -17,7 +17,6 @@ from . import audit, proc
 from .config import Config
 from .db import event, fmt_ts, now, parse_ts, tx
 from .models import FailKind, HeadStatus, RunStatus
-from .slots import capacity
 
 log = logging.getLogger(__name__)
 
@@ -62,54 +61,45 @@ def worker_argv(run_id: int) -> list[str]:
 def schedule(conn: sqlite3.Connection, cfg: Config, *, spawn: bool = True) -> list[int]:
     """One scheduling pass. Returns the run ids started.
 
-    Live heads first, exactly as before: audit runs never occupy a live slot. Audit heads
-    then start (up to `audit.max_concurrent`) only when no live head is left waiting for a
-    slot, and only into capacity under the ceiling that live runs are not using, so a live
-    review never queues behind an audit and the accounts' stream budget holds."""
+    Runs are not bounded by a review-slot count: every eligible live head starts (one run
+    per PR), and what is limited is the models. Each lane waits for a slot in its model's
+    machine-wide pool (lanepool.py), so a run whose next lane is on an idle model gets on
+    with it instead of waiting for a run on a busy one to end. `[scheduling] max_runs` is
+    only a safety cap on the runs in flight, live and audit together (0 = none).
+
+    Live heads first, priority heads before the rest (`eligible_heads` order). Audit heads
+    then start (up to `audit.concurrency`) only when no live head is left waiting, so a live
+    review never queues behind an audit; in every pool an audit's lanes line up behind every
+    live lane."""
     ts = now()
     started: list[int] = []
     active = active_runs(conn)
     active_prs = {(r["repo"], r["number"]) for r in active}
-    live = [r for r in active if r["queue"] != "audit"]
-    normal_used = sum(1 for r in live if not r["priority"])
-    priority_used = sum(1 for r in live if r["priority"])
-    audit_used = len(active) - len(live)
-    cap = capacity(conn, cfg)  # scales with the usable OpenAI accounts
-    # Under backlog pressure, temporarily lend a priority overflow slot to normal work -- but
-    # never the last one, so a priority head always has somewhere to land.
-    lent = 1 if live_queued_count(conn) > 10 and cap.priority > 1 else 0
-    normal_capacity = cap.normal + lent
+    in_flight = len(active)
+
+    def at_cap() -> bool:
+        return cfg.max_runs > 0 and in_flight >= cfg.max_runs
+
     live_waiting = False
     for head in eligible_heads(conn, ts=ts):
         if (head["repo"], head["number"]) in active_prs:
             continue  # single-flight per PR
-        # Hard ceiling for every kind of head; nothing else can start once it is reached.
-        if normal_used + priority_used >= cap.ceiling or (
-            not head["priority"] and normal_used >= normal_capacity
-        ):
+        if at_cap():
             live_waiting = True
-            continue
+            break
         run_id = _start_run(conn, cfg, head, ts=ts, spawn=spawn)
         if run_id is None:
             live_waiting = True
             continue
         started.append(run_id)
         active_prs.add((head["repo"], head["number"]))
-        if head["priority"]:
-            priority_used += 1
-        else:
-            normal_used += 1
+        in_flight += 1
     if live_waiting or not cfg.audit.enabled:
         return started
-    # never past the per-account stream budget: audits take only what live work leaves under
-    # the ceiling right now. Live heads that arrive later still start on their own slots, so
-    # the worst case is the ceiling plus the audits already in flight.
-    audit_cap = min(
-        audit.concurrency(conn, cfg),
-        cap.ceiling - normal_used - priority_used,
-    )
+    audit_used = sum(1 for r in active if r["queue"] == "audit")
+    audit_cap = audit.concurrency(conn, cfg)
     for head in eligible_audits(conn, ts=ts):
-        if audit_used >= audit_cap:
+        if audit_used >= audit_cap or at_cap():
             break
         if (head["repo"], head["number"]) in active_prs:
             continue
@@ -119,6 +109,7 @@ def schedule(conn: sqlite3.Connection, cfg: Config, *, spawn: bool = True) -> li
         started.append(run_id)
         active_prs.add((head["repo"], head["number"]))
         audit_used += 1
+        in_flight += 1
     return started
 
 

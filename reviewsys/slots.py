@@ -1,16 +1,20 @@
-"""Review slots that scale with the number of usable OpenAI (Codex) accounts.
+"""The gpt lane pool's size, scaled by the number of usable OpenAI (Codex) accounts.
+
+(It used to size the review run slots; runs are now bounded by the model pools alone, see
+lanepool.py, and this sizes the `gpt` one.)
 
 The primary models are limited per ChatGPT account, not globally: one account starts
 refusing work above ~3 concurrent streams or once its weekly window is nearly spent
 (see the 2026-09-17 `server_is_overloaded` investigation), while the proxy spreads lanes
 over every account it holds. So `max_concurrent` + `priority_overflow` (2 + 1) is the
-budget of *one* account, and the effective capacity is that unit times the number of
-accounts that can take work now, capped at `account_scale_max`.
+budget of *one* account (streams, i.e. gpt lanes in flight), and the effective capacity is
+that unit times the number of accounts that can take work now, capped at
+`account_scale_max`.
 
 The daemon refreshes the reading every few minutes from the proxy's management API
 (`auth-files`: the proxy's own record of each credential's cooldowns and the
 `X-Codex-*-Used-Percent` quota headers it last saw), so no request reaches OpenAI. The
-scheduler only reads the stored reading; a missing, stale or unreadable one falls back to
+lane pool only reads the stored reading; a missing, stale or unreadable one falls back to
 a scale of 1, never to more capacity than the static config grants.
 
 An account is spent to its last percent unless `account_reserves` names it. A reserved
@@ -316,7 +320,7 @@ def stored_accounts(conn: sqlite3.Connection) -> tuple[str, list[Account]] | Non
 
 
 def capacity(conn: sqlite3.Connection, cfg: Config) -> Capacity:
-    """The slots the scheduler may fill now. Never below the static 2 + 1."""
+    """The gpt lane pool now (`ceiling`). Never below the static 2 + 1."""
     base_n, base_p = cfg.max_concurrent, cfg.priority_overflow
     if cfg.account_scale_max <= 1:
         return Capacity(base_n, base_p, 1, None, "scaling disabled")

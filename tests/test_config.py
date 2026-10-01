@@ -59,3 +59,13 @@ def test_a_single_mention_string_is_one_mention(tmp_path, skills_dir):
         )
     )
     assert cfg_mod.load(p).page_mentions == ("UCW1VE04T",)
+
+
+def test_max_runs_defaults_to_a_safety_cap_and_is_clamped(tmp_path, skills_dir):
+    p = _write(tmp_path, skills_dir, "max_concurrent = 2")
+    assert cfg_mod.load(p).max_runs == 30
+    p.write_text(p.read_text().replace("max_runs = 30", "max_runs = -4", 1))
+    assert cfg_mod.load(p).max_runs == 0, "negative reads as no cap, never a crash loop"
+    # the box config.toml predates the key: the code default applies
+    p.write_text(p.read_text().replace("max_runs = -4\n", "", 1))
+    assert cfg_mod.load(p).max_runs == 30

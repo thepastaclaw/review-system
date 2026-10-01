@@ -289,7 +289,7 @@ def _live_lanes(run_dir: str | None, slot_dir: Path, at: datetime) -> list[dict[
             "since_seconds": _age(st.get("since"), at),
             "line_position": None,
         }
-        if lane["state"] == "waiting" and st.get("parallel"):
+        if lane["state"] == "waiting":  # every lane that waits for a slot is in its pool's line
             pool = str(st.get("pool"))
             line = lines.setdefault(pool, lanepool.waiting_line(slot_dir, pool))
             mine = [i for i, t in enumerate(line) if t.endswith(f"-{st.get('waiter')}")]
@@ -403,8 +403,9 @@ def build_lane_pools(
                 "pool": pool,
                 "slots": lanepool.limit(conn, cfg, pool),
                 "running": sum(1 for x in mine if x["state"] == "running"),
-                # reviewers wait in the ticket line; verifiers, triage and other short lanes
-                # wait without a ticket (they take the reserved top slot first)
+                # every waiting lane has a ticket in the pool's line; a waiting lane without
+                # a place in it is one of a worker still on the code before the line covered
+                # every lane (a deploy in progress)
                 "waiting": len(lanepool.waiting_line(slot_dir, pool))
                 + sum(1 for x in mine if x["state"] == "waiting" and x["line_position"] is None),
             }
@@ -525,7 +526,10 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             event["detail"] = None
         recent.append(event)
     cap = live.pop("capacity")
+    # `typical`/`priority_overflow`/`maximum` are the gpt lane pool's stream budget now (runs
+    # are bounded only by `max_runs`); the keys stay for the published page and its readers
     live["capacity"] = {
+        "max_runs": cfg.max_runs,
         "typical": cap["normal"],
         "priority_overflow": cap["priority"],
         "maximum": cap["ceiling"],

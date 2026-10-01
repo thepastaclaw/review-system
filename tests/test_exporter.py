@@ -299,10 +299,14 @@ def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
             (run, "triage", "triage", "a", "gpt-6.1-sol", "low", 1, "x", "completed", 900, 100, ts),
         )
     slot_dir = cfg.work_dir / "lane-slots"
-    (slot_dir / "glm.wait").mkdir(parents=True)
-    me = f"{os.getpid()}-7"
-    for name in (f"2-{1:020d}-{os.getpid()}-1", f"2-{2:020d}-{me}"):
-        (slot_dir / "glm.wait" / name).touch()
+    (slot_dir / "glm.line").mkdir(parents=True)
+    me, verifier = f"{os.getpid()}-7", f"{os.getpid()}-8"
+    for name in (
+        f"2-{run:012d}-{1:020d}-{verifier}",  # a side lane lines up before the reviewers
+        f"4-{run:012d}-{2:020d}-{os.getpid()}-1",
+        f"4-{run:012d}-{3:020d}-{me}",
+    ):
+        (slot_dir / "glm.line" / name).touch()
 
     def lane(dirname, **state):
         d = run_dir / "attempts" / dirname
@@ -320,6 +324,15 @@ def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
         parallel=True,
         waiter=me,
     )
+    lane(
+        "verify1-verifier-dd",
+        state="waiting",
+        role="verifier",
+        model="glm-5.3-flash",
+        effort="high",
+        parallel=False,
+        waiter=verifier,
+    )
     done = lane("phase1-old-cc", state="running", role="old", model="glm-5.3-flash", effort="max")
     (done / "lane-meta.json").write_text("{}")  # ended: its row is in the DB, not live
 
@@ -331,12 +344,16 @@ def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
     assert active["steps"][2]["info"] == {}
     assert "example.com" not in json.dumps(export) and "a@b.c" not in json.dumps(export)
     live = {x["role"]: x for x in active["live_lanes"]}
-    assert set(live) == {"general", "ffi"}
+    assert set(live) == {"general", "ffi", "verifier"}
     assert live["general"]["state"] == "running" and live["general"]["since_seconds"] >= 1800
-    assert (live["ffi"]["line_position"], live["ffi"]["line_length"]) == (2, 2)
+    assert (live["ffi"]["line_position"], live["ffi"]["line_length"]) == (3, 3)
+    # a waiting side lane has its place in line too (every lane lines up)
+    assert (live["verifier"]["line_position"], live["verifier"]["line_length"]) == (1, 3)
     assert "run_dir" not in active
     pools = {p["pool"]: p for p in export["live"]["lane_pools"]}
-    assert (pools["glm"]["running"], pools["glm"]["waiting"]) == (1, 2)
+    assert (pools["glm"]["running"], pools["glm"]["waiting"]) == (1, 3)
+    cap = export["live"]["capacity"]
+    assert cap["max_runs"] == cfg.max_runs and cap["maximum"] == 3, "the gpt pool's budget"
 
 
 def test_queue_says_why_a_head_waits(cfg, conn):

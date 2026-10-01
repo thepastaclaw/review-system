@@ -507,8 +507,9 @@ def test_twins_wait_while_production_reviewers_are_in_line(cfg, conn, tmp_path):
     from reviewsys import lanepool
 
     slot_dir = cfg.work_dir / "lane-slots"
-    (slot_dir / "gpt.wait").mkdir(parents=True)
-    ticket = slot_dir / "gpt.wait" / f"{lanepool.RANK_LIVE}-{0:020d}-{os.getpid()}-1"
+    (slot_dir / "gpt.line").mkdir(parents=True)
+    # any production lane in the gpt line holds comparison lanes back, a verifier included
+    ticket = slot_dir / "gpt.line" / f"{lanepool.RANK_LIVE_SIDE}-{1:012d}-{0:020d}-{os.getpid()}-1"
     ticket.touch()
     ran = []
 
@@ -516,7 +517,7 @@ def test_twins_wait_while_production_reviewers_are_in_line(cfg, conn, tmp_path):
         ran.append(spec.role)
         return LaneResult(0, "{}", "", 0)
 
-    gated = lanepool.gated(runner, lambda: conn, cfg, lambda: False, lanepool.RANK_LIVE)
+    gated = lanepool.gated(runner, lambda: conn, cfg, lambda: False, "live", 0)
     stop = threading.Event()
     threading.Timer(0.1, stop.set).start()
     spec = LaneSpec(

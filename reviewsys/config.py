@@ -224,8 +224,9 @@ class AuditConfig:
     """The audit queue: post-merge reviews of PRs merged without a clean review (audit.py).
 
     Audit runs only ever use capacity live review leaves idle: none starts while a live head
-    is eligible, and they never count against the live slots. `max_concurrent` is the steady
-    state (one at a time); raise it on the box to drain a backfill."""
+    is waiting to start, and their lanes line up behind every live lane in each model pool
+    (lanepool.py). `max_concurrent` is the steady state (one at a time); raise it on the box
+    to drain a backfill."""
 
     enabled: bool = True
     max_concurrent: int = 1
@@ -249,9 +250,15 @@ class Config:
     gh_bin: str
     openclaw_bin: str
     # scheduling
-    max_concurrent: int  # per usable OpenAI account (see slots.py)
-    priority_overflow: int  # per usable OpenAI account
-    account_scale_max: int  # most accounts the slots scale over; 1 = static slots
+    # safety cap on runs in flight (live + audit); 0 = none. Runs are otherwise bounded only
+    # by the per-model lane pools (lanepool.py)
+    max_runs: int
+    # the gpt lane pool: (max_concurrent + priority_overflow) streams per usable OpenAI
+    # account, over at most account_scale_max accounts (see slots.py). The names predate
+    # model-slot scheduling, when they sized the run slots; the box config.toml uses them.
+    max_concurrent: int
+    priority_overflow: int
+    account_scale_max: int  # 1 = no scaling: the gpt pool stays at one account's budget
     # OpenAI account (email) -> fraction of its quota nobody may spend; unlisted = 0
     account_reserves: dict[str, float]
     debounce_minutes: int
@@ -401,8 +408,13 @@ openclaw = "openclaw"
 [scheduling]
 # Additional automation-owned forks to poll and review (without a skills entry).
 additional_repos = []
-# slots per usable OpenAI account; the effective capacity is this times the number of
-# accounts with quota left (at most account_scale_max), never less than one unit
+# safety cap on reviews in flight (live + audit runs); 0 = no cap. Reviews are not limited
+# by a run count otherwise: every eligible PR starts, and each lane waits for a slot in its
+# model's pool (lane_pools below, gpt from the three keys after this one)
+max_runs = 30
+# the gpt lane pool: max_concurrent + priority_overflow streams per usable OpenAI account,
+# times the accounts with quota left (at most account_scale_max), never less than one unit.
+# The names are historical (they used to size the run slots); only their sum counts now.
 max_concurrent = 2
 priority_overflow = 1
 account_scale_max = 3
@@ -434,8 +446,8 @@ backlog_skip_phase1_above = 10
 # still bound the machine
 phase_parallelism = 0
 # machine-wide cap on lanes in flight per model family, across every run. gpt lanes are
-# capped by the review slot ceiling instead (the per-account stream budget); a family
-# not listed here is not capped.
+# capped by the per-account stream budget above instead; a family not listed here is not
+# capped.
 lane_pools = { muse = 8, glm = 6, gemini = 6 }
 
 [lanes]
@@ -461,8 +473,8 @@ artifact_days = 0
 worktree_budget_gb = 60
 
 [audit]
-# post-merge reviews of PRs merged without a clean review; they only use slots live review
-# leaves idle. Raise max_concurrent to drain a backfill.
+# post-merge reviews of PRs merged without a clean review; they only use model slots live
+# review leaves idle. Raise max_concurrent to drain a backfill.
 enabled = true
 max_concurrent = 1
 # private repo the per-PR audit reports are committed to ("" = on disk only)
@@ -729,6 +741,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         gh_bin=str(p["gh"]),
         openclaw_bin=str(p["openclaw"]),
         # clamped, not rejected: a bad edit must not put the daemon into a restart loop
+        max_runs=max(0, int(s.get("max_runs", 30))),
         max_concurrent=max(
             1, int(s.get("max_concurrent", settings.get("max_concurrent_reviews", 2)))
         ),
@@ -761,7 +774,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         lane_pools={
             str(k): max(1, int(v))
             for k, v in (s.get("lane_pools", DEFAULT_LANE_POOLS) or {}).items()
-            if str(k) != "gpt"  # gpt is always the review slot ceiling
+            if str(k) != "gpt"  # gpt always follows the per-account budget (slots.py)
         },
         lane_deny_exec=_deny_exec((t.get("lanes") or {}).get("deny_exec", DEFAULT_LANE_DENY_EXEC)),
         bot_login=str(i["bot_login"]),

@@ -15,13 +15,13 @@ tested, one daemon, one SQLite file, no lock files.
 | `daemon.py` | single-threaded tick loop: ingest, notify, route, supersede, reap, schedule, watchdog, gc |
 | `ingest.py` | GitHub GraphQL poll → `prs`/`heads`; notifications and inline-comment replies → `inbox` |
 | `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
-| `scheduler.py` | slots (2 + 1 priority), debounce, single-flight per PR, retries with backoff, supersede/cancel |
-| `reaper.py` | heartbeat + deadline enforcement; kills process groups; no slot can be ghosted |
+| `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
+| `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
 | `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
 | `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
 | `quota.py` | Phase-1 model ladder: remaining Antigravity / Z.AI quota via the proxy's management `api-call`; first rung with quota runs |
 | `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage; stoppable mid-run |
-| `lanepool.py` | machine-wide lane slots per model family (`flock` files), shared by every worker |
+| `lanepool.py` | machine-wide lane slots per model family (`flock` files) and one priority line per pool, shared by every worker; the only concurrency limit on reviews |
 | `prompts.py` | assembles prompts from the `thepastaclaw/skills` repo templates |
 | `contract.py` | reviewer/verifier JSON contracts; legacy-compatible `finding_hash` / `dedupe_key` |
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
@@ -242,6 +242,11 @@ where Phase 2 runs on the stand-in: a degraded backlog is the case that can leas
 the slow Phase-1 rungs. Set `backlog_skip_phase1: false` in the degraded policy to keep
 both phases (and the cross-model check) at that cost.
 
+The rule counts queued live heads. Since reviews are bounded by model slots rather than
+a run count (see [Parallel reviewer lanes](#parallel-reviewer-lanes-and-model-slots)), an
+eligible head starts on the next tick, so the queue only gets deep (and the rule only
+triggers) while `max_runs` holds heads back, or with heads still in debounce/backoff.
+
 ## Degraded mode: stand-in models when the OpenAI pool is dry
 
 The primary OpenAI model (`gpt-6.1-sol` since policy v10, `gpt-6-astra` before) sits on the critical path of every run (triage, Phase-1 gate verifier,
@@ -324,8 +329,8 @@ runs):
   never the production `gpt` one: a slot is held for the whole lane, so a comparison
   lane in the production pool could make a primary lane (even its own run's retry)
   wait. They still use the same OpenAI accounts, whose stream budget the `gpt`
-  ceiling is, so one only starts while the `gpt` pool has an idle reviewer slot at
-  that moment; the `compare` pool bounds how far they can overshoot when production
+  pool is, so one only starts while no lane is in the `gpt` line and that pool has an
+  idle reviewer slot at that moment; the `compare` pool bounds how far they can overshoot when production
   picks up after they started. Each gets one attempt. A failed one is dropped (`compare.lane_dropped`), and
   one still running (or still waiting for a slot) 20 minutes (`COMPARE_GRACE_MINUTES`)
   after the last primary lane of its phase finished is stopped and dropped the same
@@ -532,10 +537,11 @@ a PR with no further activity (reconciliation only visits PRs that changed).
 
 As soon as a PR head is queued the daemon posts (and keeps updated, every
 `queue_comment_interval_seconds`) one gate comment with the PR's place in line, an
-estimated start time (slot-pipeline model over the median of recent run durations,
-plus any debounce/backoff still to elapse) and an estimated review duration. The
-comment carries a checkbox, **Request priority review**; ticking it promotes the
-head to the priority lane (front of the queue, extra overflow slot, no debounce),
+estimated start time (any debounce/backoff still to elapse; with a `max_runs` cap, also a
+slot-pipeline model over the median of recent run durations) and an estimated review
+duration. The comment carries a checkbox, **Request priority review**; ticking it
+promotes the head to the priority lane (front of the queue, its lanes ahead of live
+lanes in every model pool, no debounce),
 records `head.priority_requested` with the editor's login from the comment's edit
 history, and re-renders the comment without the box. GitHub only renders the box as
 clickable to users who can edit the comment, i.e. repository collaborators. The
@@ -549,14 +555,29 @@ The daemon spawns `reviewsys worker --run-id N` in its own session. The worker
 heartbeats every 15 s and checks for cancellation; the reaper fails any run
 whose heartbeat is older than 5 min, whose deadline passed, or whose process is
 gone, and requeues the head with backoff (`infra` up to 3 attempts, `contract`
-twice, `fatal` never). Slot counts are recomputed from the DB every tick.
+twice, `fatal` never). Runs in flight are recounted from the DB every tick. The run
+deadline (`run_timeout_minutes`, 360) does not count time a run only waits for model
+slots: while at least one of its lanes waits for a slot and none runs, the worker pushes
+`runs.deadline_at` out by that stretch (in one-minute slices while it lasts, so a long
+wait is never reaped mid-stall; at most two run timeouts in all, so a line that never
+moves still ends in a timeout). Lane timeouts start when the lane process starts.
 
-Slots scale with the OpenAI (Codex) accounts that can take work, because the
+Reviews are not limited by a run count. The owner's rule (2026-10): "instead of limits
+for PRs, only limit for models; if we have open model slots, do it. That way we get Muse
+out of the way ASAP; and prioritize verify over finder jobs." So every eligible head
+starts on the next tick (one run per PR; priority heads first), and each of its lanes
+waits for a slot in its model's pool ([below](#parallel-reviewer-lanes-and-model-slots)).
+A run whose Phase 1 is on Muse or GLM gets on with it while gpt is busy, instead of
+waiting for another run to end. No role moves to another model because its pool is
+busy. `[scheduling] max_runs` (default 30, 0 = none) is only a runaway guard on runs in
+flight, live and audit together. Audit heads start (up to the audit concurrency) only
+when no live head is left waiting.
+
+The `gpt` pool scales with the OpenAI (Codex) accounts that can take work, because the
 primary models are limited per ChatGPT account (~3 concurrent streams, weekly
-quota), not globally. Each usable account adds `max_concurrent` normal slots
-plus `priority_overflow` slots a priority head may claim (2 + 1), for at most
-`account_scale_max` accounts (3, so 6 + 3). The total is a hard ceiling no head
-of any kind crosses. Every 2 min the daemon reads the proxy's `auth-files`
+quota), not globally. Each usable account adds `max_concurrent + priority_overflow`
+streams (2 + 1; the names are historical, from when they sized the run slots), for at
+most `account_scale_max` accounts (3, so 9). Every 2 min the daemon reads the proxy's `auth-files`
 (its record of each credential's cooldowns and `X-Codex-*-Used-Percent` quota
 headers; nothing is sent to OpenAI). An account is usable when it is enabled, not
 parked, and not cooling down for itself or for the sentinel model: it is spent to
@@ -566,12 +587,10 @@ that floor reviewsys *disables the account in the proxy*, so no client eats into
 the reserve, and re-enables it once the window that hit the floor has reset. It
 alerts on both, and it never re-enables an account an operator disabled. With no
 reading, or one older than 20 min,
-capacity falls back to one unit (2 + 1). A backlog (>10 queued) lends an overflow
-slot to normal work only while one remains free for priority, so the priority lane
-stays reserved however long the queue gets. `reviewsys status` prints the
-effective `slots:` line.
+the `gpt` pool falls back to one unit (3). `reviewsys status` prints the effective
+`runs: max N (0 = unlimited); lane pools: gpt N (reason), ...` line.
 
-### Parallel reviewer lanes
+### Parallel reviewer lanes and model slots
 
 Within a phase the general reviewer and the selected specialists run side by side
 (`phase_parallelism` per run: default 0 = every lane of the phase at once; 1 restores
@@ -582,19 +601,29 @@ reviews, 2–6 reviewers per phase), this cuts a full review from ~65 to a proje
 ~38 min; a cap of 3 already gets ~95% of that.
 
 A run no longer holds one model session at a time, so every lane (reviewers, verifiers,
-triage, selector, repair) first takes a slot in its model family's machine-wide pool
-(`lanepool.py`): an exclusive `flock` on one of N files under `work/lane-slots`, held
-while the lane runs and dropped by the kernel if the worker dies. `gpt` lanes get the
-review slot ceiling (the per-account stream budget the run slots were sized to); the
-other families take `lane_pools` (`muse = 8, glm = 6, gemini = 6` by default, from the
-measured headroom: Muse 100 RPM per team at ~3.7 req/min per lane, peak 11 in flight
-with no 429s). A lane waiting for a slot simply starts later. Two rules keep one busy
-run from starving the rest: the top slot of each pool is kept for lanes that are not
-parallel reviewers (verifiers, triage, selector, repair, conversation), which sit on
-some run's critical path; and parallel reviewers wait in line (a ticket file per waiter
-under `lane-slots/<pool>.wait`), priority runs before live runs before audits, then first
-come first served. So at the static 2 + 1 ceiling a Phase-2 run gets two gpt reviewers
-at a time; each usable OpenAI account adds three more slots.
+triage, selector, repair, conversation) first takes a slot in its model family's
+machine-wide pool (`lanepool.py`): an exclusive `flock` on one of N files under
+`work/lane-slots`, held while the lane runs and dropped by the kernel if the worker dies.
+These pools are the only concurrency limit on reviews. `gpt` lanes get the per-account
+stream budget (above); the other families take `lane_pools` (`muse = 8, glm = 6,
+gemini = 6` by default, from the measured headroom: Muse 100 RPM per team at ~3.7
+req/min per lane, peak 11 in flight with no 429s). A lane waiting for a slot simply
+starts later.
+
+Every lane waits in its pool's line: a ticket file per waiter under
+`lane-slots/<pool>.line`, named `rank-run_id-time-pid-thread`, so the line is ordered by
+rank, then the older run, then arrival. Ranks: 1 priority-run side lane, 2 live-run side
+lane, 3 priority-run reviewer, 4 live-run reviewer, 5 audit side lane, 6 audit reviewer;
+a side lane is anything that is not a parallel reviewer (verifiers, triage, selector,
+repair, conversation), short and on some run's critical path ("prioritize verify over
+finder jobs"). The head of the line may take any slot its kind allows; the top slot of
+a pool with more than one is kept for side lanes, so reviewers never take it. A side lane
+with only reviewers ahead of it may take the top slot (and only that one) without being
+the head, so a verifier never waits behind a reviewer queue. A ticket left by a dead
+worker is pruned by the next waiter. So at the static 2 + 1 budget a Phase-2 run gets two
+gpt reviewers at a time; each usable OpenAI account adds three more slots. (The line
+replaced the reviewer-only `<pool>.wait` line in a new directory, so workers still on the
+old code during a deploy never read the new ticket format; both take the same slot files.)
 
 One lane failing for good (twice, and on every Phase-1 rung) fails the phase; its
 siblings are stopped (`lanes.status = cancelled`) instead of spending quota on an
@@ -611,8 +640,9 @@ started go straight to the new rung. Provenance and finding rows keep role order
 
 ## Alerts (Slack via `openclaw message send`)
 
-Only: a head failed after all retries, watchdog (eligible work + free slot +
-nothing started for 30 min, or ingest stale/erroring), daemon start/stop.
+Only: a head failed after all retries, watchdog (an eligible head whose PR has no run in
+flight + `max_runs` not reached + nothing started for 30 min, or ingest stale/erroring),
+daemon start/stop.
 Everything else is in `events` and `reviewsys status`.
 
 Degraded mode is a page, not an alert: only a person can add or re-enable an
@@ -675,11 +705,12 @@ Where to look when something is off, in order:
 4. `~/.reviewsys/watchdog.log` — every restart the cron watchdog performed
 
 Config knobs (`~/.reviewsys/config.toml`, restart the daemon after editing):
-`max_concurrent` / `priority_overflow` (slots per usable OpenAI account),
-`account_scale_max` (1 = static slots), `account_reserves`, `page_target` / `page_mentions`
-(`[identity]`, degraded-mode pages), `debounce_minutes`,
+`max_runs` (safety cap on runs in flight, live + audit; 0 = none),
+`max_concurrent` / `priority_overflow` (their sum is the `gpt` lane streams per usable
+OpenAI account), `account_scale_max` (1 = no scaling), `account_reserves`,
+`page_target` / `page_mentions` (`[identity]`, degraded-mode pages), `debounce_minutes`,
 `phase_parallelism` (reviewer lanes per phase per run, 0 = all), `lane_pools` (lanes in flight per
-model family across all runs; `gpt` always follows the slot ceiling),
+model family across all runs; `gpt` always follows the per-account budget),
 `lane_timeout_minutes` (wall-clock bound per lane), `lane_budget_usd` (runaway
 guard passed as `claude --max-budget-usd`; it is the CLI's list-price estimate,
 not real spend, so keep it well above a normal $3–10 lane).
@@ -691,9 +722,10 @@ Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
 `config.toml` wins over the skills repo's `config.json` for any key it defines, so a
 slot change made only in the skills repo has no effect on the box. `doctor` prints the
-effective `review slots` line for exactly this reason. Do not run `reviewsys tick` while
-the daemon is live -- it refuses, because two schedulers would each admit up to the
-ceiling; `tick --no-spawn` never schedules and is safe any time.
+effective `review slots` line (`runs: max N ...; lane pools: ...`) for exactly this
+reason. Do not run `reviewsys tick` while the daemon is live -- it refuses, because two
+schedulers could start the same head twice; `tick --no-spawn` never schedules and is
+safe any time.
 
 ### Notes after the legacy cutover (2026-09)
 

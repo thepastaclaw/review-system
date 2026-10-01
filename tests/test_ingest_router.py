@@ -1,3 +1,4 @@
+import dataclasses
 from datetime import timedelta
 
 from reviewsys.db import kv_get, kv_set, now, parse_ts, tx
@@ -252,6 +253,8 @@ def _queue(conn, cfg, n):
 
 
 def test_queue_comments_posted_with_position_eta_and_checkbox(cfg, conn, gh):
+    # the ETA's slot model applies under a run cap; unlimited is covered below
+    cfg = dataclasses.replace(cfg, max_runs=2)
     _queue(conn, cfg, 3)
     with tx(conn):
         conn.execute("UPDATE heads SET eligible_at=queued_at")  # past debounce
@@ -260,7 +263,7 @@ def test_queue_comments_posted_with_position_eta_and_checkbox(cfg, conn, gh):
     assert len(gh.gate_bodies) == 3
     first = gh.gate_bodies[0]
     assert "thepastaclaw-gate" in first and "1st in line" in first
-    # idle system (no active runs): the first two heads fit the two slots -> start now
+    # idle system (no active runs): the first two heads fit under the cap of two -> start now
     assert "estimated start in ~5 min" in first
     assert "3rd in line" in gh.gate_bodies[2] and "estimated start in ~2.0 h" in gh.gate_bodies[2]
     assert PRIORITY_BOX in first
@@ -274,6 +277,18 @@ def test_queue_comments_posted_with_position_eta_and_checkbox(cfg, conn, gh):
     gh.routes["repos/dashpay/platform/issues/comments/77"] = gh.issue_comments[0]
     # PRs 300/301 differ from the shared body, so only those two are rewritten
     assert update_queue_comments(conn, cfg, gh)["written"] == 2
+
+
+def test_without_a_run_cap_every_ready_head_is_due_to_start_now(cfg, conn, gh):
+    """No run count bounds reviews (models do): a ready head starts on the next tick however
+    far down the queue it is, and only debounce/backoff push its estimate out."""
+    cfg = dataclasses.replace(cfg, max_runs=0)
+    _queue(conn, cfg, 5)
+    with tx(conn):
+        conn.execute("UPDATE heads SET eligible_at=queued_at")
+    update_queue_comments(conn, cfg, gh)
+    assert "5th in line" in gh.gate_bodies[4]
+    assert all("estimated start in ~5 min" in b for b in gh.gate_bodies)
 
 
 def test_ticked_checkbox_promotes_head_to_front(cfg, conn, gh):

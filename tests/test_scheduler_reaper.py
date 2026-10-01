@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from datetime import timedelta
 
 from reviewsys.db import now, parse_ts, tx
@@ -32,52 +33,43 @@ def queue(conn, cfg, n: int, *, priority=False, ready=True):
     return ids
 
 
-def test_slots_and_priority_overflow(cfg, conn):
-    queue(conn, cfg, 4)
-    started = schedule(conn, cfg, spawn=False)
-    assert len(started) == 2  # max_concurrent
-    assert schedule(conn, cfg, spawn=False) == []
-    with tx(conn):
-        enqueue_head(conn, cfg, "dashpay/platform", 200, "e" * 40, Trigger.REVIEW_REQUESTED)
-    assert len(schedule(conn, cfg, spawn=False)) == 1  # priority overflow slot
-    assert schedule(conn, cfg, spawn=False) == []
-    assert conn.execute("SELECT COUNT(*) FROM runs WHERE status='spawned'").fetchone()[0] == 3
+def _in_flight(conn) -> int:
+    return conn.execute("SELECT COUNT(*) FROM runs WHERE status='spawned'").fetchone()[0]
 
 
-def test_backlog_never_lends_the_last_priority_slot(cfg, conn):
-    """With a single overflow slot the backlog may not borrow it: priority work must fit."""
-    queue(conn, cfg, 11)
-    assert len(schedule(conn, cfg, spawn=False)) == 2
-    with tx(conn):
-        enqueue_head(conn, cfg, "dashpay/platform", 200, "e" * 40, Trigger.REVIEW_REQUESTED)
-    assert len(schedule(conn, cfg, spawn=False)) == 1
-
-
-def test_small_backlog_keeps_priority_slot_reserved(cfg, conn):
-    queue(conn, cfg, 3)
-    assert len(schedule(conn, cfg, spawn=False)) == 2
-
-
-def test_backlog_behind_a_priority_run_fills_only_the_normal_slots(cfg, conn):
-    """The live incident's shape: priority work active, a long normal queue behind it."""
-    with tx(conn):
-        enqueue_head(conn, cfg, "dashpay/platform", 200, "e" * 40, Trigger.REVIEW_REQUESTED)
-    assert len(schedule(conn, cfg, spawn=False)) == 1
+def test_every_eligible_head_starts_without_a_run_slot_count(cfg, conn):
+    """Reviews are bounded by model slots (lanepool.py), not a run count: a backlog far past
+    the old 2 + 1 starts at once, and priority work arriving later starts too."""
     queue(conn, cfg, 12)
-    assert len(schedule(conn, cfg, spawn=False)) == 2  # not 3: the backlog may not lend
-
-
-def test_total_never_exceeds_max_plus_overflow(cfg, conn):
-    """Normal work starting after priority work must still respect the global ceiling."""
-    ceiling = cfg.max_concurrent + cfg.priority_overflow
+    assert len(schedule(conn, cfg, spawn=False)) == 12
     with tx(conn):
-        for i in range(3):
-            enqueue_head(conn, cfg, "dashpay/platform", 300 + i, f"{i}" * 40, Trigger.MENTION)
-    schedule(conn, cfg, spawn=False)  # priority heads claim their slots first
-    queue(conn, cfg, 12)  # a backlog of normal work arrives behind them
-    schedule(conn, cfg, spawn=False)
-    active = conn.execute("SELECT COUNT(*) FROM runs WHERE status='spawned'").fetchone()[0]
-    assert active == ceiling == 3
+        enqueue_head(conn, cfg, "dashpay/platform", 200, "e" * 40, Trigger.REVIEW_REQUESTED)
+    assert len(schedule(conn, cfg, spawn=False)) == 1
+    assert schedule(conn, cfg, spawn=False) == []
+    assert _in_flight(conn) == 13
+
+
+def test_max_runs_is_a_safety_cap_priority_first(cfg, conn):
+    cfg = replace(cfg, max_runs=3)
+    queue(conn, cfg, 4)
+    assert len(schedule(conn, cfg, spawn=False)) == 3
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 200, "e" * 40, Trigger.REVIEW_REQUESTED)
+    assert schedule(conn, cfg, spawn=False) == [], "the cap holds for priority work too"
+    with tx(conn):
+        conn.execute("UPDATE runs SET status='done' WHERE id=(SELECT MIN(id) FROM runs)")
+    (rid,) = schedule(conn, cfg, spawn=False)
+    picked = conn.execute(
+        "SELECT h.number FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?", (rid,)
+    ).fetchone()[0]
+    assert picked == 200, "the priority head, though normal heads were queued before it"
+    assert _in_flight(conn) == 3
+
+
+def test_max_runs_zero_means_no_cap(cfg, conn):
+    cfg = replace(cfg, max_runs=0)
+    queue(conn, cfg, 40)
+    assert len(schedule(conn, cfg, spawn=False)) == 40
 
 
 def test_debounce_blocks_until_eligible(cfg, conn):
@@ -213,9 +205,9 @@ def test_reaper_process_exited_without_status(cfg, conn):
 def test_no_slot_can_be_ghosted(cfg, conn):
     """The property the old system lacked: a dead run never occupies a slot for more than one reap."""
     queue(conn, cfg, 3)
-    r1, r2 = schedule(conn, cfg, spawn=False)
+    rids = schedule(conn, cfg, spawn=False)
     with tx(conn):
-        for rid in (r1, r2):
+        for rid in rids:
             conn.execute(
                 "UPDATE runs SET status='running', pid=999998, heartbeat_at=? WHERE id=?",
                 (now(), rid),
@@ -229,7 +221,7 @@ def test_no_slot_can_be_ghosted(cfg, conn):
     )
     with tx(conn):
         conn.execute("UPDATE heads SET eligible_at=? WHERE status='queued'", (now(),))
-    assert len(schedule(conn, cfg, spawn=False)) == 2
+    assert len(schedule(conn, cfg, spawn=False)) == 3
 
 
 def test_watchdog(cfg, conn):
@@ -237,7 +229,27 @@ def test_watchdog(cfg, conn):
     assert not w["stuck"]
     queue(conn, cfg, 1)
     w = watchdog(conn, cfg)
-    assert w["stuck"] and w["eligible"] == 1  # eligible work, free slot, never started anything
+    assert w["stuck"] and w["eligible"] == 1  # eligible work, under the cap, nothing started
+
+
+def test_watchdog_is_quiet_at_the_run_cap_and_behind_single_flight(cfg, conn):
+    cfg = replace(cfg, max_runs=1, watchdog_minutes=0)
+    queue(conn, cfg, 2)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    with tx(conn):  # the run started long ago; a head is still waiting
+        conn.execute("UPDATE runs SET started_at='2026-01-01T00:00:00Z' WHERE id=?", (rid,))
+    assert not watchdog(conn, cfg)["stuck"], "waiting for max_runs is not stuck"
+    assert watchdog(conn, replace(cfg, max_runs=0))["stuck"]
+    # a head of a PR whose run is still going waits for that run, not for the scheduler
+    running = conn.execute(
+        "SELECT h.number FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?", (rid,)
+    ).fetchone()[0]
+    with tx(conn):
+        conn.execute("DELETE FROM heads WHERE id NOT IN (SELECT head_id FROM runs)")
+        enqueue_head(conn, cfg, "dashpay/platform", running, "f" * 40, Trigger.MENTION)
+        conn.execute("UPDATE heads SET eligible_at=queued_at WHERE status='queued'")
+    w = watchdog(conn, replace(cfg, max_runs=0))
+    assert w["eligible"] == 1 and not w["stuck"]
 
 
 def test_spawn_real_worker_process(cfg, conn, tmp_path, monkeypatch):

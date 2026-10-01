@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -222,7 +223,7 @@ def test_gated_runner_waits_for_a_slot_and_honours_cancel(cfg, conn, tmp_path):
 
     stop = threading.Event()
     gated = lanepool.gated(
-        inner, lambda: conn, cfg, run_stopped=stop.is_set, reviewer_rank=lanepool.RANK_LIVE
+        inner, lambda: conn, cfg, run_stopped=stop.is_set, queue="live", run_id=0
     )
     spec = LaneSpec(
         role="general",
@@ -269,7 +270,7 @@ def test_gated_lane_that_raises_leaves_no_running_state(cfg, conn, tmp_path):
     def boom(spec, art, worktree):
         raise OSError("claude binary missing")
 
-    gated = lanepool.gated(boom, lambda: conn, cfg, lambda: False, lanepool.RANK_LIVE)
+    gated = lanepool.gated(boom, lambda: conn, cfg, lambda: False, "live", 0)
     with pytest.raises(OSError):
         gated(_muse_spec(tmp_path, role="triage", effort="low"), tmp_path / "art", tmp_path)
     assert not (tmp_path / "art" / lanepool.LANE_STATE).exists()
@@ -280,7 +281,9 @@ def test_waiting_lane_says_so_with_its_place_in_line(cfg, conn, tmp_path):
     finds its ticket in the pool's line (what the status export shows as the place in line)."""
     cfg = dataclasses.replace(cfg, lane_pools={"muse": 2})
     slot_dir = cfg.work_dir / "lane-slots"
-    held = lanepool.acquire(slot_dir, "muse", lambda: 2, lambda: False, rank=lanepool.RANK_LIVE)
+    held = lanepool.acquire(
+        slot_dir, "muse", lambda: 2, lambda: False, rank=lanepool.RANK_LIVE_REVIEWER
+    )
     art = tmp_path / "art"
     spec = _muse_spec(tmp_path, role="general", effort="high", parallel=True)
     gated = lanepool.gated(
@@ -288,7 +291,8 @@ def test_waiting_lane_says_so_with_its_place_in_line(cfg, conn, tmp_path):
         lambda: conn,
         cfg,
         run_stopped=lambda: False,
-        reviewer_rank=lanepool.RANK_LIVE,
+        queue="live",
+        run_id=0,
     )
     t = threading.Thread(target=gated, args=(spec, art, tmp_path))
     t.start()
@@ -363,48 +367,182 @@ def test_gpt_reviewers_leave_the_top_slot_to_verifiers(cfg, conn, gh, lanes):
     assert runner.peak == 2
     slot_dir = cfg.work_dir / "lane-slots"
     # with both reviewer slots held elsewhere, a verifier still gets the reserved one ...
-    held = [lanepool.acquire(slot_dir, "gpt", lambda: 3, lambda: False, rank=2) for _ in range(2)]
-    fd = lanepool.acquire(slot_dir, "gpt", lambda: 3, lambda: True)
+    reviewer = lanepool.RANK_LIVE_REVIEWER
+    held = [
+        lanepool.acquire(slot_dir, "gpt", lambda: 3, lambda: False, rank=reviewer) for _ in range(2)
+    ]
+    fd = lanepool.acquire(slot_dir, "gpt", lambda: 3, lambda: True, rank=lanepool.RANK_LIVE_SIDE)
     assert fd is not None
     # ... and a third reviewer does not
-    assert lanepool.acquire(slot_dir, "gpt", lambda: 3, lambda: True, rank=2) is None
+    assert lanepool.acquire(slot_dir, "gpt", lambda: 3, lambda: True, rank=reviewer) is None
     for f in (fd, *held):
         lanepool.release(f)
 
 
-def test_reviewer_lanes_wait_in_line(tmp_path):
-    """Only the head of the line takes a slot, and priority lines up before live and live
-    before audits; a ticket left by a dead process does not block the line."""
-    wait_dir = tmp_path / "glm.wait"
-    wait_dir.mkdir()
+def _ticket(line: Path, rank: int, run_id: int, pid: int, tid: int, at: int = 0) -> Path:
+    t = line / f"{rank}-{run_id:012d}-{at:020d}-{pid}-{tid}"
+    t.touch()
+    return t
+
+
+def test_every_lane_lines_up_side_lanes_first_priority_first_older_run_first(tmp_path):
+    """One line per pool for every lane: side lanes (verifiers, triage, ...) before reviewers,
+    priority before live, an older run before a newer one, then arrival; audits last."""
+    assert [lanepool.rank_of(q, side=True) for q in ("priority", "live", "audit")] == [1, 2, 5]
+    assert [lanepool.rank_of(q, side=False) for q in ("priority", "live", "audit")] == [3, 4, 6]
+    line = tmp_path / "glm.line"
+    line.mkdir()
+    pid = os.getpid()
+    expected = [
+        _ticket(line, lanepool.RANK_PRIORITY_SIDE, 99, pid, 1, at=9),
+        _ticket(line, lanepool.RANK_LIVE_SIDE, 50, pid, 2, at=8),
+        _ticket(line, lanepool.RANK_PRIORITY_REVIEWER, 70, pid, 3, at=7),
+        _ticket(line, lanepool.RANK_LIVE_REVIEWER, 3, pid, 4, at=6),  # older run first ...
+        _ticket(line, lanepool.RANK_LIVE_REVIEWER, 9, pid, 5, at=1),  # ... then arrival
+        _ticket(line, lanepool.RANK_LIVE_REVIEWER, 9, pid, 6, at=2),
+        _ticket(line, lanepool.RANK_AUDIT_SIDE, 1, pid, 7, at=0),
+        _ticket(line, lanepool.RANK_AUDIT_REVIEWER, 0, pid, 8, at=0),
+    ]
+    (line / "2-00000000001-1234-1").touch()  # not a ticket of this format: ignored
+    assert lanepool.waiting_line(tmp_path, "glm") == [t.name for t in expected]
+    # a fresh ticket sorts by the same rules
+    assert lanepool.ticket_name(lanepool.RANK_LIVE_SIDE, 7) < expected[2].name
+
+
+def test_take_rules_head_any_express_top_only(tmp_path):
+    """The head takes any slot its kind allows (a reviewer never the top one while the pool
+    has more); a side lane with only reviewers ahead may take the top slot and nothing else;
+    everyone else waits."""
+    r1, r2 = "4-000000000001-00000000000000000001-1-1", "4-000000000002-00000000000000000002-1-2"
+    s1, s2 = "5-000000000003-00000000000000000003-1-3", "5-000000000004-00000000000000000004-1-4"
+    may = lanepool._may_take
+    assert list(may([s1], s1, 3, True) or []) == [2, 1, 0], "side head: the top slot first"
+    assert list(may([r1], r1, 3, False) or []) == [0, 1], "reviewer head: never the top"
+    assert list(may([r1], r1, 1, False) or []) == [0], "a one-slot pool has no reserved slot"
+    assert list(may([r1, r2, s1], s1, 3, True) or []) == [2], "express lane: the top only"
+    assert may([r1, s1, s2], s2, 3, True) is None, "a side lane ahead goes first"
+    assert may([r1, r2], r2, 3, False) is None, "a reviewer waits for its turn"
+    assert may([r1, s1], s1, 1, True) is None, "no express lane without a reserved slot"
+
+
+def test_a_verifier_passes_a_head_reviewer_stuck_waiting(tmp_path):
+    """The head of the gpt line is another worker's reviewer, waiting because every reviewer
+    slot is taken; a verifier behind it takes the free top slot, a reviewer behind it waits."""
+    line = tmp_path / "gpt.line"
+    line.mkdir()
     sleeper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
     try:
-        ahead = wait_dir / f"{lanepool.RANK_PRIORITY}-{0:020d}-{sleeper.pid}-1"
-        ahead.touch()
-        polls = iter(range(5))
+        _ticket(line, lanepool.RANK_LIVE_REVIEWER, 1, sleeper.pid, 1)
+        reviewer = lanepool.RANK_LIVE_REVIEWER
+        held = [lanepool._try_slots(tmp_path, "gpt", range(i, i + 1)) for i in (0, 1)]
+        polls = iter(range(3))
 
         def give_up_soon() -> bool:
             return next(polls, None) is None
 
-        # a free slot, but a priority lane from another worker is ahead in line
-        assert lanepool.acquire(tmp_path, "glm", lambda: 4, give_up_soon, rank=2) is None
-        assert list(wait_dir.iterdir()) == [ahead], "the waiter took its ticket with it"
-        # an audit ticket queued long before still goes after a live lane
-        audit_ticket = wait_dir / f"{lanepool.RANK_AUDIT}-{0:020d}-{sleeper.pid}-2"
-        audit_ticket.touch()
-        ahead.unlink()
-        fd = lanepool.acquire(tmp_path, "glm", lambda: 4, lambda: True, rank=2)
-        assert fd is not None
-        lanepool.release(fd)
+        lanepool.POLL_SECONDS, old = 0.01, lanepool.POLL_SECONDS
+        try:
+            fd = lanepool.acquire(
+                tmp_path, "gpt", lambda: 3, lambda: True, rank=lanepool.RANK_AUDIT_SIDE, run_id=9
+            )
+            assert fd is not None, "the express lane"
+            assert lanepool.acquire(tmp_path, "gpt", lambda: 3, give_up_soon, rank=reviewer) is None
+        finally:
+            lanepool.POLL_SECONDS = old
+        assert [f.name.split("-")[0] for f in line.iterdir()] == ["4"], "waiters took their tickets"
+        for f in (fd, *held):
+            assert f is not None
+            lanepool.release(f)
     finally:
         sleeper.kill()
         sleeper.wait()
-    # its process is gone: the stale ticket is dropped and the line moves
-    stale = wait_dir / f"{lanepool.RANK_PRIORITY}-{0:020d}-{sleeper.pid}-3"
-    stale.touch()
-    fd = lanepool.acquire(tmp_path, "glm", lambda: 4, lambda: True, rank=2)
+
+
+def test_a_ticket_left_by_a_dead_process_is_pruned(tmp_path):
+    line = tmp_path / "glm.line"
+    line.mkdir()
+    gone = subprocess.Popen([sys.executable, "-c", "pass"])
+    gone.wait()
+    stale = _ticket(line, lanepool.RANK_PRIORITY_SIDE, 1, gone.pid, 1)
+    assert lanepool.waiting_line(tmp_path, "glm") == [], "readers skip it without deleting it"
+    assert stale.exists()
+    fd = lanepool.acquire(
+        tmp_path, "glm", lambda: 4, lambda: True, rank=lanepool.RANK_AUDIT_REVIEWER
+    )
     assert fd is not None and not stale.exists()
     lanepool.release(fd)
+    assert list(line.iterdir()) == []
+
+
+def test_stall_clock_counts_only_time_with_lanes_waiting_and_none_running():
+    t = [0.0]
+    c = lanepool.StallClock(lambda: t[0])
+    assert c.wait_started() == 0.0  # stalled from 0
+    t[0] = 10
+    assert c.wait_ended(started=True) == 10  # a lane runs: the stall ends
+    t[0] = 15
+    assert c.wait_started() == 0.0  # waiting beside a running lane is not a stall
+    t[0] = 40
+    assert c.run_ended() == 0.0  # nothing runs any more, one waits: stalled from 40
+    t[0] = 100
+    assert c.flush() == 60  # a long stall is credited while it lasts ...
+    t[0] = 130
+    assert c.flush() == 0.0  # ... in slices of at least a minute
+    t[0] = 150
+    assert c.wait_ended(started=False) == 50  # given up: nothing waits, the rest is credited
+    assert c.run_started() == 0.0 and c.run_ended() == 0.0
+
+
+def test_slot_waits_push_the_run_deadline_out(cfg, conn, tmp_path, monkeypatch):
+    """A run admitted without a run cap may wait long for model slots; that time must not
+    count against its deadline. Time a lane spends running does."""
+    from reviewsys.db import parse_ts
+
+    monkeypatch.setattr(lanepool, "POLL_SECONDS", 0.01)
+    cfg = dataclasses.replace(cfg, lane_pools={"muse": 1})
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
+    (rid,) = schedule(conn, cfg, spawn=False)
+
+    def deadline():
+        row = conn.execute("SELECT deadline_at FROM runs WHERE id=?", (rid,)).fetchone()
+        return parse_ts(row["deadline_at"])
+
+    before = deadline()
+    slot_dir = cfg.work_dir / "lane-slots"
+    t = [1000.0]
+
+    def inner(spec, art, worktree):
+        t[0] += 300  # five minutes running: not a stall
+        return LaneResult(exit_code=0, stdout="", stderr="", duration_s=300)
+
+    gated = lanepool.gated(inner, lambda: conn, cfg, lambda: False, "live", rid, clock=lambda: t[0])
+    spec = _muse_spec(tmp_path, role="general", effort="high", parallel=True)
+
+    def lane_waits(seconds: float) -> None:
+        """Run the lane while another run holds the only slot for `seconds` (fake clock)."""
+        held = lanepool.acquire(slot_dir, "muse", lambda: 1, lambda: False)
+
+        def other_run_finishes():
+            # only once our lane is in line: a fixed delay raced a slow runner, which let the
+            # clock jump before the lane started waiting (no stall, no credit)
+            deadline_at = time.monotonic() + 10
+            while not lanepool.waiting_line(slot_dir, "muse") and time.monotonic() < deadline_at:
+                time.sleep(0.005)
+            t[0] += seconds
+            lanepool.release(held)
+
+        other = threading.Thread(target=other_run_finishes)
+        other.start()
+        assert gated(spec, tmp_path, tmp_path).ok
+        other.join()
+
+    lane_waits(600)  # ten minutes in which the lane only waited
+    assert (deadline() - before).total_seconds() == 600
+    # the credit is capped (two run timeouts): a line that never moves still times out
+    cap = cfg.run_timeout_minutes * 60 * lanepool.STALL_CREDIT_MAX_FACTOR
+    lane_waits(10 * cap)
+    assert (deadline() - before).total_seconds() == cap
 
 
 def test_parallel_lanes_on_a_dry_pool_flip_the_run_once(

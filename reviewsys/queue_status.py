@@ -21,7 +21,6 @@ from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .models import Trigger
-from .slots import capacity
 from .status import median_run_minutes
 
 log = logging.getLogger(__name__)
@@ -189,7 +188,9 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     stats = {"written": 0, "promoted": 0, "deferred": 0}
     ts = now()
     run_min = median_run_minutes(conn) or DEFAULT_RUN_MINUTES
-    slots = max(capacity(conn, cfg).normal, 1)
+    # runs are bounded only by the `max_runs` safety cap (0 = none): below it an eligible head
+    # starts on the next tick, and the model pools only make runs longer, not later
+    slots = cfg.max_runs
     rows = queued_order(conn, ts=ts)
     comments: dict[int, dict[str, Any] | None] = {}
     for h in rows:
@@ -236,18 +237,19 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
                     comments[p["id"]] = _read_comment(conn, gh, cfg, p["repo"], p["number"])
         except Exception as exc:
             log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
+    # max_runs counts audit runs too
     active = conn.execute(
-        "SELECT COUNT(*) AS n FROM runs r JOIN heads h ON h.id=r.head_id "
-        "WHERE r.status IN ('spawned','running') AND h.queue='live'"
+        "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
     ).fetchone()["n"]
     is_degraded = bool(degraded_mod.snapshot(conn, cfg).get("active"))
     for pos, h in enumerate(rows, 1):
         if h["id"] not in comments:
             continue  # read failed this pass; try again next time
-        # runs ahead of this head in its slot, plus the remainder of whatever occupies the slot
-        # now (half a run) when all slots are busy, plus any debounce/backoff still to elapse
-        ahead = ((pos - 1) // slots) * run_min
-        busy = run_min / 2 if active >= slots else 0.0
+        # with a run cap: runs ahead of this head in its slot, plus the remainder of whatever
+        # occupies the slot now (half a run) when all slots are busy; always: any
+        # debounce/backoff still to elapse
+        ahead = ((pos - 1) // slots) * run_min if slots else 0.0
+        busy = run_min / 2 if slots and active >= slots else 0.0
         wait = max(0.0, (parse_ts(h["eligible_at"]) - now_dt()).total_seconds() / 60)
         body = queue_body(
             h["sha"],

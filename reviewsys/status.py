@@ -6,7 +6,7 @@ import sqlite3
 from datetime import timedelta
 from typing import Any
 
-from . import audit, degraded, slots
+from . import audit, degraded, lanepool, slots
 from .config import Config
 from .db import fmt_ts, kv_get, now, now_dt, parse_ts
 
@@ -24,6 +24,21 @@ def median_run_minutes(conn: sqlite3.Connection) -> float | None:
         if r["finished_at"]
     )
     return durations[len(durations) // 2] if durations else None
+
+
+def slots_summary(cfg: Config, cap: slots.Capacity | None) -> str:
+    """`runs: max N (0 = unlimited); lane pools: gpt ..., muse 8, ...` for `status` and
+    `doctor`. `cap` None (no database at hand): the gpt pool as configured, per account."""
+    if cap is None:
+        gpt = (
+            f"gpt {cfg.max_concurrent + cfg.priority_overflow} per usable OpenAI account, "
+            f"up to {cfg.account_scale_max} accounts"
+        )
+    else:
+        gpt = f"gpt {cap.ceiling} ({cap.reason})"
+    pools = {lanepool.COMPARE_POOL: lanepool.COMPARE_POOL_SLOTS, **cfg.lane_pools}
+    rest = ", ".join(f"{p} {n}" for p, n in sorted(pools.items()))
+    return f"runs: max {cfg.max_runs} (0 = unlimited); lane pools: {gpt}, {rest}"
 
 
 def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
@@ -72,23 +87,36 @@ def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
 
 
 def watchdog(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
-    """True 'stuck' when eligible work exists, a slot is free, and nothing started recently."""
+    """True 'stuck' when a live head could start (eligible, its PR has no run in flight, and
+    `max_runs` is not reached) yet nothing started recently. Runs are not bounded by a slot
+    count any more (lanepool.py), so such a head starts on the next tick unless something is
+    wrong."""
     ts = now_dt()
     eligible = conn.execute(
         "SELECT COUNT(*) AS n FROM heads WHERE status='queued' AND queue='live' AND eligible_at<=?",
+        (fmt_ts(ts),),
+    ).fetchone()["n"]
+    # a head of a PR with a run in flight waits for it (single flight), not for the scheduler
+    startable = conn.execute(
+        "SELECT COUNT(*) AS n FROM heads h WHERE h.status='queued' AND h.queue='live' "
+        "AND h.eligible_at<=? AND NOT EXISTS (SELECT 1 FROM runs r JOIN heads o ON o.id=r.head_id "
+        "WHERE r.status IN ('spawned','running') AND o.repo=h.repo AND o.number=h.number)",
         (fmt_ts(ts),),
     ).fetchone()["n"]
     active = conn.execute(
         "SELECT COUNT(*) AS n FROM runs r JOIN heads h ON h.id=r.head_id "
         "WHERE r.status IN ('spawned','running') AND h.queue='live'"
     ).fetchone()["n"]
+    in_flight = conn.execute(
+        "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
+    ).fetchone()["n"]
     last_start = conn.execute(
         "SELECT MAX(r.started_at) AS s FROM runs r JOIN heads h ON h.id=r.head_id WHERE h.queue='live'"
     ).fetchone()["s"]
     idle_min = (ts - parse_ts(last_start)).total_seconds() / 60 if last_start else None
     stuck = (
-        bool(eligible)
-        and active < slots.capacity(conn, cfg).normal
+        bool(startable)
+        and (cfg.max_runs == 0 or in_flight < cfg.max_runs)
         and (idle_min is None or idle_min > cfg.watchdog_minutes)
     )
     ingest_last = kv_get(conn, "ingest.last_at")

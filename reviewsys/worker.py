@@ -2838,20 +2838,15 @@ def main(
         ctx.audit = audit.load(conn, ctx.head_id)
         if ctx.audit is None:
             raise SystemExit(f"run {run_id}: audit head without an audits row")
-    # every lane of this run, parallel reviewers and side lanes alike, first takes a slot in
+    # every lane of this run, parallel reviewers and side lanes alike, lines up for a slot in
     # its model's machine-wide pool (lanepool.py)
-    if ctx.is_audit:
-        rank = lanepool.RANK_AUDIT
-    elif row["priority"]:
-        rank = lanepool.RANK_PRIORITY
-    else:
-        rank = lanepool.RANK_LIVE
     ctx.lane_runner = lanepool.gated(
         sandboxed(lane_runner or run_claude_lane, exec_deny_profile(cfg.lane_deny_exec)),
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,
-        reviewer_rank=rank,
+        queue="audit" if ctx.is_audit else "priority" if row["priority"] else "live",
+        run_id=run_id,
     )
     ctx.quota_reader = quota_reader
     ctx.prober = prober

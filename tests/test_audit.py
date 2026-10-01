@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 
 import pytest
@@ -193,40 +194,41 @@ def _concurrency(conn, n):
         )
 
 
-def test_audits_fill_only_the_capacity_live_work_leaves_under_the_ceiling(cfg, conn):
+def test_audit_concurrency_bounds_audits_and_live_work_starts_beside_them(cfg, conn):
     _audits(conn, cfg, 6)
     _concurrency(conn, 4)
-    # ceiling = max_concurrent 2 + overflow 1 = 3 streams per account: the override of 4 is
-    # capped there, never added on top
-    assert len(schedule(conn, cfg, spawn=False)) == 3
-    assert _running(conn, "audit") == 3
-    # live work arriving now still gets its own slots: audits never take a live slot
+    # no run slot count any more: the operator's audit concurrency is the bound (the audits'
+    # lanes line up behind every live lane in each model pool)
+    assert len(schedule(conn, cfg, spawn=False)) == 4
+    assert _running(conn, "audit") == 4
+    # live work arriving now starts at once, beside the audits
     _live(conn, cfg, 3)
     schedule(conn, cfg, spawn=False)
-    assert _running(conn, "live") == 2 and _running(conn, "audit") == 3
-    # while live work runs, finished audits are not replaced past the ceiling
-    with tx(conn):
-        conn.execute(
-            "UPDATE runs SET status='done' WHERE id IN (SELECT r.id FROM runs r JOIN heads h "
-            "ON h.id=r.head_id WHERE h.queue='audit')"
-        )
-    schedule(conn, cfg, spawn=False)
-    assert _running(conn, "live") == 2 and _running(conn, "audit") == 0  # 1 live still waits
+    assert _running(conn, "live") == 3 and _running(conn, "audit") == 4
 
 
-def test_no_audit_starts_while_live_work_waits_for_a_slot(cfg, conn):
+def test_no_audit_starts_while_live_work_waits_for_a_run(cfg, conn):
+    cfg = dataclasses.replace(cfg, max_runs=2)  # live work only ever waits for the safety cap now
     _live(conn, cfg, 3)  # 2 start, 1 waits
     _audits(conn, cfg, 2)
     schedule(conn, cfg, spawn=False)
     assert _running(conn, "live") == 2 and _running(conn, "audit") == 0
-    # the waiting live head starts once a slot frees; only then do audits start
-    with tx(conn):
-        conn.execute(
-            "UPDATE runs SET status='done' WHERE id=(SELECT MIN(r.id) FROM runs r JOIN heads h "
-            "ON h.id=r.head_id WHERE h.queue='live')"
-        )
+
+    def finish_one_live() -> None:
+        with tx(conn):
+            conn.execute(
+                "UPDATE runs SET status='done' WHERE id=(SELECT MIN(r.id) FROM runs r JOIN heads "
+                "h ON h.id=r.head_id WHERE h.queue='live' AND r.status='spawned')"
+            )
+
+    # the waiting live head takes the freed run; the cap is reached again, so no audit
+    finish_one_live()
     schedule(conn, cfg, spawn=False)
-    assert _running(conn, "live") == 2 and _running(conn, "audit") == 1
+    assert _running(conn, "live") == 2 and _running(conn, "audit") == 0
+    # no live head left waiting and room under the cap: now an audit starts
+    finish_one_live()
+    schedule(conn, cfg, spawn=False)
+    assert _running(conn, "live") == 1 and _running(conn, "audit") == 1
 
 
 def test_audit_backlog_never_triggers_the_live_backlog_rules(cfg, conn):
