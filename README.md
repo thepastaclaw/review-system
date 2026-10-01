@@ -17,8 +17,10 @@ tested, one daemon, one SQLite file, no lock files.
 | `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
-| `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
-| `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
+| `worker.py` | one run: worktree → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
+| `prep.py` | one cheap lane answers both pre-review questions: the effort tier and the discretionary specialists |
+| `triage.py` | the tier guide and rules (trivial/low/normal/critical); the tier picks each phase's `--effort`; runs alone when there are no specialists to choose |
+| `select.py` | specialist selection: the selector lane (runs alone without triage) and the heuristic fallback |
 | `quota.py` | Phase-1 model ladder: remaining Antigravity / Z.AI quota via the proxy's management `api-call`; first rung with quota runs |
 | `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage; stoppable mid-run; correction turns in the lane's own session |
 | `lanepool.py` | machine-wide lane slots per model family (`flock` files) and one priority line per pool, shared by every worker; the only concurrency limit on reviews |
@@ -39,7 +41,8 @@ Models, agents and default reasoning levels come from `review_model_policy` in t
 skills repo's `config.json`, read at every config load (no redeploy to change them).
 If the policy has a `triage` block, a `gpt-6.1-sol --effort low` lane rates each PR
 and the tier picks the `--effort` of the reviewer lanes; verifiers keep their fixed
-level. Blockers always win: a Phase-1 blocker publishes the preliminary review
+level. The same lane also picks the discretionary specialists (see
+[The prep lane](#the-prep-lane-tier-and-specialists-in-one-call)). Blockers always win: a Phase-1 blocker publishes the preliminary review
 regardless of tier. `trivial` with no blockers publishes a *final* review from
 Phase 1 only and says so in the provenance block. Triage failure falls back to
 `fallback_tier` and is recorded as a `triage.degraded` event. `normal` is the
@@ -61,6 +64,35 @@ Efforts are validated against `low|medium|high|xhigh|max` at load. Every lane's
 effort is stored in `lanes.effort`, the tier in `runs.tier`, and both are printed
 in the review's provenance block and the gate comment. Without a `triage` block the
 policy behaves as a single `normal` tier at the configured reasoning levels.
+
+### The prep lane: tier and specialists in one call
+
+Before the review starts two questions are asked: which tier the PR is (above) and which
+discretionary specialists review it. They used to be two lanes in a row, the selector on
+`selector_model` (`gpt-5.6-terra`) and then triage, each with a pool slot and a cold start
+of its own, though neither reads the other's answer (since v0.23: selection 43 s on
+average, max 126; triage 14 s, max 115). Since 2026-10 one lane (`prep.py`, role `prep`,
+artifacts in `run-N/prep/attempt-*`) on the triage model and effort asks both, in two
+separated sections of one prompt: triage's tier guide and decision rules and the
+selector's specialist list and rule word for word. It replies with one object,
+`{"tier", "tier_reasoning", "selected", "selection_reasoning"}`.
+
+- Each half is validated on its own: an unknown tier falls back to `fallback_tier`
+  (`triage.degraded`), a missing or non-list `selected` to the selector's trigger
+  heuristics (`select.degraded`); unknown specialist ids are dropped as before. One broken
+  half never discards the other: the second attempt only fills the half still missing.
+- A quota-shaped lane failure (stderr, never model output) flips the run into degraded mode
+  and asks the stand-in once more for the half (or both) that fell back, as the two lanes
+  did; the event detail reads `prep lane: …`.
+- Outputs are unchanged: `selector.json` / `triage.json`, `runs.tier`, `Triage.method`
+  (`llm:<model>` / `fallback`), the provenance line, and both the `select` and `triage`
+  step rows. The rows start and end together, so the progress profile (step durations by
+  name over the last 40 runs) reads old runs, where they ran one after the other, and new
+  ones alike: while both run the estimate counts the longer, and while both are still to
+  come it counts both, about 45 s too much at the very start of a run.
+- Without triage (a policy with no `triage` block, or a light audit, which reviews at a
+  fixed tier) the selector runs alone as before; with no discretionary specialists (the
+  selection comes from config) triage runs alone. Conversation runs ask neither.
 
 ### Phase-1 roster, points gate, single-stage tiers, repos without Phase 1
 
@@ -341,7 +373,7 @@ and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
   `sentinel` through the proxy (cached 2 min in `kv degraded.probe`). Only a
   quota-shaped answer (HTTP 429, "cooling down", "usage limit") counts; a dead proxy
   or a 5xx does not, because swapping models would not help. A lane that dies on a
-  quota error mid-run (reviewer, verifier, triage or selector) flips the run over on
+  quota error mid-run (reviewer, verifier, prep, triage or selector) flips the run over on
   the spot, gets its attempts again on the stand-in, and records a 20-minute hold so
   the following runs start degraded even if a tiny probe happens to get through.
   The daemon re-probes every 2 minutes so the mode clears by itself once quota is

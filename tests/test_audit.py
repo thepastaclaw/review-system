@@ -521,8 +521,10 @@ def test_light_audit_escalates_to_full_on_a_blocker(cfg, conn, gh, lanes):
     lanes.verifier["default"] = _verifier([_blocking()])
     rid, status = _audit_run(cfg, conn, gh, lanes, title="ci: re-pin PR Hygiene")
     assert status == RunStatus.DONE
-    assert not any(s.role == "triage" for s in lanes.calls)
+    # a light audit is rated by config (LIGHT_AUDIT_TIER): the selector runs alone, no prep
+    assert [s.role for s in lanes.calls if s.role in ("selector", "triage", "prep")] == ["selector"]
     steps = {r["name"] for r in conn.execute("SELECT name FROM steps WHERE run_id=?", (rid,))}
+    assert "select" in steps and "triage" not in steps
     assert "phase2" not in steps and "persistence" not in steps
     row = conn.execute("SELECT mode, escalated, finished_at FROM audits").fetchone()
     assert tuple(row) == ("full", 1, None)

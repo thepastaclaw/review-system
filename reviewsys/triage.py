@@ -32,10 +32,16 @@ class Triage:
     error: str | None = None
 
 
-def _prompt(
-    repo: str, base_ref: str, title: str, body: str, files: list[dict[str, Any]], tiers: list[str]
-) -> str:
-    listing = "\n".join(f"- `{t}`: {TIER_GUIDE.get(t, '')}" for t in tiers)
+# the decision rules recalibrated in policy v5 (2026-09-10); prep.py asks them verbatim too
+TIER_RULES = (
+    "Judge by what the diff itself changes, not by how it is described or by how sensitive the surrounding subsystem is. "
+    "`normal` is the default; move up only when the change clearly meets the bar for `critical`, and move down when the "
+    "change is small or contained. When unsure between two tiers pick the lower one. "
+)
+
+
+def pr_block(title: str, body: str, files: list[dict[str, Any]]) -> str:
+    """Title, description and changed files with line counts: what triage (and prep) judge."""
     changed = "\n".join(
         f"- {f.get('filename')} (+{f.get('additions', 0)} -{f.get('deletions', 0)})"
         for f in files[:200]
@@ -43,16 +49,35 @@ def _prompt(
     adds = sum(int(f.get("additions") or 0) for f in files)
     dels = sum(int(f.get("deletions") or 0) for f in files)
     return (
-        f"You rate the complexity and criticality of a pull request in {repo} (base branch `{base_ref}`) "
-        "so an automated review can decide how much reasoning effort to spend on it.\n\n"
         f"PR title: {title}\n\nPR description:\n{body[:4000]}\n\n"
         f"Changed files ({len(files)}, +{adds} -{dels}):\n{changed}\n\n"
-        f"Tiers:\n{listing}\n\n"
-        "Judge by what the diff itself changes, not by how it is described or by how sensitive the surrounding subsystem is. "
-        "`normal` is the default; move up only when the change clearly meets the bar for `critical`, and move down when the "
-        "change is small or contained. When unsure between two tiers pick the lower one. "
-        f'Reply with exactly one JSON object: {{"tier": "<one of {", ".join(tiers)}>", "reasoning": "one sentence"}}. No prose, no fences.'
     )
+
+
+def tier_listing(tiers: list[str]) -> str:
+    listing = "\n".join(f"- `{t}`: {TIER_GUIDE.get(t, '')}" for t in tiers)
+    return f"Tiers:\n{listing}\n\n"
+
+
+def _prompt(
+    repo: str, base_ref: str, title: str, body: str, files: list[dict[str, Any]], tiers: list[str]
+) -> str:
+    return (
+        f"You rate the complexity and criticality of a pull request in {repo} (base branch `{base_ref}`) "
+        "so an automated review can decide how much reasoning effort to spend on it.\n\n"
+        + pr_block(title, body, files)
+        + tier_listing(tiers)
+        + TIER_RULES
+        + f'Reply with exactly one JSON object: {{"tier": "<one of {", ".join(tiers)}>", "reasoning": "one sentence"}}. No prose, no fences.'
+    )
+
+
+def parse_tier(obj: dict[str, Any], tiers: Any) -> str:
+    """The tier `obj` names; ValueError (the reason) when it names none of `tiers`."""
+    tier = str(obj.get("tier") or "").strip().lower()
+    if tier not in tiers:
+        raise ValueError(f"unknown tier {tier!r}")
+    return tier
 
 
 def triage(
@@ -95,9 +120,10 @@ def triage(
                 )
                 continue
             obj = parse_json_object(res.result_text)
-            tier = str(obj.get("tier") or "").strip().lower()
-            if tier not in pol.tiers:
-                error = f"unknown tier {tier!r}"
+            try:
+                tier = parse_tier(obj, pol.tiers)
+            except ValueError as bad:
+                error = str(bad)
                 continue
             return Triage(
                 tier=tier,

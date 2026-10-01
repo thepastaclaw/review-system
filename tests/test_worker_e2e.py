@@ -107,18 +107,18 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
     rid, status = _run(cfg, conn, gh, lanes)
     assert status == RunStatus.DONE
     roles = [(s.role, s.model, s.effort) for s in lanes.calls]
-    # selector, triage, phase1 general+always-on+security (GLM @max, in parallel), verifier
-    # (Sol), phase2 x3 (astra @high for the `normal` tier), final verifier (astra, fixed high)
-    assert roles[0][0] == "selector"
-    assert roles[1] == ("triage", "gpt-6-astra", "low")
-    assert sorted(roles[2:5]) == [
+    # prep (selection + triage in one lane, on the triage model), phase1
+    # general+always-on+security (GLM @max, in parallel), verifier (Sol), phase2 x3 (astra
+    # @high for the `normal` tier), final verifier (astra, fixed high)
+    assert roles[0] == ("prep", "gpt-6-astra", "low")
+    assert sorted(roles[1:4]) == [
         ("always-on", "glm-5.3-flash", "max"),
         ("general", "glm-5.3-flash", "max"),
         ("security-auditor", "glm-5.3-flash", "max"),
     ]
-    assert roles[5] == ("verifier", "gpt-5.6-sol", "high")
-    assert [r[1:] for r in roles[6:9]] == [("gpt-6-astra", "high")] * 3
-    assert roles[9] == ("verifier", "gpt-6-astra", "high")
+    assert roles[4] == ("verifier", "gpt-5.6-sol", "high")
+    assert [r[1:] for r in roles[5:8]] == [("gpt-6-astra", "high")] * 3
+    assert roles[8] == ("verifier", "gpt-6-astra", "high")
     assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] == "normal"
     assert {r["effort"] for r in conn.execute("SELECT effort FROM lanes WHERE phase='phase2'")} == {
         "high"
@@ -224,7 +224,7 @@ def test_blocker_gate_publishes_preliminary_request_changes(cfg, conn, gh, lanes
     assert len(gh.posted_reviews) == 1 and gh.posted_reviews[0]["event"] == "REQUEST_CHANGES"
     assert "phase=preliminary" in gh.posted_reviews[0]["body"]
     assert all(
-        s.model == "glm-5.3-flash" or s.role in ("verifier", "selector", "triage")
+        s.model == "glm-5.3-flash" or s.role in ("verifier", "selector", "triage", "prep")
         for s in lanes.calls
     ), "phase 2 must not run"
     assert not conn.execute(
@@ -464,7 +464,9 @@ def test_daemon_tick_shadow_mode(cfg, conn, gh, notifier):
 
 
 def _reviewer_calls(lanes):
-    return [s for s in lanes.calls if s.role not in ("selector", "triage", "verifier", "repair")]
+    return [
+        s for s in lanes.calls if s.role not in ("selector", "triage", "prep", "verifier", "repair")
+    ]
 
 
 def test_tier_scales_effort_and_is_disclosed(cfg, conn, gh, lanes):
@@ -669,7 +671,7 @@ def test_adhoc_review_of_unlisted_repo(cfg, conn, gh, lanes):
     _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/quorum-list-server", 14)
     assert status == RunStatus.DONE
     sel = lanes.calls[0]
-    assert sel.role == "selector" and "security-auditor" in sel.prompt
+    assert sel.role == "prep" and "security-auditor" in sel.prompt
     assert "always-on" not in sel.prompt, "always-run specialists are repo-specific"
     roles = [s.role for s in _reviewer_calls(lanes)]
     # each phase runs its two lanes in parallel, in either order
@@ -2674,7 +2676,7 @@ def test_fatal_phase1_error_still_fails_the_run(cfg, conn, gh, lanes, monkeypatc
     monkeypatch.setattr(worker, "verifier_prompt", broken)
     rid, status = _run(cfg, conn, gh, lanes)
     assert status == RunStatus.FAILED
-    assert not [s for s in lanes.calls if s.model == "gpt-6-astra" and s.role != "triage"]
+    assert not [s for s in lanes.calls if s.model == "gpt-6-astra" and s.role != "prep"]
     step = conn.execute(
         "SELECT name, status FROM steps WHERE run_id=? AND name='verify1'", (rid,)
     ).fetchone()
@@ -2729,7 +2731,7 @@ def test_reviewers_and_verifiers_are_told_to_review_statically_from_ci(cfg, conn
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier([])
     _run(cfg, conn, gh, lanes)
-    graded = [s for s in lanes.calls if s.role not in ("selector", "triage")]
+    graded = [s for s in lanes.calls if s.role not in ("selector", "triage", "prep")]
     if lane_mod.exec_deny_profile(cfg.lane_deny_exec):  # darwin: main() wraps every lane
         assert all(s.sandbox_profile for s in lanes.calls)
     assert graded and all("This is a static review." in s.prompt for s in graded)

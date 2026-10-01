@@ -1,6 +1,6 @@
 """Worker: runs one review (one `runs` row) end to end.
 
-Steps: worktree -> select -> triage -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
+Steps: worktree -> select + triage (one prep lane) -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
 Every step is recorded in `steps`. Any ReviewError ends the run as failed with
 its classification; the scheduler decides on retry. Cooperative cancellation
 is checked on every heartbeat.
@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from . import audit, converse, degraded, github, labels, lanepool, publish, quota
+from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
 from .contract import (
@@ -660,14 +661,75 @@ def _audit_worktree(ctx: RunContext, meta: github.PrMeta) -> None:
     _record_worktree(ctx)
 
 
-def step_select(ctx: RunContext) -> None:
+def step_prep(ctx: RunContext) -> None:
+    """Which specialists review the PR (`select` step) and which effort tier it is (`triage`
+    step). With triage configured and specialists to choose from, one prep lane answers both
+    (prep.py): the two step rows start and end together, so the progress profile (steps by
+    name, see progress.py) reads old runs, where they ran one after the other, and new ones
+    alike, and a running pair counts once (the longer one). Otherwise the selector (no
+    triage: a light audit, or a policy without triage) or triage (nothing to choose: the
+    selection comes from config) runs alone, as before the merge.
+
+    Every half keeps its own fallback, artifact (selector.json / triage.json) and event
+    (`select.degraded` / `triage.degraded`)."""
     assert ctx.meta and ctx.worktree
+    _step_start(ctx, StepName.SELECT)
     files_raw = (
         ctx.gh.api(f"repos/{ctx.repo}/pulls/{ctx.number}/files?per_page=100", paginate=True) or []
     )
     ctx.files = [f for f in files_raw if isinstance(f, dict)]
-    files = [str(f.get("filename")) for f in ctx.files]
+    lane = ctx.cfg.policy.triage
+    if ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
+        ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
+        lane = None
+    if lane is not None and any(not s.always_run for s in ctx.cfg.specialists_for(ctx.repo)):
+        _step_start(ctx, StepName.TRIAGE)
+        p = _prep(ctx, lane)
+        _end_select(ctx, p.selection)
+        _end_triage(ctx, p.triage)
+    else:
+        _end_select(ctx, _select(ctx))
+        if lane is None:
+            return
+        ctx.check_cancel()
+        _step_start(ctx, StepName.TRIAGE)
+        _end_triage(ctx, _triage(ctx, lane))
+    _gate_comment(ctx, "in_progress")
+
+
+def _prep(ctx: RunContext, lane: LaneModel) -> prep_mod.Prep:
+    assert ctx.meta and ctx.worktree
     meta, worktree = ctx.meta, ctx.worktree
+
+    def attempt(prior: prep_mod.Prep | None = None) -> prep_mod.Prep:
+        return prep_mod.prep(
+            ctx.cfg,
+            repo=ctx.repo,
+            base_ref=meta.base_ref,
+            title=meta.title,
+            body=meta.body,
+            files=ctx.files,
+            run_dir=ctx.run_dir,
+            worktree=worktree,
+            runner=ctx.lane_runner,
+            lane=ctx.lane_model(lane),
+            prior=prior,
+        )
+
+    p = attempt()
+    if (
+        (p.selection.error or p.triage.error)
+        and p.infra_error
+        and _degrade_on_side_lane_failure(ctx, "prep", lane.model, p.infra_error)
+    ):
+        p = attempt(p)  # once more on the stand-in, for the half (or both) that fell back
+    return p
+
+
+def _select(ctx: RunContext) -> Selection:
+    assert ctx.meta and ctx.worktree
+    meta, worktree = ctx.meta, ctx.worktree
+    files = [str(f.get("filename")) for f in ctx.files]
 
     def attempt() -> Selection:
         return select(
@@ -687,26 +749,11 @@ def step_select(ctx: RunContext) -> None:
         ctx, "select", ctx.cfg.policy.selector_model, sel.error
     ):
         sel = attempt()  # once more, on the stand-ins
-    write_selection(ctx.run_dir, sel)
-    ctx.selection = sel.selected
-    if sel.error:
-        with tx(ctx.conn):
-            event(
-                ctx.conn,
-                "select.degraded",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=f"method={sel.method} error={sel.error}",
-            )
+    return sel
 
 
-def step_triage(ctx: RunContext) -> None:
-    """Rate the PR so reviewer effort can scale; no-op unless the policy configures triage."""
+def _triage(ctx: RunContext, lane: LaneModel) -> Triage:
     assert ctx.meta and ctx.worktree
-    lane = ctx.cfg.policy.triage
-    if lane is None:
-        return
     meta, worktree = ctx.meta, ctx.worktree
 
     def attempt() -> Triage:
@@ -726,6 +773,26 @@ def step_triage(ctx: RunContext) -> None:
     t = attempt()
     if t.error and _degrade_on_side_lane_failure(ctx, "triage", lane.model, t.error):
         t = attempt()  # once more, on the stand-in
+    return t
+
+
+def _end_select(ctx: RunContext, sel: Selection) -> None:
+    write_selection(ctx.run_dir, sel)
+    ctx.selection = sel.selected
+    if sel.error:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "select.degraded",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"method={sel.method} error={sel.error}",
+            )
+    _step_end(ctx, StepName.SELECT, "ok", {"selection": ctx.selection})
+
+
+def _end_triage(ctx: RunContext, t: Triage) -> None:
     write_triage(ctx.run_dir, t)
     ctx.triage = t
     ctx.tier = t.tier
@@ -740,7 +807,7 @@ def step_triage(ctx: RunContext) -> None:
                 run_id=ctx.run_id,
                 detail=f"tier={t.tier} method={t.method} error={t.error}",
             )
-    _gate_comment(ctx, "in_progress")
+    _step_end(ctx, StepName.TRIAGE, "ok", dataclasses.asdict(t))
 
 
 def step_context(ctx: RunContext) -> None:
@@ -2805,28 +2872,17 @@ def run(ctx: RunContext) -> RunStatus:
     _detect_degraded(ctx)
     _gate_comment(ctx, "in_progress")
     standing = _standing_review(ctx) if ctx.trigger == Trigger.REVIEW_REPLY else None
-    for name, fn in (
-        (StepName.WORKTREE, step_worktree),
-        (StepName.SELECT, step_select),
-        (StepName.TRIAGE, step_triage),
-        (StepName.CONTEXT, step_context),
-    ):
-        if name == StepName.TRIAGE and pol.triage is None:
-            continue
-        if standing and name in (StepName.SELECT, StepName.TRIAGE):
-            continue  # a conversation needs no specialist selection or effort triage
-        if name == StepName.TRIAGE and ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
-            ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
-            continue
+    ctx.check_cancel()
+    _step_start(ctx, StepName.WORKTREE)
+    step_worktree(ctx)
+    _step_end(ctx, StepName.WORKTREE, "ok")
+    if not standing:  # a conversation needs no specialist selection or effort triage
         ctx.check_cancel()
-        _step_start(ctx, name)
-        fn(ctx)
-        detail: dict[str, Any] | None = None
-        if name == StepName.SELECT:
-            detail = {"selection": ctx.selection}
-        elif name == StepName.TRIAGE and ctx.triage:
-            detail = dataclasses.asdict(ctx.triage)
-        _step_end(ctx, name, "ok", detail)
+        step_prep(ctx)
+    ctx.check_cancel()
+    _step_start(ctx, StepName.CONTEXT)
+    step_context(ctx)
+    _step_end(ctx, StepName.CONTEXT, "ok")
     if standing:
         # a human replied on a commit we already reviewed: the code did not change, the
         # discussion did. Answer the threads; never re-run the review pipeline for that.
