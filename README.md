@@ -243,23 +243,30 @@ layers now stand between a broken answer and a failed phase, in this order:
    `lane.corrected` and `lane.correction_failed` (phase/role, model, turns, first error, and
    for a failure whether the answer stayed invalid or the session could not be resumed). The
    saved session (`$CLAUDE_CONFIG_DIR` or `~/.claude`, `projects/<worktree slug>/<uuid>.jsonl`,
-   megabytes for a long lane) is deleted when the lane's turns end; `gc` sweeps any a dead
-   worker left behind under this box's worktree project dirs after a day. Verified with
-   Claude Code 2.1.286: `--bare --print --output-format json` keeps and resumes sessions this
-   way, and a missing session exits 1 ("No conversation found with session ID").
-   `reviewsys doctor` runs one real keep-resume-delete round trip through the launcher
-   ("lane correction turns") whenever the knob is on.
-3. **The repair lane**, only when the session cannot be resumed (knob 0, or the follow-up
-   itself failed) and the answer has no readable JSON object: the context-free
-   `repair_model` (low effort) reformats it, now told the expected `review_phase`, full
-   `head_sha` and prior hashes, and its output goes through the same normalization and
-   validation (lane status `repaired`). Before, 44% of repaired outputs failed the contract
-   on exactly those fields.
+   the only file a session leaves; megabytes for a long lane) is deleted when the lane's
+   turns end; `gc` removes what a dead worker left behind, and the emptied project dirs, for
+   finished runs' worktrees only (`runs.worktree`), after a day. Verified with Claude Code
+   2.1.286: `--bare --print --output-format json` keeps and resumes sessions this way (from
+   any cwd, prompt cache included), and a missing session exits 1 ("No conversation found
+   with session ID"). The envelope's `usage` is per call, so a lane row's tokens are the sum
+   of its turns; `total_cost_usd` is the session's running total, so a correction turn's
+   `lane-meta.json` cost includes the turns before it, and `--max-budget-usd` (passed again)
+   bounds the lane and its corrections together. `reviewsys doctor` runs one real
+   keep-resume-delete round trip through the launcher ("lane correction turns") whenever the
+   knob is on, and fails it when the session lands where the cleanup cannot see it (a
+   launcher with its own config dir) or cannot be deleted.
+3. **The repair lane**, the last resort for an answer that still has no readable JSON object
+   (the session could not be resumed, the corrections ran out, or the knob is 0): the
+   context-free `repair_model` (low effort) reformats it, now told the expected
+   `review_phase`, full `head_sha` and prior hashes, and its output goes through the same
+   normalization and validation (lane status `repaired`). Before, 44% of repaired outputs
+   failed the contract on exactly those fields.
 
 An answer still invalid after all of that fails the attempt; the lane's second attempt
 starts fresh (with its own corrections), and only then does a Phase-1 lane fall down the
 ladder. (Before, an answer whose JSON parsed but broke the contract failed the phase
-immediately, with no retry and no ladder.)
+immediately, with no retry and no ladder.) A lane told to stop between its turns (a sibling
+failed, the run was cancelled) is recorded as stopped: no correction, retry or ladder fall.
 
 ### Review body layout
 
@@ -649,10 +656,12 @@ same estimate. The day view filters its runs by path.
 
 A failed step of an active run shows its error under the run (collapsed or not) and as the
 red pill's tooltip, e.g. a single-stage Phase 1 that failed while Phase 2 is still going.
-The page is public, so the export carries a sanitized copy only (`exporter.public_error`:
-URLs, filesystem paths, account emails, JSON bodies and quoted fragments of 40+ characters,
-i.e. model output or upstream replies, are taken out; capped at 300 characters); the full
-text stays in the step and the events. A lane in a correction turn is listed live as
+The page is public and the error text can quote model output about a private PR, upstream
+replies, hosts or keys, so the export never carries it: `exporter.public_error` rebuilds a
+line from known words only (the lane named at the start of the message, a fixed failure
+phrase, attempts and correction turns), e.g. "phase1/general: answer had no JSON object (2
+attempts, 2 correction turns)"; anything unrecognised is just "failed". The full text stays
+in the step and the events. A lane in a correction turn is listed live as
 "general (correction 1)".
 
 ## Liveness model

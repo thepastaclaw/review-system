@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import hashlib
 import json
@@ -223,17 +224,14 @@ def project_slug(cwd: Path) -> str:
 def forget_session(session_id: str) -> None:
     """Delete a lane's saved session once its corrections are over. A transcript holds every
     tool result of the lane (megabytes for a long review) and nothing reads it again: the
-    lane's artifacts keep the prompts and answers. Also removes the per-worktree project
-    directory once it is empty. Best effort: a leftover is swept by gc."""
+    lane's artifacts keep the prompts and answers. The per-worktree project directory stays
+    (the run's other lanes share it); gc removes it once empty, and any leftover."""
     for p in session_files(session_id):
-        try:
-            if p.is_dir():
-                shutil.rmtree(p, ignore_errors=True)
-            else:
-                p.unlink(missing_ok=True)
-            p.parent.rmdir()
-        except OSError:
-            pass
+        if p.is_dir():
+            shutil.rmtree(p, ignore_errors=True)
+        else:
+            with contextlib.suppress(OSError):
+                p.unlink()
 
 
 def run_with_corrections(
@@ -252,9 +250,11 @@ def run_with_corrections(
     lined up again. A turn that did not finish (failed, timed out, stopped) ends the
     corrections; the caller reads every turn in `followups` and decides. The saved session is
     deleted at the end however it went."""
-    res = runner(spec, artifact_dir, worktree)
-    sessions = {spec.session_id, res.session_id or ""} if spec.session_id else set()
+    sessions = {spec.session_id} if spec.session_id else set()
     try:
+        res = runner(spec, artifact_dir, worktree)
+        if spec.session_id and res.session_id:
+            sessions.add(res.session_id)
         turn = res
         while spec.check is not None and spec.session_id and len(res.followups) < spec.corrections:
             if not turn.ok:
@@ -283,7 +283,7 @@ def run_with_corrections(
                 raise
             res.followups.append(turn)
     finally:
-        for sid in sessions - {""}:
+        for sid in sessions:
             forget_session(sid)
     return res
 

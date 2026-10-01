@@ -12,6 +12,7 @@ import threading
 
 import pytest
 
+from reviewsys import config as cfg_mod
 from reviewsys import lane as lane_mod
 from reviewsys import lanepool, worker
 from reviewsys.contract import finding_hash
@@ -162,7 +163,7 @@ def test_corrections_resume_the_same_session_and_delete_it(tmp_path, _claude_con
     # a correction only re-emits an answer: bounded well below the lane's own timeout
     assert {c.timeout_seconds for c in calls[1:]} == {lane_mod.CORRECTION_TIMEOUT_SECONDS}
     assert marks == [("correction-1", "running"), ("correction-2", "running")]
-    assert not project.exists(), "the transcript and the emptied project dir are gone"
+    assert project.is_dir() and not any(project.iterdir()), "the transcript is gone"
 
 
 def test_no_correction_after_a_turn_that_did_not_finish(tmp_path):
@@ -301,14 +302,14 @@ def test_a_contract_error_is_corrected_with_the_prior_hashes_and_rules(cfg, conn
 
 
 def test_correction_exhausted_fails_the_attempt_as_before(cfg, conn, gh, lanes):
-    """Still invalid after every correction turn: the attempt fails, the lane gets its retry
-    (corrections again), then Phase 1 falls through as for any other Phase-1 failure. No
-    repair lane: the session was there, the model could not fix it."""
+    """Still invalid after every correction turn (and the repair lane): the attempt fails, the
+    lane gets its retry (corrections again), then Phase 1 falls through as for any other
+    Phase-1 failure."""
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier()
 
     def runner(spec, art, worktree):
-        if spec.role == "general" and spec.model == "glm-5.3-flash":
+        if (spec.role == "general" and spec.model == "glm-5.3-flash") or spec.role == "repair":
             lanes.calls.append(spec)
             return _answer("I reviewed it and everything looks fine.")
         return lanes(spec, art, worktree)
@@ -318,7 +319,8 @@ def test_correction_exhausted_fails_the_attempt_as_before(cfg, conn, gh, lanes):
     assert "Phase 2 only (Phase 1 failed)" in gh.posted_reviews[0]["body"]
     general = [s for s in lanes.calls if s.role == "general" and s.model == "glm-5.3-flash"]
     assert [s.resume for s in general] == [False, True, True] * 2, "2 attempts x 2 corrections"
-    assert not any(s.role == "repair" for s in lanes.calls)
+    # still no JSON object after the corrections: the repair lane is the last resort, per attempt
+    assert sum(s.role == "repair" for s in lanes.calls) == 2
     failed = _events(conn, rid, "lane.correction_failed")
     assert len(failed) == 2 and all("turns=2 (still invalid)" in d for d in failed)
     rows = conn.execute(
@@ -456,19 +458,40 @@ def test_gc_sweeps_sessions_a_dead_worker_left(cfg, conn, _claude_config_dir):
 
     from reviewsys import gc
 
-    cfg.worktrees_dir.mkdir(parents=True, exist_ok=True)
+    wts = {
+        name: cfg.worktrees_dir / f"dashpay-platform-1-{n}"
+        for n, name in enumerate(("done", "empty", "running"), 7)
+    }
+    with tx(conn):
+        hid = conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at) "
+            "VALUES ('dashpay/platform', 1, ?, 'new_pr', 'done', '2026-01-01', '2026-01-01')",
+            ("d" * 40,),
+        ).lastrowid
+        for name, path in wts.items():
+            conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at, "
+                "worktree) VALUES (?,1,?,?,'2026-01-01','2026-01-02',?)",
+                (hid, "running" if name == "running" else "done", name, str(path)),
+            )
     projects = _claude_config_dir / "projects"
-    mine = projects / (lane_mod.project_slug(cfg.worktrees_dir) + "-dashpay-platform-1-9")
+    dirs = {name: projects / lane_mod.project_slug(p) for name, p in wts.items()}
+    # a sibling directory whose slug only shares the prefix, and somebody else's project
+    alike = projects / (lane_mod.project_slug(cfg.worktrees_dir) + "-old-dashpay-platform-1-7")
     other = projects / "-Users-someone-else"
-    for d in (mine, other):
+    old = time.time() - 2 * 86400
+    for d in (dirs["done"], dirs["running"], alike, other):
         d.mkdir(parents=True)
         (d / "old.jsonl").write_text("{}")
-        old = time.time() - 2 * 86400
         os.utime(d / "old.jsonl", (old, old))
-    (mine / "fresh.jsonl").write_text("{}")
+    (dirs["done"] / "fresh.jsonl").write_text("{}")
+    dirs["empty"].mkdir(parents=True)
     assert gc.run(conn, cfg)["lane_sessions_removed"] == 1
-    assert not (mine / "old.jsonl").exists() and (mine / "fresh.jsonl").exists()
-    assert (other / "old.jsonl").exists(), "never anything outside this box's worktrees"
+    assert not (dirs["done"] / "old.jsonl").exists() and (dirs["done"] / "fresh.jsonl").exists()
+    assert not dirs["empty"].exists(), "a finished run's emptied project dir goes"
+    assert (dirs["running"] / "old.jsonl").exists(), "a run in flight keeps its sessions"
+    for d in (alike, other):
+        assert (d / "old.jsonl").exists(), "never anything outside this box's run worktrees"
 
 
 def test_project_slug_matches_claude_code(tmp_path):
@@ -508,3 +531,101 @@ def test_repair_prompt_keeps_the_raw_answer_last():
     assert '"xxxxxxxxxxxx"' in p
     generic = repair_prompt("x", kind="", expected_phase="", head_sha=HEAD, prior_hashes=[])
     assert "schema" not in generic and "review_phase" not in generic
+
+
+def test_a_lane_told_to_stop_between_turns_is_stopped_not_failed(cfg, conn, gh, lanes):
+    """A sibling fails for good just as this lane's (invalid) answer comes back: the lane is
+    recorded as stopped, never a failed attempt, a correction, a retry or a ladder fall."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier()
+    calls: list[LaneSpec] = []
+    running = threading.Event()
+
+    def runner(spec, art, worktree):
+        if spec.model == "glm-5.3-flash" and spec.role == "security-auditor":
+            calls.append(spec)
+            running.set()
+            for _ in range(1000):  # answers only once the phase has been abandoned
+                if spec.should_stop and spec.should_stop():
+                    break
+                threading.Event().wait(0.01)
+            return _answer("not json")
+        if spec.model == "glm-5.3-flash" and spec.role == "general":
+            assert running.wait(10)  # fails only once its sibling is in flight
+            return LaneResult(exit_code=1, stdout="", stderr="launcher crashed", duration_s=1)
+        return lanes(spec, art, worktree)
+
+    rid, status = _run(cfg, conn, gh, runner)
+    assert status == RunStatus.DONE, "Phase 1 fell through to Phase 2"
+    assert len(calls) == 1 and not calls[0].resume, "no correction for a stopped lane"
+    rows = conn.execute(
+        "SELECT status, reason FROM lanes WHERE run_id=? AND phase='phase1' "
+        "AND role='security-auditor'",
+        (rid,),
+    ).fetchall()
+    assert [r["status"] for r in rows] == ["cancelled"]
+    assert rows[0]["reason"].startswith("stopped: phase1/general failed (lane exit 1")
+    assert not _events(conn, rid, "phase1.model_fallback")
+    assert not any(s.role == "repair" for s in lanes.calls)
+
+
+def test_a_timed_out_correction_turn_leaves_the_answer_before_it(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier()
+
+    def runner(spec, art, worktree):
+        if spec.role == "general" and spec.model == "glm-5.3-flash":
+            if spec.resume:
+                return LaneResult(
+                    exit_code=None, stdout="", stderr="", duration_s=1, timed_out=True
+                )
+            return _answer("Findings: none.")
+        if spec.role == "repair":
+            return _answer(json.dumps({"summary": "ok", "findings": []}))
+        return lanes(spec, art, worktree)
+
+    rid, status = _run(cfg, conn, gh, runner)
+    assert status == RunStatus.DONE
+    assert _lane(conn, rid, "phase1", "general")["status"] == "repaired"
+    (failed,) = _events(conn, rid, "lane.correction_failed")
+    assert "(correction turn timed out)" in failed
+
+
+def test_a_quota_failure_on_a_correction_turn_flips_the_run_degraded(cfg, conn, gh, lanes):
+    """The correction turn of a primary-model verifier dies on a dry pool: the run goes to
+    the stand-in as it would for a first turn, instead of retrying into the same 429."""
+    stand_in = cfg_mod.Substitute(model="muse-spark-1.3-contributor", effort_cap="xhigh")
+    pol = dataclasses.replace(
+        cfg.policy,
+        degraded=cfg_mod.DegradedPolicy(
+            sentinel="gpt-6-astra", substitutes={"gpt-6-astra": stand_in}
+        ),
+    )
+    cfg = dataclasses.replace(cfg, policy=pol, backlog_skip_phase1_above=0)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier()
+
+    def runner(spec, art, worktree):
+        if spec.role == "verifier" and spec.model == "gpt-6-astra":
+            lanes.calls.append(spec)
+            if spec.resume:
+                return LaneResult(
+                    exit_code=1,
+                    stdout="",
+                    stderr="API Error: 429 All credentials for model gpt-6-astra are cooling down",
+                    duration_s=1,
+                )
+            return _answer(json.dumps({**_verifier(), "adjudication_complete": False}))
+        return lanes(spec, art, worktree)
+
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    status = worker.main(
+        cfg, conn, rid, gh=gh, lane_runner=runner, heartbeat=False, prober=lambda m: (False, "")
+    )
+    assert status == RunStatus.DONE
+    assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 1
+    assert any(
+        s.role == "verifier" and s.model == "muse-spark-1.3-contributor" for s in lanes.calls
+    )

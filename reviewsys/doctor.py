@@ -13,10 +13,12 @@ from . import degraded, quota, status
 from .config import Config
 from .lane import (
     CLAUDE_SETTINGS,
+    claude_projects_dir,
     exec_deny_profile,
     forget_session,
     new_session_id,
     sandbox_problem,
+    session_files,
 )
 
 PROXY_URL = os.environ.get("REVIEWSYS_PROXY_URL", "http://127.0.0.1:8317")
@@ -159,6 +161,13 @@ def probe_resume(model: str, claude_bin: str) -> tuple[bool, str]:
                 return False, f"{flags[0]}: non-JSON output"
         if "kumquat" not in answer.lower():
             return False, f"resumed turn did not see the first one: {answer[:80]!r}"
+        if not session_files(sid):
+            # the launcher keeps sessions in a config dir the worker does not see: every
+            # lane would leave its transcript behind, and gc could not find it either
+            return False, f"session not under {claude_projects_dir()}: cleanup cannot see it"
+        forget_session(sid)
+        if session_files(sid):
+            return False, "session could not be deleted"
         return True, "session kept, resumed and deleted"
     finally:
         forget_session(sid)

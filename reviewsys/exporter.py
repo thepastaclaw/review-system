@@ -13,7 +13,6 @@ from typing import Any
 from . import lanepool, progress
 from .config import Config
 from .db import fmt_ts, now, now_dt, parse_ts
-from .notify import redact_emails
 from .queue_status import queued_order
 from .status import snapshot
 
@@ -215,7 +214,8 @@ _PUBLIC_EVENT_DETAIL = frozenset(
     }
 )
 # step detail keys that are safe and useful on the public page; `error` and free-form failure
-# text are not (they can carry proxy and account details)
+# text are not (they can carry proxy and account details): a failed step's `error` is
+# published only as `public_error` rebuilds it
 _STEP_KEYS = (
     "roles",
     "selection",
@@ -234,26 +234,61 @@ _STEP_KEYS = (
 )
 
 
-_URL_RE = re.compile(r"https?://\S+")
-_PATH_RE = re.compile(r"(?:~|\.{1,2})?(?:/[\w.@+-]+){2,}/?")
-_JSON_RE = re.compile(r"\{.*\}", re.S)
-# a quoted fragment this long is model output (`model output is not a JSON object: '...'`) or
-# an upstream body: the PR under review may be private, so never on the public page
-_LONG_QUOTE_RE = re.compile(r"(['\"])[^'\"]{40,}\1")
-STEP_ERROR_CHARS = 300
+# A failed step's error, as the public page may show it, is never the error text: that can
+# quote model output about a private PR, upstream replies, proxy hosts, keys or accounts. It is
+# rebuilt from an allowlist: which lane (`phase/role`, ids from our own config), what kind of
+# failure (fixed phrases below, matched in the worker's own messages), and how many attempts
+# and correction turns. Anything unrecognised says only that the step failed.
+# only at the start, where the worker names the lane: never an id out of quoted model output
+_LANE_RE = re.compile(
+    r"(phase1|phase2|verify1|verify2|persistence|converse)/([A-Za-z0-9_.#-]{1,60})\b"
+)
+_ATTEMPTS_RE = re.compile(r"lane failed (twice|\d+ times)")
+_TURNS_RE = re.compile(r"after (\d+) correction turns")
+_SUBTYPE_RE = re.compile(r"\blane (max_turns|max_budget_usd|during_execution)\b")
+# (needle in the worker's message, what the public page says), first match wins
+_FAILURE_KINDS = (
+    ("lane timed out", "timed out"),
+    ("lane stopped before it finished", "stopped"),
+    ("lane sandbox cannot start", "lane sandbox could not start"),
+    ("the run left", "its model was given up for a lower rung"),
+    ("the run went degraded", "the run went to stand-in models"),
+    ("model output is not a JSON object", "answer had no JSON object"),
+    ("empty model output", "answer was empty"),
+    ("is not the assigned head", "answer named another commit"),
+    ("reconciliation", "prior-finding reconciliation broke the output contract"),
+    ("STILL_VALID", "prior-finding reconciliation broke the output contract"),
+    ("severity", "a finding had an invalid severity"),
+    ("findings must be a list", "answer had no findings list"),
+    ("finding has no title", "a finding had no title"),
+    ("adjudication_complete", "verifier answer broke the output contract"),
+    ("coderabbit", "verifier answer broke the output contract"),
+    ("prerequisite_adjudications", "verifier answer broke the output contract"),
+    ("output rejected", "answer broke the output contract"),
+    ("API Error", "upstream error"),
+    ("lane exit", "the lane exited with an error"),
+)
 
 
 def public_error(text: str) -> str:
-    """A failed step's error as the public page may show it: what failed and how, with URLs,
-    paths, account emails, JSON bodies and long quoted fragments (model output, upstream
-    replies) taken out, on one line, capped. The full text stays in the step and the events."""
-    msg = _URL_RE.sub("<url>", text)
-    msg = redact_emails(msg)
-    msg = _JSON_RE.sub("{…}", msg)
-    msg = _LONG_QUOTE_RE.sub(r"\1…\1", msg)
-    msg = _PATH_RE.sub("<path>", msg)
-    msg = " ".join(msg.replace("[infra] ", "").replace("[contract] ", "").split())
-    return msg if len(msg) <= STEP_ERROR_CHARS else msg[: STEP_ERROR_CHARS - 1] + "…"
+    """What failed and how, for the public page, built only from known vocabulary (see
+    above), e.g. "phase1/general: answer had no JSON object (2 attempts, 2 correction turns
+    each)". The full text stays in the step detail and the events."""
+    lane = _LANE_RE.match(text)
+    kind = next((say for needle, say in _FAILURE_KINDS if needle in text), "")
+    if not kind and (m := _SUBTYPE_RE.search(text)):
+        kind = f"stopped by Claude Code ({m.group(1)})"
+    attempts = _ATTEMPTS_RE.search(text)
+    turns = _TURNS_RE.search(text)
+    extra = []
+    if attempts:
+        n = 2 if attempts.group(1) == "twice" else int(attempts.group(1).split()[0])
+        extra.append(f"{n} attempt{'s' if n != 1 else ''}")
+    if turns:
+        extra.append(f"{turns.group(1)} correction turns")
+    head = f"{lane.group(1)}/{lane.group(2)}: " if lane else ""
+    tail = " (" + ", ".join(extra) + ")" if extra else ""
+    return f"{head}{kind or 'failed'}{tail}"
 
 
 def _step_info(status: str, detail: str | None) -> dict[str, Any]:
@@ -270,7 +305,7 @@ def _step_info(status: str, detail: str | None) -> dict[str, Any]:
         info["reason"] = raw["reason"][:200]  # e.g. "skipped for throughput: 22 PRs queued"
     if status == "failed" and isinstance(raw.get("error"), str):
         # e.g. a single-stage Phase 1 that failed while Phase 2 goes on: the page shows why
-        # under the red pill right away, not only in the review hours later
+        # under the red pill right away (allowlisted, never the raw text)
         info["error"] = public_error(raw["error"])
     return info
 

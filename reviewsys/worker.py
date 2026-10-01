@@ -150,7 +150,9 @@ def _validated[T](raw: dict[str, Any], check: OutputCheck[T]) -> _Verdict:
         return _Verdict(error=exc)
     except (TypeError, ValueError, KeyError, AttributeError) as exc:
         # a value of the wrong type the parser did not expect (`int("abc")` for a comment id)
-        # is the model's contract breach too, and as correctable
+        # is the model's contract breach too, and as correctable; logged with its traceback,
+        # since a bug in the parser itself would look the same
+        log.exception("lane output rejected by %s", getattr(check.validate, "__name__", "?"))
         msg = f"output rejected: {type(exc).__name__}: {exc}"
         return _Verdict(error=ReviewError(FailKind.CONTRACT, msg))
 
@@ -861,11 +863,12 @@ def _run_checked_lane[T](
     after the deterministic normalization in contract.py) is first corrected in the lane's
     own session: up to `[lanes] correction_turns` follow-up turns tell the model the exact
     errors and the values it must echo (`lane.run_with_corrections`, inside the lane's pool
-    slot). Only when the session cannot be resumed (no session, or the follow-up failed) does
-    the context-free repair lane get an answer that has no JSON object in it, told the values
-    it cannot know; its output is normalized and validated like any other. An attempt still
-    failing after that is a failed attempt, retried once: so it happens before the Phase-1
-    ladder (`_reviewer_lane`) moves a role down for a contract failure. Every correction is an
+    slot). An answer that still has no JSON object after that (the session could not be
+    resumed, or the corrections ran out) goes to the context-free repair lane as a last resort,
+    told the values it cannot know; its output is normalized and validated like any other. An
+    attempt still failing after that is a failed attempt, retried once: so it happens before
+    the Phase-1 ladder (`_reviewer_lane`) moves a role down for a contract failure. A lane told
+    to stop between its turns is stopped, never a failed attempt. Every correction is an
     event (`lane.corrected` / `lane.correction_failed`), every normalized answer one too
     (`lane.output_normalized`); the row is `corrected` / `repaired` / `completed`.
 
@@ -951,26 +954,37 @@ def _run_checked_lane[T](
             artifact_dir=art,
             psha=psha,
         )
-        if any(t.cancelled for t in turns):  # stopped, before it finished or mid-correction
-            if res.started:  # a lane stopped while it waited for a slot never ran
+
+        def stopped(started: bool, row: functools.partial[None] = row) -> LaneStopped:
+            """Record a lane stopped before it finished (or between its turns) and say so."""
+            if started:  # a lane stopped while it waited for a slot never ran
                 if ctx.cancel_flag.is_set():
                     why = "run cancelled"
                 elif comparison:
                     why = "stopped: comparison lane"
                 else:
-                    why = (
-                        stop_reason() if stop_reason else ""
-                    ) or "another lane of this phase failed"
+                    why = (stop_reason() if stop_reason else "") or (
+                        "another lane of this phase failed"
+                    )
                 row(status="cancelled", reason=why)
             ctx.check_cancel()
-            raise LaneStopped(started=res.started)
+            return LaneStopped(started=started)
+
+        if any(t.cancelled for t in turns):  # stopped, before it finished or mid-correction
+            raise stopped(res.started)
         # the newest turn that finished: a correction that could not resume the session (or
         # died on its own) leaves the answer before it standing
         basis = next((t for t in reversed(turns) if t.ok), res)
-        resume_failed = bool(res.followups) and not turns[-1].ok
+        failed_turn = turns[-1] if res.followups and not turns[-1].ok else None
         verdict = _evaluate(basis, check)
+        if verdict.error is not None and stop():
+            # told to stop between turns (the phase was abandoned, the run cancelled): not a
+            # failed attempt, so never a retry or a fall down the ladder for a stopped lane
+            raise stopped(True)
         status = "completed" if basis is res else "corrected"  # when it passes
-        if verdict.error is not None and verdict.unparsed and (not session or resume_failed):
+        if verdict.error is not None and verdict.unparsed:
+            # still no JSON object: the session could not be resumed, the corrections ran
+            # out, or there were none. The context-free repair lane is the last resort.
             repaired = _repair(ctx, basis.result_text, art, stop, pool, check)
             if repaired is not None:
                 fixed = _validated(repaired, check)
@@ -985,7 +999,7 @@ def _run_checked_lane[T](
                 f"{phase}/{key} {lm.model} turns={len(res.followups)}",
                 asked,
                 verdict.error or ("rescued by the repair lane" if status == "repaired" else None),
-                res.followups[-1] if resume_failed else None,
+                failed_turn,
             )
         if verdict.error is None:
             notes: list[str] = getattr(verdict.output, "normalized", None) or []
@@ -1007,7 +1021,11 @@ def _run_checked_lane[T](
         after = f" (after {len(res.followups)} correction turns)" if res.followups else ""
         row(status="failed", reason=f"{exc}{after}")
         last, cause = f"{exc}{after}", exc.message
-        switched = None if comparison else _degrade_on_quota_failure(ctx, lm, exc, res)
+        # a correction turn that died on a dry pool says so as surely as a first turn would
+        quota_turn, quota_exc = res, exc
+        if failed_turn is not None:
+            quota_turn, quota_exc = failed_turn, _evaluate(failed_turn, check).error or exc
+        switched = None if comparison else _degrade_on_quota_failure(ctx, lm, quota_exc, quota_turn)
         if switched is not None:
             lm, budget = switched, attempt + 2
     raise LaneFailed(
@@ -1044,11 +1062,13 @@ def _correction_event(
     if failure is None:
         _lane_event(ctx, "lane.corrected", f"{head}: {first}")
         return
-    how = (
-        f"resume failed: {(failed_turn.first_stderr_line or failed_turn.result_text)[:200]}"
-        if failed_turn is not None
-        else "still invalid"
-    )
+    if failed_turn is None:
+        how = "still invalid"
+    elif failed_turn.timed_out:
+        how = "correction turn timed out"
+    else:
+        said = failed_turn.first_stderr_line or f"exit {failed_turn.exit_code}"
+        how = f"resume failed: {said[:200]}"
     end = failure.message if isinstance(failure, ReviewError) else failure
     _lane_event(ctx, "lane.correction_failed", f"{head} ({how}): {end[:400]}; {first}")
 
@@ -1159,6 +1179,11 @@ def _reviewer_lane(
                 stop_reason=stop_reason,
             )
         except ReviewError as exc:
+            if should_stop is not None and should_stop():
+                # the phase is being abandoned (or the run cancelled) meanwhile: no ladder
+                # fall for it; the failure that stopped it is what the run reports
+                ctx.check_cancel()
+                raise LaneStopped() from exc
             nxt = _phase1_fallback(ctx, lm, exc) if phase == "phase1" else None
             if nxt is None:
                 raise

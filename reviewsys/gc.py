@@ -32,20 +32,27 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def sweep_lane_sessions(cfg: Config) -> int:
+def sweep_lane_sessions(conn: sqlite3.Connection, cfg: Config) -> int:
     """Claude Code sessions of review lanes that their worker never deleted (it died
-    mid-lane): files under the project directories of this box's worktrees (one per run
-    worktree, `<config dir>/projects/<slug of the worktree path>`) older than
-    SESSION_RETENTION_HOURS; a project directory left empty goes too. Nothing outside those
-    directories is touched."""
+    mid-lane), and the project directories their deletion left empty. Only the project
+    directories of this box's finished runs' worktrees are looked at (`<config dir>/projects/
+    <slug of runs.worktree>`), never any other project; files there older than
+    SESSION_RETENTION_HOURS go, and an emptied directory with them."""
     projects = claude_projects_dir()
     if not projects.is_dir():
         return 0
-    prefix = project_slug(cfg.worktrees_dir) + "-"
+    ours = {
+        project_slug(Path(str(r[0])))
+        for r in conn.execute(
+            # a run still in flight keeps its directory, however old its files look
+            "SELECT DISTINCT worktree FROM runs WHERE worktree IS NOT NULL "
+            "AND status NOT IN ('spawned','running')"
+        )
+    }
     cutoff = time.time() - SESSION_RETENTION_HOURS * 3600
     removed = 0
     for d in projects.iterdir():
-        if not d.name.startswith(prefix) or not d.is_dir():
+        if d.name not in ours or not d.is_dir():
             continue
         for p in d.iterdir():
             with contextlib.suppress(OSError):
@@ -98,7 +105,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             total -= _dir_size(victim)
             shutil.rmtree(victim, ignore_errors=True)
             stats["worktrees_removed"] += 1
-    stats["lane_sessions_removed"] = sweep_lane_sessions(cfg)
+    stats["lane_sessions_removed"] = sweep_lane_sessions(conn, cfg)
     if cfg.runs_dir.exists() and not keep_runs:
         for rd in cfg.runs_dir.iterdir():
             try:
