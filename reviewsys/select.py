@@ -51,18 +51,56 @@ def heuristic(specialists: list[Specialist], title: str, body: str, files: list[
     return out
 
 
+# the selection rule; prep.py asks it verbatim too
+PICK_RULE = "Pick every specialist whose expertise is clearly relevant to these changes; pick none if none apply. "
+
+
+def specialist_listing(specialists: list[Specialist]) -> str:
+    listing = "\n".join(f"- `{s.id}`: {s.description}" for s in specialists)
+    return f"Available specialists:\n{listing}\n\n"
+
+
 def _prompt(
     repo: str, title: str, body: str, files: list[str], specialists: list[Specialist]
 ) -> str:
-    listing = "\n".join(f"- `{s.id}`: {s.description}" for s in specialists)
     return (
         f"You select specialist code reviewers for a pull request in {repo}.\n\n"
         f"PR title: {title}\n\nPR description:\n{body[:4000]}\n\nChanged files ({len(files)}):\n"
         + "\n".join(f"- {f}" for f in files[:200])
         + "\n\n"
-        f"Available specialists:\n{listing}\n\n"
-        "Pick every specialist whose expertise is clearly relevant to these changes; pick none if none apply. "
-        'Reply with exactly one JSON object: {"selected": ["id", ...], "reasoning": "one sentence"}. No prose, no fences.'
+        + specialist_listing(specialists)
+        + PICK_RULE
+        + 'Reply with exactly one JSON object: {"selected": ["id", ...], "reasoning": "one sentence"}. No prose, no fences.'
+    )
+
+
+def split(specialists: tuple[Specialist, ...]) -> tuple[list[str], list[Specialist]]:
+    """(ids of the always-run specialists, the discretionary ones the LLM picks from)."""
+    return [s.id for s in specialists if s.always_run], [s for s in specialists if not s.always_run]
+
+
+def llm_selection(
+    available: tuple[Specialist, ...], picked: list[str], model: str, reasoning: str
+) -> Selection:
+    always, _ = split(available)
+    return Selection(
+        selected=sorted(set(always) | set(picked)),
+        method=f"llm:{model}",
+        reasoning=reasoning,
+        considered=[s.id for s in available],
+    )
+
+
+def heuristic_selection(
+    available: tuple[Specialist, ...], title: str, body: str, files: list[str], error: str | None
+) -> Selection:
+    """The fallback when no model answered: always-run plus the trigger heuristics."""
+    always, discretionary = split(available)
+    return Selection(
+        selected=sorted(set(always) | set(heuristic(discretionary, title, body, files))),
+        method="heuristic",
+        error=error,
+        considered=[s.id for s in available],
     )
 
 
@@ -79,9 +117,8 @@ def select(
     model_for: Callable[[str], str] = lambda m: m,
 ) -> Selection:
     """`model_for` maps a policy model to the one to actually run (degraded-mode stand-ins)."""
-    available = list(cfg.specialists_for(repo))
-    always = [s.id for s in available if s.always_run]
-    discretionary = [s for s in available if not s.always_run]
+    available = cfg.specialists_for(repo)
+    always, discretionary = split(available)
     if not discretionary:
         return Selection(selected=always, method="config", considered=[s.id for s in available])
     spec = LaneSpec(
@@ -113,21 +150,10 @@ def select(
             picked = [
                 str(x) for x in obj.get("selected") or [] if str(x) in {s.id for s in discretionary}
             ]
-            return Selection(
-                selected=sorted(set(always) | set(picked)),
-                method=f"llm:{model}",
-                reasoning=str(obj.get("reasoning") or ""),
-                considered=[s.id for s in available],
-            )
+            return llm_selection(available, picked, model, str(obj.get("reasoning") or ""))
         except Exception as exc:
             error = f"{model}: {exc}"
-    fallback = heuristic(discretionary, title, body, files)
-    return Selection(
-        selected=sorted(set(always) | set(fallback)),
-        method="heuristic",
-        error=error,
-        considered=[s.id for s in available],
-    )
+    return heuristic_selection(available, title, body, files, error)
 
 
 def write_selection(run_dir: Path, sel: Selection) -> None:

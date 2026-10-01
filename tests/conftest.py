@@ -375,6 +375,23 @@ class FakeLanes:
         self.dead_models: set[str] = set()  # every lane on these models exits 1
         self.dead_stderr = "API Error: 429 rate limited"  # what a dead lane says
 
+    def prep_output(self) -> Any:
+        """The prep lane answers both: `triage` and `selector` set each half; a non-dict one
+        becomes an invalid half (a string tier, a non-list selection), both non-dicts no JSON."""
+        t, s = self.triage, self.selector
+        if not isinstance(t, dict) and not isinstance(s, dict):
+            return f"{t} {s}"
+        out: dict[str, Any] = {}
+        if isinstance(t, dict):
+            out.update(tier=t.get("tier"), tier_reasoning=t.get("reasoning"))
+        else:
+            out["tier"] = t
+        if isinstance(s, dict):
+            out.update(selected=s.get("selected"), selection_reasoning=s.get("reasoning"))
+        else:
+            out["selected"] = s
+        return out
+
     def __call__(self, spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
         self.calls.append(spec)
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -386,6 +403,8 @@ class FakeLanes:
             out = self.selector
         elif spec.role == "triage":
             out = self.triage
+        elif spec.role == "prep":
+            out = self.prep_output()
         elif spec.role == "conversation":
             out = self.conversation
         elif spec.role == "repair":

@@ -180,7 +180,7 @@ def test_heartbeat_refreshes_in_progress_comment_until_a_final_status(cfg, conn,
     assert "Final review complete" in gh.gate_bodies[-1]
 
 
-def test_no_estimate_before_triage_and_conversations_use_their_own_profile(conn):
+def test_before_triage_every_tier_counts_and_conversations_use_their_own_profile(conn):
     at = now_dt()
     with tx(conn):
         _history(conn)
@@ -204,11 +204,34 @@ def test_no_estimate_before_triage_and_conversations_use_their_own_profile(conn)
             started=at - timedelta(seconds=10),
         )
         _step(conn, reply, "converse", at - timedelta(seconds=5), status="running")
+        # queued by a reply: may yet be a conversation, so no review estimate before triage
+        maybe = _run(
+            conn,
+            _head(conn, 8, "running"),
+            status="running",
+            tier=None,
+            started=at - timedelta(seconds=30),
+        )
+        conn.execute("UPDATE heads SET trigger='review_reply' WHERE number=8")
+        _step(conn, maybe, "worktree", at - timedelta(seconds=30), status="running")
     est = progress.estimate(conn, fresh, at)
-    assert est is not None and est.progress is None, "no tier yet: no guess"
+    # no tier yet: measured against reviews of every tier, and it says so
+    assert est is not None and est.basis == "reviews" and est.progress is not None
+    assert est.remaining_seconds == 600 + 60 + 450 + 10
+    assert est.upcoming == ["phase1", "verify1", "fresh_phase2", "publish"]
+    est = progress.estimate(conn, maybe, at)
+    assert est is not None and est.progress is None and est.basis is None
+    assert progress.estimate(conn, maybe, at, conversation=False).basis == "reviews"
+    est = progress.estimate(conn, maybe, at, conversation=True)
+    assert est is not None and est.basis == "conversation" and est.remaining_seconds == 20
     est = progress.estimate(conn, reply, at)
     assert est is not None and est.remaining_seconds == 15 and est.upcoming == []
+    assert est.basis == "conversation"
     assert "converse" not in progress.profile(conn, "normal")
+    assert "converse" not in progress.profile(conn, progress.ALL_TIERS)
+    with tx(conn):
+        conn.execute("UPDATE runs SET tier='normal' WHERE id=?", (fresh,))
+    assert progress.estimate(conn, fresh, at).basis == "tier"
 
 
 def test_a_step_far_past_its_median_is_overdue(conn):
@@ -432,3 +455,107 @@ def test_comparison_twins_still_going_after_the_primary_lanes(conn):
     }
     (counts,) = progress.step_lanes(conn, run, [step])
     assert counts == {"lanes_done": 2, "lanes_total": 2, "lanes_left": [], "comparison_left": 1}
+
+
+def _ctx(cfg, conn, gh, tmp_path, run, hid, number):
+    return worker.RunContext(
+        cfg=cfg,
+        main_conn=conn,
+        gh=gh,
+        run_id=run,
+        head_id=hid,
+        repo="dashpay/platform",
+        number=number,
+        sha=f"{number}" * 40,
+        token="t",
+        run_dir=tmp_path,
+        conversation=False,
+    )
+
+
+def test_gate_comment_before_triage_shows_where_the_run_is(cfg, conn, gh, tmp_path):
+    """The first in-progress comment used to be the status line and a footer: no tier means
+    no estimate, and the only steps that exist that early were all hidden."""
+    at = now_dt()
+    with tx(conn):
+        _history(conn)
+        hid = _head(conn, 9, "running")
+        run = _run(conn, hid, status="running", tier=None, started=at - timedelta(seconds=20))
+        _step(conn, run, "worktree", at - timedelta(seconds=20), status="running")
+    ctx = _ctx(cfg, conn, gh, tmp_path, run, hid, 9)
+    worker._gate_comment(ctx, "in_progress")
+    lines = gh.gate_bodies[-1].splitlines()
+    assert lines[1].startswith("🔍 Review in progress") and "triage:" not in lines[1]
+    assert lines[2].startswith("`") and "%**" in lines[2], "a bar from the first minute"
+    assert lines[3] == "⏳ **checkout** → ▫️ Phase 1 → ▫️ verify 1 → ▫️ fresh Phase 2 → ▫️ publish"
+    assert lines[4].startswith("<sub>Estimated from recent reviews · updated ")
+    assert "of this tier" not in lines[4]
+    # the prep lane: select and triage run together and show as the one triage chip
+    with tx(conn):
+        conn.execute(
+            "UPDATE steps SET status='ok', finished_at=? WHERE run_id=?", (fmt_ts(at), run)
+        )
+        _step(conn, run, "select", at, status="running")
+        _step(conn, run, "triage", at, status="running")
+    ctx.gate_refreshed_at -= worker.GATE_PROGRESS_MIN_GAP_SECONDS + 1
+    worker._refresh_gate_progress(ctx, conn)
+    assert gh.gate_bodies[-1].splitlines()[3].startswith("⏳ **triage** → ▫️ Phase 1")
+
+
+def test_gate_comment_without_history_still_has_the_step(cfg, conn, gh, tmp_path):
+    at = now_dt()
+    with tx(conn):
+        hid = _head(conn, 10, "running")
+        run = _run(conn, hid, status="running", tier=None, started=at)
+        _step(conn, run, "worktree", at, status="running")
+    worker._gate_comment(_ctx(cfg, conn, gh, tmp_path, run, hid, 10), "in_progress")
+    lines = gh.gate_bodies[-1].splitlines()
+    assert lines[2] == "⏳ **checkout**"
+    assert lines[3].startswith("<sub>updated "), "no estimate, so no 'Estimated from'"
+
+
+def test_gate_comment_is_not_edited_when_nothing_visible_changed(cfg, conn, gh, tmp_path):
+    at = now_dt()
+    with tx(conn):
+        _history(conn)
+        hid = _head(conn, 11, "running")
+        run = _run(conn, hid, status="running", tier="normal", started=at - timedelta(minutes=3))
+        _step(conn, run, "phase1", at - timedelta(minutes=3), status="running")
+    ctx = _ctx(cfg, conn, gh, tmp_path, run, hid, 11)
+    worker._gate_comment(ctx, "in_progress")
+    posted = len(gh.gate_bodies)
+    # a step the comment does not show finished: the steps changed, the body did not
+    with tx(conn):
+        _step(conn, run, "worktree", at - timedelta(minutes=4), 30)
+    ctx.gate_refreshed_at -= worker.GATE_PROGRESS_MIN_GAP_SECONDS + 1
+    worker._refresh_gate_progress(ctx, conn)
+    assert len(gh.gate_bodies) == posted, "a hidden step change re-posts nothing"
+    # past the interval, an identical body (only the update time would move) is still left
+    ctx.gate_refreshed_at -= worker.GATE_PROGRESS_EVERY_SECONDS + 1
+    worker._refresh_gate_progress(ctx, conn)
+    assert len(gh.gate_bodies) == posted, "nothing but the update time moved"
+    # a main-thread re-post of the same status is skipped too
+    worker._gate_comment(ctx, "in_progress")
+    assert len(gh.gate_bodies) == posted
+    # the bar moving alone is edited at the interval, not before
+    body = gh.gate_bodies[-1]
+    bar = next(x for x in body.splitlines() if x.startswith("`"))
+    moved = body.replace(bar, "`" + "█" * 20 + "` **99%** · finishing up · running for 9 h 0 min")
+    assert worker._gate_edit_due(ctx, moved, worker.GATE_PROGRESS_MIN_GAP_SECONDS + 1) is False
+    assert worker._gate_edit_due(ctx, moved, worker.GATE_PROGRESS_EVERY_SECONDS) is True
+    overdue = body.replace(bar, bar + " · taking longer than usual")
+    assert worker._gate_edit_due(ctx, overdue, 0.0) is True, "overdue is news"
+
+
+def test_an_audit_without_a_tier_is_not_estimated(conn):
+    """A light audit never records a tier; measured against reviews of every tier it would
+    show an hour left for a ten-minute pass."""
+    at = now_dt()
+    with tx(conn):
+        _history(conn)
+        hid = _head(conn, 12, "running")
+        conn.execute("UPDATE heads SET queue='audit' WHERE id=?", (hid,))
+        run = _run(conn, hid, status="running", tier=None, started=at - timedelta(minutes=1))
+        _step(conn, run, "phase1", at - timedelta(minutes=1), status="running")
+    est = progress.estimate(conn, run, at)
+    assert est is not None and est.progress is None and est.basis is None

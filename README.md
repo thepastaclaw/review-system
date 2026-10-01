@@ -17,8 +17,10 @@ tested, one daemon, one SQLite file, no lock files.
 | `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
-| `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
-| `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
+| `worker.py` | one run: worktree → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
+| `prep.py` | one cheap lane answers both pre-review questions: the effort tier and the discretionary specialists |
+| `triage.py` | the tier guide and rules (trivial/low/normal/critical); the tier picks each phase's `--effort`; runs alone when there are no specialists to choose |
+| `select.py` | specialist selection: the selector lane (runs alone without triage) and the heuristic fallback |
 | `quota.py` | Phase-1 model ladder: remaining Antigravity / Z.AI quota via the proxy's management `api-call`; first rung with quota runs |
 | `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage; stoppable mid-run; correction turns in the lane's own session |
 | `lanepool.py` | machine-wide lane slots per model family (`flock` files) and one priority line per pool, shared by every worker; the only concurrency limit on reviews |
@@ -39,7 +41,8 @@ Models, agents and default reasoning levels come from `review_model_policy` in t
 skills repo's `config.json`, read at every config load (no redeploy to change them).
 If the policy has a `triage` block, a `gpt-6.1-sol --effort low` lane rates each PR
 and the tier picks the `--effort` of the reviewer lanes; verifiers keep their fixed
-level. Blockers always win: a Phase-1 blocker publishes the preliminary review
+level. The same lane also picks the discretionary specialists (see
+[The prep lane](#the-prep-lane-tier-and-specialists-in-one-call)). Blockers always win: a Phase-1 blocker publishes the preliminary review
 regardless of tier. `trivial` with no blockers publishes a *final* review from
 Phase 1 only and says so in the provenance block. Triage failure falls back to
 `fallback_tier` and is recorded as a `triage.degraded` event. `normal` is the
@@ -61,6 +64,37 @@ Efforts are validated against `low|medium|high|xhigh|max` at load. Every lane's
 effort is stored in `lanes.effort`, the tier in `runs.tier`, and both are printed
 in the review's provenance block and the gate comment. Without a `triage` block the
 policy behaves as a single `normal` tier at the configured reasoning levels.
+
+### The prep lane: tier and specialists in one call
+
+Before the review starts two questions are asked: which tier the PR is (above) and which
+discretionary specialists review it. They used to be two lanes in a row, the selector on
+`selector_model` (`gpt-5.6-terra`) and then triage, each with a pool slot and a cold start
+of its own, though neither reads the other's answer (since v0.23: selection 43 s on
+average, max 126; triage 14 s, max 115). Since 2026-10 one lane (`prep.py`, role `prep`,
+artifacts in `run-N/prep/attempt-*`) on the triage model and effort asks both, in two
+separated sections of one prompt: triage's tier guide and decision rules and the
+selector's specialist list and rule word for word. It replies with one object,
+`{"tier", "tier_reasoning", "selected", "selection_reasoning"}`.
+
+- Each half is validated on its own: an unknown tier falls back to `fallback_tier`
+  (`triage.degraded`), a missing or non-list `selected` to the selector's trigger
+  heuristics (`select.degraded`); unknown specialist ids are dropped as before. One broken
+  half never discards the other: the second attempt only fills the half still missing.
+  Both attempts run on the triage model; the selector's second attempt used to go to the
+  Phase-2 model, which is the same `gpt-6.1-sol` pool since policy v10.
+- A quota-shaped lane failure (stderr, never model output) flips the run into degraded mode
+  and asks the stand-in once more for the half (or both) that fell back, as the two lanes
+  did; the event detail reads `prep lane: …`.
+- Outputs are unchanged: `selector.json` / `triage.json`, `runs.tier`, `Triage.method`
+  (`llm:<model>` / `fallback`), the provenance line, and both the `select` and `triage`
+  step rows. The rows start and end together, so the progress profile (step durations by
+  name over the last 40 runs) reads old runs, where they ran one after the other, and new
+  ones alike: while both run the estimate counts the longer, and while both are still to
+  come it counts both, about 45 s too much at the very start of a run.
+- Without triage (a policy with no `triage` block, or a light audit, which reviews at a
+  fixed tier) the selector runs alone as before; with no discretionary specialists (the
+  selection comes from config) triage runs alone. Conversation runs ask neither.
 
 ### Phase-1 roster, points gate, single-stage tiers, repos without Phase 1
 
@@ -341,7 +375,7 @@ and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
   `sentinel` through the proxy (cached 2 min in `kv degraded.probe`). Only a
   quota-shaped answer (HTTP 429, "cooling down", "usage limit") counts; a dead proxy
   or a 5xx does not, because swapping models would not help. A lane that dies on a
-  quota error mid-run (reviewer, verifier, triage or selector) flips the run over on
+  quota error mid-run (reviewer, verifier, prep, triage or selector) flips the run over on
   the spot, gets its attempts again on the stand-in, and records a 20-minute hold so
   the following runs start degraded even if a tiny probe happens to get through.
   The daemon re-probes every 2 minutes so the mode clears by itself once quota is
@@ -443,6 +477,18 @@ Approval is tied to the exact reviewed head. The worker checks the live PR head 
 before publishing, so a push or base update during review invalidates the run and queues the
 new head instead of approving an obsolete commit. The published provenance identifies when
 the fresh final gate ran.
+
+A head that is obsolete when the worker checks it (at checkout, before publishing, before a
+conversation posts) is not a failed review: a push moved the PR's head past it, or the PR
+closed or merged. The run ends `cancelled` (reason `head superseded: live head … != assigned
+…` or `head closed: PR is closed (merged)`, no `fail_kind`), the head `superseded` / `closed`
+with a `head.superseded` / `head.closed` event, exactly as when ingest notices first. No
+retry, no `head.failed` alert, no "could not complete" gate comment: the first "in progress"
+status is only posted after the checkout check, and for a moved head the newer head's queue
+comment takes the PR's comment over. For a closed PR nothing would, so an existing gate
+comment is set to "⏹️ Not reviewed — PR is closed (merged)" (none is created). Until 2026-10 these ended as "failed · fatal" on the dashboard (7 runs in
+5 days for a moved head, 4 for a merged PR, which also paged as `head.failed`). A moved
+*base* still fails `fatal` and re-queues the same head.
 
 ## Replies to findings
 
@@ -619,6 +665,40 @@ same comment is reused by the worker for "in progress" / "done" / "failed" state
 so a PR never has more than one bot status comment. Writes are capped at 25 per
 pass to respect GitHub's content-creation limits; the rest catch up next pass.
 
+A draft PR, and a new head still waiting out the push debounce (not priority, not a retry),
+get the "Review not started yet" body instead, with two boxes: **Request normal review**
+(queue it now) and **Request priority review**. Each PR gets exactly one of the two bodies
+per pass, and a body equal to what GitHub has is never rewritten. A retry waiting out its
+backoff keeps the queue body, whose ETA counts the wait. (Until 2026-10 both renderers ran
+for a debounced head in the same pass, so its comment flipped between the two every ~5 min.)
+
+### Live progress in the gate comment
+
+While a run is in progress the worker's heartbeat keeps the comment showing a progress bar
+(estimated share done, time left, time running), the steps as chips (`✅ triage → ⏳ **Phase
+1** (2/3 lanes) → ▫️ verify 1 → …`) and a link to the run on the dashboard.
+
+- The first "in progress" status is posted once `step_worktree` has confirmed the head is
+  still the PR's live head, with the checkout as the running step. Setup steps (checkout,
+  lane selection, context) show only while they run; the selection and triage of the prep
+  lane show as the one triage chip.
+- Before triage has set the tier, the estimate measures the run against recent reviews of
+  every tier (`progress.ALL_TIERS`, path-aware like the tier profile) and the footer says
+  "Estimated from recent reviews"; from the tier on, "… of this tier"; a conversation is
+  measured against conversations. A run queued by a reply gets no review estimate before
+  triage on the dashboard, which cannot tell yet whether it is a conversation (the worker
+  can). Without any history the comment shows the steps and no bar.
+- Edits: the heartbeat re-renders the body when the run's steps (or a phase's lane count)
+  changed, at most every 30 s (`GATE_PROGRESS_MIN_GAP_SECONDS`), and otherwise every 10 min
+  (`GATE_PROGRESS_EVERY_SECONDS`), and compares it with the one last written. Nothing but
+  the update time moved: no edit at all. The status line, a chip, the estimate's basis or
+  the "taking longer than usual" mark changed: an edit. Only the bar and time left moved:
+  an edit only at the 10-min interval. Status changes the worker posts itself (the tier
+  after triage, Phase 1 dropped) go out at once, unless they render the same as what is
+  shown. Before 2026-10 every step change re-posted the body, and
+  since the early steps were hidden, the comment showed a bare "Review in progress" line
+  re-posted two or three times in the first minutes of each run (dashpay/platform#5237).
+
 ## Status dashboard: priority vs normal timing
 
 The public status page (`site/`, fed by `reviewsys export-status`, see
@@ -652,7 +732,8 @@ The "longer than usual" mark on an active run (a running step past 1.5× its typ
 duration, `progress.estimate`) compares the run with recent reviews of its own tier *and*
 path; a path with fewer than five recent reviews of the tier falls back to the tier's
 reviews of both paths, and an audit is measured against both. The PR's gate comment uses the
-same estimate. The day view filters its runs by path.
+same estimate ([live progress](#live-progress-in-the-gate-comment)). The day view filters
+its runs by path.
 
 A failed step of an active run shows its error under the run (collapsed or not) and as the
 red pill's tooltip, e.g. a single-stage Phase 1 that failed while Phase 2 is still going.
@@ -670,7 +751,8 @@ The daemon spawns `reviewsys worker --run-id N` in its own session. The worker
 heartbeats every 15 s and checks for cancellation; the reaper fails any run
 whose heartbeat is older than 5 min, whose deadline passed, or whose process is
 gone, and requeues the head with backoff (`infra` up to 3 attempts, `contract`
-twice, `fatal` never). Runs in flight are recounted from the DB every tick. The run
+twice, `fatal` never; a stale head is no failure at all, see
+[above](#final-approval-after-an-iterative-review)). Runs in flight are recounted from the DB every tick. The run
 deadline (`run_timeout_minutes`, 360) does not count time a run only waits for model
 slots: while at least one of its lanes waits for a slot and none runs, the worker pushes
 `runs.deadline_at` out by that stretch (in one-minute slices while it lasts, so a long

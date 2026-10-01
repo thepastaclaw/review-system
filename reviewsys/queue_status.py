@@ -6,6 +6,11 @@ the comment id is cached in `kv` so no search is needed after the first write), 
 ticked priority box, and rewrites only when the rendered body differs from what GitHub has.
 Comparing against the live body, not a cache, means a worker-written "in progress"/"failed"
 body on a requeued head is always replaced.
+
+Each PR gets one body per pass, from one of two renderers: `deferred_body` for a draft and for
+a new head waiting out the push debounce (not started, nothing to rank yet), `queue_body` for
+every other queued head. Both used to render a debounced head, one after the other in the same
+pass, so its comment flipped between the two every pass (dashpay/platform#5237, 2026-10-01).
 """
 
 from __future__ import annotations
@@ -207,11 +212,18 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
         rows = queued_order(conn, ts=ts)
 
     # Drafts and heads in push debounce need an actionable explanation too. A checked box is
-    # an explicit request and is converted into a normal or priority queue entry.
+    # an explicit request and is converted into a normal or priority queue entry. This pass is
+    # the only writer for the heads it selects; the queue pass below leaves them alone. A head
+    # waiting out a retry backoff (attempts > 0) or a priority head is not in debounce: it
+    # keeps the queue body, whose ETA counts the wait.
     deferred = conn.execute(
-        "SELECT p.repo,p.number,p.head_sha,p.is_draft,h.id,h.priority,h.status FROM prs p LEFT JOIN heads h ON h.repo=p.repo AND h.number=p.number AND h.sha=p.head_sha WHERE p.state='open' AND (p.is_draft=1 OR (h.status='queued' AND h.eligible_at>?))",
+        "SELECT p.repo,p.number,p.head_sha,p.is_draft,h.id,h.priority,h.status FROM prs p "
+        "LEFT JOIN heads h ON h.repo=p.repo AND h.number=p.number AND h.sha=p.head_sha "
+        "WHERE p.state='open' AND ((p.is_draft=1 AND (h.status IS NULL OR h.status!='queued')) "
+        "OR (h.status='queued' AND h.eligible_at>? AND h.priority=0 AND h.attempts=0))",
         (ts,),
     ).fetchall()
+    in_debounce = {p["id"] for p in deferred if p["id"] is not None}
     for p in deferred:
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
@@ -231,10 +243,8 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
             if stats["written"] < MAX_WRITES_PER_PASS:
                 _write(conn, gh, p["repo"], p["number"], c, rendered)
                 stats["written"] += 1
-                # The same head may also be present in `rows`; refresh the shared comment
-                # cache so the queue renderer updates this comment instead of creating a second.
-                if p["id"]:
-                    comments[p["id"]] = _read_comment(conn, gh, cfg, p["repo"], p["number"])
+            else:
+                stats["deferred"] += 1
         except Exception as exc:
             log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
     # max_runs counts audit runs too
@@ -243,8 +253,8 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     ).fetchone()["n"]
     is_degraded = bool(degraded_mod.snapshot(conn, cfg).get("active"))
     for pos, h in enumerate(rows, 1):
-        if h["id"] not in comments:
-            continue  # read failed this pass; try again next time
+        if h["id"] not in comments or h["id"] in in_debounce:
+            continue  # read failed this pass (try again next time), or the deferred body's
         # with a run cap: runs ahead of this head in its slot, plus the remainder of whatever
         # occupies the slot now (half a run) when all slots are busy; always: any
         # debounce/backoff still to elapse

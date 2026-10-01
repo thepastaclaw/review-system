@@ -215,6 +215,39 @@ def finish_run(
             _requeue_or_fail(conn, cfg, run["head_id"], fail_kind or FailKind.INFRA, reason)
 
 
+def retire_obsolete_head(
+    conn: sqlite3.Connection, head_id: int, status: HeadStatus, reason: str
+) -> bool:
+    """End a running head whose run found it obsolete before reviewing anything: a push moved
+    the PR's head past it (SUPERSEDED; ingest queues, or has queued, the new one) or the PR
+    closed (CLOSED). The same end ingest gives a head it sees go stale, so no retry, no
+    `head.failed` alert, and the gate comment is left to the newer head's writer. A head
+    ingest already ended is left as it is. Caller holds the write transaction."""
+    assert status in (HeadStatus.SUPERSEDED, HeadStatus.CLOSED)
+    ts = now()
+    head = conn.execute("SELECT * FROM heads WHERE id=?", (head_id,)).fetchone()
+    n = conn.execute(
+        "UPDATE heads SET status=?, superseded_at=?, finished_at=?, reason=? "
+        "WHERE id=? AND status='running'",
+        (
+            status.value,
+            ts if status == HeadStatus.SUPERSEDED else None,
+            ts,
+            reason[:500],
+            head_id,
+        ),
+    ).rowcount
+    if n:
+        event(
+            conn,
+            f"head.{status.value}",
+            repo=head["repo"],
+            number=head["number"],
+            detail=f"obsolete assigned head {head['sha'][:8]}: {reason[:300]}",
+        )
+    return bool(n)
+
+
 def _requeue_or_fail(
     conn: sqlite3.Connection, cfg: Config, head_id: int, kind: FailKind, reason: str
 ) -> None:
@@ -236,6 +269,8 @@ def _requeue_or_fail(
             detail=f"base moved while reviewing {head['sha'][:8]}: {reason[:300]}",
         )
         return
+    # a worker since 2026-10 ends this case as cancelled (retire_obsolete_head) instead; kept
+    # for one still on the older code during a deploy
     if kind == FailKind.FATAL and reason.startswith("live head "):
         ts = now()
         conn.execute(

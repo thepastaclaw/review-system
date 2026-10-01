@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -401,8 +402,14 @@ def upsert_gate_comment(gh: Gh, repo: str, number: int, bot_login: str, body: st
 
 
 DASHBOARD_URL = "https://thepastaclaw.github.io/review-system/"
-# setup steps say nothing a PR author cares about; the rest are the review's milestones
-_PROGRESS_SKIP = frozenset({"worktree", "select", "context"})
+# setup steps say little a PR author cares about once done: they show only while running (so
+# the comment says where the run is from its first minute), the rest are the review's milestones
+_SETUP_STEPS = frozenset({"worktree", "select", "context"})
+_ESTIMATED_FROM = {
+    "tier": "Estimated from recent reviews of this tier",
+    "reviews": "Estimated from recent reviews",
+    "conversation": "Estimated from recent conversations",
+}
 _STEP_MARKS = {
     "ok": "✅",
     "running": "⏳",
@@ -445,8 +452,11 @@ def progress_lines(progress: dict[str, Any]) -> list[str]:
         bits.append(f"running for {_fmt_span(int(progress.get('elapsed_seconds', 0)))}")
         lines.append(" · ".join(bits))
     chips = []
-    for name, status, *note in progress.get("steps", []):
-        if name in _PROGRESS_SKIP:
+    steps = progress.get("steps", [])
+    # one prep lane chooses the lanes and rates the tier: its triage chip stands for both
+    prep = any(st[0] == "triage" for st in steps)
+    for name, status, *note in steps:
+        if (name in _SETUP_STEPS and status != "running") or (name == "select" and prep):
             continue
         label = STEP_LABELS.get(name, name)
         label = f"**{label}**" if status == "running" else label
@@ -455,11 +465,31 @@ def progress_lines(progress: dict[str, Any]) -> list[str]:
         chips.append(f"{_STEP_MARKS.get(status, '▫️')} {label}")
     if chips:
         lines.append(" → ".join(chips))
-    lines.append(
-        f"<sub>Estimated from recent reviews of this tier · updated {progress.get('updated_at', '')} "
-        f"UTC · [live progress]({DASHBOARD_URL}#run={progress.get('run_id')})</sub>"
-    )
+    basis = _ESTIMATED_FROM.get(progress.get("basis") or "tier") if fraction is not None else None
+    footer = [
+        *([basis] if basis else []),
+        f"updated {progress.get('updated_at', '')} UTC",
+        f"[live progress]({DASHBOARD_URL}#run={progress.get('run_id')})",
+    ]
+    lines.append(f"<sub>{' · '.join(footer)}</sub>")
     return lines
+
+
+# the parts of an in-progress body that move by themselves: the bar line (share, time left,
+# time running) and the update time; "taking longer than usual" still counts as a change
+_UPDATED = r"updated \d\d:\d\d UTC"
+_MOVING = re.compile(rf"^`[█░]+`.*$|{_UPDATED}", re.MULTILINE)
+
+
+def gate_digest(body: str) -> str:
+    """`body` without what moves on its own, i.e. what a reader would notice changing: the
+    status line, the step chips, the estimate's basis and whether it is overdue. The worker
+    edits a live gate comment when this changes, else at most every few minutes."""
+    return _MOVING.sub(lambda m: "overdue" if "longer than usual" in m.group(0) else "", body)
+
+
+def without_update_time(body: str) -> str:
+    return re.sub(_UPDATED, "", body)
 
 
 # why a run reviewed with Phase 2 alone (RunContext.phase1_skipped starts with one of these)
@@ -530,6 +560,8 @@ def gate_body(
         head = warn or ("⛔" if n else "✅")
         scope = " — Phase 1 only" if phase2_skipped else ""
         return f"{GATE_MARKER}\n{head} Final review complete{scope} — {'no blockers' if not n else f'{n} blocking finding(s)'} (commit {s}){t}"
+    if status == "closed":  # the PR closed or merged before its review finished
+        return f"{GATE_MARKER}\n⏹️ Not reviewed — {reason or 'the PR is closed'} (commit {s})"
     if status == "failed":
         return f"{GATE_MARKER}\n{warn or '⚠️'} Automated review could not complete (commit {s})\n_Reason: {reason or 'unknown'}_"
     head = f"{warn} " if warn else ""

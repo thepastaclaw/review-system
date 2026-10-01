@@ -1,6 +1,6 @@
 """Worker: runs one review (one `runs` row) end to end.
 
-Steps: worktree -> select -> triage -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
+Steps: worktree -> select + triage (one prep lane) -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
 Every step is recorded in `steps`. Any ReviewError ends the run as failed with
 its classification; the scheduler decides on retry. Cooperative cancellation
 is checked on every heartbeat.
@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from . import audit, converse, degraded, github, labels, lanepool, publish, quota
+from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
 from .contract import (
@@ -51,7 +52,7 @@ from .lane import (
     run_claude_lane,
     sandboxed,
 )
-from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
+from .models import FailKind, HeadStatus, ReviewError, RunStatus, StepName, Trigger
 from .prompts import (
     correction_prompt,
     prior_for_prompt,
@@ -60,7 +61,7 @@ from .prompts import (
     skill_texts,
     verifier_prompt,
 )
-from .scheduler import finish_run, live_queued_count
+from .scheduler import finish_run, live_queued_count, retire_obsolete_head
 from .select import Selection, select, write_selection
 from .steps import worktree as wt
 from .triage import Triage, triage, write_triage
@@ -70,6 +71,29 @@ log = logging.getLogger(__name__)
 
 class Cancelled(Exception):
     pass
+
+
+class HeadObsolete(Exception):
+    """The run's head is no longer worth reviewing: the PR's live head moved past it (a push
+    landed after it was queued) or the PR closed. Not a failure: the run ends `cancelled` and
+    the head `superseded` / `closed`, as ingest ends a head it sees go stale (see `main`)."""
+
+    def __init__(self, status: HeadStatus, reason: str) -> None:
+        super().__init__(reason)
+        self.status = status
+        self.reason = reason
+
+
+def _require_live(ctx: RunContext, live: github.PrMeta) -> None:
+    """Raise HeadObsolete unless the PR is open and `live` is still the run's head."""
+    if live.state != "open" or live.merged:
+        raise HeadObsolete(
+            HeadStatus.CLOSED, f"PR is {live.state}{' (merged)' if live.merged else ''}"
+        )
+    if live.head_sha != ctx.sha:
+        raise HeadObsolete(
+            HeadStatus.SUPERSEDED, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
+        )
 
 
 class LaneStopped(Exception):
@@ -240,6 +264,10 @@ class RunContext:
     gate_comment_id: int | None = None
     gate_steps_seen: tuple[tuple[str, str, str], ...] = ()  # steps + lane notes last shown
     gate_refreshed_at: float = 0.0  # time.monotonic() of the last progress edit
+    gate_body_seen: str = ""  # the in-progress body last written, to skip edits that change nothing
+    # a conversation run (answers replies on a reviewed commit); None until run() knows. The
+    # progress estimate measures it against conversations from the start (see progress.py)
+    conversation: bool | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -365,10 +393,11 @@ def _gate_progress(ctx: RunContext, conn: sqlite3.Connection) -> dict[str, Any] 
     Never raises: the gate comment is bookkeeping, not the review."""
     try:
         at = now_dt()
-        est = progress_mod.estimate(conn, ctx.run_id, at)
+        est = progress_mod.estimate(conn, ctx.run_id, at, conversation=ctx.conversation)
         if est is None:
             return None
         return {
+            "basis": est.basis,
             "fraction": est.progress,
             "overdue": est.overdue,
             "remaining_seconds": est.remaining_seconds,
@@ -385,11 +414,26 @@ def _gate_progress(ctx: RunContext, conn: sqlite3.Connection) -> dict[str, Any] 
         return None
 
 
+def _gate_edit_due(ctx: RunContext, body: str, since: float) -> bool:
+    """Whether a re-rendered in-progress `body` is worth a GitHub edit: never when nothing but
+    the update time moved; at once (past the min gap) when the status line, a step chip or the
+    estimate's basis changed; otherwise (only the bar and time left moved) every
+    GATE_PROGRESS_EVERY_SECONDS. A step change alone is not enough: steps the comment does not
+    show (a finished checkout) used to re-post an identical body two or three times a run."""
+    seen = ctx.gate_body_seen
+    if github.without_update_time(body) == github.without_update_time(seen):
+        return False
+    return github.gate_digest(body) != github.gate_digest(seen) or (
+        since >= GATE_PROGRESS_EVERY_SECONDS
+    )
+
+
 def _refresh_gate_progress(
     ctx: RunContext, conn: sqlite3.Connection, stop: threading.Event | None = None
 ) -> None:
     """Re-render the in-progress gate comment when the run's steps changed, or every
-    GATE_PROGRESS_EVERY_SECONDS. Runs on the heartbeat thread, with its own connection.
+    GATE_PROGRESS_EVERY_SECONDS, and edit it when that changed what it shows
+    (`_gate_edit_due`). Runs on the heartbeat thread, with its own connection.
 
     Never waits: if the main thread is writing the gate comment (it holds `gate_lock` across a
     GitHub call), this pass is skipped, so a slow GitHub never delays the heartbeat or its
@@ -419,7 +463,15 @@ def _refresh_gate_progress(
         body = github.gate_body(
             "in_progress", ctx.sha, **_gate_defaults(ctx, kw), progress=_gate_progress(ctx, conn)
         )
-        ctx.gate_steps_seen, ctx.gate_refreshed_at = steps, time.monotonic()
+        ctx.gate_steps_seen = steps  # rendered: re-render on the next change or interval
+        since = time.monotonic() - ctx.gate_refreshed_at  # the main thread may have just edited
+        if not _gate_edit_due(ctx, body, since):
+            if github.without_update_time(body) == github.without_update_time(ctx.gate_body_seen):
+                # nothing at all moved (no history, so no bar): wait out another interval
+                # rather than re-render on every heartbeat
+                ctx.gate_refreshed_at = time.monotonic()
+            return
+        ctx.gate_refreshed_at = time.monotonic()
         try:
             ctx.gh.api(
                 f"repos/{ctx.repo}/issues/comments/{ctx.gate_comment_id}",
@@ -427,6 +479,7 @@ def _refresh_gate_progress(
                 body={"body": body},
                 timeout=30,
             )
+            ctx.gate_body_seen = body
         except ReviewError as exc:
             log.warning("gate progress update failed: %s", exc)
     finally:
@@ -577,21 +630,43 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
         full = _gate_defaults(ctx, kw)
         if live:
             full["progress"] = _gate_progress(ctx, ctx.conn)
-        try:
-            cid = github.upsert_gate_comment(
-                ctx.gh,
-                ctx.repo,
-                ctx.number,
-                ctx.cfg.bot_login,
-                github.gate_body(status, ctx.sha, **full),
-            )
-            ctx.gate_comment_id = cid or ctx.gate_comment_id
-        except ReviewError as exc:
-            log.warning("gate comment update failed: %s", exc)
+        body = github.gate_body(status, ctx.sha, **full)
+        # an in-progress status this worker already shows (same status line, chips, basis) is
+        # left to the heartbeat's interval refresh; the first one always replaces the queue's
+        if not live or ctx.gate_comment_id is None or _gate_edit_due(ctx, body, 0.0):
+            try:
+                cid = github.upsert_gate_comment(
+                    ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, body
+                )
+                ctx.gate_comment_id = cid or ctx.gate_comment_id
+                ctx.gate_body_seen = body if live else ""
+            except ReviewError as exc:
+                log.warning("gate comment update failed: %s", exc)
+            if live:
+                ctx.gate_refreshed_at = time.monotonic()
         if live:
-            ctx.gate_refreshed_at = time.monotonic()
             with contextlib.suppress(sqlite3.Error):
                 ctx.gate_steps_seen = tuple(_progress_steps(ctx.conn, ctx.run_id))
+
+
+def _gate_closed(ctx: RunContext, reason: str) -> None:
+    """The PR closed or merged before this run could review it: an existing gate comment says
+    so instead of a stale "queued" / "in progress" status that nothing else would replace (no
+    newer head will be queued). Never creates a comment on a closed PR just to say that."""
+    if ctx.dry_run or ctx.is_audit:
+        return
+    with ctx.gate_lock:
+        ctx.gate_live_kw = None
+        try:
+            existing = github.find_gate_comment(ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login)
+            if existing:
+                ctx.gh.api(
+                    f"repos/{ctx.repo}/issues/comments/{existing['id']}",
+                    method="PATCH",
+                    body={"body": github.gate_body("closed", ctx.sha, reason=reason)},
+                )
+        except ReviewError as exc:
+            log.warning("gate comment update failed: %s", exc)
 
 
 # ---- steps ----
@@ -602,14 +677,12 @@ def step_worktree(ctx: RunContext) -> None:
     if ctx.is_audit:
         _audit_worktree(ctx, meta)
         return
-    if meta.state != "open" or meta.merged:
-        raise ReviewError(FailKind.FATAL, f"PR is {meta.state}{' (merged)' if meta.merged else ''}")
-    if meta.head_sha != ctx.sha:
-        raise ReviewError(
-            FailKind.FATAL, f"live head {meta.head_sha[:8]} != assigned {ctx.sha[:8]}"
-        )
+    _require_live(ctx, meta)
     ctx.meta = meta
     ctx.base_sha = meta.base_sha
+    # the first "in progress" status, once the head is known to be live (an obsolete run
+    # leaves the comment to the newer head's writer): the checkout shows as the running step
+    _gate_comment(ctx, "in_progress")
     ctx.worktree = _checkout_head(ctx)
     base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
     ctx.coverage_from = base or f"{ctx.sha}~1"
@@ -660,14 +733,75 @@ def _audit_worktree(ctx: RunContext, meta: github.PrMeta) -> None:
     _record_worktree(ctx)
 
 
-def step_select(ctx: RunContext) -> None:
+def step_prep(ctx: RunContext) -> None:
+    """Which specialists review the PR (`select` step) and which effort tier it is (`triage`
+    step). With triage configured and specialists to choose from, one prep lane answers both
+    (prep.py): the two step rows start and end together, so the progress profile (steps by
+    name, see progress.py) reads old runs, where they ran one after the other, and new ones
+    alike, and a running pair counts once (the longer one). Otherwise the selector (no
+    triage: a light audit, or a policy without triage) or triage (nothing to choose: the
+    selection comes from config) runs alone, as before the merge.
+
+    Every half keeps its own fallback, artifact (selector.json / triage.json) and event
+    (`select.degraded` / `triage.degraded`)."""
     assert ctx.meta and ctx.worktree
+    _step_start(ctx, StepName.SELECT)
     files_raw = (
         ctx.gh.api(f"repos/{ctx.repo}/pulls/{ctx.number}/files?per_page=100", paginate=True) or []
     )
     ctx.files = [f for f in files_raw if isinstance(f, dict)]
-    files = [str(f.get("filename")) for f in ctx.files]
+    lane = ctx.cfg.policy.triage
+    if lane is not None and ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
+        ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
+        lane = None
+    if lane is not None and any(not s.always_run for s in ctx.cfg.specialists_for(ctx.repo)):
+        _step_start(ctx, StepName.TRIAGE)
+        p = _prep(ctx, lane)
+        _end_select(ctx, p.selection)
+        _end_triage(ctx, p.triage)
+    else:
+        _end_select(ctx, _select(ctx))
+        if lane is None:
+            return
+        ctx.check_cancel()
+        _step_start(ctx, StepName.TRIAGE)
+        _end_triage(ctx, _triage(ctx, lane))
+    _gate_comment(ctx, "in_progress")
+
+
+def _prep(ctx: RunContext, lane: LaneModel) -> prep_mod.Prep:
+    assert ctx.meta and ctx.worktree
     meta, worktree = ctx.meta, ctx.worktree
+
+    def attempt(prior: prep_mod.Prep | None = None) -> prep_mod.Prep:
+        return prep_mod.prep(
+            ctx.cfg,
+            repo=ctx.repo,
+            base_ref=meta.base_ref,
+            title=meta.title,
+            body=meta.body,
+            files=ctx.files,
+            run_dir=ctx.run_dir,
+            worktree=worktree,
+            runner=ctx.lane_runner,
+            lane=ctx.lane_model(lane),
+            prior=prior,
+        )
+
+    p = attempt()
+    if (
+        (p.selection.error or p.triage.error)
+        and p.infra_error
+        and _degrade_on_side_lane_failure(ctx, "prep", lane.model, p.infra_error)
+    ):
+        p = attempt(p)  # once more on the stand-in, for the half (or both) that fell back
+    return p
+
+
+def _select(ctx: RunContext) -> Selection:
+    assert ctx.meta and ctx.worktree
+    meta, worktree = ctx.meta, ctx.worktree
+    files = [str(f.get("filename")) for f in ctx.files]
 
     def attempt() -> Selection:
         return select(
@@ -687,26 +821,11 @@ def step_select(ctx: RunContext) -> None:
         ctx, "select", ctx.cfg.policy.selector_model, sel.error
     ):
         sel = attempt()  # once more, on the stand-ins
-    write_selection(ctx.run_dir, sel)
-    ctx.selection = sel.selected
-    if sel.error:
-        with tx(ctx.conn):
-            event(
-                ctx.conn,
-                "select.degraded",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=f"method={sel.method} error={sel.error}",
-            )
+    return sel
 
 
-def step_triage(ctx: RunContext) -> None:
-    """Rate the PR so reviewer effort can scale; no-op unless the policy configures triage."""
+def _triage(ctx: RunContext, lane: LaneModel) -> Triage:
     assert ctx.meta and ctx.worktree
-    lane = ctx.cfg.policy.triage
-    if lane is None:
-        return
     meta, worktree = ctx.meta, ctx.worktree
 
     def attempt() -> Triage:
@@ -726,6 +845,26 @@ def step_triage(ctx: RunContext) -> None:
     t = attempt()
     if t.error and _degrade_on_side_lane_failure(ctx, "triage", lane.model, t.error):
         t = attempt()  # once more, on the stand-in
+    return t
+
+
+def _end_select(ctx: RunContext, sel: Selection) -> None:
+    write_selection(ctx.run_dir, sel)
+    ctx.selection = sel.selected
+    if sel.error:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "select.degraded",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"method={sel.method} error={sel.error}",
+            )
+    _step_end(ctx, StepName.SELECT, "ok", {"selection": ctx.selection})
+
+
+def _end_triage(ctx: RunContext, t: Triage) -> None:
     write_triage(ctx.run_dir, t)
     ctx.triage = t
     ctx.tier = t.tier
@@ -740,7 +879,7 @@ def step_triage(ctx: RunContext) -> None:
                 run_id=ctx.run_id,
                 detail=f"tier={t.tier} method={t.method} error={t.error}",
             )
-    _gate_comment(ctx, "in_progress")
+    _step_end(ctx, StepName.TRIAGE, "ok", dataclasses.asdict(t))
 
 
 def step_context(ctx: RunContext) -> None:
@@ -1583,15 +1722,10 @@ def step_publish(
 ) -> publish.PublishResult:
     # The review may have taken long enough for a push to land after the initial
     # worktree check. Never publish an approval (or any verdict) against an
-    # obsolete head; the scheduler will supersede this run and ingest will queue
-    # the live commit.
+    # obsolete head; the run ends superseded (HeadObsolete) and ingest queues the
+    # live commit.
     live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
-    if live.state != "open" or live.merged:
-        raise ReviewError(FailKind.FATAL, f"PR is {live.state}{' (merged)' if live.merged else ''}")
-    if live.head_sha != ctx.sha:
-        raise ReviewError(
-            FailKind.FATAL, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
-        )
+    _require_live(ctx, live)
     if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
         raise ReviewError(
             FailKind.FATAL,
@@ -2026,7 +2160,10 @@ def _triage_provenance(ctx: RunContext) -> dict[str, Any] | None:
     t, lm = ctx.triage, ctx.cfg.policy.triage
     if t is None or lm is None:
         return None
-    ran = ctx.lane_model(lm)
+    # the lane that answered: a run that went degraded after the primary rated it (a later
+    # lane hit the dry pool, or only the selection half was retried on the stand-in) still
+    # names the primary
+    ran = lm if t.method == f"llm:{lm.model}" else ctx.lane_model(lm)
     return {
         "tier": t.tier,
         "model": ran.model,
@@ -2594,13 +2731,9 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         json.dumps({h: dataclasses.asdict(o) for h, o in out.outcomes.items()}, indent=1)
     )
     # same guard as step_publish: a push may have landed while the lane ran, and a verdict
-    # follow-up must never be posted against an obsolete commit (the scheduler supersedes
-    # this head and ingest queues the live one)
-    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
-    if live.head_sha != ctx.sha:
-        raise ReviewError(
-            FailKind.FATAL, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
-        )
+    # follow-up must never be posted against an obsolete commit (the run ends superseded and
+    # ingest queues the live one)
+    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
     out = converse.accept_deferrals(out, threads)
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
@@ -2803,30 +2936,19 @@ def run(ctx: RunContext) -> RunStatus:
     pol = ctx.cfg.policy
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
     _detect_degraded(ctx)
-    _gate_comment(ctx, "in_progress")
     standing = _standing_review(ctx) if ctx.trigger == Trigger.REVIEW_REPLY else None
-    for name, fn in (
-        (StepName.WORKTREE, step_worktree),
-        (StepName.SELECT, step_select),
-        (StepName.TRIAGE, step_triage),
-        (StepName.CONTEXT, step_context),
-    ):
-        if name == StepName.TRIAGE and pol.triage is None:
-            continue
-        if standing and name in (StepName.SELECT, StepName.TRIAGE):
-            continue  # a conversation needs no specialist selection or effort triage
-        if name == StepName.TRIAGE and ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
-            ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
-            continue
+    ctx.conversation = standing is not None
+    ctx.check_cancel()
+    _step_start(ctx, StepName.WORKTREE)
+    step_worktree(ctx)
+    _step_end(ctx, StepName.WORKTREE, "ok")
+    if not standing:  # a conversation needs no specialist selection or effort triage
         ctx.check_cancel()
-        _step_start(ctx, name)
-        fn(ctx)
-        detail: dict[str, Any] | None = None
-        if name == StepName.SELECT:
-            detail = {"selection": ctx.selection}
-        elif name == StepName.TRIAGE and ctx.triage:
-            detail = dataclasses.asdict(ctx.triage)
-        _step_end(ctx, name, "ok", detail)
+        step_prep(ctx)
+    ctx.check_cancel()
+    _step_start(ctx, StepName.CONTEXT)
+    step_context(ctx)
+    _step_end(ctx, StepName.CONTEXT, "ok")
     if standing:
         # a human replied on a commit we already reviewed: the code did not change, the
         # discussion did. Answer the threads; never re-run the review pipeline for that.
@@ -3200,6 +3322,21 @@ def main(
         kind = FailKind.INFRA
     except Cancelled:
         status, reason = RunStatus.CANCELLED, "cancel requested"
+    except HeadObsolete as exc:
+        # nothing to review: end the head as ingest would have, with no failure, retry, alert
+        # or failure gate comment (the newer head's queue comment takes the PR's comment over)
+        status, reason = RunStatus.CANCELLED, f"head {exc.status.value}: {exc.reason}"
+        current = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (run_id,)).fetchone()
+        with tx(ctx.conn):
+            if current and current["phase"]:
+                ctx.conn.execute(
+                    "UPDATE steps SET status='cancelled', finished_at=?, detail=? "
+                    "WHERE run_id=? AND name=? AND status='running'",
+                    (now(), json.dumps({"reason": reason}), run_id, current["phase"]),
+                )
+            retire_obsolete_head(ctx.conn, ctx.head_id, exc.status, exc.reason)
+        if exc.status == HeadStatus.CLOSED:
+            _gate_closed(ctx, exc.reason)
     except ReviewError as exc:
         status, reason, kind = RunStatus.FAILED, exc.message, exc.kind
         current = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -3222,7 +3359,7 @@ def main(
             run_id,
             status,
             reason=reason,
-            fail_kind=None if status == RunStatus.DONE else kind,
+            fail_kind=kind if status == RunStatus.FAILED else None,  # a cancel is no failure
         )
         cleanup(ctx, status)
     return status

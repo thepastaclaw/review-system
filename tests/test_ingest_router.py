@@ -353,6 +353,79 @@ def test_requeued_head_replaces_worker_written_gate_comment(cfg, conn, gh):
     assert stats["written"] == 1 and "Queued for automated review" in gh.gate_bodies[-1]
 
 
+def _debounced(conn, cfg, gh, number=400, *, attempts=0):
+    """An open PR whose new head waits out the push debounce, with an existing gate comment."""
+    sha = f"{number:040x}"
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) "
+            "VALUES ('dashpay/platform', ?, ?, 'open', 't')",
+            (number, sha),
+        )
+        enqueue_head(conn, cfg, "dashpay/platform", number, sha, Trigger.NEW_PUSH)
+        conn.execute("UPDATE heads SET attempts=? WHERE number=?", (attempts, number))
+        kv_set(conn, f"queue.comment_id:dashpay/platform#{number}", str(number))
+    ep = f"repos/dashpay/platform/issues/comments/{number}"
+    gh.routes[ep] = {
+        "id": number,
+        "node_id": f"IC_{number}",
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-gate v1 -->\n✅ Final review complete (commit 11111111)",
+    }
+    return ep
+
+
+def test_debounced_head_gets_one_stable_body(cfg, conn, gh):
+    """The deferred pass and the queue pass both rendered a debounced head, one after the
+    other, so its comment flipped between the two bodies on every pass."""
+    from reviewsys.queue_status import DEFERRED_MARKER
+
+    ep = _debounced(conn, cfg, gh)
+    update_queue_comments(conn, cfg, gh)
+    assert len(gh.gate_bodies) == 1 and DEFERRED_MARKER in gh.gate_bodies[0]
+    assert "30-minute push debounce" in gh.routes[ep]["body"]
+    for _ in range(3):
+        stats = update_queue_comments(conn, cfg, gh)
+        assert stats["written"] == 0, "an unchanged body is never rewritten"
+    assert len(gh.gate_bodies) == 1
+    assert "Queued for automated review" not in gh.routes[ep]["body"]
+
+
+def test_debounced_head_boxes_still_work(cfg, conn, gh):
+    gh.routes["graphql:userContentEdits"] = {
+        "node": {"userContentEdits": {"nodes": [{"editedAt": "t", "editor": {"login": "knst"}}]}}
+    }
+    ep = _debounced(conn, cfg, gh, 401)
+    update_queue_comments(conn, cfg, gh)
+    gh.routes[ep]["body"] = gh.routes[ep]["body"].replace(
+        "- [ ] **Request priority", "- [x] **Request priority"
+    )
+    assert update_queue_comments(conn, cfg, gh)["promoted"] == 1
+    head = conn.execute("SELECT priority, trigger FROM heads WHERE number=401").fetchone()
+    assert tuple(head) == (1, "priority_request")
+    assert gh.routes[ep]["body"].splitlines()[1].startswith("⚡ Priority review — 1st in line")
+    # the normal box: an explicit request, queued at once
+    ep = _debounced(conn, cfg, gh, 402)
+    update_queue_comments(conn, cfg, gh)
+    gh.routes[ep]["body"] = gh.routes[ep]["body"].replace(
+        "- [ ] **Request normal", "- [x] **Request normal"
+    )
+    update_queue_comments(conn, cfg, gh)
+    head = conn.execute("SELECT priority, trigger FROM heads WHERE number=402").fetchone()
+    assert tuple(head) == (1, "manual")
+    update_queue_comments(conn, cfg, gh)
+    assert "Priority review" in gh.routes[ep]["body"]
+
+
+def test_head_in_retry_backoff_keeps_the_queue_body(cfg, conn, gh):
+    """A retry backoff is not the push debounce: the queue body's ETA counts the wait."""
+    ep = _debounced(conn, cfg, gh, 403, attempts=1)
+    update_queue_comments(conn, cfg, gh)
+    update_queue_comments(conn, cfg, gh)
+    assert len(gh.gate_bodies) == 1
+    assert "Queued for automated review" in gh.routes[ep]["body"]
+
+
 def test_queue_comment_writes_are_capped_per_pass(cfg, conn, gh, monkeypatch):
     from reviewsys import queue_status
 

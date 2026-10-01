@@ -81,7 +81,9 @@ def _run(cfg, conn, gh, lanes, *, prober, number=1):
 
 
 def _reviewer_calls(lanes):
-    return [s for s in lanes.calls if s.role not in ("selector", "triage", "verifier", "repair")]
+    return [
+        s for s in lanes.calls if s.role not in ("selector", "triage", "prep", "verifier", "repair")
+    ]
 
 
 EXHAUSTED = lambda model: (True, f"`{model}` unavailable: cooling down")  # noqa: E731
@@ -268,14 +270,13 @@ def test_degraded_run_swaps_every_primary_lane_and_discloses_it(
     rid, status = _run(c, conn, gh, lanes, prober=EXHAUSTED)
     assert status == RunStatus.DONE
     calls = [(s.role, s.model, s.effort) for s in lanes.calls]
-    assert calls[0] == ("selector", "glm-5.3-flash", "low")  # terra -> glm
-    assert calls[1] == ("triage", MUSE, "low")  # astra -> muse
+    assert calls[0] == ("prep", MUSE, "low")  # selection + triage, on triage's astra -> muse
     # Phase 1 stays on its own model but the tier's `max` is capped to `high`
     roles = ("always-on", "general", "security-auditor")  # a phase's lanes run in parallel
-    assert sorted(calls[2:5]) == [(r, "glm-5.3-flash", "high") for r in roles]
-    assert calls[5] == ("verifier", MUSE, "high")  # sol gate verifier -> muse
-    assert sorted(calls[6:9]) == [(r, MUSE, "high") for r in roles]
-    assert calls[9] == ("verifier", MUSE, "high")
+    assert sorted(calls[1:4]) == [(r, "glm-5.3-flash", "high") for r in roles]
+    assert calls[4] == ("verifier", MUSE, "high")  # sol gate verifier -> muse
+    assert sorted(calls[5:8]) == [(r, MUSE, "high") for r in roles]
+    assert calls[8] == ("verifier", MUSE, "high")
     assert {s.model for s in lanes.calls} == {"glm-5.3-flash", MUSE}, "no primary model touched"
     # persisted + evented
     assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 1
@@ -324,16 +325,18 @@ def test_quota_failure_mid_run_switches_the_rest_of_the_run(conn, gh, lanes, ski
     )
     rid, status = _run(c, conn, gh, lanes, prober=FINE)  # the probe said fine; the lane knew better
     assert status == RunStatus.DONE
-    # triage on astra dies on 429 (twice, its own retry): that flips the mode, triage is re-run
-    # on the stand-in and every later lane avoids the dead pool
-    triage_models = [s.model for s in lanes.calls if s.role == "triage"]
-    assert triage_models == ["gpt-6-astra", "gpt-6-astra", MUSE]
+    # the prep lane (selection + triage) on astra dies on 429 (twice, its own retry): that
+    # flips the mode, prep is re-run on the stand-in and every later lane avoids the dead pool
+    prep_models = [s.model for s in lanes.calls if s.role == "prep"]
+    assert prep_models == ["gpt-6-astra", "gpt-6-astra", MUSE]
     assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] == "normal"
     assert [s.model for s in lanes.calls if s.role == "verifier"] == [MUSE, MUSE]
     assert {s.model for s in _reviewer_calls(lanes)} == {"glm-5.3-flash", MUSE}
     kinds = [r["kind"] for r in conn.execute("SELECT kind FROM events WHERE run_id=?", (rid,))]
     assert "degraded.entered_midrun" in kinds and "degraded.run" not in kinds
     assert "triage.degraded" not in kinds, "the re-run triage succeeded"
+    assert "select.degraded" not in kinds, "and so did the selection"
+    assert (c.runs_dir / f"run-{rid}" / "prep" / "attempt-3").is_dir(), "numbered on"
     assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 1
     body = gh.posted_reviews[0]["body"]
     assert DEGRADED_BADGE in body and "(detected by lane" in body
@@ -344,7 +347,7 @@ def test_quota_failure_mid_run_switches_the_rest_of_the_run(conn, gh, lanes, ski
     detail = conn.execute(
         "SELECT detail FROM events WHERE run_id=? AND kind='degraded.entered_midrun'", (rid,)
     ).fetchone()["detail"]
-    assert detail.startswith("triage lane: exit 1")
+    assert detail.startswith("prep lane: exit 1")
     # the failure is remembered with a hold: the next run starts degraded without a probe
     blob = json.loads(kv_get(conn, degraded.KV_PROBE))
     assert blob["quota_exhausted"] and blob["hold_until"]
@@ -415,6 +418,7 @@ def test_without_a_degraded_block_a_quota_failure_falls_through_to_phase_2(cfg, 
     # ... but a dead Phase-2 model still fails the run: there is nothing left to fall to
     lanes.dead_models = {"gpt-6-astra"}
     gh.posted_reviews.clear()
+    gh.pr = {**gh.pr, "head": {"sha": "c" * 40}}  # PR 2's live head
     with tx(conn):
         conn.execute("UPDATE heads SET status='done'")
         enqueue_head(conn, cfg, "dashpay/platform", 2, "c" * 40, Trigger.MENTION)
@@ -422,6 +426,8 @@ def test_without_a_degraded_block_a_quota_failure_falls_through_to_phase_2(cfg, 
     assert worker.main(cfg, conn, rid2, gh=gh, lane_runner=lanes, heartbeat=False) == (
         RunStatus.FAILED
     )
+    step = conn.execute("SELECT phase FROM runs WHERE id=?", (rid2,)).fetchone()["phase"]
+    assert step == "phase2", "failed on the dead Phase-2 model, not on a stale head"
 
 
 def test_degraded_mode_under_a_deep_backlog_runs_phase_2_only_on_the_standin(
@@ -703,11 +709,10 @@ def test_degraded_rereview_never_retracts_a_full_strength_approval(
     assert "review.verdict_updated" in kinds2
 
 
-def test_production_shape_substitutes_keep_two_selector_attempts(
-    conn, gh, lanes, skills_dir, tmp_path
-):
-    """The shipped policy maps terra, luna, sol and astra all onto muse; the selector must
-    still get its two attempts (both on muse) rather than collapsing to one."""
+def test_production_shape_substitutes_keep_two_prep_attempts(conn, gh, lanes, skills_dir, tmp_path):
+    """The shipped policy maps terra, luna, sol and astra all onto muse; the prep lane
+    (selection + triage) must still get its two attempts (both on muse) rather than
+    collapsing to one."""
     block = {
         "sentinel": "gpt-6-astra",
         "phase1_effort_cap": "high",
@@ -718,11 +723,11 @@ def test_production_shape_substitutes_keep_two_selector_attempts(
     c = _cfg_with(skills_dir, tmp_path, block=block)
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier()
-    lanes.broken_once = {"selector"}  # first selector attempt returns unparseable JSON
+    lanes.broken_once = {"prep"}  # first prep attempt returns unparseable JSON
     _rid, status = _run(c, conn, gh, lanes, prober=EXHAUSTED)
     assert status == RunStatus.DONE
-    selector = [s.model for s in lanes.calls if s.role == "selector"]
-    assert selector == [MUSE, MUSE]
+    prep = [s.model for s in lanes.calls if s.role == "prep"]
+    assert prep == [MUSE, MUSE]
     sel = json.loads((c.runs_dir / "run-1" / "selector.json").read_text())
     assert sel["method"] == f"llm:{MUSE}" and sel["selected"] == ["always-on", "security-auditor"]
     assert {s.model for s in lanes.calls} == {"glm-5.3-flash", MUSE}

@@ -24,7 +24,7 @@ from reviewsys.steps import worktree as wt
 HEAD = "a" * 40
 PRIMARY, SECOND = "gpt-6.1-sol", "gpt-6-astra"
 ROLES = {"general", "always-on", "security-auditor"}
-NON_REVIEWER_ROLES = {"selector", "triage", "verifier", "repair"}
+NON_REVIEWER_ROLES = {"selector", "triage", "prep", "verifier", "repair"}
 
 
 @pytest.fixture(autouse=True)
