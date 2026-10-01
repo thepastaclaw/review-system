@@ -295,6 +295,24 @@ def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
             ("triage", "ok", {"tier": "critical", "reasoning": "big diff", "error": "a@b.c"}),
             ("phase1", "running", {}),
             ("context", "failed", {"error": "token for someone@example.com"}),
+            (
+                "phase2",
+                "failed",
+                {
+                    "error": "phase2/general lane failed twice: [infra] lane exit 1: API Error: "
+                    '429 {"error": {"message": "limit for a@b.c"}} see https://proxy.example/x '
+                    "in /Users/claw/.reviewsys/work/run-60",
+                    "dropped": True,
+                },
+            ),
+            (
+                "verify1",
+                "failed",
+                {
+                    "error": "phase1/general lane failed twice: [contract] model output is not a "
+                    "JSON object: 'Here is my review of the private code and what it does'"
+                },
+            ),
         ):
             conn.execute(
                 "INSERT INTO steps (run_id, name, status, started_at, detail) VALUES (?,?,?,?,?)",
@@ -346,10 +364,21 @@ def test_active_runs_carry_steps_lanes_and_live_lane_state(cfg, conn, tmp_path):
     export = build_export(conn, cfg)
     (active,) = export["live"]["active"]
     assert active["wait_seconds"] == 900 and active["tokens_in"] == 900
-    assert [s["name"] for s in active["steps"]] == ["triage", "phase1", "context"]
-    assert active["steps"][0]["info"] == {"tier": "critical", "reasoning": "big diff"}
-    assert active["steps"][2]["info"] == {}
-    assert "example.com" not in json.dumps(export) and "a@b.c" not in json.dumps(export)
+    steps = {s["name"]: s for s in active["steps"]}
+    assert list(steps) == ["triage", "phase1", "context", "phase2", "verify1"]
+    assert steps["triage"]["info"] == {"tier": "critical", "reasoning": "big diff"}
+    # a failed step says why on the public page, sanitized: no account, URL, path, upstream
+    # body or model output
+    assert steps["context"]["info"] == {"error": "token for <account>"}
+    assert steps["phase2"]["info"] == {
+        "error": "phase2/general lane failed twice: lane exit 1: API Error: 429 {…} see <url> "
+        "in <path>"
+    }
+    assert steps["verify1"]["info"] == {
+        "error": "phase1/general lane failed twice: model output is not a JSON object: '…'"
+    }
+    text = json.dumps(export)
+    assert "example.com" not in text and "a@b.c" not in text and "private code" not in text
     live = {x["role"]: x for x in active["live_lanes"]}
     assert set(live) == {"general", "ffi", "verifier"}
     assert live["general"]["state"] == "running" and live["general"]["since_seconds"] >= 1800

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import statistics
 from datetime import datetime, timedelta
@@ -12,6 +13,7 @@ from typing import Any
 from . import lanepool, progress
 from .config import Config
 from .db import fmt_ts, now, now_dt, parse_ts
+from .notify import redact_emails
 from .queue_status import queued_order
 from .status import snapshot
 
@@ -232,6 +234,28 @@ _STEP_KEYS = (
 )
 
 
+_URL_RE = re.compile(r"https?://\S+")
+_PATH_RE = re.compile(r"(?:~|\.{1,2})?(?:/[\w.@+-]+){2,}/?")
+_JSON_RE = re.compile(r"\{.*\}", re.S)
+# a quoted fragment this long is model output (`model output is not a JSON object: '...'`) or
+# an upstream body: the PR under review may be private, so never on the public page
+_LONG_QUOTE_RE = re.compile(r"(['\"])[^'\"]{40,}\1")
+STEP_ERROR_CHARS = 300
+
+
+def public_error(text: str) -> str:
+    """A failed step's error as the public page may show it: what failed and how, with URLs,
+    paths, account emails, JSON bodies and long quoted fragments (model output, upstream
+    replies) taken out, on one line, capped. The full text stays in the step and the events."""
+    msg = _URL_RE.sub("<url>", text)
+    msg = redact_emails(msg)
+    msg = _JSON_RE.sub("{…}", msg)
+    msg = _LONG_QUOTE_RE.sub(r"\1…\1", msg)
+    msg = _PATH_RE.sub("<path>", msg)
+    msg = " ".join(msg.replace("[infra] ", "").replace("[contract] ", "").split())
+    return msg if len(msg) <= STEP_ERROR_CHARS else msg[: STEP_ERROR_CHARS - 1] + "…"
+
+
 def _step_info(status: str, detail: str | None) -> dict[str, Any]:
     try:
         raw = json.loads(detail or "{}")
@@ -244,6 +268,10 @@ def _step_info(status: str, detail: str | None) -> dict[str, Any]:
         info["reasoning"] = info["reasoning"][:400]
     if status == "skipped" and isinstance(raw.get("reason"), str):
         info["reason"] = raw["reason"][:200]  # e.g. "skipped for throughput: 22 PRs queued"
+    if status == "failed" and isinstance(raw.get("error"), str):
+        # e.g. a single-stage Phase 1 that failed while Phase 2 goes on: the page shows why
+        # under the red pill right away, not only in the review hours later
+        info["error"] = public_error(raw["error"])
     return info
 
 
@@ -256,10 +284,12 @@ def _live_lanes(run_dir: str | None, slot_dir: Path, at: datetime) -> list[dict[
     out = []
     lines: dict[str, list[str]] = {}
     root = Path(run_dir)
-    # a repair lane runs in its parent lane's `repair/` subdirectory
+    # a repair lane runs in its parent lane's `repair/` subdirectory, a correction turn (in
+    # the lane's own session and slot) in its `correction-<n>/`
     found = [
         *root.glob(f"*/*/{lanepool.LANE_STATE}"),
         *root.glob(f"attempts/*/repair/{lanepool.LANE_STATE}"),
+        *root.glob(f"attempts/*/correction-*/{lanepool.LANE_STATE}"),
     ]
     for state_file in sorted(found):
         lane_dir = state_file.parent
@@ -276,14 +306,20 @@ def _live_lanes(run_dir: str | None, slot_dir: Path, at: datetime) -> list[dict[
         except (OSError, ValueError):
             continue
         repair = lane_dir.name == "repair"
+        correction = lane_dir.name.startswith("correction-")
         # attempts/<phase>-<role>-<id> for phase lanes, <step>/attempt-N for selector/triage
-        named = lane_dir.parent if repair else lane_dir
+        named = lane_dir.parent if repair or correction else lane_dir
         phase = (
             named.name.split("-", 1)[0] if named.parent.name == "attempts" else named.parent.name
         )
+        role = st.get("role")
+        if repair:
+            role = f"{role} (repair)"
+        elif correction:
+            role = f"{role} (correction {lane_dir.name.removeprefix('correction-')})"
         lane = {
             "phase": phase,
-            "role": f"{st.get('role')} (repair)" if repair else st.get("role"),
+            "role": role,
             "model": st.get("model"),
             "effort": st.get("effort"),
             "pool": st.get("pool"),

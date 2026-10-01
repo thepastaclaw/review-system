@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import functools
 import json
 import logging
 import random
@@ -22,7 +23,7 @@ from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import audit, converse, degraded, github, labels, lanepool, publish, quota
 from . import progress as progress_mod
@@ -45,12 +46,20 @@ from .lane import (
     LaneSpec,
     exec_deny_profile,
     lane_output,
+    new_session_id,
     prompt_sha,
     run_claude_lane,
     sandboxed,
 )
 from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
-from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, skill_texts, verifier_prompt
+from .prompts import (
+    correction_prompt,
+    prior_for_prompt,
+    repair_prompt,
+    reviewer_prompt,
+    skill_texts,
+    verifier_prompt,
+)
 from .scheduler import finish_run, live_queued_count
 from .select import Selection, select, write_selection
 from .steps import worktree as wt
@@ -71,6 +80,90 @@ class LaneStopped(Exception):
     def __init__(self, *, started: bool = True) -> None:
         super().__init__()
         self.started = started
+
+
+class LaneFailed(ReviewError):
+    """A lane failed for good (every attempt it had). `cause` is the last attempt's own
+    error, without the "phase/role lane failed twice" framing: what a stopped sibling's
+    reason quotes."""
+
+    def __init__(self, kind: FailKind, message: str, cause: str) -> None:
+        super().__init__(kind, message)
+        self.cause = cause
+
+
+class StopSignal:
+    """A threading.Event that remembers why it was set (the first reason wins), so a lane
+    stopped because its phase is being abandoned can say which lane failed and how."""
+
+    def __init__(self) -> None:
+        self._event = threading.Event()
+        self._lock = threading.Lock()
+        self.reason = ""
+
+    def set(self, reason: str = "") -> None:
+        with self._lock:
+            if not self._event.is_set():
+                self.reason = reason
+                self._event.set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+
+@dataclass(frozen=True, slots=True)
+class OutputCheck[T]:
+    """How a lane's JSON answer becomes its typed output (`validate`, raising a CONTRACT
+    ReviewError when it breaks the contract), and what a correction turn or the repair lane is
+    told about it. `kind` "reviewer" / "verifier" lanes get correction turns in their own
+    session (`[lanes] correction_turns`); "" (persistence, conversation) only the repair lane,
+    as before."""
+
+    validate: Callable[[dict[str, Any]], T]
+    kind: str = ""
+    expected_phase: str = ""
+    prior: list[dict[str, Any]] = field(default_factory=list)  # prior findings, as prompted
+    coderabbit_ids: list[int] = field(default_factory=list)
+
+
+def _as_is(raw: dict[str, Any]) -> dict[str, Any]:
+    return raw
+
+
+PLAIN_OUTPUT = OutputCheck(validate=_as_is)
+
+
+@dataclass(slots=True)
+class _Verdict:
+    """One answer judged against its OutputCheck: `output` when `error` is None."""
+
+    output: Any = None
+    error: ReviewError | None = None
+    # no JSON object could be read from an answer that did finish: what the repair lane fixes
+    unparsed: bool = False
+
+
+def _validated[T](raw: dict[str, Any], check: OutputCheck[T]) -> _Verdict:
+    try:
+        return _Verdict(output=check.validate(raw))
+    except ReviewError as exc:
+        return _Verdict(error=exc)
+    except (TypeError, ValueError, KeyError, AttributeError) as exc:
+        # a value of the wrong type the parser did not expect (`int("abc")` for a comment id)
+        # is the model's contract breach too, and as correctable
+        msg = f"output rejected: {type(exc).__name__}: {exc}"
+        return _Verdict(error=ReviewError(FailKind.CONTRACT, msg))
+
+
+def _evaluate[T](turn: LaneResult, check: OutputCheck[T]) -> _Verdict:
+    """A finished turn's answer: an INFRA error when the turn itself failed (crash, timeout,
+    upstream error), CONTRACT when its answer has no JSON object or breaks the contract."""
+    try:
+        raw = lane_output(turn)
+    except ReviewError as exc:
+        unparsed = exc.kind is FailKind.CONTRACT and turn.ok and bool(turn.result_text.strip())
+        return _Verdict(error=exc, unparsed=unparsed)
+    return _validated(raw, check)
 
 
 @dataclass(slots=True)
@@ -386,6 +479,12 @@ def _lane_row(
     psha: str,
     reason: str = "",
 ) -> None:
+    """One row per lane attempt. Its correction turns (`res.followups`) ran in the same
+    session and slot, so their tokens are added to the row rather than given rows of their
+    own: a role still has one row per attempt, which is what progress and compare count."""
+    turns = [res, *res.followups] if res else []
+    tokens_in = [t.tokens_in for t in turns if t.tokens_in is not None]
+    tokens_out = [t.tokens_out for t in turns if t.tokens_out is not None]
     with tx(ctx.conn):
         ctx.conn.execute(
             "INSERT INTO lanes (run_id, phase, role, agent, model, effort, attempt, attempt_id, status, exit_code, tokens_in, tokens_out, started_at, finished_at, artifact_dir, prompt_sha, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -400,8 +499,8 @@ def _lane_row(
                 attempt_id,
                 status,
                 res.exit_code if res else None,
-                res.tokens_in if res else None,
-                res.tokens_out if res else None,
+                sum(tokens_in) if tokens_in else None,
+                sum(tokens_out) if tokens_out else None,
                 now(),
                 now(),
                 str(artifact_dir),
@@ -728,24 +827,63 @@ def _run_lane(
     lm: LaneModel,
     prompt: str,
     is_verifier: bool,
+) -> dict[str, Any]:
+    """A lane whose JSON answer its caller checks itself (persistence, conversation): retries
+    and the repair lane as below, no correction turns."""
+    return _run_checked_lane(
+        ctx,
+        phase=phase,
+        role=role,
+        lm=lm,
+        prompt=prompt,
+        is_verifier=is_verifier,
+        check=PLAIN_OUTPUT,
+    )
+
+
+def _run_checked_lane[T](
+    ctx: RunContext,
+    *,
+    phase: str,
+    role: str,
+    lm: LaneModel,
+    prompt: str,
+    is_verifier: bool,
+    check: OutputCheck[T],
     fresh: bool = False,
     should_stop: Callable[[], bool] | None = None,
     comparison: bool = False,
-) -> dict[str, Any]:
-    """Run a lane with bounded retries and one cheap JSON repair. Returns parsed output.
+    stop_reason: Callable[[], str] | None = None,
+) -> T:
+    """Run a lane with bounded retries until its answer passes `check`. Returns the output.
+
+    An answer that breaks the contract (no JSON object in it, or `check.validate` rejects it
+    after the deterministic normalization in contract.py) is first corrected in the lane's
+    own session: up to `[lanes] correction_turns` follow-up turns tell the model the exact
+    errors and the values it must echo (`lane.run_with_corrections`, inside the lane's pool
+    slot). Only when the session cannot be resumed (no session, or the follow-up failed) does
+    the context-free repair lane get an answer that has no JSON object in it, told the values
+    it cannot know; its output is normalized and validated like any other. An attempt still
+    failing after that is a failed attempt, retried once: so it happens before the Phase-1
+    ladder (`_reviewer_lane`) moves a role down for a contract failure. Every correction is an
+    event (`lane.corrected` / `lane.correction_failed`), every normalized answer one too
+    (`lane.output_normalized`); the row is `corrected` / `repaired` / `completed`.
 
     A lane on a primary model that dies on a quota failure flips the run into degraded mode
     (when the policy has a stand-in for that model) and gets its two attempts again on the
     stand-in, so one exhausted pool does not fail the review.
 
     `should_stop` (default: the run was cancelled) is polled while the lane runs; a stopped
-    lane raises Cancelled when the run was cancelled, else LaneStopped. A `comparison` lane
-    (keyed `<role>#2`) gets one attempt, takes its slot in the `compare` pool (never a
-    production one), never runs on a stand-in and never flips the run: it fails instead."""
+    lane raises Cancelled when the run was cancelled, else LaneStopped, its row saying why
+    (`stop_reason`). A `comparison` lane (keyed `<role>#2`) gets one attempt, takes its slot in
+    the `compare` pool (never a production one), never runs on a stand-in and never flips the
+    run: it fails instead."""
     assert ctx.worktree
     stop = should_stop or ctx.cancel_flag.is_set
     key = f"{role}{COMPARE_SUFFIX}" if comparison else role
-    last: str = ""
+    pool = lanepool.COMPARE_POOL if comparison else None
+    corrections = ctx.cfg.lane_correction_turns if check.kind else 0
+    last = cause = ""
     attempt, budget = 0, 1 if comparison else 2
     while attempt < budget:
         attempt += 1
@@ -761,6 +899,25 @@ def _run_lane(
             raise ReviewError(FailKind.INFRA, f"{phase}/{role}: the run left {lm.model}")
         attempt_id = uuid.uuid4().hex[:12]
         art = ctx.run_dir / "attempts" / f"{phase}-{role}-{attempt_id}"
+        asked: list[str] = []  # the error each correction turn was asked to fix
+
+        def ask(turn: LaneResult, asked: list[str] = asked) -> str | None:
+            verdict = _evaluate(turn, check)
+            if verdict.error is None or verdict.error.kind is not FailKind.CONTRACT:
+                return None
+            asked.append(verdict.error.message)
+            return correction_prompt(
+                errors=verdict.error.message.split("; "),
+                kind=check.kind,
+                expected_phase=check.expected_phase,
+                head_sha=ctx.sha,
+                prior=check.prior,
+                coderabbit_ids=check.coderabbit_ids,
+                turn=len(asked),
+                turns=corrections,
+            )
+
+        session = new_session_id() if corrections else ""
         spec = LaneSpec(
             role=role,
             agent=lm.agent,
@@ -774,91 +931,126 @@ def _run_lane(
             max_budget_usd=ctx.cfg.lane_budget_usd,
             should_stop=stop,
             parallel=not is_verifier and not comparison,
-            pool=lanepool.COMPARE_POOL if comparison else None,
+            pool=pool,
+            session_id=session,
+            check=ask if session else None,
+            corrections=corrections,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)
-        if res.cancelled:
-            if res.started:  # a lane stopped while it waited for a slot never ran
-                _lane_row(
-                    ctx,
-                    phase=phase,
-                    role=role,
-                    lm=lm,
-                    attempt=attempt,
-                    attempt_id=attempt_id,
-                    status="cancelled",
-                    res=res,
-                    artifact_dir=art,
-                    psha=psha,
-                    reason="run cancelled"
-                    if ctx.cancel_flag.is_set()
-                    else "stopped: comparison lane"
-                    if comparison
-                    else "another lane of this phase failed",
-                )
-            ctx.check_cancel()
-            raise LaneStopped(started=res.started)
-        try:
-            out = lane_output(res)
-        except ReviewError as exc:
-            if exc.kind == FailKind.CONTRACT and res.ok and res.result_text.strip():
-                repaired = _repair(
-                    ctx, res.result_text, art, stop, lanepool.COMPARE_POOL if comparison else None
-                )
-                if repaired is not None:
-                    _lane_row(
-                        ctx,
-                        phase=phase,
-                        role=role,
-                        lm=lm,
-                        attempt=attempt,
-                        attempt_id=attempt_id,
-                        status="repaired",
-                        res=res,
-                        artifact_dir=art,
-                        psha=psha,
-                    )
-                    if not is_verifier:
-                        _record_reviewer(ctx, phase, role, key, lm, fresh, attempt_id)
-                    return repaired
-            _lane_row(
-                ctx,
-                phase=phase,
-                role=role,
-                lm=lm,
-                attempt=attempt,
-                attempt_id=attempt_id,
-                status="failed",
-                res=res,
-                artifact_dir=art,
-                psha=psha,
-                reason=str(exc),
-            )
-            last = str(exc)
-            switched = None if comparison else _degrade_on_quota_failure(ctx, lm, exc, res)
-            if switched is not None:
-                lm, budget = switched, attempt + 2
-            continue
-        _lane_row(
+        turns = [res, *res.followups]
+        row = functools.partial(
+            _lane_row,
             ctx,
             phase=phase,
             role=role,
             lm=lm,
             attempt=attempt,
             attempt_id=attempt_id,
-            status="completed",
             res=res,
             artifact_dir=art,
             psha=psha,
         )
-        if not is_verifier:
-            _record_reviewer(ctx, phase, role, key, lm, fresh, attempt_id)
-        return out
-    raise ReviewError(
+        if any(t.cancelled for t in turns):  # stopped, before it finished or mid-correction
+            if res.started:  # a lane stopped while it waited for a slot never ran
+                if ctx.cancel_flag.is_set():
+                    why = "run cancelled"
+                elif comparison:
+                    why = "stopped: comparison lane"
+                else:
+                    why = (
+                        stop_reason() if stop_reason else ""
+                    ) or "another lane of this phase failed"
+                row(status="cancelled", reason=why)
+            ctx.check_cancel()
+            raise LaneStopped(started=res.started)
+        # the newest turn that finished: a correction that could not resume the session (or
+        # died on its own) leaves the answer before it standing
+        basis = next((t for t in reversed(turns) if t.ok), res)
+        resume_failed = bool(res.followups) and not turns[-1].ok
+        verdict = _evaluate(basis, check)
+        status = "completed" if basis is res else "corrected"  # when it passes
+        if verdict.error is not None and verdict.unparsed and (not session or resume_failed):
+            repaired = _repair(ctx, basis.result_text, art, stop, pool, check)
+            if repaired is not None:
+                fixed = _validated(repaired, check)
+                if fixed.error is None:
+                    verdict, status = fixed, "repaired"
+                else:
+                    msg = f"repaired output: {fixed.error.message}"
+                    verdict = _Verdict(error=ReviewError(FailKind.CONTRACT, msg))
+        if res.followups:
+            _correction_event(
+                ctx,
+                f"{phase}/{key} {lm.model} turns={len(res.followups)}",
+                asked,
+                verdict.error or ("rescued by the repair lane" if status == "repaired" else None),
+                res.followups[-1] if resume_failed else None,
+            )
+        if verdict.error is None:
+            notes: list[str] = getattr(verdict.output, "normalized", None) or []
+            reason = (
+                f"corrected ({len(res.followups)} turns): {asked[0]}"
+                if asked and status == "corrected"
+                else ""
+            )
+            if notes:
+                reason = "; ".join(filter(None, (reason, "normalized: " + "; ".join(notes))))
+                _lane_event(
+                    ctx, "lane.output_normalized", f"{phase}/{key} {lm.model}: {'; '.join(notes)}"
+                )
+            row(status=status, reason=reason)
+            if not is_verifier:
+                _record_reviewer(ctx, phase, role, key, lm, fresh, attempt_id)
+            return cast(T, verdict.output)
+        exc = verdict.error
+        after = f" (after {len(res.followups)} correction turns)" if res.followups else ""
+        row(status="failed", reason=f"{exc}{after}")
+        last, cause = f"{exc}{after}", exc.message
+        switched = None if comparison else _degrade_on_quota_failure(ctx, lm, exc, res)
+        if switched is not None:
+            lm, budget = switched, attempt + 2
+    raise LaneFailed(
         FailKind.INFRA if "timed out" in last or "exit" in last else FailKind.CONTRACT,
         f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}",
+        cause,
     )
+
+
+def _lane_event(ctx: RunContext, kind: str, detail: str) -> None:
+    with tx(ctx.conn):
+        event(
+            ctx.conn,
+            kind,
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=detail[:1000],
+        )
+
+
+def _correction_event(
+    ctx: RunContext,
+    head: str,
+    asked: list[str],
+    failure: ReviewError | str | None,
+    failed_turn: LaneResult | None,
+) -> None:
+    """`lane.corrected` / `lane.correction_failed`, one per lane attempt that had correction
+    turns: `head` (phase/role, model, turns), what the first turn was asked to fix, and for a
+    failure why (still invalid, or the session could not be resumed) and how it ended (the
+    error, or that the repair lane rescued it). `failure` None: the correction worked."""
+    first = f"first error: {asked[0][:400]}" if asked else ""
+    if failure is None:
+        _lane_event(ctx, "lane.corrected", f"{head}: {first}")
+        return
+    how = (
+        f"resume failed: {(failed_turn.first_stderr_line or failed_turn.result_text)[:200]}"
+        if failed_turn is not None
+        else "still invalid"
+    )
+    end = failure.message if isinstance(failure, ReviewError) else failure
+    _lane_event(ctx, "lane.correction_failed", f"{head} ({how}): {end[:400]}; {first}")
 
 
 def _record_reviewer(
@@ -889,9 +1081,18 @@ def _record_reviewer(
         )
 
 
-def _repair(
-    ctx: RunContext, raw: str, art: Path, stop: Callable[[], bool], pool: str | None = None
+def _repair[T](
+    ctx: RunContext,
+    raw: str,
+    art: Path,
+    stop: Callable[[], bool],
+    pool: str | None,
+    check: OutputCheck[T],
 ) -> dict[str, Any] | None:
+    """The context-free repair lane: turns an answer with no readable JSON object into one.
+    It is told the echo fields and prior hashes it could not know (it used to guess them, and
+    44% of its outputs then failed the contract); its output still goes through the same
+    normalization and validation. `pool`: a comparison lane's repair stays in its pool."""
     if len(raw) > 200_000 or not ctx.worktree:
         return None
     spec = LaneSpec(
@@ -899,13 +1100,19 @@ def _repair(
         agent="repair",
         model=ctx.model_name(ctx.cfg.policy.repair_model),
         effort="low",
-        prompt=REPAIR_PROMPT.format(raw=raw),
+        prompt=repair_prompt(
+            raw,
+            kind=check.kind,
+            expected_phase=check.expected_phase,
+            head_sha=ctx.sha,
+            prior_hashes=[str(p["finding_hash"]) for p in check.prior],
+        ),
         cwd=ctx.worktree,
         add_dir=ctx.run_dir,
         timeout_seconds=300,
         claude_bin=ctx.cfg.claude_bin,
         should_stop=stop,
-        pool=pool,  # a comparison lane's repair stays out of the production pool too
+        pool=pool,
     )
     try:
         res = ctx.lane_runner(spec, art / "repair", ctx.worktree)
@@ -923,27 +1130,33 @@ def _reviewer_lane(
     role: str,
     lm: LaneModel,
     prompt: str,
+    check: OutputCheck[ReviewerOutput],
     fresh: bool = False,
     should_stop: Callable[[], bool] | None = None,
     comparison: bool = False,
-) -> dict[str, Any]:
+    stop_reason: Callable[[], str] | None = None,
+) -> ReviewerOutput:
     """One reviewer lane, retried down the Phase-1 ladder when its rung dies. A Phase-1 lane
     starts (and restarts) on the run's current rung, so a lane that starts after a sibling
-    fell down the ladder does not walk into the same dead rung."""
+    fell down the ladder does not walk into the same dead rung. Its output contract is checked
+    (and corrected) per attempt inside `_run_checked_lane`, so a contract failure reaches the
+    ladder only after the corrections and the retry."""
     while True:
         if phase == "phase1" and ctx.phase1_lm is not None:
             lm = ctx.phase1_lm
         try:
-            return _run_lane(
+            return _run_checked_lane(
                 ctx,
                 phase=phase,
                 role=role,
                 lm=lm,
                 prompt=prompt,
                 is_verifier=False,
+                check=check,
                 fresh=fresh,
                 should_stop=should_stop,
                 comparison=comparison,
+                stop_reason=stop_reason,
             )
         except ReviewError as exc:
             nxt = _phase1_fallback(ctx, lm, exc) if phase == "phase1" else None
@@ -969,7 +1182,7 @@ def _reviewer_lanes(
     lm: LaneModel,
     expected_phase: str,
     fresh: bool = False,
-    abort: threading.Event | None = None,
+    abort: StopSignal | None = None,
 ) -> dict[str, ReviewerOutput]:
     """The general reviewer and the phase's specialists (`_phase_roles`), side by side (at
     most `phase_parallelism` at once, all of them when it is 0; each lane also waits for a
@@ -979,7 +1192,8 @@ def _reviewer_lanes(
 
     One lane failing for good fails the phase, exactly as it did when they ran one after
     another: its siblings are stopped rather than left to spend quota on a run that will be
-    retried from scratch.
+    retried from scratch, their rows naming the lane that failed and how ("stopped:
+    phase1/rust-quality output failed the contract (...)").
 
     On a comparison run (`ctx.compare_model`) every Phase-2 role also runs on that model,
     keyed `<role>#2`, on a pool of its own so the primary lanes keep their parallelism. Not on
@@ -991,7 +1205,7 @@ def _reviewer_lanes(
     assert ctx.meta
     meta = ctx.meta.as_dict()
     if abort is None:
-        abort = threading.Event()
+        abort = StopSignal()
     roles = _phase_roles(ctx, phase)
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
@@ -1019,7 +1233,7 @@ def _reviewer_lanes(
         twin = dataclasses.replace(lm, model=ctx.compare_model, substitute_for=None)
         lanes += [(f"{r}{COMPARE_SUFFIX}", r, twin, True) for r in roles]
     keys = [k for k, *_ in lanes]
-    abandon = threading.Event()  # the phase failed: every lane stops
+    abandon = StopSignal()  # the phase failed: every lane stops, told which lane failed
     twins_stop = threading.Event()  # the comparison lanes ran out of grace
 
     def stopped() -> bool:
@@ -1048,24 +1262,35 @@ def _reviewer_lanes(
         except sqlite3.Error as exc:  # bookkeeping for a comparison must not fail the review
             log.warning("could not record dropped comparison lane %s: %s", key, exc)
 
+    def stop_reason() -> str:
+        # the caller's abort is the root cause when it is set (a single-stage Phase 2 failed)
+        return abort.reason or abandon.reason
+
     def review(key: str, role: str, lane_lm: LaneModel, comparison: bool) -> ReviewerOutput | None:
-        try:
-            raw = _reviewer_lane(
-                ctx,
-                phase=phase,
-                role=role,
-                lm=lane_lm,
-                prompt=prompts[role],
-                fresh=fresh,
-                should_stop=twin_stopped if comparison else stopped,
-                comparison=comparison,
-            )
+        def validate(raw: dict[str, Any]) -> ReviewerOutput:
             return parse_reviewer_output(
                 raw,
                 expected_phase=expected_phase,
                 head_sha=ctx.sha,
                 source=f"{phase}:{key}",
                 prior_hashes=prior_hashes,
+            )
+
+        check = OutputCheck(
+            validate=validate, kind="reviewer", expected_phase=expected_phase, prior=review_prior
+        )
+        try:
+            return _reviewer_lane(
+                ctx,
+                phase=phase,
+                role=role,
+                lm=lane_lm,
+                prompt=prompts[role],
+                check=check,
+                fresh=fresh,
+                should_stop=twin_stopped if comparison else stopped,
+                comparison=comparison,
+                stop_reason=stop_reason,
             )
         except Exception as exc:  # a comparison lane never fails the phase, whatever broke
             if not comparison or abandon.is_set() or isinstance(exc, Cancelled):
@@ -1113,7 +1338,7 @@ def _reviewer_lanes(
                         results[futures[fut]] = fut.result()
                     except BaseException as exc:  # Cancelled included: it must stop the siblings
                         errors.append(exc)
-                        abandon.set()
+                        abandon.set(_stop_note(phase, futures[fut], exc))
                         for f in futures:
                             f.cancel()  # roles not started yet never start
                 if grace_until is None and primaries.isdisjoint(pending):
@@ -1122,7 +1347,8 @@ def _reviewer_lanes(
                     twins_stop.set()
         finally:
             if len(results) < len(lanes):
-                abandon.set()  # however we leave (an interrupt too), no lane outlives the phase
+                # however we leave (an interrupt too), no lane outlives the phase
+                abandon.set(f"stopped: {phase} was abandoned")
     if errors:
         # a cancelled run wins; else the failure that stopped the others, never a stopped lane
         raise next(
@@ -1169,6 +1395,21 @@ def _reviewer_lanes(
     return outputs
 
 
+def _stop_note(phase: str, key: str, exc: BaseException) -> str:
+    """Why a phase's other lanes are being stopped, for their rows: the lane that failed and
+    a short reason (model output never reaches the public page; lane rows are private)."""
+    if isinstance(exc, Cancelled):
+        return "run cancelled"
+    if isinstance(exc, LaneStopped):  # stopped by the caller's abort, which says why
+        return f"stopped: {phase} was abandoned"
+    if isinstance(exc, ReviewError):
+        cause = exc.cause if isinstance(exc, LaneFailed) else exc.message
+        what = "output failed the contract" if exc.kind is FailKind.CONTRACT else "failed"
+        brief = " ".join(cause.split())
+        return f"stopped: {phase}/{key} {what} ({brief[:160]}{'…' if len(brief) > 160 else ''})"
+    return f"stopped: {phase}/{key} crashed ({type(exc).__name__})"
+
+
 def _verifier_lane(
     ctx: RunContext,
     *,
@@ -1196,9 +1437,30 @@ def _verifier_lane(
         fresh_final=fresh_final,
         single_stage=ctx.single_stage,
     )
-    raw = _run_lane(ctx, phase=phase, role="verifier", lm=lm, prompt=prompt, is_verifier=True)
-    out = parse_verifier_output(
-        raw, expected_phase=expected_phase, expected_coderabbit_ids=ctx.coderabbit_ids
+    prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
+
+    def validate(raw: dict[str, Any]) -> VerifierOutput:
+        return parse_verifier_output(
+            raw,
+            expected_phase=expected_phase,
+            expected_coderabbit_ids=ctx.coderabbit_ids,
+            prior_hashes=prior_hashes,
+        )
+
+    out = _run_checked_lane(
+        ctx,
+        phase=phase,
+        role="verifier",
+        lm=lm,
+        prompt=prompt,
+        is_verifier=True,
+        check=OutputCheck(
+            validate=validate,
+            kind="verifier",
+            expected_phase=expected_phase,
+            prior=ctx.prior,
+            coderabbit_ids=ctx.coderabbit_ids,
+        ),
     )
     lane_findings = {
         f"{p}:{role}": o.findings
@@ -1791,7 +2053,7 @@ def _reviewer_step(
     lm: LaneModel | Callable[[], LaneModel],
     expected_phase: str,
     fresh: bool = False,
-    abort: threading.Event | None = None,
+    abort: StopSignal | None = None,
 ) -> dict[str, ReviewerOutput]:
     # the planned lanes, so a phase that is still going can say how many of them are done
     _step_start(ctx, step, {"roles": _phase_roles(ctx, phase)})
@@ -2629,9 +2891,7 @@ def _phase2_only(ctx: RunContext, effort: TierEffort) -> RunStatus:
     return _final_review(ctx, effort)
 
 
-def _phase2_reviewers(
-    ctx: RunContext, effort: TierEffort, abort: threading.Event | None = None
-) -> None:
+def _phase2_reviewers(ctx: RunContext, effort: TierEffort, abort: StopSignal | None = None) -> None:
     ctx.phase2_outputs = _reviewer_step(
         ctx,
         step=StepName.PHASE2,
@@ -2701,7 +2961,7 @@ def _single_stage(ctx: RunContext, effort: TierEffort) -> RunStatus:
     coverage here: when it fails on every rung its output is dropped and disclosed, never the
     review. When Phase 2 fails, Phase 1 is stopped and the run fails as it would have."""
     ctx.single_stage = True
-    abort = threading.Event()
+    abort = StopSignal()
     p1: dict[str, Any] = {}
 
     def phase1() -> None:
@@ -2718,7 +2978,18 @@ def _single_stage(ctx: RunContext, effort: TierEffort) -> RunStatus:
             p1["exc"] = exc
             stopped = isinstance(exc, (Cancelled, LaneStopped)) or abort.is_set()
             try:  # a failed Phase 2 is charged to `phase2`; this step must not stay running
-                _step_end(ctx, StepName.PHASE1, "cancelled" if stopped else "failed")
+                if stopped or not isinstance(exc, Exception):
+                    _step_end(ctx, StepName.PHASE1, "cancelled" if stopped else "failed")
+                else:
+                    # recorded the moment it fails (step error + event), not hours later when
+                    # Phase 2 is done and its output is dropped
+                    _record_phase1_failure(
+                        ctx,
+                        _failure_text(exc),
+                        StepName.PHASE1,
+                        "phase1.failed_single_stage",
+                        dropped=True,
+                    )
             except sqlite3.Error as db_exc:
                 log.warning("could not close the single-stage phase1 step: %s", db_exc)
         finally:
@@ -2728,8 +2999,8 @@ def _single_stage(ctx: RunContext, effort: TierEffort) -> RunStatus:
     t.start()
     try:
         _phase2_reviewers(ctx, effort)
-    except BaseException:
-        abort.set()
+    except BaseException as p2_exc:
+        abort.set(f"stopped: phase2 failed ({' '.join(_failure_text(p2_exc).split())[:160]})")
         raise
     finally:
         t.join()
@@ -2744,21 +3015,39 @@ def _single_stage(ctx: RunContext, effort: TierEffort) -> RunStatus:
     return _final_review(ctx, effort)
 
 
+def _failure_text(exc: BaseException) -> str:
+    return exc.message if isinstance(exc, ReviewError) else f"{type(exc).__name__}: {exc}"
+
+
 def _drop_single_stage_phase1(ctx: RunContext, exc: Exception) -> None:
-    """Phase 1 of a single-stage run failed while Phase 2 finished: review on Phase 2 alone."""
-    msg = exc.message if isinstance(exc, ReviewError) else f"{type(exc).__name__}: {exc}"
-    log.warning("single-stage phase1 failed (%s); publishing from Phase 2 alone", msg)
-    _drop_phase1(ctx, msg, StepName.PHASE1, "phase1.failed_single_stage", dropped=True)
+    """Phase 1 of a single-stage run failed while Phase 2 finished: review on Phase 2 alone.
+    The failure itself (step error, `phase1.failed_single_stage`) was recorded when it
+    happened, on the Phase-1 thread; only its output is dropped here."""
+    log.warning(
+        "single-stage phase1 failed (%s); publishing from Phase 2 alone", _failure_text(exc)
+    )
+    _discard_phase1(ctx)
 
 
 def _drop_phase1(ctx: RunContext, msg: str, step: StepName, kind: str, **detail: Any) -> None:
     """Phase 1 failed and the run goes on without it: whatever it produced is dropped (never
     handed to the final verifier unverified), the failed step and an event keep the error, and
     the review only says Phase 1 failed (`PHASE1_FAILED`)."""
+    _discard_phase1(ctx)
+    _record_phase1_failure(ctx, msg, step, kind, **detail)
+
+
+def _discard_phase1(ctx: RunContext) -> None:
     ctx.phase1_skipped = PHASE1_FAILED
     ctx.phase1_outputs, ctx.verify1 = {}, None
     with ctx.state_lock:
         ctx.reviewers[:] = [r for r in ctx.reviewers if r["phase"] != "phase1"]
+
+
+def _record_phase1_failure(
+    ctx: RunContext, msg: str, step: StepName, kind: str, **detail: Any
+) -> None:
+    """The failed step with its error (the status page shows it, sanitized) and the event."""
     _step_end(ctx, step, "failed", {"error": msg[:1000], **detail})
     with tx(ctx.conn):
         event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=msg[:500])

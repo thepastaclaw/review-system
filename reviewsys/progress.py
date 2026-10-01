@@ -226,7 +226,7 @@ def step_lanes(
     twins: list[tuple[str, str, str]] = []
     for r in conn.execute(
         "SELECT phase,role,started_at,model FROM lanes WHERE run_id=? "
-        "AND status IN ('completed','repaired') AND phase IN ('phase1','phase2')",
+        "AND status IN ('completed','repaired','corrected') AND phase IN ('phase1','phase2')",
         (run_id,),
     ):
         row = (str(r[0]), str(r[1]), str(r[2]))

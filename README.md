@@ -20,10 +20,10 @@ tested, one daemon, one SQLite file, no lock files.
 | `worker.py` | one run: worktree → select → triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
 | `triage.py` | one cheap lane rates the PR (trivial/low/normal/critical); the tier picks each phase's `--effort` |
 | `quota.py` | Phase-1 model ladder: remaining Antigravity / Z.AI quota via the proxy's management `api-call`; first rung with quota runs |
-| `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage; stoppable mid-run |
+| `lane.py` | runs `claude --bare --permission-mode plan` in the worktree, captures JSON + token usage; stoppable mid-run; correction turns in the lane's own session |
 | `lanepool.py` | machine-wide lane slots per model family (`flock` files) and one priority line per pool, shared by every worker; the only concurrency limit on reviews |
 | `prompts.py` | assembles prompts from the `thepastaclaw/skills` repo templates |
-| `contract.py` | reviewer/verifier JSON contracts; legacy-compatible `finding_hash` / `dedupe_key` |
+| `contract.py` | reviewer/verifier JSON contracts and their deterministic normalization (echo fields, prior hashes); legacy-compatible `finding_hash` / `dedupe_key` |
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
@@ -93,7 +93,9 @@ Phase 1 scored 4-10x lower value per token than Phase 2. All four are off when a
   `verify1` or `gate` step. It is meant for `critical` changes, whose authors are expected
   to have reviewed them closely already, so a gate only adds latency. Phase 1 is extra
   coverage here: if it fails on every rung its output is dropped (`phase1.failed_single_stage`,
-  disclosed as for a Phase-1 failure), never the review. If Phase 2 fails, the Phase-1
+  disclosed as for a Phase-1 failure), never the review. The failure is recorded the moment it
+  happens (the `phase1` step's error and the event), so the status page shows why Phase 1 is
+  red while Phase 2 is still going; the output is dropped once Phase 2 is done. If Phase 2 fails, the Phase-1
   lanes are stopped and the run fails as usual. Disclosed as "Single stage: Phase 1 and
   Phase 2 reviewed this head side by side".
 - `repos[].phase1: false` in the skills config: reviews of that repo skip Phase 1 and go
@@ -197,6 +199,67 @@ platform workspace and the iOS FFI side by side (each run in its own worktree,
 so each a cold build); the box went to load 900 and 60 GB of swap, and a
 `low`-tier dashwallet-ios review spent a 3-hour lane timeout polling an FFI
 build with `sleep 420`.
+
+### Output contract: normalization, correction turns, repair
+
+A reviewer lane must answer one JSON object (`summary`, `findings`, `out_of_scope_findings`,
+`review_phase`, `head_sha`, and on a re-review one `prior_finding_reconciliation` row per
+prior finding); a verifier its own schema (`contract.parse_verifier_output`). Measured
+2026-09-26..10-01, about a tenth of runs failed, and the output contract was a large part of
+it: a broken answer failed the whole phase (its siblings stopped) and usually the run. Three
+layers now stand between a broken answer and a failed phase, in this order:
+
+1. **Deterministic normalization** (`contract.normalize_reviewer_output`, no model call).
+   `review_phase` and `head_sha` are echo fields: the worker states both in the prompt and
+   knows them. A missing or wrong `review_phase` (seen: `final`, `complete`, `planning`,
+   `in_progress`, `''`; a Gemini lane on run 2883 returned only `findings` and
+   `out_of_scope_findings` after 28 minutes of good work) is set to the expected phase; a
+   missing `head_sha`, or a prefix of the assigned head of at least 7 hex characters, becomes
+   the full sha. A `head_sha` naming any other commit is still rejected: that lane may have
+   reviewed the wrong code. The verifier's `review_phase` is an echo field too and is
+   normalized the same way. On a re-review, a reconciliation row's (or a carried finding's)
+   `finding_hash` that is a prefix (7+ chars) of exactly one prior hash, or has exactly one
+   prior hash as its prefix (`ccf9a4a010e` / `a265b2d54f12f` for 12-char hashes), becomes that
+   hash; an ambiguous prefix is never guessed. Statuses only get their canonical spelling
+   (`still valid` → `STILL_VALID`); a word from another vocabulary (the verifier's
+   `REFUTED`, `INTENTIONAL_EXCLUSION`) is a judgment call left to the correction turn, as are
+   duplicate rows, missing hashes and a STILL_VALID row no finding carries. The verifier is
+   shown the normalized output. Every fix is noted: event `lane.output_normalized`
+   (phase/role, model, what changed) and the lane row's `reason`, never silent.
+2. **Correction turns in the lane's own session** (`[lanes] correction_turns`, default 2,
+   clamped to 0..5). Reviewer and verifier lanes run with `--session-id <uuid>` instead of
+   `--no-session-persistence`. When the answer has no JSON object, or still breaks the
+   contract after normalization, the lane's session is resumed (`--resume <uuid>`) with one
+   follow-up turn: the exact validation errors (all reconciliation problems at once), the
+   schema keys, the expected `review_phase` / `head_sha`, and on a reconciliation problem
+   every prior hash with its original title, the allowed statuses and the carry rule; it asks
+   for the complete corrected object only. The model that wrote the answer still has
+   everything it read, so it fixes what is named instead of a context-free model guessing.
+   The turn runs through the same lane machinery (model, effort, launcher, `deny_exec`
+   sandbox, `should_stop`, nice) inside the lane's pool slot (`lanepool.gated` holds it across
+   the corrections: never released, never lined up again; a comparison lane stays in the
+   `compare` pool), with a timeout of at most 30 minutes, artifacts in the lane's
+   `correction-N/`, and its tokens added to the lane's row (status `corrected`). Events
+   `lane.corrected` and `lane.correction_failed` (phase/role, model, turns, first error, and
+   for a failure whether the answer stayed invalid or the session could not be resumed). The
+   saved session (`$CLAUDE_CONFIG_DIR` or `~/.claude`, `projects/<worktree slug>/<uuid>.jsonl`,
+   megabytes for a long lane) is deleted when the lane's turns end; `gc` sweeps any a dead
+   worker left behind under this box's worktree project dirs after a day. Verified with
+   Claude Code 2.1.286: `--bare --print --output-format json` keeps and resumes sessions this
+   way, and a missing session exits 1 ("No conversation found with session ID").
+   `reviewsys doctor` runs one real keep-resume-delete round trip through the launcher
+   ("lane correction turns") whenever the knob is on.
+3. **The repair lane**, only when the session cannot be resumed (knob 0, or the follow-up
+   itself failed) and the answer has no readable JSON object: the context-free
+   `repair_model` (low effort) reformats it, now told the expected `review_phase`, full
+   `head_sha` and prior hashes, and its output goes through the same normalization and
+   validation (lane status `repaired`). Before, 44% of repaired outputs failed the contract
+   on exactly those fields.
+
+An answer still invalid after all of that fails the attempt; the lane's second attempt
+starts fresh (with its own corrections), and only then does a Phase-1 lane fall down the
+ladder. (Before, an answer whose JSON parsed but broke the contract failed the phase
+immediately, with no retry and no ladder.)
 
 ### Review body layout
 
@@ -584,6 +647,14 @@ path; a path with fewer than five recent reviews of the tier falls back to the t
 reviews of both paths, and an audit is measured against both. The PR's gate comment uses the
 same estimate. The day view filters its runs by path.
 
+A failed step of an active run shows its error under the run (collapsed or not) and as the
+red pill's tooltip, e.g. a single-stage Phase 1 that failed while Phase 2 is still going.
+The page is public, so the export carries a sanitized copy only (`exporter.public_error`:
+URLs, filesystem paths, account emails, JSON bodies and quoted fragments of 40+ characters,
+i.e. model output or upstream replies, are taken out; capped at 300 characters); the full
+text stays in the step and the events. A lane in a correction turn is listed live as
+"general (correction 1)".
+
 ## Liveness model
 
 The daemon spawns `reviewsys worker --run-id N` in its own session. The worker
@@ -662,7 +733,9 @@ old code during a deploy never read the new ticket format; both take the same sl
 
 One lane failing for good (twice, and on every Phase-1 rung) fails the phase; its
 siblings are stopped (`lanes.status = cancelled`) instead of spending quota on an
-abandoned phase. A failed Phase 1 no longer fails the run: whether a reviewer lane died on
+abandoned phase, their `reason` naming the lane that failed and how ("stopped:
+phase1/rust-quality output failed the contract (...)"; "stopped: phase2 failed (...)" for the
+Phase-1 lanes of a single-stage run). A failed Phase 1 no longer fails the run: whether a reviewer lane died on
 every rung, the gate verifier died twice, or either returned output that breaks the
 contract, Phase 1 is dropped and the run goes on with Phase 2 alone, exactly like the
 backlog rule (the step that failed, `phase1` or `verify1`, is marked `failed` with
@@ -736,7 +809,8 @@ Where to look when something is off, in order:
 1. `sqlite3 ~/.reviewsys/review.db "select ts,kind,repo,number,run_id,substr(detail,1,160) from events order by id desc limit 40"`
 2. `~/.reviewsys/daemon.log` (rotated, 20 MB × 5) and `daemon.stderr.log` (crash output only)
 3. `~/.reviewsys/work/runs/run-N/attempts/*/` — `prompt.md`, `stdout.json`, `lane-meta.json`
-   (`turns`, `cost_usd`, `subtype`) for every lane of a run
+   (`turns`, `cost_usd`, `subtype`) for every lane of a run; a lane's correction turns in its
+   `correction-N/`, the repair lane in `repair/`
 4. `~/.reviewsys/watchdog.log` — every restart the cron watchdog performed
 
 Config knobs (`~/.reviewsys/config.toml`, restart the daemon after editing):
@@ -748,7 +822,9 @@ OpenAI account), `account_scale_max` (1 = no scaling), `account_reserves`,
 model family across all runs; `gpt` always follows the per-account budget),
 `lane_timeout_minutes` (wall-clock bound per lane), `lane_budget_usd` (runaway
 guard passed as `claude --max-budget-usd`; it is the CLI's list-price estimate,
-not real spend, so keep it well above a normal $3–10 lane).
+not real spend, so keep it well above a normal $3–10 lane). `[lanes] deny_exec` (see
+[Reviews are static](#reviews-are-static-lanes-never-build)), `[lanes] correction_turns`
+(default 2, 0..5; see [Output contract](#output-contract-normalization-correction-turns-repair)).
 
 `[retention] artifact_days` (0 = keep run artifacts forever, the default: they are the
 only per-lane record for later analysis and grow ~1 GB per two weeks), `worktree_budget_gb`.

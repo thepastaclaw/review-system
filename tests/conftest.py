@@ -345,6 +345,15 @@ def _lane_sandbox_starts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lane_module, "sandbox_problem", lambda profile: "")
 
 
+@pytest.fixture(autouse=True)
+def _claude_config_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """Lane session cleanup (lane.forget_session, gc) looks under the Claude Code config dir:
+    never the developer's own ~/.claude in tests."""
+    d = tmp_path / "claude-config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(d))
+    return d
+
+
 @pytest.fixture
 def gh() -> FakeGh:
     return FakeGh()
@@ -383,11 +392,14 @@ class FakeLanes:
             # the broken payload is the original JSON with its closing brace removed
             out = json.loads(spec.prompt.split("Do not add fences.\n\n", 1)[1] + "}")
         elif spec.role == "verifier":
-            phase = "preliminary" if "must be `preliminary`" in spec.prompt else "final"
+            # a correction turn (`spec.resume`) is told the phase it must echo
+            prelim = ("must be `preliminary`", '`review_phase` is exactly "preliminary"')
+            phase = "preliminary" if any(p in spec.prompt for p in prelim) else "final"
             out = self.verifier.get(phase) or self.verifier["default"]
             out = {**out, "review_phase": phase}
         else:
-            phase = "preliminary" if "set to `preliminary`" in spec.prompt else "final"
+            prelim = ("set to `preliminary`", '`review_phase` is exactly "preliminary"')
+            phase = "preliminary" if any(p in spec.prompt for p in prelim) else "final"
             base = self.reviewer.get(spec.role) or self.reviewer["default"]
             out = {**base, "review_phase": phase, "head_sha": self.head}
         text = json.dumps(out)

@@ -80,7 +80,7 @@ from pathlib import Path
 from . import slots
 from .config import Config
 from .db import fmt_ts, now, parse_ts, tx
-from .lane import LaneResult, LaneRunner, LaneSpec
+from .lane import LaneResult, LaneRunner, LaneSpec, run_with_corrections
 
 log = logging.getLogger(__name__)
 
@@ -404,9 +404,18 @@ def gated(
             raise
 
     def _running(spec: LaneSpec, artifact_dir: Path, worktree: Path, pool: str) -> LaneResult:
+        """The lane and its correction turns, all in the one slot: a correction neither
+        releases the slot nor lines up again (its turns are marked running in their own
+        `correction-<n>/` dirs, so the status page follows them)."""
         try:
             _mark(artifact_dir, spec, pool, "running")
-            return runner(spec, artifact_dir, worktree)
+            return run_with_corrections(
+                runner,
+                spec,
+                artifact_dir,
+                worktree,
+                mark=lambda d, s, state: _mark(d, s, pool, state),
+            )
         finally:
             credit(stall.run_ended())
 

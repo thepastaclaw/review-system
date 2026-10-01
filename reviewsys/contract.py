@@ -34,9 +34,14 @@ CATEGORIES = (
     "backport-prereq",
 )
 REVALIDATION_STATUSES = ("STILL_VALID", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED", "WITHDRAWN")
+# Shortest abbreviation of a commit sha (git's default) or a finding hash that the output
+# normalization below will expand to the one full value it names.
+MIN_SHA_PREFIX = 7
 
 _NORMALIZE_RE = re.compile(r"[^\w\s]|_")
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.S)
+_HEX_RE = re.compile(r"[0-9a-f]+")
+_STATUS_SEP_RE = re.compile(r"[\s\-]+")
 
 
 def finding_hash(file: str, category: str, title: str) -> str:
@@ -166,7 +171,10 @@ class ReviewerOutput:
     review_phase: str
     head_sha: str
     prior_reconciliation: list[dict[str, Any]]
-    raw: dict[str, Any]
+    raw: dict[str, Any]  # the output as the verifier is shown it: normalized (see `normalized`)
+    # what `normalize_reviewer_output` fixed deterministically, e.g. "review_phase 'final' ->
+    # 'preliminary'"; the worker records each non-empty list as a `lane.output_normalized` event
+    normalized: list[str] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -184,6 +192,7 @@ class VerifierOutput:
     # the verifier's own `prior_finding_reconciliation` rows: it is the canonical source of
     # truth, so its status and reason for a prior finding outrank any reviewer lane's
     prior_reconciliation: list[dict[str, Any]] = field(default_factory=list)
+    normalized: list[str] = field(default_factory=list)  # as ReviewerOutput.normalized
 
     @property
     def blocker_count(self) -> int:
@@ -220,76 +229,200 @@ def parse_json_object(text: str) -> dict[str, Any]:
     raise ReviewError(FailKind.CONTRACT, f"model output is not a JSON object: {text[:160]!r}")
 
 
+# ---- deterministic output normalization ----
+#
+# `review_phase` and `head_sha` are echo fields: the worker tells the lane both and checks
+# that they come back. A reviewer that did its job but wrote `"review_phase": "final"` (or
+# left both out, as a Gemini lane did on run 2883 after 28 minutes of good work) used to fail
+# the whole phase; and the context-free repair model, which never saw either value, got them
+# wrong in 44% of repaired outputs (2026-09-26..10-01: 'complete', 'planning', '', head_sha cut
+# to 8-14 hex). So both are set to what the worker knows, with a note, never silently. The one
+# thing still rejected is a head_sha naming another commit: that lane may have reviewed the
+# wrong code. Prior-finding hashes get the same treatment where exactly one prior hash fits.
+
+
+def _expand(value: str, full: set[str]) -> str | None:
+    """The one value of `full` that `value` names: itself, a prefix of it (at least
+    MIN_SHA_PREFIX hex chars), or an over-long copy with it as the prefix. None when it names
+    none or more than one (an ambiguous prefix is never guessed)."""
+    v = value.strip().lower()
+    lowered = {f.lower(): f for f in full}
+    if v in lowered:
+        return lowered[v]
+    if not _HEX_RE.fullmatch(v):
+        return None
+    hits = {
+        f
+        for low, f in lowered.items()
+        if (len(v) >= MIN_SHA_PREFIX and low.startswith(v)) or v.startswith(low)
+    }
+    return hits.pop() if len(hits) == 1 else None
+
+
+def _status_spelling(status: str) -> str:
+    """A reconciliation status written another way (`still valid`, `Still-Valid`, `FIXED.`)
+    as its REVALIDATION_STATUSES spelling; anything else unchanged. Only spelling: a word from
+    another vocabulary (the verifier's REFUTED, INTENTIONAL_EXCLUSION) is a judgment call left
+    to the lane's correction turn."""
+    canon = _STATUS_SEP_RE.sub("_", status.strip().strip(".,;:!").upper())
+    return canon if canon in REVALIDATION_STATUSES else status
+
+
+def _normalize_phase(out: dict[str, Any], expected: str, notes: list[str]) -> None:
+    got = out.get("review_phase")
+    if got == expected:
+        return
+    shown = "missing" if got in (None, "") else repr(got)
+    notes.append(f"review_phase {shown} -> {expected!r}")
+    out["review_phase"] = expected
+
+
+def _normalize_head(out: dict[str, Any], head_sha: str, notes: list[str]) -> None:
+    got = out.get("head_sha")
+    if got == head_sha:
+        return
+    text = str(got or "").strip().lower()
+    if not text:
+        notes.append("head_sha missing -> assigned head")
+    elif len(text) <= len(head_sha) and _expand(text, {head_sha}) is not None:
+        notes.append(f"head_sha {got!r} -> {head_sha}")
+    else:
+        raise ReviewError(
+            FailKind.CONTRACT,
+            f"reviewer output head_sha={text[:16]!r} is not the assigned head {head_sha[:12]!r}",
+        )
+    out["head_sha"] = head_sha
+
+
+def _normalize_prior_hashes(out: dict[str, Any], prior: set[str], notes: list[str]) -> None:
+    """Reconciliation rows and carried findings whose `finding_hash` names exactly one prior
+    hash get that hash; reconciliation statuses get their canonical spelling."""
+    recon = out.get("prior_finding_reconciliation")
+    if isinstance(recon, list):
+        rows: list[Any] = []
+        for row in recon:
+            if isinstance(row, dict):
+                row = dict(row)
+                h = str(row.get("finding_hash") or "")
+                full = _expand(h, prior) if h else None
+                if full is not None and full != h:
+                    notes.append(f"reconciliation hash {h!r} -> {full!r}")
+                    row["finding_hash"] = full
+                st = row.get("status")
+                if isinstance(st, str) and (canon := _status_spelling(st)) != st:
+                    notes.append(f"reconciliation status {st!r} -> {canon!r}")
+                    row["status"] = canon
+            rows.append(row)
+        out["prior_finding_reconciliation"] = rows
+    findings = out.get("findings")
+    if isinstance(findings, list):
+        fixed: list[Any] = []
+        for f in findings:
+            h = str(f.get("finding_hash") or "") if isinstance(f, dict) else ""
+            full = _expand(h, prior) if h else None
+            if isinstance(f, dict) and full is not None and full != h:
+                notes.append(f"carried finding hash {h!r} -> {full!r}")
+                f = {**f, "finding_hash": full}
+            fixed.append(f)
+        out["findings"] = fixed
+
+
+def normalize_reviewer_output(
+    raw: dict[str, Any], *, expected_phase: str, head_sha: str, prior_hashes: set[str]
+) -> tuple[dict[str, Any], list[str]]:
+    """A copy of `raw` with the echo fields and unambiguous prior-hash slips fixed, and one
+    note per fix. Raises (CONTRACT) only for a head_sha that names another commit."""
+    out = dict(raw)
+    notes: list[str] = []
+    _normalize_phase(out, expected_phase, notes)
+    _normalize_head(out, head_sha, notes)
+    if prior_hashes:
+        _normalize_prior_hashes(out, prior_hashes, notes)
+    return out, notes
+
+
+def _reconciliation_problems(
+    recon: list[Any], findings: list[Finding], prior_hashes: set[str]
+) -> list[str]:
+    """Every way the reconciliation breaks the contract, not just the first, so a correction
+    turn can fix them all at once."""
+    problems: list[str] = []
+    seen: dict[str, str] = {}
+    for row in recon:
+        if not isinstance(row, dict):
+            problems.append("a reconciliation row is not an object")
+            continue
+        h, st = str(row.get("finding_hash") or ""), str(row.get("status") or "")
+        if h not in prior_hashes:
+            problems.append(f"bad reconciliation row hash={h!r} status={st!r}: not a prior hash")
+        elif h in seen:
+            problems.append(f"bad reconciliation row hash={h!r} status={st!r}: hash repeated")
+        elif st not in REVALIDATION_STATUSES:
+            problems.append(f"bad reconciliation row hash={h!r} status={st!r}: unknown status")
+        else:
+            seen[h] = st
+    missing = prior_hashes - set(seen)
+    if missing:
+        problems.append(f"reconciliation missing prior hashes: {sorted(missing)}")
+    carried = {f.prior_hash for f in findings if f.prior_hash}
+    still_valid = {h for h, st in seen.items() if st == "STILL_VALID"}
+    if carried != still_valid:
+        problems.append(
+            f"STILL_VALID set {sorted(still_valid)} != carried findings {sorted(carried)}"
+        )
+    return problems
+
+
 def parse_reviewer_output(
     raw: dict[str, Any], *, expected_phase: str, head_sha: str, source: str, prior_hashes: set[str]
 ) -> ReviewerOutput:
+    raw, notes = normalize_reviewer_output(
+        raw, expected_phase=expected_phase, head_sha=head_sha, prior_hashes=prior_hashes
+    )
     findings_raw = raw.get("findings")
     if not isinstance(findings_raw, list):
         raise ReviewError(FailKind.CONTRACT, "reviewer output: findings must be a list")
     findings = [Finding.from_dict(f, source=source) for f in findings_raw]
-    phase = str(raw.get("review_phase") or "")
-    if phase != expected_phase:
-        raise ReviewError(
-            FailKind.CONTRACT,
-            f"reviewer output review_phase={phase!r}, expected {expected_phase!r}",
-        )
-    out_head = str(raw.get("head_sha") or "")
-    if out_head != head_sha:
-        raise ReviewError(
-            FailKind.CONTRACT,
-            f"reviewer output head_sha={out_head[:12]!r}, expected {head_sha[:12]!r}",
-        )
     recon = raw.get("prior_finding_reconciliation") or []
     if not isinstance(recon, list):
         raise ReviewError(FailKind.CONTRACT, "prior_finding_reconciliation must be a list")
     if prior_hashes:
-        seen: dict[str, str] = {}
-        for row in recon:
-            if not isinstance(row, dict):
-                raise ReviewError(FailKind.CONTRACT, "reconciliation row is not an object")
-            h, st = str(row.get("finding_hash") or ""), str(row.get("status") or "")
-            if h not in prior_hashes or st not in REVALIDATION_STATUSES or h in seen:
-                raise ReviewError(
-                    FailKind.CONTRACT, f"bad reconciliation row hash={h!r} status={st!r}"
-                )
-            seen[h] = st
-        missing = prior_hashes - set(seen)
-        if missing:
-            raise ReviewError(
-                FailKind.CONTRACT, f"reconciliation missing prior hashes: {sorted(missing)}"
-            )
-        carried = {f.prior_hash for f in findings if f.prior_hash}
-        still_valid = {h for h, st in seen.items() if st == "STILL_VALID"}
-        if carried != still_valid:
-            raise ReviewError(
-                FailKind.CONTRACT,
-                f"STILL_VALID set {sorted(still_valid)} != carried findings {sorted(carried)}",
-            )
+        problems = _reconciliation_problems(recon, findings, prior_hashes)
+        if problems:
+            raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     oos = raw.get("out_of_scope_findings") or []
     return ReviewerOutput(
         summary=str(raw.get("summary") or "").strip(),
         findings=findings,
-        out_of_scope=[o for o in oos if isinstance(o, dict)],
-        review_phase=phase,
-        head_sha=out_head,
+        out_of_scope=[o for o in oos if isinstance(o, dict)] if isinstance(oos, list) else [],
+        review_phase=expected_phase,
+        head_sha=head_sha,
         prior_reconciliation=[r for r in recon if isinstance(r, dict)],
         raw=raw,
+        normalized=notes,
     )
 
 
 def parse_verifier_output(
-    raw: dict[str, Any], *, expected_phase: str, expected_coderabbit_ids: list[int]
+    raw: dict[str, Any],
+    *,
+    expected_phase: str,
+    expected_coderabbit_ids: list[int],
+    prior_hashes: set[str] | None = None,
 ) -> VerifierOutput:
+    """`review_phase` is an echo field here too (the prompt states it, nothing reads it back),
+    so it is normalized like a reviewer's; prior hashes in the verifier's own reconciliation
+    rows are expanded the same way (they decide the thread answers), never validated."""
+    raw = dict(raw)
+    notes: list[str] = []
+    _normalize_phase(raw, expected_phase, notes)
+    if prior_hashes:
+        _normalize_prior_hashes(raw, prior_hashes, notes)
     if raw.get("adjudication_complete") is not True:
         raise ReviewError(FailKind.CONTRACT, "verifier: adjudication_complete must be true")
     adj = raw.get("prerequisite_adjudications")
     if not isinstance(adj, list):
         raise ReviewError(FailKind.CONTRACT, "verifier: prerequisite_adjudications must be a list")
-    phase = str(raw.get("review_phase") or "")
-    if phase != expected_phase:
-        raise ReviewError(
-            FailKind.CONTRACT, f"verifier review_phase={phase!r}, expected {expected_phase!r}"
-        )
     if "@coderabbitai review" in json.dumps(raw).lower():
         raise ReviewError(
             FailKind.CONTRACT, "verifier output contains a forbidden CodeRabbit retrigger"
@@ -330,11 +463,12 @@ def parse_verifier_output(
         coderabbit_reactions=list(by_id.values()),
         prerequisite_adjudications=[a for a in adj if isinstance(a, dict)],
         adjudication_complete=True,
-        review_phase=phase,
+        review_phase=expected_phase,
         raw=raw,
         prior_reconciliation=[
             r
             for r in (raw.get("prior_finding_reconciliation") or [])
             if isinstance(r, dict) and r.get("finding_hash") and r.get("status")
         ],
+        normalized=notes,
     )

@@ -283,6 +283,9 @@ class Config:
     lane_pools: dict[str, int]
     # paths a lane may not execute anything under: reviews are static (see lane.exec_deny_profile)
     lane_deny_exec: tuple[str, ...]
+    # follow-up turns a reviewer/verifier lane gets in its own session when its output breaks
+    # the contract (see worker._run_lane); 0 = none, the context-free repair lane only
+    lane_correction_turns: int
     # identity / alerting
     bot_login: str
     slack_target: str | None
@@ -395,6 +398,11 @@ DEFAULT_LANE_DENY_EXEC = (
     "~/.local/bin/sccache",
 )
 
+# correction turns per reviewer/verifier lane ([lanes] correction_turns); a box config.toml
+# predating the knob gets the default
+DEFAULT_CORRECTION_TURNS = 2
+MAX_CORRECTION_TURNS = 5
+
 DEFAULT_TOML = """\
 # reviewsys configuration
 [paths]
@@ -455,6 +463,10 @@ lane_pools = { muse = 8, glm = 6, gemini = 6 }
 # runners): reviews are static and read CI results. Unset = the built-in list
 # (config.DEFAULT_LANE_DENY_EXEC); [] = no sandbox.
 # deny_exec = ["~/.rustup", "~/.cargo/bin", "/usr/bin/make", "/usr/bin/xcodebuild"]
+# a reviewer or verifier whose answer breaks the output contract is asked to correct it in
+# its own session (it keeps everything it read), at most this many times; 0 = never, only the
+# context-free repair lane (clamped to 0..5)
+correction_turns = 2
 
 [identity]
 bot_login = "thepastaclaw"
@@ -777,6 +789,10 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
             if str(k) != "gpt"  # gpt always follows the per-account budget (slots.py)
         },
         lane_deny_exec=_deny_exec((t.get("lanes") or {}).get("deny_exec", DEFAULT_LANE_DENY_EXEC)),
+        lane_correction_turns=min(
+            MAX_CORRECTION_TURNS,
+            max(0, int((t.get("lanes") or {}).get("correction_turns", DEFAULT_CORRECTION_TURNS))),
+        ),
         bot_login=str(i["bot_login"]),
         slack_target=i.get("slack_target"),
         slack_account=str(i.get("slack_account", "default")),

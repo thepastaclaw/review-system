@@ -11,7 +11,13 @@ from pathlib import Path
 
 from . import degraded, quota, status
 from .config import Config
-from .lane import CLAUDE_SETTINGS, exec_deny_profile, sandbox_problem
+from .lane import (
+    CLAUDE_SETTINGS,
+    exec_deny_profile,
+    forget_session,
+    new_session_id,
+    sandbox_problem,
+)
 
 PROXY_URL = os.environ.get("REVIEWSYS_PROXY_URL", "http://127.0.0.1:8317")
 LANE_PROBE_TIMEOUT_S = 180
@@ -105,6 +111,57 @@ def probe_lane(model: str, claude_bin: str) -> tuple[bool, str]:
     if out.get("is_error"):
         return False, str(out.get("result"))[:160]
     return True, f"{out.get('duration_ms', '?')} ms"
+
+
+def probe_resume(model: str, claude_bin: str) -> tuple[bool, str]:
+    """Correction turns resume a lane's own session (`--session-id`, then `--resume`) through
+    the launcher: check both flags pass and the second turn sees the first, so a launcher that
+    filters arguments or a config dir the cleanup cannot see shows here, not in every lane."""
+    sid = new_session_id()
+    base = [
+        claude_bin,
+        "--bare",
+        "--settings",
+        CLAUDE_SETTINGS,
+        "--permission-mode",
+        "plan",
+        "--model",
+        model,
+        "--effort",
+        "low",
+        "--output-format",
+        "json",
+    ]
+    turns = (
+        (["--session-id", sid], "Remember the word kumquat. Reply with exactly the word ok."),
+        (["--resume", sid], "Which word did I ask you to remember? Reply with that word only."),
+    )
+    env = {**os.environ, "GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+    answer = ""
+    try:
+        for flags, prompt in turns:
+            try:
+                r = subprocess.run(
+                    [*base, *flags, "--print", prompt],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=LANE_PROBE_TIMEOUT_S,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                return False, f"{flags[0]}: {str(exc)[:140]}"
+            if r.returncode != 0:
+                return False, f"{flags[0]}: {_first_line(r)[:140] or f'exit {r.returncode}'}"
+            try:
+                answer = str(json.loads(r.stdout).get("result") or "")
+            except (json.JSONDecodeError, AttributeError):
+                return False, f"{flags[0]}: non-JSON output"
+        if "kumquat" not in answer.lower():
+            return False, f"resumed turn did not see the first one: {answer[:80]!r}"
+        return True, "session kept, resumed and deleted"
+    finally:
+        forget_session(sid)
 
 
 def report_quota(cfg: Config, mgmt: quota.Management | None = None) -> bool:
@@ -216,6 +273,10 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             for m in sorted(models):
                 good, detail = probe_single_stop(m, key)
                 ok &= _ok(f"proxy model {m} (single stop_sequence)", good, detail)
+        if cfg.lane_correction_turns:
+            m = cfg.policy.phase2_reviewer.model
+            good, detail = probe_resume(m, cfg.claude_bin)
+            ok &= _ok(f"lane correction turns ({m} session resume)", good, detail)
         if cfg.policy.has_phase1_ladder:
             ok &= report_quota(cfg)
             for c in cfg.policy.phase1_candidates:

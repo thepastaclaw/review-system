@@ -6,11 +6,14 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import time
+import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +28,12 @@ LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is 
 # Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
 CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+# A correction turn only re-emits an answer the lane already worked out: bounded well below
+# the lane timeout, so two of them cannot triple a lane's wall clock
+CORRECTION_TIMEOUT_SECONDS = 30 * 60
+# (artifact dir, spec, "running" | None): how `run_with_corrections` tells the slot holder
+# (lanepool.gated) that a correction turn started or ended abnormally, for the status page
+TurnMark = Callable[[Path, "LaneSpec", str | None], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,6 +56,15 @@ class LaneSpec:
     pool: str | None = None
     # macOS sandbox profile the lane runs under ("" = none); see `exec_deny_profile`
     sandbox_profile: str = ""
+    # Correction turns (see `run_with_corrections`). `session_id` (a UUID) makes the lane keep
+    # its Claude Code session under that id instead of `--no-session-persistence`; with
+    # `resume` the lane continues that session, `prompt` being the next user turn. `check` looks
+    # at a finished turn and returns the follow-up prompt when its output must be corrected
+    # (None: accept it); at most `corrections` follow-ups run.
+    session_id: str = ""
+    resume: bool = False
+    check: Callable[[LaneResult], str | None] | None = None
+    corrections: int = 0
 
 
 @dataclass(slots=True)
@@ -64,6 +82,9 @@ class LaneResult:
     subtype: str | None = None
     cancelled: bool = False  # stopped by `LaneSpec.should_stop`, not by the model or a timeout
     started: bool = True  # False: stopped while waiting for a lane slot, never ran
+    session_id: str | None = None  # the envelope's, when the CLI reported one
+    # the correction turns run in this lane's session and slot after it, in order
+    followups: list[LaneResult] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -154,6 +175,119 @@ def sandboxed(runner: LaneRunner, profile: str) -> LaneRunner:
     return run
 
 
+def session_args(spec: LaneSpec) -> list[str]:
+    """Verified with Claude Code 2.1.286 (2026-10-01): `--bare --print --output-format json
+    --session-id <uuid>` saves the session under that id (the envelope's `session_id` echoes
+    it), and `--resume <uuid>` with the same flags continues it with the full earlier context
+    (prompt cache included), from any cwd, keeping the id. A missing session exits 1 with "No
+    conversation found with session ID" on stderr. Every lane without a session id keeps
+    `--no-session-persistence`: nothing to clean up."""
+    if spec.resume and spec.session_id:
+        return ["--resume", spec.session_id]
+    if spec.session_id:
+        return ["--session-id", spec.session_id]
+    return ["--no-session-persistence"]
+
+
+def new_session_id() -> str:
+    return str(uuid.uuid4())
+
+
+def session_files(session_id: str) -> list[Path]:
+    """Where Claude Code keeps a session: `<config dir>/projects/<cwd slug>/<id>.jsonl` (plus a
+    `<id>/` directory for tool output it spilled), the config dir being `$CLAUDE_CONFIG_DIR` or
+    `~/.claude` as the lane inherits it. Lanes run in per-run worktrees, so the slug is new per
+    run; the id is looked up in every slug rather than re-deriving Claude Code's slug rules."""
+    try:
+        uuid.UUID(session_id)
+    except ValueError:
+        return []  # never glob with anything but a UUID
+    projects = claude_projects_dir()
+    if not projects.is_dir():
+        return []
+    return [*projects.glob(f"*/{session_id}.jsonl"), *projects.glob(f"*/{session_id}")]
+
+
+def claude_projects_dir() -> Path:
+    root = Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude").expanduser()
+    return root / "projects"
+
+
+def project_slug(cwd: Path) -> str:
+    """Claude Code's project directory name for a cwd: the resolved path with every
+    character but ASCII letters and digits turned into `-` (2.1.286: /private/tmp/x/wt ->
+    -private-tmp-x-wt)."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(cwd.resolve()))
+
+
+def forget_session(session_id: str) -> None:
+    """Delete a lane's saved session once its corrections are over. A transcript holds every
+    tool result of the lane (megabytes for a long review) and nothing reads it again: the
+    lane's artifacts keep the prompts and answers. Also removes the per-worktree project
+    directory once it is empty. Best effort: a leftover is swept by gc."""
+    for p in session_files(session_id):
+        try:
+            if p.is_dir():
+                shutil.rmtree(p, ignore_errors=True)
+            else:
+                p.unlink(missing_ok=True)
+            p.parent.rmdir()
+        except OSError:
+            pass
+
+
+def run_with_corrections(
+    runner: LaneRunner,
+    spec: LaneSpec,
+    artifact_dir: Path,
+    worktree: Path,
+    mark: TurnMark | None = None,
+) -> LaneResult:
+    """Run the lane, then up to `spec.corrections` correction turns in its own session while
+    `spec.check` asks for one: the model that wrote the answer, with everything it read still
+    in context, is told what was wrong and answers again. Each turn is a whole `runner` call
+    (same model, effort, launcher, sandbox, stop polling), with its own artifacts in
+    `correction-<n>/` and a timeout of at most CORRECTION_TIMEOUT_SECONDS. Called by the slot
+    holder (lanepool.gated), so the corrections run in the lane's slot: never released, never
+    lined up again. A turn that did not finish (failed, timed out, stopped) ends the
+    corrections; the caller reads every turn in `followups` and decides. The saved session is
+    deleted at the end however it went."""
+    res = runner(spec, artifact_dir, worktree)
+    sessions = {spec.session_id, res.session_id or ""} if spec.session_id else set()
+    try:
+        turn = res
+        while spec.check is not None and spec.session_id and len(res.followups) < spec.corrections:
+            if not turn.ok:
+                break
+            prompt = spec.check(turn)
+            if prompt is None or (spec.should_stop is not None and spec.should_stop()):
+                break
+            n = len(res.followups) + 1
+            follow = dataclasses.replace(
+                spec,
+                prompt=prompt,
+                session_id=turn.session_id or spec.session_id,
+                resume=True,
+                check=None,
+                corrections=0,
+                timeout_seconds=min(spec.timeout_seconds, CORRECTION_TIMEOUT_SECONDS),
+            )
+            turn_dir = artifact_dir / f"correction-{n}"
+            if mark is not None:
+                mark(turn_dir, follow, "running")
+            try:
+                turn = runner(follow, turn_dir, worktree)
+            except BaseException:
+                if mark is not None:
+                    mark(turn_dir, follow, None)
+                raise
+            res.followups.append(turn)
+    finally:
+        for sid in sessions - {""}:
+            forget_session(sid)
+    return res
+
+
 def argv_for(spec: LaneSpec) -> list[str]:
     """The lane's command line, under `nice`: review lanes are batch work and the proxies they
     talk to must win the CPU. (Not `preexec_fn=os.nice`: that runs Python in the forked child,
@@ -178,7 +312,7 @@ def argv_for(spec: LaneSpec) -> list[str]:
         str(spec.add_dir),
         "--output-format",
         "json",
-        "--no-session-persistence",
+        *session_args(spec),
         "--print",
     ]
     if spec.max_budget_usd:
@@ -253,6 +387,7 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
                 "cost_usd": res.cost_usd,
                 "turns": res.turns,
                 "subtype": res.subtype,
+                "session_id": res.session_id if spec.session_id else None,
                 "argv": argv_for(spec),
             },
             indent=1,
@@ -324,6 +459,9 @@ def _extract_result(res: LaneResult) -> None:
     subtype = env.get("subtype")
     if subtype:
         res.subtype = str(subtype)
+    sid = env.get("session_id")
+    if isinstance(sid, str) and sid:
+        res.session_id = sid
     if env.get("is_error"):
         res.exit_code = res.exit_code or 1
 
