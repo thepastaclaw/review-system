@@ -282,6 +282,10 @@ class FakeGh(Gh):
                 if not self.labels_defined:
                     raise _GhFailure("HTTP 404: Not Found")
                 return {"name": urllib.parse.unquote(ep.rsplit("/labels/", 1)[1])}
+            if "/check-runs" in ep:
+                return {"check_runs": []}
+            if ep.startswith("repos/") and "/commits/" in ep and "/status" in ep:
+                return {"state": "success", "statuses": []}
             if ep.startswith("/notifications"):
                 return self.notifications
             if ep == "user":

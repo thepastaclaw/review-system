@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -23,6 +24,7 @@ LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is 
 # Plan mode otherwise enables Claude Code's separate LLM permission classifier.
 # Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
 CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +45,8 @@ class LaneSpec:
     parallel: bool = False  # a reviewer lane running beside its siblings (lanepool lines these up)
     # the lane-slot pool when it is not the model family's (comparison lanes: lanepool.COMPARE_POOL)
     pool: str | None = None
+    # macOS sandbox profile the lane runs under ("" = none); see `exec_deny_profile`
+    sandbox_profile: str = ""
 
 
 @dataclass(slots=True)
@@ -96,11 +100,44 @@ class LaneResult:
         return ""
 
 
+def exec_deny_profile(paths: tuple[str, ...]) -> str:
+    """A sandbox profile that allows everything except executing anything under `paths`
+    (compilers, build systems, test runners), or "" when there is nothing to deny or no
+    `sandbox-exec` (Linux CI). It is enforced by the kernel on every process the lane starts,
+    so `./build_ios.sh` running cargo is stopped as surely as cargo itself. Each path is
+    listed as given and resolved, so a symlink in the list still matches what exec sees."""
+    if not paths or not os.path.exists(SANDBOX_EXEC):
+        return ""
+    seen: list[str] = []
+    for raw in paths:
+        p = os.path.expanduser(raw)
+        for q in (p, os.path.realpath(p)):
+            if q not in seen:
+                seen.append(q)
+    rules = " ".join(
+        '(subpath "{}")'.format(q.replace("\\", "\\\\").replace('"', '\\"')) for q in seen
+    )
+    return f"(version 1) (allow default) (deny process-exec {rules})"
+
+
+def sandboxed(runner: LaneRunner, profile: str) -> LaneRunner:
+    """`runner`, with every lane under `profile` (no change when it is "")."""
+    if not profile:
+        return runner
+
+    def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
+        return runner(dataclasses.replace(spec, sandbox_profile=profile), artifact_dir, worktree)
+
+    return run
+
+
 def argv_for(spec: LaneSpec) -> list[str]:
     """The lane's command line, under `nice`: review lanes are batch work and the proxies they
     talk to must win the CPU. (Not `preexec_fn=os.nice`: that runs Python in the forked child,
     which can deadlock now that a worker starts lanes from several threads.)"""
+    sandbox = [SANDBOX_EXEC, "-p", spec.sandbox_profile] if spec.sandbox_profile else []
     argv = [
+        *sandbox,
         "nice",
         "-n",
         str(LANE_NICE),

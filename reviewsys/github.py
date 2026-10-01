@@ -199,6 +199,38 @@ def evidence_bundle(
     return {"pr": meta.as_dict(), "issue_comments": ev_comments, "review_threads": ev_threads}
 
 
+def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
+    """The head's CI as reviewers need it: check runs and commit statuses, one line each.
+    Best effort: lanes can still ask `gh pr checks` themselves, so a failed read only notes
+    the error instead of failing the run."""
+    try:
+        runs = gh.api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100") or {}
+        status = gh.api(f"repos/{repo}/commits/{sha}/status?per_page=100") or {}
+    except Exception as exc:  # evidence only, never the run's problem
+        return {"error": str(exc)[:300]}
+    checks = [
+        {
+            "name": r.get("name"),
+            "status": r.get("status"),
+            "conclusion": r.get("conclusion"),
+            "url": r.get("html_url") or r.get("details_url"),
+        }
+        for r in (runs.get("check_runs") or [])
+        if isinstance(r, dict)
+    ]
+    checks += [
+        {
+            "name": st.get("context"),
+            "status": "completed" if st.get("state") != "pending" else "in_progress",
+            "conclusion": st.get("state"),
+            "url": st.get("target_url"),
+        }
+        for st in (status.get("statuses") or [])
+        if isinstance(st, dict)
+    ]
+    return {"head_sha": sha, "checks": checks}
+
+
 def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, dict[str, Any]]:
     """finding_hash -> thread facts for every unresolved bot finding thread.
 

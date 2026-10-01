@@ -178,6 +178,26 @@ usable reading is the rung skipped. On the box itself the proxies should run as
 10`, priorities only so CI keeps full parallelism when the box is otherwise
 idle; that needs sudo (`~claw/prioritize-proxies.sh`).
 
+### Reviews are static: lanes never build
+
+Every lane runs under `sandbox-exec` with a profile that allows everything but
+executing anything under `[lanes] deny_exec` (default
+`config.DEFAULT_LANE_DENY_EXEC`: the rustup toolchains and cargo proxies, make,
+cmake, ninja, go, xcodebuild and the Xcode toolchains, clang/cc/ld, swift, java,
+npm/yarn/pnpm, sccache). The kernel enforces it for every process the lane
+starts, so a project script that runs cargo is stopped too. `git` stays usable:
+`/usr/bin/git` goes through `xcrun` into Xcode's `usr/bin`, which is why those
+two are not on the list. Set `deny_exec = []` to turn the sandbox off; with no
+`sandbox-exec` (Linux) lanes run unsandboxed. Reviewer and verifier prompts say
+the review is static and point at the PR's CI instead: the head's check runs
+and commit statuses are in the evidence as `ci`, and lanes may run
+`gh pr checks` / `gh run view --log-failed` for the current state. Why
+(2026-10-01): with parallel lanes and up to 9 runs, lanes built dashd, the
+platform workspace and the iOS FFI side by side (each run in its own worktree,
+so each a cold build); the box went to load 900 and 60 GB of swap, and a
+`low`-tier dashwallet-ios review spent a 3-hour lane timeout polling an FFI
+build with `sleep 420`.
+
 ### Review body layout
 
 The body leads with what the developer needs: title, verifier summary, severity

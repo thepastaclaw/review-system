@@ -274,6 +274,8 @@ class Config:
     phase_parallelism: int
     # machine-wide lane slots per non-gpt model family (see lanepool.py); unlisted = ungated
     lane_pools: dict[str, int]
+    # paths a lane may not execute anything under: reviews are static (see lane.exec_deny_profile)
+    lane_deny_exec: tuple[str, ...]
     # identity / alerting
     bot_login: str
     slack_target: str | None
@@ -341,6 +343,49 @@ DEFAULT_PAGE_MENTIONS = ("UCW1VE04T", "U02CNG35EGG")
 # box config.toml files predating parallel lanes get the same caps as a fresh one
 DEFAULT_LANE_POOLS = {"muse": 8, "glm": 6, "gemini": 6}
 
+# Toolchains a review lane may not run (2026-10-01: lanes building dashd, the platform
+# workspace and the iOS FFI side by side filled 60 GB of swap and stalled every review).
+# Reviews read the code and the PR's CI results instead. git is /usr/bin/git -> xcrun ->
+# Xcode's usr/bin, so neither xcrun nor Developer/usr/bin as a whole can be listed.
+DEFAULT_LANE_DENY_EXEC = (
+    "~/.rustup",
+    "~/.cargo/bin",
+    "/usr/bin/make",
+    "/usr/bin/gnumake",
+    "/usr/bin/xcodebuild",
+    "/usr/bin/clang",
+    "/usr/bin/clang++",
+    "/usr/bin/cc",
+    "/usr/bin/c++",
+    "/usr/bin/gcc",
+    "/usr/bin/g++",
+    "/usr/bin/ld",
+    "/usr/bin/swift",
+    "/usr/bin/swiftc",
+    "/usr/bin/java",
+    "/Applications/Xcode.app/Contents/Developer/Toolchains",
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild",
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/make",
+    "/Library/Developer/CommandLineTools/usr/bin/make",
+    "/Library/Developer/CommandLineTools/usr/bin/clang",
+    "/Library/Developer/CommandLineTools/usr/bin/clang++",
+    "/Library/Developer/CommandLineTools/usr/bin/ld",
+    "/Library/Java/JavaVirtualMachines",
+    "/opt/homebrew/Cellar/cmake",
+    "/opt/homebrew/Cellar/ninja",
+    "/opt/homebrew/Cellar/go",
+    "/opt/homebrew/Cellar/gcc",
+    "/opt/homebrew/Cellar/llvm",
+    "/opt/homebrew/Cellar/openjdk",
+    "/opt/homebrew/Cellar/gradle",
+    "/opt/homebrew/Cellar/sccache",
+    "/opt/homebrew/lib/node_modules/npm",
+    "~/.npm-global/lib/node_modules/npm",
+    "~/.npm-global/lib/node_modules/yarn",
+    "~/.npm-global/lib/node_modules/pnpm",
+    "~/.local/bin/sccache",
+)
+
 DEFAULT_TOML = """\
 # reviewsys configuration
 [paths]
@@ -390,6 +435,12 @@ phase_parallelism = 0
 # capped by the review slot ceiling instead (the per-account stream budget); a family
 # not listed here is not capped.
 lane_pools = { muse = 8, glm = 6, gemini = 6 }
+
+[lanes]
+# lanes may not execute anything under these paths (compilers, build systems, test
+# runners): reviews are static and read CI results. Unset = the built-in list
+# (config.DEFAULT_LANE_DENY_EXEC); [] = no sandbox.
+# deny_exec = ["~/.rustup", "~/.cargo/bin", "/usr/bin/make", "/usr/bin/xcodebuild"]
 
 [identity]
 bot_login = "thepastaclaw"
@@ -710,6 +761,9 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
             for k, v in (s.get("lane_pools", DEFAULT_LANE_POOLS) or {}).items()
             if str(k) != "gpt"  # gpt is always the review slot ceiling
         },
+        lane_deny_exec=tuple(
+            str(x) for x in (t.get("lanes") or {}).get("deny_exec", DEFAULT_LANE_DENY_EXEC)
+        ),
         bot_login=str(i["bot_login"]),
         slack_target=i.get("slack_target"),
         slack_account=str(i.get("slack_account", "default")),

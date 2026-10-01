@@ -2719,3 +2719,12 @@ def test_a_later_full_review_voids_older_concessions(conn):
             (rid, "final", "conceded", "xxx", "f.rs", 1, 1, "blocking", None, "general", "x", ""),
         )
     assert worker._open_blockers(ctx, "final", lifted={"yyy"}) == 0  # type: ignore[arg-type]
+
+
+def test_reviewers_and_verifiers_are_told_to_review_statically_from_ci(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    _run(cfg, conn, gh, lanes)
+    graded = [s for s in lanes.calls if s.role not in ("selector", "triage")]
+    assert graded and all("This is a static review." in s.prompt for s in graded)
+    assert all('"ci": {' in s.prompt and "--log-failed" in s.prompt for s in graded)

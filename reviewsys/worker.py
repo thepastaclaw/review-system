@@ -39,7 +39,16 @@ from .db import connect_existing, event, kv_get, kv_set, now, now_dt, tx
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
-from .lane import LaneResult, LaneRunner, LaneSpec, lane_output, prompt_sha, run_claude_lane
+from .lane import (
+    LaneResult,
+    LaneRunner,
+    LaneSpec,
+    exec_deny_profile,
+    lane_output,
+    prompt_sha,
+    run_claude_lane,
+    sandboxed,
+)
 from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
 from .prompts import REPAIR_PROMPT, prior_for_prompt, reviewer_prompt, skill_texts, verifier_prompt
 from .scheduler import finish_run, live_queued_count
@@ -639,6 +648,7 @@ def step_context(ctx: RunContext) -> None:
     ctx.evidence = github.evidence_bundle(
         ctx.gh, ctx.repo, ctx.number, ctx.meta, ctx.cfg.bot_login, include_coderabbit=False
     )
+    ctx.evidence["ci"] = github.ci_checks(ctx.gh, ctx.repo, ctx.sha)
     ctx.coderabbit = github.coderabbit_context(threads)
     ctx.coderabbit_ids = [
         int(f["comment_id"]) for f in ctx.coderabbit["findings"] if f.get("comment_id")
@@ -2837,7 +2847,7 @@ def main(
     else:
         rank = lanepool.RANK_LIVE
     ctx.lane_runner = lanepool.gated(
-        lane_runner or run_claude_lane,
+        sandboxed(lane_runner or run_claude_lane, exec_deny_profile(cfg.lane_deny_exec)),
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,
