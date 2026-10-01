@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import statistics
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -139,8 +140,8 @@ def build_day_runs(conn: sqlite3.Connection, days: list[str]) -> dict[str, list[
     out: dict[str, list[dict[str, Any]]] = {day: [] for day in days}
     for row in conn.execute(
         "SELECT r.id,r.status,r.fail_kind,r.attempt,r.tier,r.degraded,r.blocker_count,r.review_url,"
-        "r.started_at,r.finished_at,h.repo,h.number,h.sha,h.queue,h.trigger,h.priority,h.queued_at,"
-        "h.eligible_at,COALESCE(p.title,a.title,'') title,a.comment_url audit_url,"
+        "r.started_at,r.finished_at,r.path,h.repo,h.number,h.sha,h.queue,h.trigger,h.priority,"
+        "h.queued_at,h.eligible_at,COALESCE(p.title,a.title,'') title,a.comment_url audit_url,"
         # the head's queued_at/eligible_at are not reset by a retry, a backoff or an audit
         # escalation, so a later run waited from its predecessor's end, and only the head's
         # newest run can be measured against eligible_at
@@ -175,6 +176,7 @@ def build_day_runs(conn: sqlite3.Connection, days: list[str]) -> dict[str, list[
                 "queue": row["queue"],
                 "trigger": row["trigger"],
                 "priority": bool(row["priority"]),
+                "path": row["path"],  # the run's own; the head's fields can change after it
                 "queued_at": row["queued_at"],
                 "started_at": row["started_at"],
                 "finished_at": row["finished_at"],
@@ -314,6 +316,76 @@ def _typical_minutes_by_tier(conn: sqlite3.Connection, at: datetime) -> dict[str
     return {t: round(sorted(v)[len(v) // 2], 1) for t, v in by_tier.items()}
 
 
+# the window of the dashboard's priority-vs-normal timing
+PATH_TIMING_DAYS = 7
+# v0.23.0 (lanepool.StallClock) started pushing `runs.deadline_at` out by the time a run only
+# waited for model slots; a run that started earlier has no such record (it waited for its slot
+# before it started, which its wait to start already counts)
+SLOT_WAIT_RECORDED_SINCE = "2026-10-01T19:13:32Z"
+
+
+def _spread(values: list[int]) -> dict[str, int | None]:
+    """How many samples, their median and their 90th percentile (seconds)."""
+    if not values:
+        return {"n": 0, "median_seconds": None, "p90_seconds": None}
+    return {
+        "n": len(values),
+        "median_seconds": round(statistics.median(values)),
+        "p90_seconds": round(statistics.quantiles(values, n=10, method="inclusive")[-1]),
+    }
+
+
+def build_path_timing(conn: sqlite3.Connection, cfg: Config, at: datetime) -> dict[str, Any]:
+    """Wait to start, slot wait in the run and review time of the week's live reviews, per path
+    (`runs.path`, recorded as the run starts: priority or normal, the day table's badge). A run
+    whose path is not known (one from before the column whose head was queued again after it)
+    is left out.
+
+    Post-merge audits are left out: they take only the capacity live review leaves idle, so
+    nobody waits on them. Conversations (a reply on a reviewed commit) are too: seconds long,
+    they are not reviews. Every run that started in the window counts, whatever its outcome:
+    - wait: as the day table's "Waited" column, from the head's queue time (or the end of the
+      head's previous run, for a retry) to the run's start; the normal path's debounce is in
+      it. A failed or cancelled run waited just as long before it started, so it counts too.
+    - duration: start to finish of completed (`done`) runs only; a failure ends early.
+    - slot_wait: of the same completed runs, the time the run only waited for model slots (at
+      least one lane in a pool's line and none running): the stall credit added to its
+      deadline, less the run timeout configured now (a changed `run_timeout_minutes` skews it
+      for a week). Runs started before SLOT_WAIT_RECORDED_SINCE have no such record and are
+      left out."""
+    since = fmt_ts(at - timedelta(days=PATH_TIMING_DAYS))
+    timeout = cfg.run_timeout_minutes * 60
+    samples: dict[str, dict[str, list[int]]] = {
+        path: {"wait": [], "duration": [], "slot_wait": []}
+        for path in (progress.PRIORITY, progress.NORMAL)
+    }
+    for row in conn.execute(
+        "SELECT r.status,r.started_at,r.finished_at,r.deadline_at,r.path,h.queued_at,"
+        "(SELECT MAX(o.finished_at) FROM runs o WHERE o.head_id=r.head_id AND o.id<r.id) prev_end "
+        "FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.path IN (?,?) AND r.started_at>=? "
+        "AND NOT EXISTS (SELECT 1 FROM steps c WHERE c.run_id=r.id AND c.name='converse')",
+        (progress.PRIORITY, progress.NORMAL, since),
+    ):
+        mine = samples[row["path"]]
+        waited_from = max(filter(None, (row["queued_at"], row["prev_end"])), default=None)
+        if (wait := _span(waited_from, row["started_at"])) is not None:
+            mine["wait"].append(wait)
+        took = _span(row["started_at"], row["finished_at"])
+        if row["status"] != "done" or took is None:
+            continue
+        mine["duration"].append(took)
+        if row["started_at"] >= SLOT_WAIT_RECORDED_SINCE:
+            credited = _span(row["started_at"], row["deadline_at"]) or 0
+            mine["slot_wait"].append(max(0, credited - timeout))
+    return {
+        "window_days": PATH_TIMING_DAYS,
+        "slot_wait_since": SLOT_WAIT_RECORDED_SINCE,
+        "paths": {
+            path: {k: _spread(v) for k, v in figures.items()} for path, figures in samples.items()
+        },
+    }
+
+
 def build_active_runs(conn: sqlite3.Connection, cfg: Config, at: datetime) -> list[dict[str, Any]]:
     """Every run in flight with everything the page can say about it: steps so far, finished
     and live lanes, tokens and findings so far, and how long it waited to start."""
@@ -336,7 +408,7 @@ def build_active_runs(conn: sqlite3.Connection, cfg: Config, at: datetime) -> li
             }
         )
     slot_dir = cfg.work_dir / "lane-slots"
-    profiles: dict[str, dict[str, progress.StepStat]] = {}
+    profiles: dict[tuple[str, str | None], dict[str, progress.StepStat]] = {}
     runs = []
     # `queue` tells a post-merge audit (of a PR that is merged by definition) apart from a live
     # review; without it an audit reads as a review stuck on a PR that closed hours ago
@@ -587,6 +659,7 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "tokens_by_model": tokens_by_model,
             "tokens_by_effort": tokens_by_effort,
             "tokens_by_run": tokens_by_run,
+            "path_timing": build_path_timing(conn, cfg, at),
         },
     }
 

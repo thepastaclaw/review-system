@@ -10,8 +10,12 @@ side by side) + the weighted durations of the steps after the furthest one the r
 
 A conversation (a reply on a reviewed commit) is measured against other conversations, never
 a review profile; a review is not estimated at all until triage has set its tier, since the
-tiers differ several-fold. A running step well past its typical duration marks the estimate
-`overdue` instead of letting the time left sit at the same figure for as long as it overruns.
+tiers differ several-fold. A live review is measured against its own path too (`path_of`:
+priority or normal), since a priority run's lanes go ahead of normal ones in every model
+pool's line and so spend less of each step waiting for a slot; a path with fewer than
+`MIN_PROFILE_RUNS` recent reviews of the tier borrows the tier's profile of both paths. A
+running step well past its typical duration marks the estimate `overdue` ("longer than
+usual") instead of letting the time left sit at the same figure for as long as it overruns.
 """
 
 from __future__ import annotations
@@ -63,6 +67,19 @@ MIN_PROFILE_RUNS = 5  # below this a tier borrows the all-tier profile
 UPCOMING_SHARE = 0.5  # a step shown as upcoming runs on at least half of the tier's reviews
 OVERDUE_FACTOR = 1.5  # a running step this far past its median makes the estimate overdue
 CONVERSATION = "conversation"  # the profile key of conversation runs
+# the review paths, as the dashboard's badges name them: a live head with `priority` set (a
+# mention, a review request, a ticked priority box, a reply under a finding, `enqueue`), any
+# other live head, and a post-merge audit (`queue='audit'`, never priority)
+PRIORITY, NORMAL, AUDIT = "priority", "normal", "audit"
+
+
+def path_of(queue: str | None, priority: object) -> str:
+    """The path of a run of a head from `queue` with `priority`: the same split the worker's
+    lane-line rank uses (`lanepool.rank_of`). The scheduler records it as `runs.path` when the
+    run starts; the dashboard's badges, path filter and timing read that."""
+    if queue == "audit":
+        return AUDIT
+    return PRIORITY if priority else NORMAL
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,10 +97,11 @@ class Estimate:
     overdue: bool = False
 
 
-def profile(conn: sqlite3.Connection, key: str) -> dict[str, StepStat]:
+def profile(conn: sqlite3.Connection, key: str, path: str | None = None) -> dict[str, StepStat]:
     """Typical duration and frequency of every step on recent completed live runs of `key`: a
     tier's reviews, or CONVERSATION. Reviews never include conversations (they are seconds long
-    and would drag every review estimate down)."""
+    and would drag every review estimate down). `path` (PRIORITY or NORMAL) narrows a tier's
+    reviews to that path while it has MIN_PROFILE_RUNS of them; None = both paths."""
     converse = "EXISTS (SELECT 1 FROM steps c WHERE c.run_id=r.id AND c.name='converse')"
 
     def load(run_filter: str, params: tuple[Any, ...]) -> tuple[int, dict[str, StepStat]]:
@@ -113,6 +131,10 @@ def profile(conn: sqlite3.Connection, key: str) -> dict[str, StepStat]:
 
     if key == CONVERSATION:
         return load(converse, ())[1]
+    if path in (PRIORITY, NORMAL):
+        n, prof = load(f"r.tier=? AND r.path=? AND NOT {converse}", (key, path))
+        if n >= MIN_PROFILE_RUNS:
+            return prof
     n, prof = load(f"r.tier=? AND NOT {converse}", (key,))
     if n < MIN_PROFILE_RUNS:
         prof = load(f"r.tier IS NOT NULL AND NOT {converse}", ())[1]
@@ -123,11 +145,15 @@ def estimate(
     conn: sqlite3.Connection,
     run_id: int,
     at: datetime,
-    profiles: dict[str, dict[str, StepStat]] | None = None,
+    profiles: dict[tuple[str, str | None], dict[str, StepStat]] | None = None,
 ) -> Estimate | None:
     """Time left for a running run; None when the run does not exist. `profiles` caches
-    tier profiles across calls (the export estimates every active run)."""
-    run = conn.execute("SELECT started_at, tier FROM runs WHERE id=?", (run_id,)).fetchone()
+    (tier, path) profiles across calls (the export estimates every active run)."""
+    run = conn.execute(
+        "SELECT r.started_at, r.tier, r.path, h.queue, h.priority FROM runs r "
+        "LEFT JOIN heads h ON h.id=r.head_id WHERE r.id=?",
+        (run_id,),
+    ).fetchone()
     if run is None:
         return None
     elapsed = max(0, int((at - parse_ts(run[0])).total_seconds()))
@@ -138,11 +164,14 @@ def estimate(
     key = CONVERSATION if "converse" in seen else run[1]
     if key is None:  # before triage: which tier's profile applies is not known yet
         return Estimate(elapsed, None, None)
+    # an audit is measured against live reviews of both paths, as before the path split
+    path = run[2] or path_of(run[3], run[4])  # a run started before `runs.path` existed
+    cached = (key, None if key == CONVERSATION or path == AUDIT else path)
     if profiles is None:
         profiles = {}
-    if key not in profiles:
-        profiles[key] = profile(conn, key)
-    prof = profiles[key]
+    if cached not in profiles:
+        profiles[cached] = profile(conn, *cached)
+    prof = profiles[cached]
     if not prof:
         return Estimate(elapsed, None, None)
     in_step = {

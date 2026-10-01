@@ -13,7 +13,7 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-from . import audit, proc
+from . import audit, proc, progress
 from .config import Config
 from .db import event, fmt_ts, now, parse_ts, tx
 from .models import FailKind, HeadStatus, RunStatus
@@ -121,8 +121,17 @@ def _start_run(
     deadline = fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.run_timeout_minutes))
     with tx(conn):
         cur = conn.execute(
-            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) VALUES (?,?,?,?,?,?)",
-            (head["id"], attempt, RunStatus.SPAWNED.value, token, ts, deadline),
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at, path) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (
+                head["id"],
+                attempt,
+                RunStatus.SPAWNED.value,
+                token,
+                ts,
+                deadline,
+                progress.path_of(head["queue"], head["priority"]),
+            ),
         )
         run_id = int(cur.lastrowid or 0)
         conn.execute(

@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -112,6 +112,17 @@ MIGRATIONS: dict[int, str] = {
         line_end INTEGER, category TEXT, title TEXT NOT NULL, body TEXT NOT NULL,
         status TEXT, evidence TEXT, fixed_by TEXT,
         PRIMARY KEY (audit_id, hash));
+    """,
+    # the path a run took (progress.path_of: priority, normal or audit), fixed as it starts: a
+    # reply re-queues a finished head with `priority` set and a new `queued_at`, and an audit
+    # takes the merged head over, so the head no longer says what its earlier runs were. Runs
+    # from before the column are filled from their head, unless the head was queued again
+    # after they started (left NULL: not known)
+    5: """
+    ALTER TABLE runs ADD COLUMN path TEXT;
+    UPDATE runs SET path=(SELECT CASE WHEN h.queue='audit' THEN 'audit'
+        WHEN h.priority<>0 THEN 'priority' ELSE 'normal' END
+        FROM heads h WHERE h.id=runs.head_id AND h.queued_at<=runs.started_at);
     """,
 }
 
