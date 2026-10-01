@@ -213,7 +213,7 @@ def estimate(
         progress=round(progress, 3),
         upcoming=[n for n in later if prof[n].share >= UPCOMING_SHARE],
         overdue=overdue,
-        basis="conversation" if key == CONVERSATION else "reviews" if key == ALL_TIERS else "tier",
+        basis={CONVERSATION: "conversation", ALL_TIERS: "reviews"}.get(key, "tier"),
     )
 
 

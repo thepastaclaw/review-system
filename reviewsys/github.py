@@ -477,7 +477,8 @@ def progress_lines(progress: dict[str, Any]) -> list[str]:
 
 # the parts of an in-progress body that move by themselves: the bar line (share, time left,
 # time running) and the update time; "taking longer than usual" still counts as a change
-_MOVING = re.compile(r"^`[█░]+`.*$|updated \d\d:\d\d UTC", re.MULTILINE)
+_UPDATED = r"updated \d\d:\d\d UTC"
+_MOVING = re.compile(rf"^`[█░]+`.*$|{_UPDATED}", re.MULTILINE)
 
 
 def gate_digest(body: str) -> str:
@@ -488,7 +489,7 @@ def gate_digest(body: str) -> str:
 
 
 def without_update_time(body: str) -> str:
-    return re.sub(r"updated \d\d:\d\d UTC", "", body)
+    return re.sub(_UPDATED, "", body)
 
 
 # why a run reviewed with Phase 2 alone (RunContext.phase1_skipped starts with one of these)
