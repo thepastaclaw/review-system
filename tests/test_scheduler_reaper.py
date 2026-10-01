@@ -47,6 +47,8 @@ def test_every_eligible_head_starts_without_a_run_slot_count(cfg, conn):
     assert len(schedule(conn, cfg, spawn=False)) == 1
     assert schedule(conn, cfg, spawn=False) == []
     assert _in_flight(conn) == 13
+    paths = conn.execute("SELECT path, COUNT(*) FROM runs GROUP BY path ORDER BY path").fetchall()
+    assert [tuple(r) for r in paths] == [("normal", 12), ("priority", 1)], "fixed as runs start"
 
 
 def test_max_runs_is_a_safety_cap_priority_first(cfg, conn):

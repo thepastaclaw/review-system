@@ -9,18 +9,18 @@ from reviewsys import github, progress, worker
 from reviewsys.db import fmt_ts, now_dt, tx
 
 
-def _head(conn, number, status="done"):
+def _head(conn, number, status="done", *, priority=False, queue="live"):
     return conn.execute(
-        "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at) "
-        "VALUES ('dashpay/platform', ?, ?, 'new_push', ?, 't', 't')",
-        (number, f"{number:040x}", status),
+        "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at, "
+        "queue) VALUES ('dashpay/platform', ?, ?, 'new_push', ?, ?, 't', 't', ?)",
+        (number, f"{number:040x}", int(priority), status, queue),
     ).lastrowid
 
 
-def _run(conn, head_id, *, status, tier, started):
+def _run(conn, head_id, *, status, tier, started, path=None):
     return conn.execute(
         "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at, finished_at, "
-        "tier) VALUES (?,1,?,?,?,?,?,?)",
+        "tier, path) VALUES (?,1,?,?,?,?,?,?,?)",
         (
             head_id,
             status,
@@ -29,6 +29,7 @@ def _run(conn, head_id, *, status, tier, started):
             "t",
             fmt_ts(started + timedelta(hours=1)) if status == "done" else None,
             tier,
+            path,
         ),
     ).lastrowid
 
@@ -237,6 +238,66 @@ def test_a_step_far_past_its_median_is_overdue(conn):
             "updated_at": "x",
         },
     )
+
+
+def _phase1_history(conn, *, priority, minutes, n=6, first=300):
+    """n completed normal-tier reviews on one path whose Phase 1 took `minutes`. The heads all
+    say normal: a run's path is the one recorded as it started, whatever its head says now (a
+    reply re-queues a reviewed head as priority)."""
+    t0 = now_dt() - timedelta(days=1)
+    for i in range(n):
+        run = _run(
+            conn,
+            _head(conn, first + i),
+            status="done",
+            tier="normal",
+            started=t0,
+            path="priority" if priority else "normal",
+        )
+        _step(conn, run, "phase1", t0, minutes * 60)
+
+
+def _in_phase1(conn, number, at, minutes, **head):
+    run = _run(
+        conn,
+        _head(conn, number, "running", **head),
+        status="running",
+        tier="normal",
+        started=at - timedelta(minutes=minutes),
+    )
+    _step(conn, run, "phase1", at - timedelta(minutes=minutes), status="running")
+    return run
+
+
+def test_longer_than_usual_compares_a_run_with_its_own_path(conn):
+    """Priority lanes go first in every pool's line, so a priority Phase 1 is short; 6 min of
+    it is long for a priority review and quick for a normal one."""
+    at = now_dt()
+    with tx(conn):
+        _phase1_history(conn, priority=True, minutes=3, first=300)
+        _phase1_history(conn, priority=False, minutes=20, first=400)
+        fast = _in_phase1(conn, 8, at, 6, priority=True)
+        slow = _in_phase1(conn, 9, at, 6)
+        audit = _in_phase1(conn, 10, at, 6, queue="audit")
+    profiles: dict = {}
+    assert progress.estimate(conn, fast, at, profiles).overdue  # 6 > 1.5 x 3
+    est = progress.estimate(conn, slow, at, profiles)
+    assert not est.overdue and est.remaining_seconds == 14 * 60
+    # an audit (never priority) is measured against both paths: median of 3s and 20s = 11.5
+    assert progress.estimate(conn, audit, at, profiles).remaining_seconds == int(5.5 * 60)
+    assert set(profiles) == {("normal", "priority"), ("normal", "normal"), ("normal", None)}
+    assert progress.path_of("live", 1) == "priority" and progress.path_of("audit", 0) == "audit"
+
+
+def test_a_path_with_too_few_runs_borrows_the_tiers_profile_of_both_paths(conn):
+    at = now_dt()
+    with tx(conn):
+        _phase1_history(conn, priority=True, minutes=3, n=progress.MIN_PROFILE_RUNS - 1)
+        _phase1_history(conn, priority=False, minutes=20, n=7, first=400)
+        run = _in_phase1(conn, 11, at, 6, priority=True)
+    est = progress.estimate(conn, run, at)
+    # 4 priority runs of 3 min are not enough: the tier's 11 runs say 20 min
+    assert est is not None and not est.overdue and est.remaining_seconds == 14 * 60
 
 
 def test_refresh_stops_for_a_superseded_head_and_never_waits_for_the_lock(cfg, conn, gh, tmp_path):

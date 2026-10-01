@@ -7,10 +7,17 @@ import os
 from datetime import timedelta
 
 from reviewsys import degraded, lanepool
-from reviewsys.db import event, fmt_ts, now_dt, tx
-from reviewsys.exporter import _live_lanes, build_day_runs, build_export, write_export
+from reviewsys.db import MIGRATIONS, event, fmt_ts, now_dt, parse_ts, tx
+from reviewsys.exporter import (
+    _live_lanes,
+    build_day_runs,
+    build_export,
+    build_path_timing,
+    write_export,
+)
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import Trigger
+from reviewsys.progress import path_of
 from reviewsys.queue_status import queued_order
 from reviewsys.scheduler import eligible_heads
 
@@ -404,3 +411,171 @@ def test_live_lanes_see_stand_in_retries_and_repairs(tmp_path):
     assert lanes["general (repair)"]["phase"] == "phase1"
     os.utime(state, ns=(meta_ns - 10**9, meta_ns - 10**9))  # the lane-meta.json is newer: ended
     assert "triage" not in {x["role"] for x in _live_lanes(str(tmp_path), tmp_path, now_dt())}
+
+
+_AT = parse_ts("2026-10-20T12:00:00Z")  # after SLOT_WAIT_RECORDED_SINCE, whatever today is
+
+
+def _path_run(
+    conn,
+    number,
+    *,
+    priority=False,
+    queue="live",
+    status="done",
+    waited_min=10,
+    took_min=30,
+    slot_wait_min=0,
+    days_ago=1,
+    converse=False,
+):
+    """A head queued `waited_min` before its one run started `days_ago` days before _AT; the
+    run took `took_min` and only waited for slots for `slot_wait_min` (its deadline credit)."""
+    started = _AT - timedelta(days=days_ago)
+    hid = conn.execute(
+        "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at, "
+        "queue) VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "dashpay/platform",
+            number,
+            f"{number:040x}",
+            "mention" if priority else "new_push",
+            int(priority),
+            "done",
+            fmt_ts(started - timedelta(minutes=waited_min)),
+            fmt_ts(started),
+            queue,
+        ),
+    ).lastrowid
+    run = conn.execute(
+        "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at, finished_at, "
+        "path) VALUES (?,1,?,?,?,?,?,?)",
+        (
+            hid,
+            status,
+            f"t{number}",
+            fmt_ts(started),
+            fmt_ts(started + timedelta(minutes=360 + slot_wait_min)),  # run_timeout_minutes 360
+            fmt_ts(started + timedelta(minutes=took_min)) if status != "running" else None,
+            path_of(queue, priority),
+        ),
+    ).lastrowid
+    if converse:
+        conn.execute(
+            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?,?,?,?)",
+            (run, "converse", "ok", fmt_ts(started)),
+        )
+    return run
+
+
+def test_path_timing_is_empty_without_runs(cfg, conn):
+    timing = build_path_timing(conn, cfg, _AT)
+    empty = {"n": 0, "median_seconds": None, "p90_seconds": None}
+    assert timing["window_days"] == 7
+    assert timing["paths"] == {
+        path: {"wait": empty, "duration": empty, "slot_wait": empty}
+        for path in ("priority", "normal")
+    }
+    assert build_export(conn, cfg)["history"]["path_timing"]["paths"]["normal"]["wait"] == empty
+
+
+def test_path_timing_of_a_single_run_is_that_run(cfg, conn):
+    with tx(conn):
+        _path_run(conn, 1, waited_min=12, took_min=40, slot_wait_min=5)
+    normal = build_path_timing(conn, cfg, _AT)["paths"]["normal"]
+    assert normal["wait"] == {"n": 1, "median_seconds": 720, "p90_seconds": 720}
+    assert normal["duration"] == {"n": 1, "median_seconds": 2400, "p90_seconds": 2400}
+    assert normal["slot_wait"] == {"n": 1, "median_seconds": 300, "p90_seconds": 300}
+
+
+def test_path_timing_splits_priority_from_normal_and_leaves_audits_out(cfg, conn):
+    with tx(conn):
+        for i in range(10):  # normal: waits 31..40 min (debounce), reviews 60 min
+            _path_run(conn, 10 + i, waited_min=31 + i, took_min=60, slot_wait_min=i)
+        for i in range(3):  # priority: waits 1..3 min, reviews 20, 30, 40 min
+            _path_run(conn, 30 + i, priority=True, waited_min=1 + i, took_min=20 + 10 * i)
+        # left out: audits, conversations, runs before the window, and still-running runs'
+        # review time (their wait counts: it ended when they started)
+        _path_run(conn, 40, queue="audit", waited_min=900, took_min=900)
+        _path_run(conn, 41, priority=True, converse=True, waited_min=0, took_min=1)
+        _path_run(conn, 42, days_ago=8, waited_min=999, took_min=999)
+        _path_run(conn, 43, priority=True, status="running", waited_min=4)
+        # a failed run waited too, but its short life is no review time
+        _path_run(conn, 44, priority=True, status="failed", waited_min=5, took_min=2)
+    paths = build_path_timing(conn, cfg, _AT)["paths"]
+    normal, priority = paths["normal"], paths["priority"]
+    # p90 interpolates between the 9th and 10th of the sorted samples: 39.1 min
+    assert normal["wait"] == {"n": 10, "median_seconds": 35 * 60 + 30, "p90_seconds": 2346}
+    assert normal["duration"] == {"n": 10, "median_seconds": 3600, "p90_seconds": 3600}
+    assert normal["slot_wait"]["n"] == 10 and normal["slot_wait"]["median_seconds"] == 270
+    assert priority["wait"]["n"] == 5 and priority["wait"]["median_seconds"] == 180
+    assert priority["duration"] == {"n": 3, "median_seconds": 1800, "p90_seconds": 2280}
+    assert priority["slot_wait"] == {"n": 3, "median_seconds": 0, "p90_seconds": 0}
+
+
+def test_path_timing_measures_a_retry_from_its_predecessor(cfg, conn):
+    with tx(conn):
+        first = _path_run(conn, 50, status="failed", waited_min=30, took_min=10)
+        head, started = conn.execute(
+            "SELECT head_id, started_at FROM runs WHERE id=?", (first,)
+        ).fetchone()
+        retry_start = parse_ts(started) + timedelta(minutes=25)  # 15 min after the failure
+        conn.execute(
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at, "
+            "finished_at, path) VALUES (?,2,'done','t50b',?,?,?,'normal')",
+            (
+                head,
+                fmt_ts(retry_start),
+                fmt_ts(retry_start + timedelta(minutes=360)),
+                fmt_ts(retry_start + timedelta(minutes=45)),
+            ),
+        )
+    normal = build_path_timing(conn, cfg, _AT)["paths"]["normal"]
+    assert normal["wait"]["n"] == 2 and normal["wait"]["median_seconds"] == (30 + 15) * 60 // 2
+    assert normal["duration"]["n"] == 1 and normal["duration"]["median_seconds"] == 45 * 60
+
+
+def test_path_timing_has_no_slot_wait_for_runs_before_it_was_recorded(cfg, conn):
+    """Before v0.23 a run waited for its slot before it started (its wait to start counts
+    that) and its deadline was never extended: a 0 there would be a made-up figure."""
+    with tx(conn):
+        _path_run(conn, 60, days_ago=19.5, took_min=30)  # 2026-10-01T00:00Z
+    paths = build_path_timing(conn, cfg, _AT + timedelta(days=-13))["paths"]
+    assert paths["normal"]["duration"]["n"] == 1
+    assert paths["normal"]["slot_wait"]["n"] == 0
+
+
+def test_path_timing_keeps_a_runs_path_when_a_reply_requeues_its_head_as_priority(cfg, conn):
+    """A reply under a finding re-queues the reviewed head with `priority` set and a new
+    `queued_at`; the normal review that ran before must stay normal, with its own wait."""
+    with tx(conn):
+        run = _path_run(conn, 70, waited_min=45, took_min=50)
+        conn.execute(
+            "UPDATE heads SET priority=1, trigger='review_reply', queued_at=? "
+            "WHERE id=(SELECT head_id FROM runs WHERE id=?)",
+            (fmt_ts(_AT - timedelta(hours=1)), run),
+        )
+    paths = build_path_timing(conn, cfg, _AT)["paths"]
+    assert paths["priority"]["wait"]["n"] == 0 and paths["priority"]["duration"]["n"] == 0
+    assert paths["normal"]["duration"]["median_seconds"] == 50 * 60
+    with tx(conn):
+        conn.execute("UPDATE runs SET path=NULL WHERE id=?", (run,))
+    assert build_path_timing(conn, cfg, _AT)["paths"]["normal"]["wait"]["n"] == 0, (
+        "a run whose path is not known is left out"
+    )
+
+
+def test_runs_from_before_the_path_column_take_it_from_their_head_when_it_is_known(conn):
+    with tx(conn):
+        kept = _path_run(conn, 80, priority=True)
+        requeued = _path_run(conn, 81)
+        audited = _path_run(conn, 82, queue="audit")
+        merged = _path_run(conn, 83)
+        conn.execute("UPDATE runs SET path=NULL")
+        # queued again after their run started: by a reply (priority now) and as an audit
+        conn.execute("UPDATE heads SET priority=1, queued_at=? WHERE number=81", (fmt_ts(_AT),))
+        conn.execute("UPDATE heads SET queue='audit', queued_at=? WHERE number=83", (fmt_ts(_AT),))
+        backfill = [x for x in MIGRATIONS[5].split(";") if "UPDATE" in x]
+        conn.execute(backfill[0])
+    paths = dict(conn.execute("SELECT id, path FROM runs").fetchall())
+    assert paths == {kept: "priority", requeued: None, audited: "audit", merged: None}

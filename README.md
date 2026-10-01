@@ -549,6 +549,41 @@ same comment is reused by the worker for "in progress" / "done" / "failed" state
 so a PR never has more than one bot status comment. Writes are capped at 25 per
 pass to respect GitHub's content-creation limits; the rest catch up next pass.
 
+## Status dashboard: priority vs normal timing
+
+The public status page (`site/`, fed by `reviewsys export-status`, see
+`deploy/publish-observability.sh`) compares the two paths a live review takes, over the
+runs that started in the last 7 days (`history.path_timing` in `status.json`, each figure a
+median, a p90 and its sample count n):
+
+- **Path** (`runs.path`, the day table's `priority` / `post-merge audit` badges and its
+  path filter) is fixed when the scheduler starts the run: a live head with
+  `heads.priority` set (a mention, a review request, a ticked priority box, a reply under a
+  finding, `enqueue`) is priority, every other live head is normal, an audit head is audit.
+  It is the split the pool lines rank lanes by. It is recorded on the run because the head
+  changes afterwards: a reply re-queues a finished head as priority, and an audit takes over
+  a merged head. Runs from before the column were filled from their head, except where the
+  head was queued again after they started (unknown, left out). Post-merge audits are left
+  out (they only take capacity live review leaves idle, nobody waits on them), and so are
+  conversations (replies on a reviewed commit: seconds long, not reviews).
+- **Wait to start**: the day table's "Waited" figure, from the head's `queued_at` (or the
+  end of the head's previous run, for a retry) to the run's start. The normal path's
+  debounce is part of it. Every run that started counts, failed and cancelled ones too:
+  they waited just as long before anyone knew how they would end.
+- **Review time**: start to finish of completed runs only (a failure ends early).
+- **Slot wait in run**: of those completed runs, the time the run only waited for model
+  slots (at least one lane in a pool's line, none running), read from the stall credit
+  added to `runs.deadline_at` (see below) less the run timeout configured now (so a change
+  to `run_timeout_minutes` skews it until the window has passed). It exists since v0.23.0;
+  earlier runs waited for their slot before they started, inside their wait to start, and
+  are not counted here.
+
+The "longer than usual" mark on an active run (a running step past 1.5× its typical
+duration, `progress.estimate`) compares the run with recent reviews of its own tier *and*
+path; a path with fewer than five recent reviews of the tier falls back to the tier's
+reviews of both paths, and an audit is measured against both. The PR's gate comment uses the
+same estimate. The day view filters its runs by path.
+
 ## Liveness model
 
 The daemon spawns `reviewsys worker --run-id N` in its own session. The worker
