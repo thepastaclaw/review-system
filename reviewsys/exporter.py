@@ -321,7 +321,7 @@ PATH_TIMING_DAYS = 7
 # v0.23.0 (lanepool.StallClock) started pushing `runs.deadline_at` out by the time a run only
 # waited for model slots; a run that started earlier has no such record (it waited for its slot
 # before it started, which its wait to start already counts)
-SLOT_WAIT_RECORDED_SINCE = "2026-10-01T19:13:32Z"
+SLOT_WAIT_RECORDED_SINCE = "2026-10-01T19:14:37Z"  # v0.23.0 deploy (deployed.log)
 
 
 def _spread(values: list[int]) -> dict[str, int | None]:
