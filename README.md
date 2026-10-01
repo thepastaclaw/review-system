@@ -651,6 +651,13 @@ same comment is reused by the worker for "in progress" / "done" / "failed" state
 so a PR never has more than one bot status comment. Writes are capped at 25 per
 pass to respect GitHub's content-creation limits; the rest catch up next pass.
 
+A draft PR, and a new head still waiting out the push debounce (not priority, not a retry),
+get the "Review not started yet" body instead, with two boxes: **Request normal review**
+(queue it now) and **Request priority review**. Each PR gets exactly one of the two bodies
+per pass, and a body equal to what GitHub has is never rewritten. A retry waiting out its
+backoff keeps the queue body, whose ETA counts the wait. (Until 2026-10 both renderers ran
+for a debounced head in the same pass, so its comment flipped between the two every ~5 min.)
+
 ### Live progress in the gate comment
 
 While a run is in progress the worker's heartbeat keeps the comment showing a progress bar
