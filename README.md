@@ -651,6 +651,30 @@ same comment is reused by the worker for "in progress" / "done" / "failed" state
 so a PR never has more than one bot status comment. Writes are capped at 25 per
 pass to respect GitHub's content-creation limits; the rest catch up next pass.
 
+### Live progress in the gate comment
+
+While a run is in progress the worker's heartbeat keeps the comment showing a progress bar
+(estimated share done, time left, time running), the steps as chips (`✅ triage → ⏳ **Phase
+1** (2/3 lanes) → ▫️ verify 1 → …`) and a link to the run on the dashboard.
+
+- The first "in progress" status is posted once `step_worktree` has confirmed the head is
+  still the PR's live head, with the checkout as the running step. Setup steps (checkout,
+  lane selection, context) show only while they run; the selection and triage of the prep
+  lane show as the one triage chip.
+- Before triage has set the tier, the estimate measures the run against recent reviews of
+  every tier (`progress.ALL_TIERS`, path-aware like the tier profile) and the footer says
+  "Estimated from recent reviews"; from the tier on, "… of this tier"; a conversation is
+  measured against conversations. A run queued by a reply gets no review estimate before
+  triage on the dashboard, which cannot tell yet whether it is a conversation (the worker
+  can). Without any history the comment shows the steps and no bar.
+- Edits: a re-rendered body is compared with the one last written. Nothing but the update
+  time moved: no edit at all. The status line, a chip, the estimate's basis or the
+  "taking longer than usual" mark changed: an edit at once, at most one per 30 s
+  (`GATE_PROGRESS_MIN_GAP_SECONDS`). Only the bar and time left moved: an edit every 10 min
+  (`GATE_PROGRESS_EVERY_SECONDS`). Before 2026-10 every step change re-posted the body, and
+  since the early steps were hidden, the comment showed a bare "Review in progress" line
+  re-posted two or three times in the first minutes of each run (dashpay/platform#5237).
+
 ## Status dashboard: priority vs normal timing
 
 The public status page (`site/`, fed by `reviewsys export-status`, see
@@ -684,7 +708,8 @@ The "longer than usual" mark on an active run (a running step past 1.5× its typ
 duration, `progress.estimate`) compares the run with recent reviews of its own tier *and*
 path; a path with fewer than five recent reviews of the tier falls back to the tier's
 reviews of both paths, and an audit is measured against both. The PR's gate comment uses the
-same estimate. The day view filters its runs by path.
+same estimate ([live progress](#live-progress-in-the-gate-comment)). The day view filters
+its runs by path.
 
 A failed step of an active run shows its error under the run (collapsed or not) and as the
 red pill's tooltip, e.g. a single-stage Phase 1 that failed while Phase 2 is still going.

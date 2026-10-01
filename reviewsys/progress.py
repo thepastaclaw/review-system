@@ -9,8 +9,11 @@ running steps typically still need (the longest one, since steps of a single-sta
 side by side) + the weighted durations of the steps after the furthest one the run reached.
 
 A conversation (a reply on a reviewed commit) is measured against other conversations, never
-a review profile; a review is not estimated at all until triage has set its tier, since the
-tiers differ several-fold. A live review is measured against its own path too (`path_of`:
+a review profile. Until triage has set its tier, a review is measured against recent reviews
+of every tier (ALL_TIERS) and the estimate says so (`basis`), so the gate comment shows a bar
+from the run's first minute; the tiers differ several-fold, so the figure moves once the tier
+is known. A run queued by a reply is not estimated before triage unless the caller knows it
+is a review (`conversation=False`): it may still turn out to be a conversation. A live review is measured against its own path too (`path_of`:
 priority or normal), since a priority run's lanes go ahead of normal ones in every model
 pool's line and so spend less of each step waiting for a slot; a path with fewer than
 `MIN_PROFILE_RUNS` recent reviews of the tier borrows the tier's profile of both paths. A
@@ -67,6 +70,7 @@ MIN_PROFILE_RUNS = 5  # below this a tier borrows the all-tier profile
 UPCOMING_SHARE = 0.5  # a step shown as upcoming runs on at least half of the tier's reviews
 OVERDUE_FACTOR = 1.5  # a running step this far past its median makes the estimate overdue
 CONVERSATION = "conversation"  # the profile key of conversation runs
+ALL_TIERS = "*"  # the profile key of a review whose tier is not known yet: reviews of every tier
 # the review paths, as the dashboard's badges name them: a live head with `priority` set (a
 # mention, a review request, a ticked priority box, a reply under a finding, `enqueue`), any
 # other live head, and a post-merge audit (`queue='audit'`, never priority)
@@ -95,6 +99,9 @@ class Estimate:
     progress: float | None  # 0..0.99 while running
     upcoming: list[str] = field(default_factory=list)
     overdue: bool = False
+    # what it was measured against: "tier" (recent reviews of the run's tier), "reviews"
+    # (every tier, before triage) or "conversation"; None without an estimate
+    basis: str | None = None
 
 
 def profile(conn: sqlite3.Connection, key: str, path: str | None = None) -> dict[str, StepStat]:
@@ -131,11 +138,13 @@ def profile(conn: sqlite3.Connection, key: str, path: str | None = None) -> dict
 
     if key == CONVERSATION:
         return load(converse, ())[1]
+    # ALL_TIERS: any tier (`r.tier IS NOT NULL` keeps conversations and failed triages out)
+    tier, params = ("r.tier IS NOT NULL", ()) if key == ALL_TIERS else ("r.tier=?", (key,))
     if path in (PRIORITY, NORMAL):
-        n, prof = load(f"r.tier=? AND r.path=? AND NOT {converse}", (key, path))
+        n, prof = load(f"{tier} AND r.path=? AND NOT {converse}", (*params, path))
         if n >= MIN_PROFILE_RUNS:
             return prof
-    n, prof = load(f"r.tier=? AND NOT {converse}", (key,))
+    n, prof = load(f"{tier} AND NOT {converse}", params)
     if n < MIN_PROFILE_RUNS:
         prof = load(f"r.tier IS NOT NULL AND NOT {converse}", ())[1]
     return prof
@@ -146,11 +155,15 @@ def estimate(
     run_id: int,
     at: datetime,
     profiles: dict[tuple[str, str | None], dict[str, StepStat]] | None = None,
+    *,
+    conversation: bool | None = None,
 ) -> Estimate | None:
     """Time left for a running run; None when the run does not exist. `profiles` caches
-    (tier, path) profiles across calls (the export estimates every active run)."""
+    (tier, path) profiles across calls (the export estimates every active run).
+    `conversation`: whether the run is a conversation, when the caller knows (the worker
+    does from the start; a run only shows it once its `converse` step began)."""
     run = conn.execute(
-        "SELECT r.started_at, r.tier, r.path, h.queue, h.priority FROM runs r "
+        "SELECT r.started_at, r.tier, r.path, h.queue, h.priority, h.trigger FROM runs r "
         "LEFT JOIN heads h ON h.id=r.head_id WHERE r.id=?",
         (run_id,),
     ).fetchone()
@@ -161,9 +174,11 @@ def estimate(
         "SELECT name,status,started_at FROM steps WHERE run_id=?", (run_id,)
     ).fetchall()
     seen = {s[0] for s in steps}
-    key = CONVERSATION if "converse" in seen else run[1]
-    if key is None:  # before triage: which tier's profile applies is not known yet
-        return Estimate(elapsed, None, None)
+    key = CONVERSATION if conversation or "converse" in seen else run[1]
+    if key is None:  # before triage: reviews of every tier, unless it may be a conversation
+        if conversation is None and run[5] == "review_reply":
+            return Estimate(elapsed, None, None)
+        key = ALL_TIERS
     # an audit is measured against live reviews of both paths, as before the path split
     path = run[2] or path_of(run[3], run[4])  # a run started before `runs.path` existed
     cached = (key, None if key == CONVERSATION or path == AUDIT else path)
@@ -195,6 +210,7 @@ def estimate(
         progress=round(progress, 3),
         upcoming=[n for n in later if prof[n].share >= UPCOMING_SHARE],
         overdue=overdue,
+        basis="conversation" if key == CONVERSATION else "reviews" if key == ALL_TIERS else "tier",
     )
 
 
