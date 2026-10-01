@@ -217,7 +217,9 @@ function stepChip(st){
   const i=st.info||{},bits=[];
   if(st.name==='triage'&&i.tier)bits.push(i.tier);
   if(st.name==='select'&&i.selection)bits.push(`${i.selection.length+1} lanes`);
-  if(/^(fresh_)?phase[12]$/.test(st.name)&&i.roles)bits.push(`${i.roles.length} reviewers`);
+  if(st.lanes_total!=null&&st.status==='running')bits.push(`${st.lanes_done}/${st.lanes_total} lanes done`);
+  else if(st.lanes_done!=null&&st.status==='running')bits.push(`${st.lanes_done} lanes done`);
+  else if(/^(fresh_)?phase[12]$/.test(st.name)&&i.roles)bits.push(`${i.roles.length} reviewers`);
   if(/verify/.test(st.name)&&i.findings!=null)bits.push(`${i.findings} findings${i.blockers?` · ${i.blockers} blocking`:''}`);
   if(st.name==='gate'&&i.admit_phase2!=null)bits.push(i.admit_phase2?`Phase 2 at ${i.phase2_effort||'?'}`:'no Phase 2');
   if(st.name==='publish'&&i.event)bits.push(i.event.toLowerCase().replace('_',' '));
@@ -231,7 +233,8 @@ function activeCard(a,l){
     triage=(a.steps||[]).find(s=>s.name==='triage')?.info,f=a.findings,lanes=a.lanes||[],live=a.live_lanes||[],
     waiting=live.filter(x=>x.state==='waiting');
   const tags=[a.tier?`<span class=pill>${esc(a.tier)}</span>`:'',a.priority?'<span class="pill priority">priority</span>':'',a.queue==='audit'?'<span class="pill priority">post-merge audit</span>':'',a.attempt>1?`<span class="pill warn">attempt ${a.attempt}</span>`:'',a.degraded?'<span class="pill warn">stand-in models</span>':'',open?`<span class=pill>${esc((a.trigger||'').replace(/_/g,' '))}</span>`:''].join(' ');
-  const now=running.length?running.map(s=>`<b>${esc(STEP_LABELS[s.name]||s.name)}</b> ${dur(s.seconds)}`).join(' + '):`<b>${esc(STEP_LABELS[a.phase]||a.phase||'starting')}</b>`,
+  const lanesOf=s=>s.lanes_total!=null?` · ${s.lanes_done} of ${s.lanes_total} lanes done${s.lanes_left?.length?` (${esc(s.lanes_left.join(', '))} still going)`:s.comparison_left?` (+${s.comparison_left} comparison lane${s.comparison_left===1?'':'s'} still going)`:''}`:s.lanes_done?` · ${s.lanes_done} lanes done`:'';
+  const now=running.length?running.map(s=>`<b>${esc(STEP_LABELS[s.name]||s.name)}</b> ${dur(s.seconds)}${lanesOf(s)}`).join(' + '):`<b>${esc(STEP_LABELS[a.phase]||a.phase||'starting')}</b>`,
     next=(a.upcoming||[]).filter(n=>!['worktree','select','context'].includes(n)).map(n=>esc(STEP_LABELS[n]||n)).join(' → ');
   const liveRows=live.map(x=>`<span class="dot${x.state==='waiting'?' wait':''}"></span><span>${x.state==='waiting'?`waiting for a <b>${esc(x.pool)}</b> slot`:'<b>running</b>'}</span><span class=m>${esc(STEP_LABELS[x.phase]||x.phase)} · ${esc(x.role)} · ${esc(x.model)}${x.effort?' · '+esc(x.effort):''}${x.line_position?` · #${x.line_position} of ${x.line_length} in line`:''}</span><span class=r>${dur(x.since_seconds)}</span>`).join('');
   return `<div class="arun${focusRun===a.id?' focus':''}" id="run-${a.id}">

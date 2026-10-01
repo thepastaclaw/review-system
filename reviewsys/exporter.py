@@ -375,6 +375,10 @@ def build_active_runs(conn: sqlite3.Connection, cfg: Config, at: datetime) -> li
                 "findings": findings if row["id"] in last_verify else None,
             }
         )
+        for st, counts in zip(
+            run["steps"], progress.step_lanes(conn, row["id"], run["steps"]), strict=True
+        ):
+            st.update(counts)
         est = progress.estimate(conn, row["id"], at, profiles)
         run["progress"] = est.progress if est else None
         run["remaining_seconds"] = est.remaining_seconds if est else None

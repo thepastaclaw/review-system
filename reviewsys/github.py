@@ -404,11 +404,13 @@ def progress_lines(progress: dict[str, Any]) -> list[str]:
         bits.append(f"running for {_fmt_span(int(progress.get('elapsed_seconds', 0)))}")
         lines.append(" · ".join(bits))
     chips = []
-    for name, status in progress.get("steps", []):
+    for name, status, *note in progress.get("steps", []):
         if name in _PROGRESS_SKIP:
             continue
         label = STEP_LABELS.get(name, name)
         label = f"**{label}**" if status == "running" else label
+        if note and note[0]:
+            label += f" ({note[0]})"
         chips.append(f"{_STEP_MARKS.get(status, '▫️')} {label}")
     if chips:
         lines.append(" → ".join(chips))

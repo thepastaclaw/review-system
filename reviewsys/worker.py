@@ -134,7 +134,7 @@ class RunContext:
     gate_lock: threading.Lock = field(default_factory=threading.Lock)
     gate_live_kw: dict[str, Any] | None = None
     gate_comment_id: int | None = None
-    gate_steps_seen: tuple[tuple[str, str], ...] = ()
+    gate_steps_seen: tuple[tuple[str, str, str], ...] = ()  # steps + lane notes last shown
     gate_refreshed_at: float = 0.0  # time.monotonic() of the last progress edit
 
     @property
@@ -227,13 +227,33 @@ GATE_PROGRESS_EVERY_SECONDS = 600
 GATE_PROGRESS_MIN_GAP_SECONDS = 30
 
 
-def _run_steps(conn: sqlite3.Connection, run_id: int) -> tuple[tuple[str, str], ...]:
-    return tuple(
-        (str(r[0]), str(r[1]))
+def _progress_steps(conn: sqlite3.Connection, run_id: int) -> list[tuple[str, str, str]]:
+    """(name, status, note) per step; the note says how many lanes a reviewer step finished."""
+    rows = [
+        {"name": r[0], "status": r[1], "started_at": r[2], "info": _json_or_empty(r[3])}
         for r in conn.execute(
-            "SELECT name,status FROM steps WHERE run_id=? ORDER BY started_at, rowid", (run_id,)
+            "SELECT name,status,started_at,detail FROM steps WHERE run_id=? "
+            "ORDER BY started_at, rowid",
+            (run_id,),
         )
-    )
+    ]
+    notes = []
+    for st, n in zip(rows, progress_mod.step_lanes(conn, run_id, rows), strict=True):
+        note = ""
+        if st["status"] == "running" and "lanes_total" in n:
+            note = f"{n['lanes_done']}/{n['lanes_total']} lanes"
+            if n.get("comparison_left") and n["lanes_done"] == n["lanes_total"]:
+                note += f", {n['comparison_left']} comparison still going"
+        notes.append((st["name"], st["status"], note))
+    return notes
+
+
+def _json_or_empty(text: str | None) -> dict[str, Any]:
+    try:
+        value = json.loads(text or "{}")
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _gate_progress(ctx: RunContext, conn: sqlite3.Connection) -> dict[str, Any] | None:
@@ -249,7 +269,10 @@ def _gate_progress(ctx: RunContext, conn: sqlite3.Connection) -> dict[str, Any] 
             "overdue": est.overdue,
             "remaining_seconds": est.remaining_seconds,
             "elapsed_seconds": est.elapsed_seconds,
-            "steps": [*_run_steps(conn, ctx.run_id), *((n, "upcoming") for n in est.upcoming)],
+            "steps": [
+                *_progress_steps(conn, ctx.run_id),
+                *((n, "upcoming", "") for n in est.upcoming),
+            ],
             "run_id": ctx.run_id,
             "updated_at": at.strftime("%H:%M"),
         }
@@ -271,7 +294,7 @@ def _refresh_gate_progress(
     if ctx.gate_live_kw is None or ctx.gate_comment_id is None:
         return
     try:
-        steps = _run_steps(conn, ctx.run_id)
+        steps = tuple(_progress_steps(conn, ctx.run_id))
         head = conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
     except sqlite3.Error:
         return
@@ -309,14 +332,22 @@ def _refresh_gate_progress(
 # ---- step bookkeeping ----
 
 
-def _step_start(ctx: RunContext, name: StepName) -> None:
-    """Record a step as running. `runs.phase` (the step a failure is charged to, and what
-    status shows) only follows the worker's own thread: on a single-stage run Phase 1 runs
-    on a second thread beside Phase 2, which owns it."""
+def _step_start(ctx: RunContext, name: StepName, detail: dict[str, Any] | None = None) -> None:
+    """Record a step as running, with what is known up front (`detail`, replaced by
+    `_step_end`'s). `runs.phase` (the step a failure is charged to, and what status shows)
+    only follows the worker's own thread: on a single-stage run Phase 1 runs on a second
+    thread beside Phase 2, which owns it."""
     with tx(ctx.conn):
         ctx.conn.execute(
-            "INSERT OR REPLACE INTO steps (run_id, name, status, started_at) VALUES (?,?,?,?)",
-            (ctx.run_id, name.value, "running", now()),
+            "INSERT OR REPLACE INTO steps (run_id, name, status, started_at, detail) "
+            "VALUES (?,?,?,?,?)",
+            (
+                ctx.run_id,
+                name.value,
+                "running",
+                now(),
+                json.dumps(detail)[:4000] if detail else None,
+            ),
         )
         if threading.get_ident() == ctx.owner_thread:
             ctx.conn.execute("UPDATE runs SET phase=? WHERE id=?", (name.value, ctx.run_id))
@@ -450,7 +481,7 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
         if live:
             ctx.gate_refreshed_at = time.monotonic()
             with contextlib.suppress(sqlite3.Error):
-                ctx.gate_steps_seen = _run_steps(ctx.conn, ctx.run_id)
+                ctx.gate_steps_seen = tuple(_progress_steps(ctx.conn, ctx.run_id))
 
 
 # ---- steps ----
@@ -1752,7 +1783,8 @@ def _reviewer_step(
     fresh: bool = False,
     abort: threading.Event | None = None,
 ) -> dict[str, ReviewerOutput]:
-    _step_start(ctx, step)
+    # the planned lanes, so a phase that is still going can say how many of them are done
+    _step_start(ctx, step, {"roles": _phase_roles(ctx, phase)})
     if callable(lm):
         lm = lm()  # Phase 1 picks its model inside the step, so a slow lookup shows there
     outputs = _reviewer_lanes(
