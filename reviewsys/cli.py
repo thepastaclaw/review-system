@@ -17,6 +17,7 @@ from . import db as db_mod
 from . import degraded as degraded_mod
 from . import doctor as doctor_mod
 from . import exporter as exporter_mod
+from . import slots as slots_mod
 from . import status as status_mod
 from . import worker as worker_mod
 from .daemon import Daemon, acquire_singleton_lock
@@ -45,7 +46,8 @@ def cmd_tick(args: argparse.Namespace) -> int:
     conn = db_mod.connect(cfg.db_path)
     if not args.no_spawn:
         # A scheduling tick alongside the live daemon would be a second scheduler with its own
-        # in-memory slot accounting, so the two together could start twice the slot ceiling.
+        # in-memory run accounting, so the two together could start a head twice or go past
+        # `max_runs`.
         # `--no-spawn` builds a Daemon without the schedule task and is safe to run any time.
         acquire_singleton_lock(cfg.db_path.with_suffix(".daemon.lock"))
     d = Daemon(
@@ -82,10 +84,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             print(
                 f"  run {a['id']} {a['repo']}#{a['number']} {a['sha'][:8]} phase={a['phase']} pid={a['pid']} hb={a['heartbeat_at']}"
             )
-        c = snap["capacity"]
-        print(
-            f"slots: {c['normal']} normal + {c['priority']} priority (x{c['scale']}: {c['reason']})"
-        )
+        print(status_mod.slots_summary(cfg, slots_mod.capacity(conn, cfg)))
         w = snap["watchdog"]
         print(
             f"watchdog: stuck={w['stuck']} eligible={w['eligible']} ingest_stale={w['ingest_stale']} median_run_min={snap['median_run_minutes']}"

@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import degraded, quota
+from . import degraded, quota, status
 from .config import Config
 from .lane import CLAUDE_SETTINGS, exec_deny_profile, sandbox_problem
 
@@ -161,8 +161,7 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
     _ok(
         "review slots",
         True,
-        f"{cfg.max_concurrent} normal + {cfg.priority_overflow} priority per usable OpenAI "
-        f"account, up to {cfg.account_scale_max} accounts (from config.toml)",
+        f"{status.slots_summary(cfg, None)} (from config.toml)",
     )
     dp = cfg.policy.degraded
     if dp is None:
