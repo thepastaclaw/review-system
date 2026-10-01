@@ -243,7 +243,7 @@ _STEP_KEYS = (
 _LANE_RE = re.compile(
     r"(phase1|phase2|verify1|verify2|persistence|converse)/([A-Za-z0-9_.#-]{1,60})\b"
 )
-_ATTEMPTS_RE = re.compile(r"lane failed (twice|\d+ times)")
+_ATTEMPTS_RE = re.compile(r"lane failed (?:twice|(\d+) times)")
 _TURNS_RE = re.compile(r"after (\d+) correction turns")
 _SUBTYPE_RE = re.compile(r"\blane (max_turns|max_budget_usd|during_execution)\b")
 # (needle in the worker's message, what the public page says), first match wins
@@ -282,7 +282,7 @@ def public_error(text: str) -> str:
     turns = _TURNS_RE.search(text)
     extra = []
     if attempts:
-        n = 2 if attempts.group(1) == "twice" else int(attempts.group(1).split()[0])
+        n = int(attempts.group(1) or 2)
         extra.append(f"{n} attempt{'s' if n != 1 else ''}")
     if turns:
         extra.append(f"{turns.group(1)} correction turns")

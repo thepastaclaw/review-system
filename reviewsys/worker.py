@@ -998,7 +998,9 @@ def _run_checked_lane[T](
                 ctx,
                 f"{phase}/{key} {lm.model} turns={len(res.followups)}",
                 asked,
-                verdict.error or ("rescued by the repair lane" if status == "repaired" else None),
+                verdict.error.message
+                if verdict.error
+                else ("rescued by the repair lane" if status == "repaired" else None),
                 failed_turn,
             )
         if verdict.error is None:
@@ -1022,9 +1024,12 @@ def _run_checked_lane[T](
         row(status="failed", reason=f"{exc}{after}")
         last, cause = f"{exc}{after}", exc.message
         # a correction turn that died on a dry pool says so as surely as a first turn would
-        quota_turn, quota_exc = res, exc
-        if failed_turn is not None:
-            quota_turn, quota_exc = failed_turn, _evaluate(failed_turn, check).error or exc
+        quota_turn, quota_exc = failed_turn or res, exc
+        if failed_turn is not None:  # did not finish: lane_output names its infra error
+            try:
+                lane_output(failed_turn)
+            except ReviewError as turn_exc:
+                quota_exc = turn_exc
         switched = None if comparison else _degrade_on_quota_failure(ctx, lm, quota_exc, quota_turn)
         if switched is not None:
             lm, budget = switched, attempt + 2
@@ -1051,7 +1056,7 @@ def _correction_event(
     ctx: RunContext,
     head: str,
     asked: list[str],
-    failure: ReviewError | str | None,
+    failure: str | None,
     failed_turn: LaneResult | None,
 ) -> None:
     """`lane.corrected` / `lane.correction_failed`, one per lane attempt that had correction
@@ -1069,8 +1074,7 @@ def _correction_event(
     else:
         said = failed_turn.first_stderr_line or f"exit {failed_turn.exit_code}"
         how = f"resume failed: {said[:200]}"
-    end = failure.message if isinstance(failure, ReviewError) else failure
-    _lane_event(ctx, "lane.correction_failed", f"{head} ({how}): {end[:400]}; {first}")
+    _lane_event(ctx, "lane.correction_failed", f"{head} ({how}): {failure[:400]}; {first}")
 
 
 def _record_reviewer(
@@ -1420,6 +1424,12 @@ def _reviewer_lanes(
     return outputs
 
 
+def _brief(text: str, n: int = 160) -> str:
+    """`text` on one line, at most `n` characters."""
+    one = " ".join(text.split())
+    return one if len(one) <= n else one[: n - 1] + "…"
+
+
 def _stop_note(phase: str, key: str, exc: BaseException) -> str:
     """Why a phase's other lanes are being stopped, for their rows: the lane that failed and
     a short reason (model output never reaches the public page; lane rows are private)."""
@@ -1430,8 +1440,7 @@ def _stop_note(phase: str, key: str, exc: BaseException) -> str:
     if isinstance(exc, ReviewError):
         cause = exc.cause if isinstance(exc, LaneFailed) else exc.message
         what = "output failed the contract" if exc.kind is FailKind.CONTRACT else "failed"
-        brief = " ".join(cause.split())
-        return f"stopped: {phase}/{key} {what} ({brief[:160]}{'…' if len(brief) > 160 else ''})"
+        return f"stopped: {phase}/{key} {what} ({_brief(cause)})"
     return f"stopped: {phase}/{key} crashed ({type(exc).__name__})"
 
 
@@ -3025,7 +3034,7 @@ def _single_stage(ctx: RunContext, effort: TierEffort) -> RunStatus:
     try:
         _phase2_reviewers(ctx, effort)
     except BaseException as p2_exc:
-        abort.set(f"stopped: phase2 failed ({' '.join(_failure_text(p2_exc).split())[:160]})")
+        abort.set(f"stopped: phase2 failed ({_brief(_failure_text(p2_exc))})")
         raise
     finally:
         t.join()

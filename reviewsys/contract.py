@@ -294,37 +294,35 @@ def _normalize_head(out: dict[str, Any], head_sha: str, notes: list[str]) -> Non
     out["head_sha"] = head_sha
 
 
+def _full_hash(item: Any, prior: set[str], notes: list[str], label: str) -> Any:
+    """`item` (a reconciliation row or finding) as a copy carrying the one prior hash its
+    `finding_hash` names, noted; anything else unchanged."""
+    if not isinstance(item, dict):
+        return item
+    item = dict(item)
+    h = str(item.get("finding_hash") or "")
+    full = _expand(h, prior) if h else None
+    if full is not None and full != h:
+        notes.append(f"{label} hash {h!r} -> {full!r}")
+        item["finding_hash"] = full
+    return item
+
+
 def _normalize_prior_hashes(out: dict[str, Any], prior: set[str], notes: list[str]) -> None:
     """Reconciliation rows and carried findings whose `finding_hash` names exactly one prior
     hash get that hash; reconciliation statuses get their canonical spelling."""
     recon = out.get("prior_finding_reconciliation")
     if isinstance(recon, list):
-        rows: list[Any] = []
-        for row in recon:
-            if isinstance(row, dict):
-                row = dict(row)
-                h = str(row.get("finding_hash") or "")
-                full = _expand(h, prior) if h else None
-                if full is not None and full != h:
-                    notes.append(f"reconciliation hash {h!r} -> {full!r}")
-                    row["finding_hash"] = full
-                st = row.get("status")
-                if isinstance(st, str) and (canon := _status_spelling(st)) != st:
-                    notes.append(f"reconciliation status {st!r} -> {canon!r}")
-                    row["status"] = canon
-            rows.append(row)
+        rows = [_full_hash(row, prior, notes, "reconciliation") for row in recon]
+        for row in rows:
+            st = row.get("status") if isinstance(row, dict) else None
+            if isinstance(st, str) and (canon := _status_spelling(st)) != st:
+                notes.append(f"reconciliation status {st!r} -> {canon!r}")
+                row["status"] = canon
         out["prior_finding_reconciliation"] = rows
     findings = out.get("findings")
     if isinstance(findings, list):
-        fixed: list[Any] = []
-        for f in findings:
-            h = str(f.get("finding_hash") or "") if isinstance(f, dict) else ""
-            full = _expand(h, prior) if h else None
-            if isinstance(f, dict) and full is not None and full != h:
-                notes.append(f"carried finding hash {h!r} -> {full!r}")
-                f = {**f, "finding_hash": full}
-            fixed.append(f)
-        out["findings"] = fixed
+        out["findings"] = [_full_hash(f, prior, notes, "carried finding") for f in findings]
 
 
 def normalize_reviewer_output(

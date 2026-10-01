@@ -32,7 +32,7 @@ def _dir_size(path: Path) -> int:
     return total
 
 
-def sweep_lane_sessions(conn: sqlite3.Connection, cfg: Config) -> int:
+def sweep_lane_sessions(conn: sqlite3.Connection) -> int:
     """Claude Code sessions of review lanes that their worker never deleted (it died
     mid-lane), and the project directories their deletion left empty. Only the project
     directories of this box's finished runs' worktrees are looked at (`<config dir>/projects/
@@ -105,7 +105,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             total -= _dir_size(victim)
             shutil.rmtree(victim, ignore_errors=True)
             stats["worktrees_removed"] += 1
-    stats["lane_sessions_removed"] = sweep_lane_sessions(conn, cfg)
+    stats["lane_sessions_removed"] = sweep_lane_sessions(conn)
     if cfg.runs_dir.exists() and not keep_runs:
         for rd in cfg.runs_dir.iterdir():
             try:

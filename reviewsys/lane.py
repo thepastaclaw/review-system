@@ -250,15 +250,15 @@ def run_with_corrections(
     lined up again. A turn that did not finish (failed, timed out, stopped) ends the
     corrections; the caller reads every turn in `followups` and decides. The saved session is
     deleted at the end however it went."""
-    sessions = {spec.session_id} if spec.session_id else set()
     try:
         res = runner(spec, artifact_dir, worktree)
-        if spec.session_id and res.session_id:
-            sessions.add(res.session_id)
         turn = res
-        while spec.check is not None and spec.session_id and len(res.followups) < spec.corrections:
-            if not turn.ok:
-                break
+        while (
+            spec.check is not None
+            and spec.session_id
+            and turn.ok
+            and len(res.followups) < spec.corrections
+        ):
             prompt = spec.check(turn)
             if prompt is None or (spec.should_stop is not None and spec.should_stop()):
                 break
@@ -266,7 +266,6 @@ def run_with_corrections(
             follow = dataclasses.replace(
                 spec,
                 prompt=prompt,
-                session_id=turn.session_id or spec.session_id,
                 resume=True,
                 check=None,
                 corrections=0,
@@ -283,8 +282,8 @@ def run_with_corrections(
                 raise
             res.followups.append(turn)
     finally:
-        for sid in sessions:
-            forget_session(sid)
+        if spec.session_id:
+            forget_session(spec.session_id)
     return res
 
 
