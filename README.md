@@ -476,6 +476,17 @@ before publishing, so a push or base update during review invalidates the run an
 new head instead of approving an obsolete commit. The published provenance identifies when
 the fresh final gate ran.
 
+A head that is obsolete when the worker checks it (at checkout, before publishing, before a
+conversation posts) is not a failed review: a push moved the PR's head past it, or the PR
+closed or merged. The run ends `cancelled` (reason `head superseded: live head … != assigned
+…` or `head closed: PR is closed (merged)`, no `fail_kind`), the head `superseded` / `closed`
+with a `head.superseded` / `head.closed` event, exactly as when ingest notices first. No
+retry, no `head.failed` alert, no "could not complete" gate comment: the first "in progress"
+status is only posted after the checkout check, and the newer head's queue comment takes the
+PR's comment over. Until 2026-10 these ended as "failed · fatal" on the dashboard (7 runs in
+5 days for a moved head, 4 for a merged PR, which also paged as `head.failed`). A moved
+*base* still fails `fatal` and re-queues the same head.
+
 ## Replies to findings
 
 A human reply under one of the bot's inline finding comments is the highest-value
@@ -734,7 +745,8 @@ The daemon spawns `reviewsys worker --run-id N` in its own session. The worker
 heartbeats every 15 s and checks for cancellation; the reaper fails any run
 whose heartbeat is older than 5 min, whose deadline passed, or whose process is
 gone, and requeues the head with backoff (`infra` up to 3 attempts, `contract`
-twice, `fatal` never). Runs in flight are recounted from the DB every tick. The run
+twice, `fatal` never; a stale head is no failure at all, see
+[above](#final-approval-after-an-iterative-review)). Runs in flight are recounted from the DB every tick. The run
 deadline (`run_timeout_minutes`, 360) does not count time a run only waits for model
 slots: while at least one of its lanes waits for a slot and none runs, the worker pushes
 `runs.deadline_at` out by that stretch (in one-minute slices while it lasts, so a long

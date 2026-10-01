@@ -52,7 +52,7 @@ from .lane import (
     run_claude_lane,
     sandboxed,
 )
-from .models import FailKind, ReviewError, RunStatus, StepName, Trigger
+from .models import FailKind, HeadStatus, ReviewError, RunStatus, StepName, Trigger
 from .prompts import (
     correction_prompt,
     prior_for_prompt,
@@ -61,7 +61,7 @@ from .prompts import (
     skill_texts,
     verifier_prompt,
 )
-from .scheduler import finish_run, live_queued_count
+from .scheduler import finish_run, live_queued_count, retire_obsolete_head
 from .select import Selection, select, write_selection
 from .steps import worktree as wt
 from .triage import Triage, triage, write_triage
@@ -71,6 +71,29 @@ log = logging.getLogger(__name__)
 
 class Cancelled(Exception):
     pass
+
+
+class HeadObsolete(Exception):
+    """The run's head is no longer worth reviewing: the PR's live head moved past it (a push
+    landed after it was queued) or the PR closed. Not a failure: the run ends `cancelled` and
+    the head `superseded` / `closed`, as ingest ends a head it sees go stale (see `main`)."""
+
+    def __init__(self, status: HeadStatus, reason: str) -> None:
+        super().__init__(reason)
+        self.status = status
+        self.reason = reason
+
+
+def _require_live(ctx: RunContext, live: github.PrMeta) -> None:
+    """Raise HeadObsolete unless the PR is open and `live` is still the run's head."""
+    if live.state != "open" or live.merged:
+        raise HeadObsolete(
+            HeadStatus.CLOSED, f"PR is {live.state}{' (merged)' if live.merged else ''}"
+        )
+    if live.head_sha != ctx.sha:
+        raise HeadObsolete(
+            HeadStatus.SUPERSEDED, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
+        )
 
 
 class LaneStopped(Exception):
@@ -629,12 +652,7 @@ def step_worktree(ctx: RunContext) -> None:
     if ctx.is_audit:
         _audit_worktree(ctx, meta)
         return
-    if meta.state != "open" or meta.merged:
-        raise ReviewError(FailKind.FATAL, f"PR is {meta.state}{' (merged)' if meta.merged else ''}")
-    if meta.head_sha != ctx.sha:
-        raise ReviewError(
-            FailKind.FATAL, f"live head {meta.head_sha[:8]} != assigned {ctx.sha[:8]}"
-        )
+    _require_live(ctx, meta)
     ctx.meta = meta
     ctx.base_sha = meta.base_sha
     # the first "in progress" status, once the head is known to be live (an obsolete run
@@ -1679,15 +1697,10 @@ def step_publish(
 ) -> publish.PublishResult:
     # The review may have taken long enough for a push to land after the initial
     # worktree check. Never publish an approval (or any verdict) against an
-    # obsolete head; the scheduler will supersede this run and ingest will queue
-    # the live commit.
+    # obsolete head; the run ends superseded (HeadObsolete) and ingest queues the
+    # live commit.
     live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
-    if live.state != "open" or live.merged:
-        raise ReviewError(FailKind.FATAL, f"PR is {live.state}{' (merged)' if live.merged else ''}")
-    if live.head_sha != ctx.sha:
-        raise ReviewError(
-            FailKind.FATAL, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
-        )
+    _require_live(ctx, live)
     if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
         raise ReviewError(
             FailKind.FATAL,
@@ -2690,13 +2703,9 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         json.dumps({h: dataclasses.asdict(o) for h, o in out.outcomes.items()}, indent=1)
     )
     # same guard as step_publish: a push may have landed while the lane ran, and a verdict
-    # follow-up must never be posted against an obsolete commit (the scheduler supersedes
-    # this head and ingest queues the live one)
-    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
-    if live.head_sha != ctx.sha:
-        raise ReviewError(
-            FailKind.FATAL, f"live head {live.head_sha[:8]} != assigned {ctx.sha[:8]}"
-        )
+    # follow-up must never be posted against an obsolete commit (the run ends superseded and
+    # ingest queues the live one)
+    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
     out = converse.accept_deferrals(out, threads)
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
@@ -3285,6 +3294,19 @@ def main(
         kind = FailKind.INFRA
     except Cancelled:
         status, reason = RunStatus.CANCELLED, "cancel requested"
+    except HeadObsolete as exc:
+        # nothing to review: end the head as ingest would have, with no failure, retry, alert
+        # or failure gate comment (the newer head's queue comment takes the PR's comment over)
+        status, reason = RunStatus.CANCELLED, f"head {exc.status.value}: {exc.reason}"
+        current = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (run_id,)).fetchone()
+        with tx(ctx.conn):
+            if current and current["phase"]:
+                ctx.conn.execute(
+                    "UPDATE steps SET status='cancelled', finished_at=?, detail=? "
+                    "WHERE run_id=? AND name=? AND status='running'",
+                    (now(), json.dumps({"reason": reason}), run_id, current["phase"]),
+                )
+            retire_obsolete_head(ctx.conn, ctx.head_id, exc.status, exc.reason)
     except ReviewError as exc:
         status, reason, kind = RunStatus.FAILED, exc.message, exc.kind
         current = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (run_id,)).fetchone()
@@ -3307,7 +3329,7 @@ def main(
             run_id,
             status,
             reason=reason,
-            fail_kind=None if status == RunStatus.DONE else kind,
+            fail_kind=kind if status == RunStatus.FAILED else None,  # a cancel is no failure
         )
         cleanup(ctx, status)
     return status

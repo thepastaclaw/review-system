@@ -285,26 +285,42 @@ def test_lane_timeout_fails_run_as_infra_and_requeues(cfg, conn, gh, lanes):
     assert not gh.posted_reviews
 
 
-def test_closed_pr_is_fatal(cfg, conn, gh, lanes):
-    gh.pr = {**gh.pr, "state": "closed"}
+def _obsolete_run_ends_quietly(conn, gh, rid, status, head_status):
+    """A run whose head went stale ends cancelled, not failed: no retry, no `head.failed`
+    alert, no failure gate comment; the head ends as ingest would have ended it."""
+    assert status == RunStatus.CANCELLED
+    run = conn.execute("SELECT status, fail_kind, reason FROM runs WHERE id=?", (rid,)).fetchone()
+    assert run["status"] == "cancelled" and run["fail_kind"] is None
+    head = conn.execute("SELECT status, attempts FROM heads").fetchone()
+    assert head["status"] == head_status and head["attempts"] == 1
+    kinds = [r[0] for r in conn.execute("SELECT kind FROM events")]
+    assert f"head.{head_status}" in kinds and "run.cancelled" in kinds
+    assert "head.failed" not in kinds and "head.requeued" not in kinds and "run.failed" not in kinds
+    assert not any("could not complete" in b for b in gh.gate_bodies)
+    assert not gh.posted_reviews
+    return run["reason"]
+
+
+@pytest.mark.parametrize("merged", [False, True])
+def test_closed_pr_ends_the_head_closed(cfg, conn, gh, lanes, merged):
+    gh.pr = {**gh.pr, "state": "closed", "merged": merged}
     rid, status = _run(cfg, conn, gh, lanes)
-    assert status == RunStatus.FAILED
-    assert (
-        conn.execute("SELECT fail_kind FROM runs WHERE id=?", (rid,)).fetchone()["fail_kind"]
-        == "fatal"
-    )
-    assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "failed"
+    reason = _obsolete_run_ends_quietly(conn, gh, rid, status, "closed")
+    assert reason == f"head closed: PR is closed{' (merged)' if merged else ''}"
+    assert not gh.gate_bodies, "nothing posted for a PR that closed before the run started"
+    assert not lanes.calls
 
 
-def test_head_moved_is_fatal(cfg, conn, gh, lanes):
+def test_head_moved_before_the_run_is_superseded_not_failed(cfg, conn, gh, lanes):
+    """dash-wallet#1578 run 2879: a push landed between queueing and start."""
     gh.pr = {**gh.pr, "head": {"sha": "c" * 40}}
     rid, status = _run(cfg, conn, gh, lanes)
-    assert (
-        status == RunStatus.FAILED
-        and "live head"
-        in conn.execute("SELECT reason FROM runs WHERE id=?", (rid,)).fetchone()["reason"]
-    )
-    assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "superseded"
+    reason = _obsolete_run_ends_quietly(conn, gh, rid, status, "superseded")
+    assert reason == f"head superseded: live head cccccccc != assigned {HEAD[:8]}"
+    assert not gh.gate_bodies, "the newer head's queue comment owns the PR's comment"
+    step = conn.execute("SELECT status, detail FROM steps WHERE run_id=?", (rid,)).fetchone()
+    assert step["status"] == "cancelled" and "live head" in step["detail"]
+    assert not lanes.calls
 
 
 def test_head_moves_before_publish_and_never_receives_verdict(cfg, conn, gh, lanes):
@@ -323,10 +339,10 @@ def test_head_moves_before_publish_and_never_receives_verdict(cfg, conn, gh, lan
         return result
 
     rid, status = _run(cfg, conn, gh, racing_lane)
-    assert status == RunStatus.FAILED
-    assert "live head" in conn.execute("SELECT reason FROM runs WHERE id=?", (rid,)).fetchone()[0]
-    assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "superseded"
-    assert not gh.posted_reviews
+    reason = _obsolete_run_ends_quietly(conn, gh, rid, status, "superseded")
+    assert "live head" in reason
+    publish = conn.execute("SELECT status FROM steps WHERE run_id=? AND name='publish'", (rid,))
+    assert publish.fetchone()["status"] == "cancelled"
 
 
 def test_cross_round_dedupe_posts_visible_summary(cfg, conn, gh, lanes):

@@ -418,6 +418,7 @@ def test_without_a_degraded_block_a_quota_failure_falls_through_to_phase_2(cfg, 
     # ... but a dead Phase-2 model still fails the run: there is nothing left to fall to
     lanes.dead_models = {"gpt-6-astra"}
     gh.posted_reviews.clear()
+    gh.pr = {**gh.pr, "head": {"sha": "c" * 40}}  # PR 2's live head
     with tx(conn):
         conn.execute("UPDATE heads SET status='done'")
         enqueue_head(conn, cfg, "dashpay/platform", 2, "c" * 40, Trigger.MENTION)
@@ -425,6 +426,8 @@ def test_without_a_degraded_block_a_quota_failure_falls_through_to_phase_2(cfg, 
     assert worker.main(cfg, conn, rid2, gh=gh, lane_runner=lanes, heartbeat=False) == (
         RunStatus.FAILED
     )
+    step = conn.execute("SELECT phase FROM runs WHERE id=?", (rid2,)).fetchone()["phase"]
+    assert step == "phase2", "failed on the dead Phase-2 model, not on a stale head"
 
 
 def test_degraded_mode_under_a_deep_backlog_runs_phase_2_only_on_the_standin(

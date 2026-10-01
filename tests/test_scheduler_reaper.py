@@ -7,9 +7,9 @@ from datetime import timedelta
 
 from reviewsys.db import now, parse_ts, tx
 from reviewsys.ingest import enqueue_head
-from reviewsys.models import FailKind, RunStatus, Trigger
+from reviewsys.models import FailKind, HeadStatus, RunStatus, Trigger
 from reviewsys.reaper import reap
-from reviewsys.scheduler import apply_supersedes, finish_run, schedule
+from reviewsys.scheduler import apply_supersedes, finish_run, retire_obsolete_head, schedule
 from reviewsys.status import watchdog
 
 
@@ -124,6 +124,21 @@ def test_fatal_never_retries(cfg, conn):
     (rid,) = schedule(conn, cfg, spawn=False)
     finish_run(conn, cfg, rid, RunStatus.FAILED, reason="PR closed", fail_kind=FailKind.FATAL)
     assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "failed"
+
+
+def test_obsolete_head_is_retired_once_and_its_run_cancelled_without_requeue(cfg, conn):
+    (hid,) = queue(conn, cfg, 1)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    with tx(conn):
+        assert retire_obsolete_head(conn, hid, HeadStatus.SUPERSEDED, "live head cc != aa")
+        # ingest (or a second call) got there first: nothing more happens
+        assert not retire_obsolete_head(conn, hid, HeadStatus.CLOSED, "PR is closed")
+    finish_run(conn, cfg, rid, RunStatus.CANCELLED, reason="head superseded: live head cc != aa")
+    head = conn.execute("SELECT status, superseded_at FROM heads WHERE id=?", (hid,)).fetchone()
+    assert head["status"] == "superseded" and head["superseded_at"]
+    kinds = [r[0] for r in conn.execute("SELECT kind FROM events")]
+    assert kinds.count("head.superseded") == 1 and "head.closed" not in kinds
+    assert "head.requeued" not in kinds and "head.failed" not in kinds
 
 
 def test_live_base_move_requeues_same_head(cfg, conn):
