@@ -167,3 +167,63 @@ def estimate(
         upcoming=[n for n in later if prof[n].share >= UPCOMING_SHARE],
         overdue=overdue,
     )
+
+
+# reviewer steps -> the phase their lanes record
+_REVIEWER_STEPS = {"phase1": "phase1", "phase2": "phase2", "fresh_phase2": "phase2"}
+
+
+def step_lanes(
+    conn: sqlite3.Connection, run_id: int, steps: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """For each of `steps` (dicts with `name`, `started_at`, `info`), how many of a reviewer
+    step's lanes are done: `lanes_done`, and once the worker recorded the planned roles as the
+    step started, `lanes_total` and `lanes_left` (the ones still going). {} for other steps.
+
+    A lane's row is written when it ends, so the lanes a step finished are its phase's rows
+    recorded after the step started (a fresh Phase 2 reruns the phase2 roles). A comparison
+    run's Phase-2 twins carry the primary's role names; the second model, from the run's
+    compare.selected event (as `reviewsys compare` reads it), tells them apart."""
+    twin = conn.execute(
+        "SELECT detail FROM events WHERE run_id=? AND kind='compare.selected' ORDER BY id DESC",
+        (run_id,),
+    ).fetchone()
+    second = (
+        dict(p.split("=", 1) for p in str(twin[0]).split() if "=" in p).get("second")
+        if twin
+        else None
+    )
+    done: list[tuple[str, str, str]] = []
+    twins: list[tuple[str, str, str]] = []
+    for r in conn.execute(
+        "SELECT phase,role,started_at,model FROM lanes WHERE run_id=? "
+        "AND status IN ('completed','repaired') AND phase IN ('phase1','phase2')",
+        (run_id,),
+    ):
+        row = (str(r[0]), str(r[1]), str(r[2]))
+        (twins if row[0] == "phase2" and second is not None and r[3] == second else done).append(
+            row
+        )
+    out: list[dict[str, Any]] = []
+    for st in steps:
+        phase = _REVIEWER_STEPS.get(st["name"])
+        if phase is None:
+            out.append({})
+            continue
+        finished = {r for p, r, at in done if p == phase and at >= st["started_at"]}
+        planned = (st.get("info") or {}).get("roles")
+        if not isinstance(planned, list):
+            out.append({"lanes_done": len(finished)})
+            continue
+        counts: dict[str, Any] = {
+            "lanes_done": sum(1 for r in planned if r in finished),
+            "lanes_total": len(planned),
+            "lanes_left": [r for r in planned if r not in finished],
+        }
+        # the first Phase 2 of a comparison run waits (up to COMPARE_GRACE_MINUTES) for the
+        # second model's twin of every role after its own lanes are done
+        if st["name"] == "phase2" and second is not None:
+            twin_done = {r for p, r, at in twins if at >= st["started_at"]}
+            counts["comparison_left"] = sum(1 for r in planned if r not in twin_done)
+        out.append(counts)
+    return out

@@ -268,3 +268,106 @@ def test_refresh_stops_for_a_superseded_head_and_never_waits_for_the_lock(cfg, c
         conn.execute("UPDATE heads SET status='queued' WHERE id=?", (hid,))  # a new push landed
     worker._refresh_gate_progress(ctx, conn)
     assert len(gh.gate_bodies) == posted, "the queue owns the comment of a superseded head"
+
+
+def test_step_lanes_count_a_phases_planned_lanes_without_comparison_twins(conn):
+    at = now_dt()
+    t = lambda m: fmt_ts(at - timedelta(minutes=m))  # noqa: E731
+    with tx(conn):
+        run = _run(
+            conn,
+            _head(conn, 9, "running"),
+            status="running",
+            tier="critical",
+            started=at - timedelta(hours=2),
+        )
+        conn.execute(
+            "INSERT INTO events (ts, kind, run_id, detail) VALUES (?,?,?,?)",
+            (
+                t(100),
+                "compare.selected",
+                run,
+                "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
+            ),
+        )
+        for phase, role, model, minutes in (
+            ("phase1", "general", "glm-5.3-flash", 70),
+            ("phase1", "rust-quality", "glm-5.3-flash", 65),
+            ("phase2", "general", "gpt-6-astra", 20),  # the comparison twin finished first
+            ("phase2", "general", "gpt-6.1-sol", 50),  # first Phase 2, before the fresh pass
+        ):
+            conn.execute(
+                "INSERT INTO lanes (run_id, phase, role, agent, model, attempt, attempt_id, "
+                "status, started_at) VALUES (?,?,?,?,?,1,'x','completed',?)",
+                (run, phase, role, "a", model, t(minutes)),
+            )
+    steps = [
+        {
+            "name": "phase1",
+            "started_at": t(90),
+            "info": {"roles": ["general", "rust-quality", "ffi"]},
+        },
+        {"name": "fresh_phase2", "started_at": t(30), "info": {"roles": ["general", "ffi"]}},
+        {"name": "phase2", "started_at": t(60), "info": {}},  # an older worker: no plan
+        {"name": "verify1", "started_at": t(80), "info": {}},
+    ]
+    p1, fresh, old, verify = progress.step_lanes(conn, run, steps)
+    assert p1 == {"lanes_done": 2, "lanes_total": 3, "lanes_left": ["ffi"]}
+    assert fresh == {"lanes_done": 0, "lanes_total": 2, "lanes_left": ["general", "ffi"]}
+    assert old == {"lanes_done": 1} and verify == {}
+
+
+def test_gate_comment_says_how_many_of_a_phases_lanes_are_done():
+    body = github.gate_body(
+        "in_progress",
+        "a" * 40,
+        progress={
+            "fraction": 0.5,
+            "remaining_seconds": 600,
+            "elapsed_seconds": 600,
+            "steps": [("phase1", "running", "4/5 lanes"), ("verify1", "upcoming", "")],
+            "run_id": 1,
+            "updated_at": "x",
+        },
+    )
+    assert "⏳ **Phase 1** (4/5 lanes) → ▫️ verify 1" in body
+
+
+def test_comparison_twins_still_going_after_the_primary_lanes(conn):
+    """A comparison run's Phase 2 waits for the second model's twins once its own lanes are
+    done; the count says so instead of reading as a finished phase."""
+    at = now_dt()
+    with tx(conn):
+        run = _run(
+            conn,
+            _head(conn, 10, "running"),
+            status="running",
+            tier="critical",
+            started=at - timedelta(hours=1),
+        )
+        conn.execute(
+            "INSERT INTO events (ts, kind, run_id, detail) VALUES (?,?,?,?)",
+            (
+                fmt_ts(at),
+                "compare.selected",
+                run,
+                "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
+            ),
+        )
+        for role, model in (
+            ("general", "gpt-6.1-sol"),
+            ("ffi", "gpt-6.1-sol"),
+            ("general", "gpt-6-astra"),
+        ):
+            conn.execute(
+                "INSERT INTO lanes (run_id, phase, role, agent, model, attempt, attempt_id, "
+                "status, started_at) VALUES (?,'phase2',?,'a',?,1,'x','completed',?)",
+                (run, role, model, fmt_ts(at)),
+            )
+    step = {
+        "name": "phase2",
+        "started_at": fmt_ts(at - timedelta(minutes=30)),
+        "info": {"roles": ["general", "ffi"]},
+    }
+    (counts,) = progress.step_lanes(conn, run, [step])
+    assert counts == {"lanes_done": 2, "lanes_total": 2, "lanes_left": [], "comparison_left": 1}
