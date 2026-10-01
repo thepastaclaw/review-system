@@ -52,6 +52,22 @@ def test_sandboxed_sets_the_profile_on_every_spec(tmp_path):
     assert sandboxed(runner, "") is runner
 
 
+def test_a_sandbox_that_cannot_start_fails_the_lane_as_infra(tmp_path, monkeypatch):
+    probes: list[str] = []
+
+    def problem(profile: str) -> str:
+        probes.append(profile)
+        return "sandbox_apply: Operation not permitted"
+
+    monkeypatch.setattr(lane, "sandbox_problem", problem)
+    run = sandboxed(lambda *a: pytest.fail("lane must not start"), "P")
+    for _ in range(2):
+        with pytest.raises(lane.ReviewError) as exc:
+            run(_spec(tmp_path), tmp_path, tmp_path)
+        assert exc.value.kind == lane.FailKind.INFRA and "cannot start" in exc.value.message
+    assert probes == ["P"]  # tried once per worker, not per lane
+
+
 def test_no_profile_without_paths_or_without_sandbox_exec(monkeypatch):
     assert exec_deny_profile(()) == ""
     monkeypatch.setattr(lane, "SANDBOX_EXEC", "/nonexistent/sandbox-exec")
@@ -120,6 +136,27 @@ def test_ci_checks_merges_check_runs_and_statuses(gh):
         {"name": "build", "status": "completed", "conclusion": "failure", "url": "u1"},
         {"name": "lint", "status": "in_progress", "conclusion": "pending", "url": "u2"},
     ]
+
+
+@pytest.mark.parametrize(
+    "bad", ['"~/.rustup"', '[""]', '["~"]', '["/"]', '["relative/path"]', "[1]"]
+)
+def test_a_bad_deny_list_is_rejected_not_turned_into_deny_everything(tmp_path, skills_dir, bad):
+    toml = cfg_mod.DEFAULT_TOML.replace('skills = "~/Projects/skills"', f'skills = "{skills_dir}"')
+    p = tmp_path / "config.toml"
+    p.write_text(toml.replace("[lanes]\n", f"[lanes]\ndeny_exec = {bad}\n"))
+    with pytest.raises(ValueError, match="deny_exec"):
+        cfg_mod.load(p)
+
+
+def test_ci_checks_says_when_github_has_more(gh):
+    gh.routes["repos/o/r/commits/abc/check-runs?per_page=100"] = {
+        "total_count": 140,
+        "check_runs": [{"name": "a", "status": "completed", "conclusion": "success"}],
+    }
+    gh.routes["repos/o/r/commits/abc/status?per_page=100"] = {"total_count": 0, "statuses": []}
+    ci = github.ci_checks(gh, "o/r", "abc")
+    assert ci["truncated"] is True and ci["fetched_at"]
 
 
 def test_ci_checks_never_fails_the_run(gh):

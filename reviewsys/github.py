@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from .db import now
 from .dedupe import FINDING_MARKER_RE
 from .gh import Gh
 from .models import FailKind, ReviewError
@@ -200,9 +201,11 @@ def evidence_bundle(
 
 
 def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
-    """The head's CI as reviewers need it: check runs and commit statuses, one line each.
-    Best effort: lanes can still ask `gh pr checks` themselves, so a failed read only notes
-    the error instead of failing the run."""
+    """The head's CI as reviewers need it: check runs and commit statuses, one line each,
+    as of `fetched_at` (the run's later lanes read it hours on). The first 100 of each;
+    `truncated` says when GitHub has more. Best effort: lanes can still ask `gh pr checks`
+    themselves, so a failed read only notes the error instead of failing the run."""
+    fetched_at = now()
     try:
         runs = gh.api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100") or {}
         status = gh.api(f"repos/{repo}/commits/{sha}/status?per_page=100") or {}
@@ -228,7 +231,13 @@ def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
         for st in (status.get("statuses") or [])
         if isinstance(st, dict)
     ]
-    return {"head_sha": sha, "checks": checks}
+    total = int(runs.get("total_count") or 0) + int(status.get("total_count") or 0)
+    return {
+        "head_sha": sha,
+        "fetched_at": fetched_at,
+        "checks": checks,
+        "truncated": total > len(checks),
+    }
 
 
 def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, dict[str, Any]]:

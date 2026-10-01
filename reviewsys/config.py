@@ -366,12 +366,14 @@ DEFAULT_LANE_DENY_EXEC = (
     "/Applications/Xcode.app/Contents/Developer/Toolchains",
     "/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild",
     "/Applications/Xcode.app/Contents/Developer/usr/bin/make",
+    "/Applications/Xcode.app/Contents/Developer/usr/bin/gnumake",
     "/Library/Developer/CommandLineTools/usr/bin/make",
     "/Library/Developer/CommandLineTools/usr/bin/clang",
     "/Library/Developer/CommandLineTools/usr/bin/clang++",
     "/Library/Developer/CommandLineTools/usr/bin/ld",
     "/Library/Java/JavaVirtualMachines",
     "/opt/homebrew/Cellar/cmake",
+    "/opt/homebrew/Cellar/make",
     "/opt/homebrew/Cellar/ninja",
     "/opt/homebrew/Cellar/go",
     "/opt/homebrew/Cellar/gcc",
@@ -761,9 +763,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
             for k, v in (s.get("lane_pools", DEFAULT_LANE_POOLS) or {}).items()
             if str(k) != "gpt"  # gpt is always the review slot ceiling
         },
-        lane_deny_exec=tuple(
-            str(x) for x in (t.get("lanes") or {}).get("deny_exec", DEFAULT_LANE_DENY_EXEC)
-        ),
+        lane_deny_exec=_deny_exec((t.get("lanes") or {}).get("deny_exec", DEFAULT_LANE_DENY_EXEC)),
         bot_login=str(i["bot_login"]),
         slack_target=i.get("slack_target"),
         slack_account=str(i.get("slack_account", "default")),
@@ -779,6 +779,17 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         extra={**settings, "additional_repos": s.get("additional_repos", [])},
         audit=_audit(t.get("audit") or {}),
     )
+
+
+def _deny_exec(value: Any) -> tuple[str, ...]:
+    """`[lanes] deny_exec`, strictly: a string would split into characters ("~", "/") and an
+    empty entry resolves to the working directory, and either denies every program a lane runs."""
+    if not isinstance(value, list | tuple) or not all(isinstance(x, str) for x in value):
+        raise ValueError("[lanes] deny_exec must be a list of paths")
+    for x in value:
+        if not (x.startswith("/") or x.startswith("~/")) or x.rstrip("/") in ("", "~"):
+            raise ValueError(f"[lanes] deny_exec entry {x!r}: need an absolute or ~/ path below /")
+    return tuple(value)
 
 
 def _audit(a: dict[str, Any]) -> AuditConfig:

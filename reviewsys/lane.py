@@ -120,12 +120,35 @@ def exec_deny_profile(paths: tuple[str, ...]) -> str:
     return f"(version 1) (allow default) (deny process-exec {rules})"
 
 
+def sandbox_problem(profile: str) -> str:
+    """Why `profile` cannot be applied ("" = it can): a malformed profile, or a worker that is
+    itself inside a sandbox that refuses nesting ("sandbox_apply: Operation not permitted")."""
+    try:
+        r = subprocess.run(
+            [SANDBOX_EXEC, "-p", profile, "/usr/bin/true"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return str(exc)
+    return "" if r.returncode == 0 else (r.stderr.strip() or f"exit {r.returncode}")[:300]
+
+
 def sandboxed(runner: LaneRunner, profile: str) -> LaneRunner:
-    """`runner`, with every lane under `profile` (no change when it is "")."""
+    """`runner`, with every lane under `profile` (no change when it is ""). The profile is
+    tried once, before the first lane: a sandbox that cannot start would otherwise fail every
+    lane with an error that reads like the model's own."""
     if not profile:
         return runner
+    checked: list[str] = []
 
     def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
+        if not checked:
+            checked.append(sandbox_problem(profile))
+        if checked[0]:
+            raise ReviewError(FailKind.INFRA, f"lane sandbox cannot start: {checked[0]}")
         return runner(dataclasses.replace(spec, sandbox_profile=profile), artifact_dir, worktree)
 
     return run

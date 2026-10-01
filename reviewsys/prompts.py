@@ -22,11 +22,13 @@ ADHOC_PROJECT_SKILL = (
 STATIC_REVIEW = (
     "- This is a static review. Do not build, compile, or run tests, benchmarks, or the "
     "project's build scripts, even where the project notes describe how: compilers and build "
-    "tools are blocked in this lane, a blocked command means exactly that, and there is no "
-    "workaround to look for. For build and test evidence use the PR's CI results: the `ci` "
-    "snapshot in the evidence below, or the current state with `gh pr checks {number} --repo {repo}` "
-    "and a failed job's log with `gh run view <run-id> --repo {repo} --log-failed`. Do not wait or "
-    "poll for CI that is still running; say what is pending instead.\n"
+    'tools are blocked in this lane ("Operation not permitted"), and there is no workaround '
+    "to look for. For build and test evidence use the PR's CI: the `ci` snapshot in the "
+    "evidence below (taken at `fetched_at`), or the current state with "
+    "`gh pr checks {number} --repo {repo}` (it exits non-zero while checks are pending or "
+    "failing; that is its answer, not a block) and a failed GitHub Actions job's log with "
+    "`gh run view <run-id> --repo {repo} --log-failed`. Do not wait or poll for CI that is "
+    "still running; say what is pending instead.\n"
 )
 
 RAW_JSON_CONTRACT = (

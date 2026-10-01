@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import degraded, quota
 from .config import Config
-from .lane import CLAUDE_SETTINGS
+from .lane import CLAUDE_SETTINGS, exec_deny_profile, sandbox_problem
 
 PROXY_URL = os.environ.get("REVIEWSYS_PROXY_URL", "http://127.0.0.1:8317")
 LANE_PROBE_TIMEOUT_S = 180
@@ -152,6 +152,12 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
     )
     ok &= _ok("claude launcher", Path(cfg.claude_bin).exists(), cfg.claude_bin)
     ok &= _ok("skills config", (cfg.skills_dir / "config.json").exists(), str(cfg.skills_dir))
+    profile = exec_deny_profile(cfg.lane_deny_exec)
+    if profile:
+        problem = sandbox_problem(profile)
+        ok &= _ok("lane sandbox", not problem, problem or f"{len(cfg.lane_deny_exec)} paths denied")
+    else:
+        _ok("lane sandbox", True, "off (deny_exec empty or no sandbox-exec): lanes may build")
     _ok(
         "review slots",
         True,
