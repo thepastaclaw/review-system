@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-03T15:47:02Z",
-  "generated_at": "2026-10-03T15:47:02Z",
+  "data_as_of": "2026-10-03T15:48:02Z",
+  "generated_at": "2026-10-03T15:48:02Z",
   "history": {
     "daily": [
       {
@@ -189,6 +189,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5258,
+        "repo": "dashpay/platform",
+        "run_id": 3197,
+        "ts": "2026-10-03T15:47:40Z"
+      },
       {
         "detail": "attempt 1 sha=23d7d09f",
         "kind": "run.spawned",
@@ -500,14 +508,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-10-03T13:48:12Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 7777,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-03T13:45:06Z"
       }
     ],
     "tokens_by_effort": [
@@ -1113,24 +1113,105 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-10-03T21:46:41Z",
-        "deadline_in_seconds": 21579,
+        "deadline_in_seconds": 21519,
         "degraded": false,
-        "elapsed_seconds": 21,
+        "elapsed_seconds": 81,
         "findings": null,
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-03T15:46:57Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-03T15:47:58Z",
         "id": 3197,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 22,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 21,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "architecture-layering",
+            "since_seconds": 22,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 21,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 19,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 21,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 20,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 20,
+            "state": "running"
+          }
+        ],
         "number": 5258,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5258",
         "priority": true,
-        "progress": null,
+        "progress": 0.027,
         "queue": "live",
         "queued_at": "2026-10-03T15:45:44Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 2939,
         "repo": "dashpay/platform",
         "sha": "23d7d09f1778a4a1890a69bb5c3801770de98905",
         "started_at": "2026-10-03T15:46:41Z",
@@ -1139,17 +1220,99 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 20,
+            "seconds": 40,
             "started_at": "2026-10-03T15:46:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 12,
+            "started_at": "2026-10-03T15:47:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate resolver and probe implementation accompanies direct changes to funds movement and coin selection in wallet/core/transaction.rs::finalize_transaction and wallet/identity/network/payments.rs, enforcing final inputs across payment-building paths.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 12,
+            "started_at": "2026-10-03T15:47:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-03T15:47:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "ffi-engineer",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 6,
+            "name": "phase2",
+            "seconds": 23,
+            "started_at": "2026-10-03T15:47:39Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 23,
+            "started_at": "2026-10-03T15:47:39Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(platform-wallet)!: resolve a send with an unknown broadcast outcome and spend only final coins",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 57
       }
     ],
@@ -1182,7 +1345,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-03T15:45:22Z",
+        "at": "2026-10-03T15:47:45Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1228,13 +1391,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 6,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1253,7 +1416,7 @@
       "reviews": 39,
       "tokens": 428215847
     },
-    "ts": "2026-10-03T15:47:02Z",
+    "ts": "2026-10-03T15:48:02Z",
     "typical_minutes_by_tier": {
       "critical": 79.1,
       "low": 27.6,
@@ -1264,7 +1427,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.35,
+      "idle_minutes": 1.35,
       "ingest_stale": false,
       "stuck": false
     }
