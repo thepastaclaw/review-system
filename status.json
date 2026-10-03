@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-03T18:36:01Z",
-  "generated_at": "2026-10-03T18:36:01Z",
+  "data_as_of": "2026-10-03T18:37:05Z",
+  "generated_at": "2026-10-03T18:37:05Z",
   "history": {
     "daily": [
       {
@@ -189,6 +189,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5258,
+        "repo": "dashpay/platform",
+        "run_id": 3203,
+        "ts": "2026-10-03T18:36:40Z"
+      },
       {
         "detail": "attempt 1 sha=fdbd4f06",
         "kind": "run.spawned",
@@ -500,14 +508,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-10-03T16:38:55Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 5258,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-10-03T16:38:54Z"
       }
     ],
     "tokens_by_effort": [
@@ -1113,24 +1113,105 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-10-04T00:35:43Z",
-        "deadline_in_seconds": 21582,
+        "deadline_in_seconds": 21518,
         "degraded": false,
-        "elapsed_seconds": 18,
+        "elapsed_seconds": 82,
         "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-10-03T18:35:59Z",
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-10-03T18:37:00Z",
         "id": 3203,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 25,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 25,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "architecture-layering",
+            "since_seconds": 24,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 26,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 24,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 23,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 26,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 22,
+            "state": "running"
+          }
+        ],
         "number": 5258,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5258",
         "priority": true,
-        "progress": null,
+        "progress": 0.028,
         "queue": "live",
         "queued_at": "2026-10-03T18:35:30Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 2809,
         "repo": "dashpay/platform",
         "sha": "fdbd4f060055620bac40c1c0768da781353d4d3c",
         "started_at": "2026-10-03T18:35:43Z",
@@ -1139,17 +1220,99 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 17,
+            "seconds": 26,
             "started_at": "2026-10-03T18:35:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 24,
+            "started_at": "2026-10-03T18:36:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate change directly alters funds movement and coin selection in packages/rs-platform-wallet/src/wallet/core/transaction.rs through final-input eligibility and fee-aware funding, alongside asynchronous broadcast settlement in broadcast_resolver.rs.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 23,
+            "started_at": "2026-10-03T18:36:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-03T18:36:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "ffi-engineer",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 6,
+            "name": "phase2",
+            "seconds": 26,
+            "started_at": "2026-10-03T18:36:39Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 26,
+            "started_at": "2026-10-03T18:36:39Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(platform-wallet)!: resolve a send with an unknown broadcast outcome and spend only final coins",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 13
       }
     ],
@@ -1229,13 +1392,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 6,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1248,12 +1411,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 31,
+        "age_seconds": 95,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-03T19:05:30Z",
-        "eligible_in_seconds": 1769,
+        "eligible_in_seconds": 1705,
         "number": 5250,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5250",
@@ -1274,7 +1437,7 @@
       "reviews": 44,
       "tokens": 503810267
     },
-    "ts": "2026-10-03T18:36:01Z",
+    "ts": "2026-10-03T18:37:05Z",
     "typical_minutes_by_tier": {
       "critical": 78.0,
       "low": 27.6,
@@ -1285,7 +1448,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.3,
+      "idle_minutes": 1.3666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
