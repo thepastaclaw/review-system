@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-03T11:42:01Z",
-  "generated_at": "2026-10-03T11:42:01Z",
+  "data_as_of": "2026-10-03T11:43:01Z",
+  "generated_at": "2026-10-03T11:43:01Z",
   "history": {
     "daily": [
       {
@@ -163,8 +163,8 @@
           },
           "wait": {
             "median_seconds": 1839,
-            "n": 552,
-            "p90_seconds": 6737
+            "n": 553,
+            "p90_seconds": 6727
           }
         },
         "priority": {
@@ -189,6 +189,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1570,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 3194,
+        "ts": "2026-10-03T11:42:31Z"
+      },
+      {
+        "detail": "attempt 1 sha=6c850d2e",
+        "kind": "run.spawned",
+        "number": 1570,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 3194,
+        "ts": "2026-10-03T11:42:08Z"
+      },
       {
         "detail": "pr_closed",
         "kind": "head.closed",
@@ -420,22 +436,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 3192,
         "ts": "2026-10-03T11:00:06Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1570,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 3192,
-        "ts": "2026-10-03T11:00:05Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1570,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 3192,
-        "ts": "2026-10-03T11:00:05Z"
       },
       {
         "detail": null,
@@ -1101,14 +1101,155 @@
       "findings_posted": 2505,
       "reviews": 4075,
       "reviews_imported": 2245,
-      "runs": 3193,
+      "runs": 3194,
       "tokens_in": 22557052053,
       "tokens_out": 327813712,
       "tokens_total": 22884865765
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-03T17:42:08Z",
+        "deadline_in_seconds": 21547,
+        "degraded": false,
+        "elapsed_seconds": 53,
+        "findings": null,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-10-03T11:42:53Z",
+        "id": 3194,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 30,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 30,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 31,
+            "state": "running"
+          }
+        ],
+        "number": 1570,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1570",
+        "priority": false,
+        "progress": 0.023,
+        "queue": "live",
+        "queued_at": "2026-10-03T11:12:03Z",
+        "remaining_seconds": 2219,
+        "repo": "dashpay/dash-wallet",
+        "sha": "6c850d2e7cdbdbe4d90fa773391ec0ce7cd8cc32",
+        "started_at": "2026-10-03T11:42:08Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-03T11:42:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 3,
+            "started_at": "2026-10-03T11:42:12Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff changes funds-movement destination selection in CoinJoinFundsMigrationService and ShieldedTransferExecutor, replacing fresh receive addresses with live engine internal/change addresses while adding cross-cutting wallet ownership and address-cache coordination.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 12,
+            "started_at": "2026-10-03T11:42:15Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-03T11:42:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 31,
+            "started_at": "2026-10-03T11:42:30Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 31,
+            "started_at": "2026-10-03T11:42:30Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(receive): serve the receive address from the SDK engine, not the held dashj chain",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1805
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1124,7 +1265,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1158,11 +1299,12 @@
       "closed": 275,
       "done": 4031,
       "failed": 39,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 1772
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-03T11:39:11Z",
+    "ingest_last_at": "2026-10-03T11:43:00Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1184,52 +1326,33 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-10-03T11:24:12Z",
-    "last_run_started_at": "2026-10-03T11:20:21Z",
+    "last_run_started_at": "2026-10-03T11:42:08Z",
     "median_run_minutes": 34.233333333333334,
-    "notify_last_at": "2026-10-03T11:39:56Z",
-    "oldest_queued_at": "2026-10-03T11:12:03Z",
+    "notify_last_at": "2026-10-03T11:42:03Z",
+    "oldest_queued_at": "2026-10-03T11:31:33Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1798,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-10-03T11:42:03Z",
-        "eligible_in_seconds": 2,
-        "number": 1570,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1570",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1570#issuecomment-5769559621",
-        "priority": false,
-        "queued_at": "2026-10-03T11:12:03Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-wallet",
-        "sha": "6c850d2e7cdbdbe4d90fa773391ec0ce7cd8cc32",
-        "title": "fix(receive): serve the receive address from the SDK engine, not the held dashj chain",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 628,
+        "age_seconds": 688,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-03T12:01:33Z",
-        "eligible_in_seconds": 1172,
+        "eligible_in_seconds": 1112,
         "number": 5250,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5250",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5250#issuecomment-5945322126",
         "priority": false,
@@ -1248,7 +1371,7 @@
       "reviews": 36,
       "tokens": 324902324
     },
-    "ts": "2026-10-03T11:42:01Z",
+    "ts": "2026-10-03T11:43:01Z",
     "typical_minutes_by_tier": {
       "critical": 80.2,
       "low": 27.6,
@@ -1257,9 +1380,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 21.666666666666668,
+      "idle_minutes": 0.8833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
