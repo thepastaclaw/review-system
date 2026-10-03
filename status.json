@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-03T10:22:01Z",
-  "generated_at": "2026-10-03T10:22:01Z",
+  "data_as_of": "2026-10-03T10:23:01Z",
+  "generated_at": "2026-10-03T10:23:02Z",
   "history": {
     "daily": [
       {
@@ -163,8 +163,8 @@
           },
           "wait": {
             "median_seconds": 1839,
-            "n": 553,
-            "p90_seconds": 6727
+            "n": 554,
+            "p90_seconds": 6716
           }
         },
         "priority": {
@@ -189,6 +189,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=f4374a46",
+        "kind": "run.spawned",
+        "number": 1570,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 3192,
+        "ts": "2026-10-03T10:22:31Z"
+      },
       {
         "detail": "f4374a46 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -500,14 +508,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-03T08:33:50Z"
-      },
-      {
-        "detail": "ok in 16s",
-        "kind": "run.done",
-        "number": 5227,
-        "repo": "dashpay/platform",
-        "run_id": 3190,
-        "ts": "2026-10-03T08:28:43Z"
       }
     ],
     "tokens_by_effort": [
@@ -1101,14 +1101,92 @@
       "findings_posted": 2504,
       "reviews": 4073,
       "reviews_imported": 2245,
-      "runs": 3191,
+      "runs": 3192,
       "tokens_in": 22541006096,
       "tokens_out": 327604838,
       "tokens_total": 22868610934
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-03T16:22:31Z",
+        "deadline_in_seconds": 21570,
+        "degraded": false,
+        "elapsed_seconds": 30,
+        "findings": null,
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-10-03T10:22:46Z",
+        "id": 3192,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1570,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1570",
+        "priority": false,
+        "progress": 0.009,
+        "queue": "live",
+        "queued_at": "2026-10-03T09:52:10Z",
+        "remaining_seconds": 3151,
+        "repo": "dashpay/dash-wallet",
+        "sha": "f4374a46b8005debc7bec2a92f409e0731a1a6e1",
+        "started_at": "2026-10-03T10:22:31Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 2,
+            "started_at": "2026-10-03T10:22:33Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 10,
+            "started_at": "2026-10-03T10:22:35Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate cross-module change directly alters funds-movement destinations in ShieldedTransferExecutor.withdrawToCore and CoinJoinFundsMigrationService, replacing dashj-derived addresses with live SDK internal-chain addresses while adding ownership, caching, and failure-handling logic.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 14,
+            "started_at": "2026-10-03T10:22:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-03T10:22:59Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(receive): serve the receive address from the SDK engine, not the held dashj chain",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1821
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1124,7 +1202,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1138,7 +1216,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-03T10:19:48Z",
+        "at": "2026-10-03T10:22:07Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1158,7 +1236,7 @@
       "closed": 267,
       "done": 4029,
       "failed": 39,
-      "queued": 1,
+      "running": 1,
       "superseded": 1769
     },
     "ingest_error_streak": 0,
@@ -1196,32 +1274,12 @@
       }
     ],
     "last_run_done_at": "2026-10-03T09:32:13Z",
-    "last_run_started_at": "2026-10-03T08:54:33Z",
+    "last_run_started_at": "2026-10-03T10:22:31Z",
     "median_run_minutes": 34.233333333333334,
-    "notify_last_at": "2026-10-03T10:20:08Z",
-    "oldest_queued_at": "2026-10-03T09:52:10Z",
+    "notify_last_at": "2026-10-03T10:22:28Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1791,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-10-03T10:22:10Z",
-        "eligible_in_seconds": 9,
-        "number": 1570,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1570",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1570#issuecomment-5769559621",
-        "priority": false,
-        "queued_at": "2026-10-03T09:52:10Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-wallet",
-        "sha": "f4374a46b8005debc7bec2a92f409e0731a1a6e1",
-        "title": "fix(receive): serve the receive address from the SDK engine, not the held dashj chain",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-03",
       "failed": 0,
@@ -1229,7 +1287,7 @@
       "reviews": 34,
       "tokens": 308647493
     },
-    "ts": "2026-10-03T10:22:01Z",
+    "ts": "2026-10-03T10:23:01Z",
     "typical_minutes_by_tier": {
       "critical": 80.9,
       "low": 27.6,
@@ -1238,9 +1296,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 87.46666666666667,
+      "idle_minutes": 0.5,
       "ingest_stale": false,
       "stuck": false
     }
