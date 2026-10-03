@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-03T08:55:01Z",
-  "generated_at": "2026-10-03T08:55:01Z",
+  "data_as_of": "2026-10-03T08:56:01Z",
+  "generated_at": "2026-10-03T08:56:01Z",
   "history": {
     "daily": [
       {
@@ -189,6 +189,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1570,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 3191,
+        "ts": "2026-10-03T08:55:14Z"
+      },
       {
         "detail": "attempt 1 sha=66facee5",
         "kind": "run.spawned",
@@ -500,14 +508,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 3189,
         "ts": "2026-10-03T07:57:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.sync_failed",
-        "number": null,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": null,
-        "ts": "2026-10-03T07:36:56Z"
       }
     ],
     "tokens_by_effort": [
@@ -1113,35 +1113,55 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-03T14:54:33Z",
-        "deadline_in_seconds": 21572,
+        "deadline_in_seconds": 21512,
         "degraded": false,
-        "elapsed_seconds": 28,
+        "elapsed_seconds": 88,
         "findings": null,
         "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-10-03T08:54:49Z",
+        "heartbeat_at": "2026-10-03T08:55:49Z",
         "id": 3191,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 47,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 15,
+            "role": "general",
+            "since_seconds": 47,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 48,
             "state": "running"
           }
         ],
         "number": 1570,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1570",
         "priority": false,
-        "progress": null,
+        "progress": 0.035,
         "queue": "live",
         "queued_at": "2026-10-03T08:24:33Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 2442,
         "repo": "dashpay/dash-wallet",
         "sha": "66facee534edffd86c3ae288322edab31bc60716",
         "started_at": "2026-10-03T08:54:33Z",
@@ -1166,19 +1186,67 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff is large and intricate and directly changes funds destination selection in CoinJoinFundsMigrationService.migrateMixedFunds and ShieldedTransferExecutor, alongside cross-cutting receive-address ownership, caching, and failure handling.",
+              "tier": "critical"
+            },
             "name": "triage",
-            "seconds": 15,
+            "seconds": 24,
             "started_at": "2026-10-03T08:54:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-03T08:55:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 48,
+            "started_at": "2026-10-03T08:55:13Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 48,
+            "started_at": "2026-10-03T08:55:13Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(receive): serve the receive address from the SDK engine, not the held dashj chain",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 1800
       }
     ],
@@ -1211,7 +1279,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-03T08:52:55Z",
+        "at": "2026-10-03T08:55:20Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1257,13 +1325,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
@@ -1271,7 +1339,7 @@
     "last_run_done_at": "2026-10-03T08:28:43Z",
     "last_run_started_at": "2026-10-03T08:54:33Z",
     "median_run_minutes": 32.86666666666667,
-    "notify_last_at": "2026-10-03T08:53:16Z",
+    "notify_last_at": "2026-10-03T08:55:40Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1282,7 +1350,7 @@
       "reviews": 33,
       "tokens": 296497576
     },
-    "ts": "2026-10-03T08:55:01Z",
+    "ts": "2026-10-03T08:56:01Z",
     "typical_minutes_by_tier": {
       "critical": 80.9,
       "low": 27.6,
@@ -1293,7 +1361,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.4666666666666667,
+      "idle_minutes": 1.4666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
