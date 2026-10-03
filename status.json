@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-03T01:04:01Z",
-  "generated_at": "2026-10-03T01:04:01Z",
+  "data_as_of": "2026-10-03T01:05:02Z",
+  "generated_at": "2026-10-03T01:05:02Z",
   "history": {
     "daily": [
       {
@@ -149,6 +149,14 @@
       }
     ],
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 188,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": 3166,
+        "ts": "2026-10-03T01:04:08Z"
+      },
       {
         "detail": "attempt 1 sha=dd430bc4",
         "kind": "run.spawned",
@@ -459,14 +467,6 @@
         "number": 188,
         "repo": "dashpay/dash-platform-website",
         "run_id": 3162,
-        "ts": "2026-10-03T00:07:08Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 188,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": null,
         "ts": "2026-10-03T00:07:08Z"
       }
     ],
@@ -1073,12 +1073,12 @@
         "attempt": 1,
         "author": "bfoss765",
         "deadline_at": "2026-10-03T06:56:48Z",
-        "deadline_in_seconds": 21167,
+        "deadline_in_seconds": 21106,
         "degraded": false,
-        "elapsed_seconds": 433,
+        "elapsed_seconds": 494,
         "findings": null,
-        "heartbeat_age_seconds": 11,
-        "heartbeat_at": "2026-10-03T01:03:50Z",
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-03T01:04:50Z",
         "id": 3165,
         "lanes": [],
         "live_lanes": [
@@ -1089,7 +1089,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 410,
+            "since_seconds": 471,
             "state": "running"
           }
         ],
@@ -1098,7 +1098,7 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/186",
         "priority": true,
-        "progress": 0.303,
+        "progress": 0.331,
         "queue": "live",
         "queued_at": "2026-10-03T00:56:47Z",
         "remaining_seconds": 996,
@@ -1153,7 +1153,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 411,
+            "seconds": 472,
             "started_at": "2026-10-03T00:57:10Z",
             "status": "running"
           }
@@ -1176,35 +1176,35 @@
         "attempt": 1,
         "author": "bfoss765",
         "deadline_at": "2026-10-03T07:03:36Z",
-        "deadline_in_seconds": 21575,
+        "deadline_in_seconds": 21514,
         "degraded": false,
-        "elapsed_seconds": 25,
+        "elapsed_seconds": 86,
         "findings": null,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-03T01:03:51Z",
+        "heartbeat_at": "2026-10-03T01:04:52Z",
         "id": 3166,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "triage",
-            "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 8,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 54,
             "state": "running"
           }
         ],
         "number": 188,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/188",
         "priority": true,
-        "progress": null,
+        "progress": 0.06,
         "queue": "live",
         "queued_at": "2026-10-03T01:03:28Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1352,
         "repo": "dashpay/dash-platform-website",
         "sha": "dd430bc44287e875d06980c2291a9654bf7e2463",
         "started_at": "2026-10-03T01:03:36Z",
@@ -1229,19 +1229,52 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a large, intricate change to page deletion, publish orchestration, and cache invalidation, but platform-sign.ts only adds a pre-submission guard and test seam without changing signing, key selection, cryptography, funds movement, consensus, or storage migrations.",
+              "tier": "normal"
+            },
             "name": "triage",
-            "seconds": 8,
+            "seconds": 11,
             "started_at": "2026-10-03T01:03:53Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-03T01:04:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 54,
+            "started_at": "2026-10-03T01:04:08Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat(build): removing a page is a change, and Publish deletes its document",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 8
       }
     ],
@@ -1274,7 +1307,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-03T01:01:59Z",
+        "at": "2026-10-03T01:04:18Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1320,13 +1353,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 4,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1345,7 +1378,7 @@
       "reviews": 7,
       "tokens": 41092070
     },
-    "ts": "2026-10-03T01:04:01Z",
+    "ts": "2026-10-03T01:05:02Z",
     "typical_minutes_by_tier": {
       "critical": 83.3,
       "low": 27.6,
@@ -1356,7 +1389,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.4166666666666667,
+      "idle_minutes": 1.4333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
