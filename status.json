@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-03T17:41:01Z",
-  "generated_at": "2026-10-03T17:41:01Z",
+  "data_as_of": "2026-10-03T17:42:01Z",
+  "generated_at": "2026-10-03T17:42:01Z",
   "history": {
     "daily": [
       {
@@ -169,9 +169,9 @@
         },
         "priority": {
           "duration": {
-            "median_seconds": 2176,
-            "n": 298,
-            "p90_seconds": 6501
+            "median_seconds": 2177,
+            "n": 297,
+            "p90_seconds": 6508
           },
           "slot_wait": {
             "median_seconds": 0,
@@ -179,8 +179,8 @@
             "p90_seconds": 384
           },
           "wait": {
-            "median_seconds": 14,
-            "n": 355,
+            "median_seconds": 15,
+            "n": 354,
             "p90_seconds": 1414
           }
         }
@@ -189,6 +189,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 1001,
+        "repo": "dashpay/grovedb",
+        "run_id": 3202,
+        "ts": "2026-10-03T17:41:07Z"
+      },
       {
         "detail": "attempt 1 sha=74402d4d",
         "kind": "run.spawned",
@@ -484,14 +492,6 @@
         "repo": "dashpay/platform",
         "run_id": 3197,
         "ts": "2026-10-03T16:15:37Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 5258,
-        "repo": "dashpay/platform",
-        "run_id": 3197,
-        "ts": "2026-10-03T16:15:36Z"
       },
       {
         "detail": null,
@@ -1113,35 +1113,65 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-03T23:40:48Z",
-        "deadline_in_seconds": 21587,
+        "deadline_in_seconds": 21527,
         "degraded": false,
-        "elapsed_seconds": 13,
+        "elapsed_seconds": 73,
         "findings": null,
         "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-10-03T17:40:49Z",
+        "heartbeat_at": "2026-10-03T17:41:49Z",
         "id": 3202,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 7,
+            "role": "architecture-layering",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 51,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 52,
             "state": "running"
           }
         ],
         "number": 1001,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/grovedb/pull/1001",
         "priority": false,
-        "progress": 0.008,
+        "progress": 0.042,
         "queue": "live",
         "queued_at": "2026-10-03T17:10:44Z",
-        "remaining_seconds": 1639,
+        "remaining_seconds": 1645,
         "repo": "dashpay/grovedb",
         "sha": "74402d4d9ff04039c9092a04f5479a90f6c75365",
         "started_at": "2026-10-03T17:40:48Z",
@@ -1155,29 +1185,75 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
             "name": "select",
-            "seconds": 8,
+            "seconds": 10,
             "started_at": "2026-10-03T17:40:53Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate cross-crate changes in grovedb/src/batch/just_in_time_value_update.rs and merk/src/tree/just_in_time_value_update/mod.rs alter owner-specific storage charges and refunds, directly changing funds accounting rather than merely surrounding infrastructure.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-03T17:40:54Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 7,
-            "started_at": "2026-10-03T17:40:54Z",
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-03T17:41:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-03T17:41:07Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "platform-versioning",
+              "rust-quality"
+            ],
+            "lanes_total": 4,
+            "name": "phase2",
+            "seconds": 52,
+            "started_at": "2026-10-03T17:41:09Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(batch)!: opt-in settlement of storage owner changes",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1259,7 +1335,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 4,
         "slots": 8,
         "waiting": 0
       },
@@ -1273,7 +1349,7 @@
     "last_run_done_at": "2026-10-03T17:16:58Z",
     "last_run_started_at": "2026-10-03T17:40:48Z",
     "median_run_minutes": 34.833333333333336,
-    "notify_last_at": "2026-10-03T17:38:45Z",
+    "notify_last_at": "2026-10-03T17:41:08Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1284,7 +1360,7 @@
       "reviews": 43,
       "tokens": 484631703
     },
-    "ts": "2026-10-03T17:41:01Z",
+    "ts": "2026-10-03T17:42:01Z",
     "typical_minutes_by_tier": {
       "critical": 78.4,
       "low": 27.6,
@@ -1295,7 +1371,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.21666666666666667,
+      "idle_minutes": 1.2166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
