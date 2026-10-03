@@ -181,6 +181,9 @@ class FakeGh(Gh):
         self.diff = "diff --git a/f.rs b/f.rs\n+++ b/f.rs\n@@ -1,3 +10,5 @@\n+x\n"
         self.files = [{"filename": "f.rs"}]
         self.fail_next: list[str] = []
+        # False: the bot lacks write access, so resolveReviewThread is refused (dashpay/dash)
+        self.can_resolve = True
+        self.comment_edits: list[tuple[int, str]] = []  # (comment id, new body) via PATCH
 
     def _runner(
         self, argv: Sequence[str], stdin: str | None, timeout: int
@@ -246,6 +249,10 @@ class FakeGh(Gh):
                     }
                 }
             if "resolveReviewThread" in q:
+                if not self.can_resolve:
+                    raise _GhFailure(
+                        "gh: thepastaclaw does not have the correct permissions to execute `ResolveReviewThread`"
+                    )
                 return {
                     "data": {"resolveReviewThread": {"thread": {"id": "t", "isResolved": True}}}
                 }
@@ -314,6 +321,15 @@ class FakeGh(Gh):
             if "/pulls/" in ep and "/comments/" in ep and ep.endswith("/replies"):
                 self.replies.append(body or {})
                 return {"id": 1}
+            if "/pulls/comments/" in ep and method == "PATCH":
+                cid = int(ep.rsplit("/", 1)[1])
+                new_body = (body or {})["body"]
+                self.comment_edits.append((cid, new_body))
+                for t in self.threads:
+                    for c in t["comments"]["nodes"]:
+                        if c["databaseId"] == cid:
+                            c["body"] = new_body
+                return {"id": cid}
             if "/pulls/comments/" in ep and ep.endswith("/reactions"):
                 self.reactions.append(body or {})
                 return {"id": 1}

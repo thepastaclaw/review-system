@@ -576,6 +576,10 @@ def post_reply(gh: Gh, repo: str, number: int, comment_id: int, body: str) -> No
     )
 
 
+def edit_review_comment(gh: Gh, repo: str, comment_id: int, body: str) -> None:
+    gh.api(f"repos/{repo}/pulls/comments/{comment_id}", method="PATCH", body={"body": body})
+
+
 def react(gh: Gh, repo: str, comment_id: int, content: str) -> None:
     gh.api(
         f"repos/{repo}/pulls/comments/{comment_id}/reactions",

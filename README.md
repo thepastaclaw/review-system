@@ -555,16 +555,21 @@ verifier lanes):
   or `/pull/<n>/commits/<sha>`, up to 5, forks of this repository only; fetched into the
   mirror so `git show <sha>` works in the worktree; a commit that cannot be fetched is
   disclosed to the model with the reason and never fails the run).
-- It answers per thread with `STILL_VALID | FIXED | WITHDRAWN | INTENTIONALLY_DEFERRED |
-  NO_REPLY` and free prose. The rules it is given: verify claims against the code, never
-  repeat a point already made, evaluate a proposed change on its merits and say whether it
-  resolves the concern, concede when wrong, stay silent (`NO_REPLY`) when a reply is
-  addressed to someone else or there is nothing new to add. Severity cannot change in a
-  reply.
+- It answers per thread with `STILL_VALID | FIX_PENDING | WITHDRAWN |
+  INTENTIONALLY_DEFERRED | NO_REPLY` and free prose. The rules it is given: verify claims
+  against the code, never repeat a point already made, evaluate a proposed change on its
+  merits and say whether it resolves the concern, concede when wrong, stay silent
+  (`NO_REPLY`) when a reply is addressed to someone else or there is nothing new to add.
+  Severity cannot change in a reply. There is no `FIXED`: the checkout is the reviewed
+  commit, so a change that would resolve the finding (linked, sketched, or "changed it"
+  but not pushed) is `FIX_PENDING`, which lifts nothing; the push is reviewed in full.
+  When the author both argues the current code is correct and offers a change, the lane
+  rules on the argument first (`WITHDRAWN` if they are right). A model that still answers
+  `FIXED` gets `FIX_PENDING` (dashpay/dash#7778 lifted a blocker on an unpushed change).
 - Posting: the prose is the comment (marker `thepastaclaw-thread-answer v1`, once per
   human reply and head, `@` defused, CodeRabbit retriggers discarded), with a quiet
-  trailing note for FIXED / WITHDRAWN / INTENTIONALLY_DEFERRED instead of a bold verdict
-  lead; FIXED and WITHDRAWN threads are resolved (where the bot may). `NO_REPLY` posts
+  trailing note for FIX_PENDING / WITHDRAWN / INTENTIONALLY_DEFERRED instead of a bold
+  verdict lead; WITHDRAWN threads are resolved (where the bot may). `NO_REPLY` posts
   nothing, is recorded as `thread.answered` with `action: no_reply`, and the decision is
   remembered per (finding, reply) in `kv` (`converse.silent:<repo>#<n>:<hash>`), so a later
   conversation on the same PR never posts a late second opinion to that message; the
@@ -573,15 +578,38 @@ verifier lanes):
   bots (`*[bot]` logins, CodeRabbit) are part of the transcript but never count as a human
   waiting for an answer, and the router does not queue a `review_reply` head for them at
   all, so no bot-to-bot loop can start.
-- Verdict: a conversation never adds blockers and never approves. When every blocking
-  finding on the commit has been withdrawn, resolved or deferred and the standing review is
-  `CHANGES_REQUESTED`, the same short "Re-review after discussion" follow-up moves it to
-  COMMENT, with provenance stating that no code was re-reviewed. A concession is
-  persisted as a `conceded`-stage `findings` row for the sha, so blockers conceded in
-  earlier conversations stay lifted; the standing set is the latest *final* publication's
-  blockers for the sha plus unresolved blocking threads this database has no row for
-  (legacy findings). A blocking thread a maintainer resolved by hand, without the bot
-  conceding it, still counts. In this lane a deferral lifts a blocker only when a
+- Lifted findings on threads that stay open (the bot has no write access, e.g.
+  dashpay/dash, so `resolveReviewThread` is refused; deferrals are never resolved) would
+  still read as an open 🔴. The bot edits its own root comment instead: a quoted status
+  line (``> ✅ **Withdrawn** at `<sha>` ``, `⏭️ **Deferred**`, …) under the finding marker,
+  tagged `<!-- thepastaclaw-thread-status v1 -->`, replaced on change and removed when a
+  later answer says the finding applies again, or a later review keeps it
+  (`thread.answered` → `marked`). The full re-review path does the same for threads it
+  would resolve. Dedupe strips the line before matching.
+- Verdict: the verdict on a commit is its full review minus what the discussion withdrew
+  or deferred. A conversation never adds blockers. The standing set is the final verifier
+  set (`verify2` rows, the fresh audit's when it ran) of the run that last published
+  findings for the sha, so findings dedupe carried onto other (even resolved) threads
+  count; plus unresolved bot threads this database never posted (legacy). Threads from
+  earlier heads that run re-adjudicated do not count. Lifted = `conceded` rows after that
+  run, matched by hash or by file and title. Once no blocker stands, the follow-up
+  **APPROVEs** (from `CHANGES_REQUESTED` or `COMMENTED`) when nothing above a nitpick is
+  left, something of the verifier set was lifted, and that run is one the pipeline itself
+  would approve on: Phase 2 `ok`, not degraded, and on a later review round (an earlier
+  review of the PR exists) the fresh Phase-2 audit `ok`. A COMMENT never clears a
+  REQUEST_CHANGES on GitHub, so anything less leaves a ready PR showing a blocking review
+  (dashpay/dash#7778). If only the fresh audit is missing (it is skipped while blockers
+  stand), the follow-up is COMMENT and the commit is re-queued once
+  (`review.fresh_audit_requested`, kv `rereview.after_run:<run>` read by
+  `scheduler.finish_run`; guard `converse.fresh_audit:<repo>#<n>:<sha>`), so the audit
+  runs and approves through the normal same-sha path. Otherwise a standing
+  `CHANGES_REQUESTED` moves to COMMENT and the body says why it is not an approval. The
+  live head and the bot's reviews are re-read right before posting, so a push or a
+  dismissal during the lane never gets an approval. The follow-up is the same short
+  "Re-review after discussion" review, with provenance stating that no code was
+  re-reviewed. A concession is persisted as a `conceded`-stage `findings` row for the
+  sha, so findings conceded in earlier conversations stay lifted. A thread a maintainer
+  resolved by hand, without the bot conceding it, still counts. In this lane a deferral lifts a blocker only when a
   maintainer (OWNER, MEMBER or COLLABORATOR, the PR author included) is among the replies
   since the bot's last answer, and its thread stays open as the record; otherwise the
   reply is posted with a note that the blocker stands. (The full re-review path does not

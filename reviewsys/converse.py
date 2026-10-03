@@ -12,7 +12,9 @@ answers included), the finding, and any commits the humans linked (fetched into 
 so the model can read them). It returns one outcome per replied thread:
 
   WITHDRAWN            the human is right (or the finding no longer holds): concede and resolve
-  FIXED                the code now addresses it (a linked or pushed commit): confirm and resolve
+  FIX_PENDING          a proposed change (a linked commit, a sketch) would resolve it, but the
+                       head is still the reviewed commit: say so; the finding keeps standing
+                       until the change is pushed and that push is reviewed
   STILL_VALID          the finding still holds and there is something NEW to say: say it
   INTENTIONALLY_DEFERRED  the maintainers chose not to act and the finding need not block this
                        PR (pre-existing, out of scope, a follow-up): acknowledge and stop
@@ -21,6 +23,10 @@ so the model can read them). It returns one outcome per replied thread:
 
 `reply` is prose written for the thread, not a template. The renderer adds the marker and a
 short status word; the model writes the rest.
+
+There is no FIXED here: a conversation only runs on the commit that was reviewed, so the code
+under the finding cannot have changed. Calling a promised change "fixed" lifted blockers that
+were still in the code (dashpay/dash#7778); a model that still answers FIXED gets FIX_PENDING.
 """
 
 from __future__ import annotations
@@ -36,14 +42,14 @@ from .prompts import RAW_JSON_CONTRACT, STATIC_REVIEW
 
 CONVERSATION_STATUSES = (
     "STILL_VALID",
-    "FIXED",
+    "FIX_PENDING",
     "WITHDRAWN",
     "INTENTIONALLY_DEFERRED",
     "NO_REPLY",
 )
 # outcomes after which a blocking finding no longer holds up the verdict on this commit; a
 # deferral only counts when a maintainer made the call (`accept_deferrals`)
-LIFTING_STATUSES = frozenset({"WITHDRAWN", "FIXED", "INTENTIONALLY_DEFERRED"})
+LIFTING_STATUSES = frozenset({"WITHDRAWN", "INTENTIONALLY_DEFERRED"})
 MAINTAINER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 # posted-only status: the lane chose INTENTIONALLY_DEFERRED but no maintainer made that call
 DEFERRAL_PENDING = "DEFERRAL_PENDING"
@@ -226,10 +232,17 @@ def prompt(
         "specific interleaving, a specific line, a specific command that would demonstrate it) "
         "or accept that it did not persuade and stop pressing (NO_REPLY: the finding keeps "
         "its severity).\n"
-        "- If a human proposes a change (a linked commit, a sketch, an alternative test), "
-        "evaluate the proposal on its merits and say whether it resolves your concern. If it "
-        "does, say so plainly and mark the finding FIXED or WITHDRAWN as appropriate. Do not "
-        "answer a concrete proposal with a restatement of the original concern.\n"
+        "- The checkout is the commit you reviewed: nothing in it has changed since your "
+        "finding, so nothing here can be FIXED. If a human proposes a change (a linked "
+        "commit, a sketch, an alternative test, or a change they say they made but have not "
+        "pushed), evaluate the proposal on its merits and say whether it resolves your "
+        "concern. If it does, say so plainly and mark the finding FIX_PENDING: the finding "
+        "keeps standing on this commit, and the push that carries the change is reviewed in "
+        "full. Do not answer a concrete proposal with a restatement of the original concern.\n"
+        "- If a human argues the code is correct as it stands AND proposes a change anyway, "
+        "rule on the argument first. If they are right about the current code, mark the "
+        "finding WITHDRAWN (the proposal is then a nice-to-have, not a fix); only if the "
+        "current code is still wrong is the proposal a FIX_PENDING.\n"
         "- If you were wrong, or the finding was overstated, say so and WITHDRAW it. Conceding "
         "a point costs nothing; digging in costs the maintainers' trust.\n"
         "- If a maintainer (association OWNER, MEMBER or COLLABORATOR) has made a deliberate "
@@ -285,6 +298,8 @@ def parse(raw: dict[str, Any], *, expected: set[str]) -> ConversationOutput:
             raise ReviewError(FailKind.CONTRACT, f"conversation row for unexpected hash {h!r}")
         if h in out:
             raise ReviewError(FailKind.CONTRACT, f"duplicate conversation row for {h!r}")
+        if st == "FIXED":  # the reviewed commit is checked out: nothing can be fixed yet
+            st = "FIX_PENDING"
         if st not in CONVERSATION_STATUSES:
             raise ReviewError(FailKind.CONTRACT, f"conversation row {h}: bad status {st!r}")
         if st == "NO_REPLY":
