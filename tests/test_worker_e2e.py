@@ -1217,14 +1217,15 @@ def test_reply_on_reviewed_commit_runs_conversation_lane_not_a_review(cfg, conn,
     assert body.startswith(
         f"<!-- thepastaclaw-thread-answer v1 sha={HEAD} reply=903 finding={fh} -->"
     )
-    assert "Yes, 7c19184c does it" in body and "_Marking this resolved._" in body
+    # the linked commit is not on the head: a pending fix, not a resolved finding
+    assert "Yes, 7c19184c does it" in body and "until that change is pushed" in body
     assert (
         "**Still applies**" not in body and "**Resolved**" not in body
     )  # prose, not a verdict log
     assert "@\u200bUdjinM6" in body  # mentions defused
-    assert any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
     ev = conn.execute("SELECT detail FROM events WHERE kind='thread.answered'").fetchone()
-    assert '"status": "FIXED"' in ev["detail"] and '"mode": "conversation"' in ev["detail"]
+    assert '"status": "FIX_PENDING"' in ev["detail"] and '"mode": "conversation"' in ev["detail"]
     steps = [
         r["name"]
         for r in conn.execute("SELECT name FROM steps WHERE run_id=? ORDER BY rowid", (rid,))
@@ -1350,6 +1351,8 @@ def test_conversation_conceding_every_blocker_lifts_request_changes(cfg, conn, g
     assert "Standing review was `CHANGES_REQUESTED`; this re-review is `COMMENT`" in upd["body"]
     assert f"- {blocker['title']}" in upd["body"]
     assert "conversation lane" in upd["body"] and "the code was not re-reviewed" in upd["body"]
+    # the seeded publication has no verifier record: no approval can rest on it
+    assert "Not approved: the verifier record an approval after discussion rests on" in upd["body"]
     ev = conn.execute("SELECT detail FROM events WHERE kind='review.verdict_updated'").fetchone()
     assert "CHANGES_REQUESTED -> COMMENT" in ev["detail"] and "conversation" in ev["detail"]
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
@@ -1492,7 +1495,9 @@ def test_conversation_concession_is_remembered_across_runs(cfg, conn, gh, lanes)
     # the first thread is now resolved on GitHub (gone from open threads); the second gets a reply
     gh.threads = [thread(h2, "Second blocker", 810, [{**human, "id": 902}])]
     lanes.conversation = {
-        "threads": [{"finding_hash": h2, "status": "FIXED", "reply": "right, the guard covers it"}]
+        "threads": [
+            {"finding_hash": h2, "status": "WITHDRAWN", "reply": "right, the guard covers it"}
+        ]
     }
     with tx(conn):
         enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
@@ -1539,6 +1544,242 @@ def test_conversation_never_lifts_a_verdict_on_a_hand_resolved_blocker(cfg, conn
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
     assert len(gh.posted_reviews) == 1
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
+def _full_strength_prior(conn, *, extra_verified=()):
+    """Make the seeded prior publication a full-strength final review: Phase 2 ran on the
+    primary models and its final verifier set (`verify2` rows: everything posted, plus
+    `extra_verified` findings dedupe carried onto other threads) is on record."""
+    from reviewsys.contract import Finding
+
+    with tx(conn):
+        (rid,) = conn.execute(
+            "SELECT DISTINCT run_id FROM findings WHERE stage='posted'"
+        ).fetchone()
+        conn.execute(
+            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?, 'phase2', 'ok', 'x')",
+            (rid,),
+        )
+        conn.execute(
+            "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, "
+            "severity, confidence, category, title, body) SELECT run_id, 'verify2', 'verified', "
+            "hash, file, line_start, line_end, severity, confidence, category, title, body "
+            "FROM findings WHERE run_id=? AND stage='posted'",
+            (rid,),
+        )
+        for raw in extra_verified:
+            f = Finding.from_dict(raw)
+            conn.execute(
+                worker._FINDINGS_INSERT,
+                (
+                    rid,
+                    "verify2",
+                    "verified",
+                    f.hash,
+                    f.file,
+                    f.line_start,
+                    f.line_end,
+                    f.severity,
+                    f.confidence,
+                    f.category,
+                    f.title,
+                    f.body,
+                ),
+            )
+    return rid
+
+
+def _finding_thread(h, title, root_id, replies, *, label="🔴 Blocking"):
+    t = _prior_thread(h, replies=replies)
+    t["id"] = f"PRRT_{root_id}"
+    t["comments"]["nodes"][0]["databaseId"] = root_id
+    t["comments"]["nodes"][0]["body"] = (
+        f"<!-- thepastaclaw-review v1 finding={h} dedupe=x -->\n**{label}: {title}**\n\nbody"
+    )
+    return t
+
+
+def _standing_final(gh):
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+
+
+def _converse(cfg, conn, gh, lanes, threads, *, first=True):
+    lanes.conversation = {"threads": threads}
+    with tx(conn):
+        if first:
+            conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    return rid
+
+
+KNST = {
+    "id": 901,
+    "author": "knst",
+    "body": "can't happen",
+    "created_at": "x",
+    "association": "COLLABORATOR",
+}
+WITHDRAW = {"status": "WITHDRAWN", "reply": "Right: allowReSign is false."}
+
+
+def _updates(conn):
+    return [
+        r["detail"]
+        for r in conn.execute(
+            "SELECT detail FROM events WHERE kind='review.verdict_updated' ORDER BY id"
+        )
+    ]
+
+
+def test_conversation_withdrawing_the_only_finding_approves(cfg, conn, gh, lanes):
+    """dashpay/dash#7778: the full review's only finding was a blocker the author argued away.
+    A COMMENT cannot clear REQUEST_CHANGES on GitHub, so the follow-up must APPROVE; and since
+    the bot cannot resolve threads there, its own finding comment says the finding is withdrawn.
+    A leftover nitpick does not hold an approval back."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    _seed_prior(conn, {**_sugg("Tidy the helper"), "severity": "nitpick"})
+    posting_run = _full_strength_prior(conn)
+    gh.can_resolve = False
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    _standing_final(gh)
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
+    assert len(gh.posted_reviews) == 2
+    upd = gh.posted_reviews[1]
+    assert upd["event"] == "APPROVE" and upd["comments"] == []
+    assert "Standing review was `CHANGES_REQUESTED`; this re-review is `APPROVE`" in upd["body"]
+    assert f"the full review of `{HEAD[:8]}` (run {posting_run})" in upd["body"]
+    assert "the code was not re-reviewed" in upd["body"] and "suggestion" not in upd["body"]
+    assert "CHANGES_REQUESTED -> APPROVE" in _updates(conn)[0]
+    ((cid, body),) = gh.comment_edits
+    assert cid == 800 and f"> ✅ **Withdrawn** at `{HEAD[:8]}`" in body
+    assert body.splitlines()[0].startswith(f"<!-- thepastaclaw-review v1 finding={bh}")
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
+
+
+def test_conversation_approves_only_once_no_suggestion_is_left(cfg, conn, gh, lanes):
+    """Blocker withdrawn but a suggestion stands: COMMENT, saying why it is not an approval.
+    Withdrawing the suggestion in a later conversation then approves from that COMMENT."""
+    blocker, sugg = _blocking(), _sugg()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    sh = _seed_prior(conn, sugg)
+    _full_strength_prior(conn)
+    gh.threads = [
+        _finding_thread(bh, blocker["title"], 800, [KNST]),
+        _finding_thread(sh, sugg["title"], 810, [], label="🟡 Suggestion"),
+    ]
+    _standing_final(gh)
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
+    assert [r["event"] for r in gh.posted_reviews[1:]] == ["COMMENT"]
+    assert "Not approved: 1 non-blocking finding(s)" in gh.posted_reviews[1]["body"]
+    # the blocker thread is resolved now (gone); the suggestion gets a reply and is withdrawn
+    gh.threads = [
+        _finding_thread(sh, sugg["title"], 810, [{**KNST, "id": 902}], label="🟡 Suggestion")
+    ]
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": sh, **WITHDRAW}], first=False)
+    assert [r["event"] for r in gh.posted_reviews[1:]] == ["COMMENT", "APPROVE"]
+    assert "COMMENTED -> APPROVE" in _updates(conn)[-1]
+
+
+def test_a_finding_carried_onto_a_resolved_thread_still_blocks(cfg, conn, gh, lanes):
+    """The verifier kept a blocker that dedupe carried onto a thread a maintainer had resolved
+    by hand, so it was never posted for this commit and has no open thread. Withdrawing the
+    one finding that was posted must not approve, or lift anything, over it."""
+    nit = {**_sugg("Rename the helper"), "severity": "suggestion"}
+    nh = _seed_prior(conn, nit)
+    _full_strength_prior(conn, extra_verified=[_blocking("Carried blocker")])
+    gh.threads = [_finding_thread(nh, nit["title"], 810, [KNST], label="🟡 Suggestion")]
+    _standing_final(gh)
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": nh, **WITHDRAW}])
+    assert len(gh.posted_reviews) == 1 and _updates(conn) == []
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
+def test_an_open_thread_from_an_earlier_head_does_not_hold_back_approval(cfg, conn, gh, lanes):
+    """dashpay/dash: the bot cannot resolve threads, so a suggestion fixed on an earlier head
+    keeps an open thread forever. The review of this commit re-adjudicated it (not in its
+    verifier set), so it must not count as a finding that still stands."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    _full_strength_prior(conn)
+    old = _sugg("Old suggestion fixed on an earlier head")
+    from reviewsys.contract import Finding
+
+    oh = Finding.from_dict(old).hash
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) VALUES (?,?,?,?,?,?)",
+            ("dashpay/platform", 1, oh, "c" * 40, 1, "2026-09-01T00:00:00Z"),
+        )
+    gh.threads = [
+        _finding_thread(bh, blocker["title"], 800, [KNST]),
+        _finding_thread(oh, old["title"], 820, [], label="🟡 Suggestion"),
+    ]
+    _standing_final(gh)
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
+    assert [r["event"] for r in gh.posted_reviews[1:]] == ["APPROVE"]
+
+
+def test_a_later_round_without_the_fresh_audit_queues_it_instead_of_approving(cfg, conn, gh, lanes):
+    """On a later review round the pipeline approves only after a fresh Phase-2 audit, which it
+    skips while a blocker stands. Withdrawing that blocker must not approve around the audit:
+    COMMENT now, and the commit is re-queued once (after this run ends) so the audit runs."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    posting_run = _full_strength_prior(conn)
+    with tx(conn):  # an earlier round: a review posted by an older run
+        hid = conn.execute("SELECT head_id FROM runs WHERE id=?", (posting_run,)).fetchone()[0]
+        older = conn.execute(
+            "INSERT INTO runs (id, head_id, attempt, status, token, started_at, deadline_at) VALUES (?,?,1,'done','t','x','x')",
+            (posting_run - 1 if posting_run > 1 else 0, hid),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+            (older, "dashpay/platform", 1, "c" * 40, "final", 1, "REQUEST_CHANGES", "x"),
+        )
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    _standing_final(gh)
+    rid = _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
+    assert [r["event"] for r in gh.posted_reviews[1:]] == ["COMMENT"]
+    assert "That audit is queued for this commit" in gh.posted_reviews[1]["body"]
+    head = conn.execute(
+        "SELECT status, trigger, priority FROM heads WHERE repo='dashpay/platform' AND number=1 AND sha=?",
+        (HEAD,),
+    ).fetchone()
+    assert (head["status"], head["trigger"], head["priority"]) == ("queued", "manual", 1)
+    assert kv_get(conn, f"rereview.after_run:{rid}") is None
+    # once per commit: a second conversation that lifts again does not queue another audit
+    assert kv_get(conn, f"converse.fresh_audit:dashpay/platform#1:{HEAD}") == str(rid)
+
+
+def test_a_promised_fix_lifts_nothing(cfg, conn, gh, lanes):
+    """The #7778 misstep: the lane called a change the author had not pushed "FIXED" and the
+    blocker was lifted on code that still had it. Now the reply goes out, nothing else moves."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    _full_strength_prior(conn)
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    _standing_final(gh)
+    _converse(
+        cfg,
+        conn,
+        gh,
+        lanes,
+        [{"finding_hash": bh, "status": "FIXED", "reply": "Resending ehf_tx resolves it."}],
+    )
+    assert len(gh.replies) == 1 and "until that change is pushed" in gh.replies[0]["body"]
+    assert len(gh.posted_reviews) == 1 and gh.comment_edits == []
+    assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
     assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
 
 

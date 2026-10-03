@@ -14,6 +14,9 @@ from typing import Any
 from . import github
 from .contract import Finding, VerifierOutput
 from .dedupe import (
+    FINDING_MARKER_RE,
+    THREAD_STATUS_MARKER,
+    THREAD_STATUS_RE,
     ExistingComment,
     Suppressed,
     collapse_same_root,
@@ -347,8 +350,8 @@ def _phase1_choice_line(c: dict[str, Any]) -> str:
 def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     if p.conversation:
         return ([_degraded_line(p.degraded)] if p.degraded else []) + [
-            "- Verdict moved because every blocking finding on this commit was withdrawn, "
-            "resolved or deferred in the inline discussion; the code was not re-reviewed"
+            "- Verdict moved because the inline discussion withdrew or deferred findings of the "
+            "standing review of this commit; the code was not re-reviewed"
         ]
 
     def fmt(r: dict[str, Any]) -> str:
@@ -802,8 +805,11 @@ _ANSWER_LEAD = {
 _RESOLVING = {"WITHDRAWN", "FIXED", "OUTDATED"}
 # status -> the quiet trailing note render_conversation_answer appends (absent: no note)
 _CONVERSATION_NOTE = {
-    "FIXED": "\n\n_Marking this resolved._",
     "WITHDRAWN": "\n\n_Withdrawing this finding._",
+    "FIX_PENDING": (
+        "\n\n_The finding stands on this commit until that change is pushed; the push gets a "
+        "full review._"
+    ),
     "INTENTIONALLY_DEFERRED": (
         "\n\n_Noted as intentionally deferred; I will not press it further here._"
     ),
@@ -812,6 +818,51 @@ _CONVERSATION_NOTE = {
         "request._"
     ),
 }
+
+
+# A lifted finding whose thread stays open (the bot cannot resolve threads without write
+# access, and a deferral is never resolved) still reads as an open 🔴 to anyone skimming the
+# PR. The only thing the bot can change there is its own root comment: this line goes between
+# the finding marker and the bold headline, which `github._finding_title` keeps parsing (a
+# quoted line is not a headline; dedupe strips it). One line per thread, replaced on change.
+_THREAD_STATUS_LINE = {
+    "WITHDRAWN": "✅ **Withdrawn**",
+    "FIXED": "✅ **Resolved**",
+    "OUTDATED": "✅ **No longer applies**",
+    "INTENTIONALLY_DEFERRED": "⏭️ **Deferred** (maintainer decision; not blocking)",
+}
+
+
+def with_thread_status(body: str, *, status: str | None, head_sha: str) -> str:
+    """`body` (a bot finding's root comment) with its status line set for `status`, or removed
+    when `status` is None or has no line."""
+    body = THREAD_STATUS_RE.sub("", body, count=1)
+    line = _THREAD_STATUS_LINE.get(status or "")
+    if not line:
+        return body
+    lines = body.split("\n")
+    i = 0
+    while i < len(lines) and lines[i].lstrip().startswith("<!--"):
+        i += 1
+    block = [THREAD_STATUS_MARKER, f"> {line} at `{head_sha[:8]}`; see the replies below.", ""]
+    return "\n".join(lines[:i] + block + lines[i:])
+
+
+def _set_thread_status(
+    gh: Gh, repo: str, *, comment_id: Any, root_body: str, status: str | None, head_sha: str
+) -> bool | str:
+    """Edit our own finding root to show `status`. True when the root now shows it (or already
+    did), else the failure; only ever touches a comment carrying our finding marker."""
+    if not FINDING_MARKER_RE.search(root_body):
+        return "failed: root carries no finding marker"
+    new = with_thread_status(root_body, status=status, head_sha=head_sha)
+    if new == root_body:
+        return True
+    try:
+        github.edit_review_comment(gh, repo, int(comment_id), new)
+    except (ReviewError, ValueError) as exc:
+        return f"failed: {exc}"
+    return True
 
 
 def scrub_reply(text: str, limit: int) -> str:
@@ -849,9 +900,15 @@ def _deliver_answer(
     thread_id: Any,
     resolve: bool,
     item: dict[str, Any],
+    root_body: str,
+    lifted_status: str | None,
+    head_sha: str,
 ) -> None:
     """Post one answer on a finding thread and, when the outcome retires the finding, resolve
-    the thread. Records what happened on `item` (`action`, and `resolved` when we tried)."""
+    the thread. Records what happened on `item` (`action`, and `resolved` when we tried).
+
+    `lifted_status` is the outcome when it lifts the finding. If the thread then stays open,
+    the root comment gets that status line (`marked`); any other answer clears a stale one."""
     try:
         github.post_reply(gh, repo, number, int(comment_id), body)
         item["action"] = "replied"
@@ -864,6 +921,13 @@ def _deliver_answer(
             item["resolved"] = True
         except ReviewError as exc:
             item["resolved"] = f"failed: {exc}"
+    if not root_body:
+        return
+    status = None if item.get("resolved") is True else lifted_status
+    if status or THREAD_STATUS_MARKER in root_body:
+        item["marked"] = _set_thread_status(
+            gh, repo, comment_id=comment_id, root_body=root_body, status=status, head_sha=head_sha
+        )
 
 
 def answer_conversation(
@@ -876,8 +940,7 @@ def answer_conversation(
     outcomes: dict[str, Any],
 ) -> list[dict[str, Any]]:
     """Post the conversation lane's replies: one per replied thread with something to say,
-    exactly once per (human reply, head), resolving threads the model conceded or confirmed
-    fixed. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done."""
+    exactly once per (human reply, head), resolving threads the model conceded. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done."""
     posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
     done: list[dict[str, Any]] = []
     seen_roots: set[tuple[str, str]] = set()  # same alias guard as answer_replied_threads
@@ -923,6 +986,9 @@ def answer_conversation(
             thread_id=t.get("thread_id"),
             resolve=o.status in _RESOLVING,
             item=item,
+            root_body=str(t.get("body") or ""),
+            lifted_status=o.status if o.status in _THREAD_STATUS_LINE else None,
+            head_sha=head_sha,
         )
         done.append(item)
     return done
@@ -1042,6 +1108,7 @@ def answer_replied_threads(
             item["action"] = "already_answered"
             done.append(item)
             continue
+        resolve = explicit and status in _RESOLVING
         _deliver_answer(
             gh,
             repo,
@@ -1051,10 +1118,29 @@ def answer_replied_threads(
                 marker=marker, status=status, head_sha=head_sha, reply=reason
             ),
             thread_id=t.get("thread_id"),
-            resolve=explicit and status in _RESOLVING,
+            resolve=resolve,
             item=item,
+            root_body=str(t.get("body") or ""),
+            lifted_status=status if resolve else None,
+            head_sha=head_sha,
         )
         done.append(item)
+    # a finding this review keeps again must not go on reading "✅ Withdrawn" from an earlier
+    # head just because nobody replied on its thread this time
+    for h, t in (open_threads or {}).items():
+        body = str(t.get("body") or "")
+        if h in kept_hashes and h not in todo and THREAD_STATUS_MARKER in body:
+            item = {"finding_hash": h, "status": "STILL_VALID", "comment_id": t.get("comment_id")}
+            item["action"] = "status_cleared"
+            item["marked"] = _set_thread_status(
+                gh,
+                repo,
+                comment_id=t.get("comment_id"),
+                root_body=body,
+                status=None,
+                head_sha=head_sha,
+            )
+            done.append(item)
     return done
 
 
@@ -1072,6 +1158,7 @@ def render_verdict_update(
     previous_event: str,
     new_event: str,
     lifted_blockers: list[str],
+    note: str = "",
 ) -> str:
     n = verified.blocker_count
     summary = "\n".join(
@@ -1092,7 +1179,10 @@ def render_verdict_update(
         + ("no blocking findings remain." if not n else f"{n} blocking finding(s) now stand."),
         "",
     ]
-    parts += [_counts_line(list(verified.findings), include_zero=True), ""]
+    if note:
+        parts += [note, ""]
+    if not provenance.conversation:  # it re-reviewed nothing, so it has nothing to count
+        parts += [_counts_line(list(verified.findings), include_zero=True), ""]
     if lifted_blockers:
         parts += ["No longer blocking:", *(f"- {t}" for t in lifted_blockers), ""]
     if summary:
@@ -1188,6 +1278,7 @@ def publish_verdict_update(
     previous_event: str,
     lifted_blockers: list[str],
     bot_login: str,
+    note: str = "",
 ) -> PublishResult:
     event = verdict_event(verified, provenance)
     body = render_verdict_update(
@@ -1198,6 +1289,7 @@ def publish_verdict_update(
         previous_event=previous_event,
         new_event=event,
         lifted_blockers=lifted_blockers,
+        note=note,
     )
     own = github.pr_meta(gh, repo, number).author.lower() == bot_login.lower()
     transport = transport_event(event, own_pr=own)

@@ -15,8 +15,9 @@ from pathlib import Path
 
 from . import audit, proc, progress
 from .config import Config
-from .db import event, fmt_ts, now, parse_ts, tx
-from .models import FailKind, HeadStatus, RunStatus
+from .db import event, fmt_ts, kv_get, now, parse_ts, tx
+from .ingest import enqueue_head
+from .models import FailKind, HeadStatus, RunStatus, Trigger
 
 log = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ def finish_run(
     ts = now()
     with tx(conn):
         run = conn.execute(
-            "SELECT r.*, h.repo, h.number, h.status AS head_status FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
+            "SELECT r.*, h.repo, h.number, h.sha, h.status AS head_status FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
             (run_id,),
         ).fetchone()
         if run is None or RunStatus(run["status"]).terminal:
@@ -207,6 +208,12 @@ def finish_run(
             conn.execute(
                 "UPDATE heads SET status='done', finished_at=? WHERE id=?", (ts, run["head_id"])
             )
+            # a conversation that lifted every finding of a later-round review asked for the
+            # fresh Phase-2 audit that review skipped (worker._request_fresh_audit)
+            key = f"rereview.after_run:{run_id}"
+            if kv_get(conn, key):
+                conn.execute("DELETE FROM kv WHERE key=?", (key,))
+                enqueue_head(conn, cfg, run["repo"], run["number"], run["sha"], Trigger.MANUAL)
         elif status == RunStatus.CANCELLED:
             conn.execute(
                 "UPDATE heads SET status='queued', eligible_at=? WHERE id=?", (ts, run["head_id"])

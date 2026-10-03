@@ -19,6 +19,10 @@ _ROOT_SLUG_STRIP_RE = re.compile(r"[^A-Za-z0-9._:-]+")
 FINDING_MARKER_RE = re.compile(
     r"thepastaclaw-review v1\s+finding=([a-f0-9]+)(?:\s+dedupe=([A-Za-z0-9]+))?(?:\s+root=([A-Za-z0-9._:-]+))?"
 )
+# a status line the bot puts on its own finding root once the finding is lifted but the
+# thread stays open (see publish.with_thread_status); never part of the finding's text
+THREAD_STATUS_MARKER = "<!-- thepastaclaw-thread-status v1 -->"
+THREAD_STATUS_RE = re.compile(re.escape(THREAD_STATUS_MARKER) + r"\n[^\n]*\n\n?")
 _STOPWORDS = frozenset(
     {
         "a",
@@ -222,7 +226,7 @@ class ExistingComment:
 
     @classmethod
     def from_github(cls, c: dict[str, Any]) -> ExistingComment:
-        body = str(c.get("body") or "")
+        body = THREAD_STATUS_RE.sub("", str(c.get("body") or ""), count=1)
         m = FINDING_MARKER_RE.search(body)
         title = ""
         for line in body.splitlines():

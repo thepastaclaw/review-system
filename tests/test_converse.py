@@ -25,6 +25,18 @@ def test_parse_accepts_one_row_per_thread_and_normalises_status():
     assert out.outcomes["bbb"].status == "NO_REPLY" and out.outcomes["bbb"].reply == ""
 
 
+def test_fixed_is_never_a_conversation_outcome():
+    """A conversation runs on the reviewed commit: a promised change is FIX_PENDING, which lifts
+    nothing (dashpay/dash#7778 lifted a blocker on a change that was never pushed)."""
+    out = converse.parse(
+        {"threads": [{"finding_hash": "aaa", "status": "FIXED", "reply": "that does it"}]},
+        expected={"aaa"},
+    )
+    assert out.outcomes["aaa"].status == "FIX_PENDING"
+    assert "FIX_PENDING" not in converse.LIFTING_STATUSES
+    assert "FIXED" not in converse.CONVERSATION_STATUSES
+
+
 @pytest.mark.parametrize(
     "rows, msg",
     [
@@ -176,7 +188,7 @@ def test_answer_conversation_posts_once_resolves_and_defuses(monkeypatch):
         "ddd": {"comment_id": 930, "thread_id": "T4", "latest_reply_id": 931},
     }
     outcomes = {
-        "aaa": converse.ThreadOutcome("aaa", "FIXED", "done, thanks @knst"),
+        "aaa": converse.ThreadOutcome("aaa", "WITHDRAWN", "done, thanks @knst"),
         "bbb": converse.ThreadOutcome("bbb", "NO_REPLY", ""),
         "ccc": converse.ThreadOutcome("ccc", "STILL_VALID", "please @coderabbitai review"),
         "ddd": converse.ThreadOutcome("ddd", "INTENTIONALLY_DEFERRED", "understood"),
@@ -196,7 +208,7 @@ def test_answer_conversation_posts_once_resolves_and_defuses(monkeypatch):
     assert cid == 900 and body.startswith(
         f"<!-- thepastaclaw-thread-answer v1 sha={HEAD} reply=901 finding=aaa -->\n"
     )
-    assert "done, thanks @​knst" in body and body.endswith("_Marking this resolved._")
+    assert "done, thanks @​knst" in body and body.endswith("_Withdrawing this finding._")
     assert cid2 == 930 and body2.endswith("I will not press it further here._")
     # second pass with the same replies: everything already answered, nothing reposted
     gh.inline = [{"body": b} for _, b in gh.replies]
@@ -238,3 +250,69 @@ def test_a_deferral_counts_only_when_a_maintainer_spoke_since_our_last_answer():
         "none": converse.DEFERRAL_PENDING,
         "kept": "STILL_VALID",
     }
+
+
+ROOT = (
+    "<!-- thepastaclaw-review v1 finding=aaa dedupe=x -->\n"
+    "**🔴 Blocking: Sign with the payload's quorum**\n\nbody text"
+)
+
+
+def test_thread_status_line_sits_under_the_marker_and_keeps_the_headline_parseable():
+    marked = publish.with_thread_status(ROOT, status="WITHDRAWN", head_sha=HEAD)
+    lines = marked.splitlines()
+    assert lines[0].startswith("<!-- thepastaclaw-review v1 finding=aaa")
+    assert lines[1] == publish.THREAD_STATUS_MARKER
+    assert lines[2] == f"> ✅ **Withdrawn** at `{HEAD[:8]}`; see the replies below."
+    assert publish.github._finding_title(marked) == (
+        "blocking",
+        "Sign with the payload's quorum",
+    )
+    # replaced, never stacked; cleared back to the original byte for byte
+    again = publish.with_thread_status(marked, status="INTENTIONALLY_DEFERRED", head_sha="b" * 40)
+    assert again.count(publish.THREAD_STATUS_MARKER) == 1 and "**Deferred**" in again
+    assert publish.with_thread_status(again, status=None, head_sha=HEAD) == ROOT
+    assert publish.with_thread_status(ROOT, status="STILL_VALID", head_sha=HEAD) == ROOT
+    # dedupe matches on the finding's own text, never on the status line
+    plain, tagged = (publish.ExistingComment.from_github({"body": b}) for b in (ROOT, marked))
+    assert tagged.norm_body == plain.norm_body and tagged.finding_hash == "aaa"
+
+
+def test_answer_conversation_marks_the_root_only_when_the_thread_stays_open(monkeypatch):
+    gh = _Gh([])
+    edits: list[tuple[int, str]] = []
+    monkeypatch.setattr(publish.github, "inline_comments", lambda gh_, r, n: gh.inline)
+    monkeypatch.setattr(publish.github, "post_reply", lambda gh_, r, n, cid, body: None)
+    monkeypatch.setattr(
+        publish.github, "edit_review_comment", lambda gh_, r, cid, body: edits.append((cid, body))
+    )
+
+    def refuse(gh_, tid):
+        raise ReviewError(publish.FailKind.CONTRACT, "no permission to ResolveReviewThread")
+
+    monkeypatch.setattr(publish.github, "resolve_thread", refuse)
+    stale = publish.with_thread_status(ROOT, status="WITHDRAWN", head_sha="b" * 40)
+    threads = {
+        "aaa": {"comment_id": 900, "thread_id": "T1", "latest_reply_id": 901, "body": ROOT},
+        "bbb": {"comment_id": 910, "thread_id": "T2", "latest_reply_id": 911, "body": ROOT},
+        "ccc": {"comment_id": 920, "thread_id": "T3", "latest_reply_id": 921, "body": stale},
+        "ddd": {"comment_id": 930, "thread_id": "T4", "latest_reply_id": 931, "body": "foreign"},
+    }
+    outcomes = {
+        "aaa": converse.ThreadOutcome("aaa", "WITHDRAWN", "you are right"),
+        "bbb": converse.ThreadOutcome("bbb", "FIX_PENDING", "that change would do it"),
+        "ccc": converse.ThreadOutcome("ccc", "STILL_VALID", "it is back on this head"),
+        "ddd": converse.ThreadOutcome("ddd", "INTENTIONALLY_DEFERRED", "ok"),
+    }
+    out = {
+        o["finding_hash"]: o
+        for o in publish.answer_conversation(
+            gh, "dashpay/dash", 1, HEAD, threads=threads, outcomes=outcomes
+        )
+    }
+    assert str(out["aaa"]["resolved"]).startswith("failed") and out["aaa"]["marked"] is True
+    assert "marked" not in out["bbb"]  # a pending fix lifts nothing: the root is left alone
+    assert out["ccc"]["marked"] is True  # a stale line from an earlier head is cleared
+    assert str(out["ddd"]["marked"]).startswith("failed")  # never edit a root we did not write
+    assert [cid for cid, _ in edits] == [900, 920]
+    assert "**Withdrawn**" in edits[0][1] and edits[1][1] == ROOT
