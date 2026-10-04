@@ -277,3 +277,35 @@ def test_a_settled_issue_comes_back_only_when_its_code_changed(v12, conn, gh, la
     review = gh.posted_reviews[before]
     assert review["event"] == "REQUEST_CHANGES"
     assert by_title(conn)["Fee estimate omits drainage"].status == "open"
+
+
+def test_a_maintainer_concession_wins_over_a_blind_refind(v12, conn, gh, lanes, git):
+    """The thread lane withdraws a suggestion after a maintainer's reply while a finder, who
+    never saw the reply, restates it as a CONFIRMED blocker. The concession stands: no
+    "raising this to blocking" note on the thread it just resolved, no upgrade, the
+    disagreement recorded for the eval, and no approval this round."""
+    lanes.verify12 = _confirm_phase2
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Add a regression test", severity="suggestion", line=12)]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    sugg = _hash_of(conn, "Add a regression test")
+    reply(gh, ids[sugg], "tests/fee.rs covers it already.", rid=906)
+    lanes.thread_out[sugg] = {"status": "WITHDRAWN", "reply": "Right, tests/fee.rs covers it."}
+    lanes.candidates["general"] = [cand(f"Add a regression test [open:{sugg}]", line=12)]
+    before = len(gh.posted_reviews)
+    rid = run_round(v12, conn, gh, lanes, B)
+    bodies = [
+        r["body"] for r in gh.replies if f"finding={sugg}" in r["body"] or "Raising" in r["body"]
+    ]
+    assert len(bodies) == 1 and "Withdrawn" in bodies[0]
+    issue = by_title(conn)["Add a regression test"]
+    assert (issue.status, issue.severity) == ("withdrawn", "suggestion")
+    (detail,) = [
+        json.loads(r[0])
+        for r in conn.execute(
+            "SELECT detail FROM events WHERE kind='threads.conflict' AND run_id=?", (rid,)
+        )
+    ]
+    assert detail == {"finding_hash": sugg, "outcome": "WITHDRAWN", "verdict": "CONFIRMED"}
+    assert gh.posted_reviews[before]["event"] == "COMMENT"

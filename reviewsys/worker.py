@@ -332,6 +332,8 @@ class RunContext:
     thread_work: dict[str, list[str]] = field(default_factory=dict)  # hash -> why it is judged
     thread_lane: _ThreadLane | None = None
     thread_failed: bool = False
+    # a maintainer-driven concession met a blind re-find of the same issue this round
+    thread_conflict: bool = False
     verify_incomplete: bool = False  # a verifier shard without blockers was dropped
     # the confirmation pass on this round: {required, ran, roles, new, skipped}; None when the
     # policy does not ask for one here
@@ -4225,6 +4227,9 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
     if r is not None and d is not None:
         for h, ms in d.corroborated.items():
             r.corroborated.setdefault(h, []).extend(ms)
+        for h, v in d.refound.items():
+            if r.refound.get(h) != "CONFIRMED":
+                r.refound[h] = v
         for h, f in d.upgrades.items():
             r.upgrades.setdefault(h, f)
     return verified
@@ -4248,6 +4253,7 @@ def _verdict12(
         and not ctx.is_degraded
         and not ctx.verify_incomplete
         and not ctx.thread_failed  # someone may be waiting on a thread nobody read
+        and not ctx.thread_conflict  # a concession and a re-find disagree; a human decides
         and not ctx.is_audit
     )
     confirmed = ctx.confirmation is None or bool(ctx.confirmation.get("ran"))
@@ -4356,6 +4362,38 @@ def _apply_thread_outcomes(ctx: RunContext, verified: VerifierOutput, phase: str
     return _record_thread_answers(ctx, answered, outs, source="thread", phase=phase)
 
 
+def _resolve_conflicts(ctx: RunContext, verified: VerifierOutput) -> None:
+    """A maintainer-driven concession (WITHDRAWN, or a deferral a maintainer made) wins over a
+    finder restating the same issue this round: the finders never saw the reply. The issue is
+    not raised in place, the disagreement is recorded (`threads.conflict`, for the eval), and
+    the round cannot approve. A FIXED / OUTDATED outcome a finder contradicts is the other way
+    round (the issue stays open: `_apply_thread_outcomes`)."""
+    outcome = verified.rules
+    if outcome is None:
+        return
+    outs = _thread_outcomes(ctx)
+    conflicts = {
+        h: {"finding_hash": h, "outcome": outs[h].status, "verdict": outcome.refound.get(h, "")}
+        for h in outcome.corroborated
+        if h in outs and outs[h].status in converse.LIFTING_STATUSES
+    }
+    if not conflicts:
+        return
+    ctx.thread_conflict = True
+    for h in conflicts:
+        outcome.upgrades.pop(h, None)
+    with tx(ctx.conn):
+        for c in conflicts.values():
+            event(
+                ctx.conn,
+                "threads.conflict",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=json.dumps(c),
+            )
+
+
 def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
     """An open non-blocking issue a candidate restated and the verifier CONFIRMED as blocking
     is raised in place: the ledger's severity, and a note on its thread (never a new thread)."""
@@ -4432,6 +4470,7 @@ def _publish12(
             f"\n\n_{len(over)} more non-blocking finding(s) over the comment budget of "
             f"{ctx.cfg.comment_budget} are not posted on this round._"
         )
+    _resolve_conflicts(ctx, verified)
     lifted = _apply_thread_outcomes(ctx, verified, phase)
     _apply_upgrades(ctx, verified)
     verified.carried = _carried12(ctx, _standing_now(ctx, verified))

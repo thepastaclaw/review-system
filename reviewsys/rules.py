@@ -367,6 +367,8 @@ class Outcome:
     new: list[Finding] = field(default_factory=list)  # to post: new issues, revivals, regressions
     # ledger issue hash -> the candidate ids that restated it (it stays open; no new thread)
     corroborated: dict[str, list[str]] = field(default_factory=dict)
+    # ledger issue hash -> the strongest verdict a restatement of it got (CONFIRMED wins)
+    refound: dict[str, str] = field(default_factory=dict)
     # an open non-blocking issue the verifier now CONFIRMED as blocking: raised in place
     upgrades: dict[str, Finding] = field(default_factory=dict)
     dropped: list[dict[str, Any]] = field(default_factory=list)
@@ -467,6 +469,8 @@ def apply_rules(
             continue
         if kind == "open":
             out.corroborated.setdefault(target, []).extend(g.members)
+            if out.refound.get(target) != "CONFIRMED":
+                out.refound[target] = g.verdict
             h = issues[target]
             if h.severity != "blocking" and sev == "blocking":
                 out.upgrades[target] = f
