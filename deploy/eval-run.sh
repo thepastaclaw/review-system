@@ -12,7 +12,7 @@
 #                        production config's [paths] skills); never written to
 #   --set FILE           eval set (default: $EVAL_ROOT/eval/set.json)
 #   --labels FILE        labels (default: $EVAL_ROOT/eval/labels.jsonl)
-#   --eval-root DIR      default ~/.reviewsys-eval
+#   --eval-root DIR      default ~/.reviewsys-eval (~/.reviewsys-eval-dry with --dry)
 #   --concurrency N      replays (and judged heads) at once (default 3)
 #   --limit N            only N heads, round-robin over the sets (smoke test; own out dir)
 #   --pin-phase1-model M one Phase-1 model for both arms (default muse-spark-1.3-contributor;
@@ -58,7 +58,7 @@ PROD_CONFIG="$PROD/config.toml"
 SKILLS_REPO="" V11="169fcb8" V12="" SET="" LABELS=""
 CONCURRENCY=3 LIMIT="" PIN_P1="muse-spark-1.3-contributor"
 JUDGE_MODEL="gpt-6.1-sol" JUDGE_EFFORT="xhigh"
-MIN_FREE_GB=25 DISK_WAIT=30 RETRY="" REFRESH="" ONLY="" ALLOW_BOT="" DRY=""
+MIN_FREE_GB=25 DISK_WAIT=30 RETRY="" REFRESH="" ONLY="" ALLOW_BOT="" DRY="" EVAL_ROOT_SET=""
 EXIT_ABORTED=75 EXIT_DISK=74
 
 die() { echo "eval-run: $*" >&2; exit 1; }
@@ -70,7 +70,7 @@ while [ $# -gt 0 ]; do
     --skills-repo) need "$@"; SKILLS_REPO="$2"; shift 2;;
     --set) need "$@"; SET="$2"; shift 2;;
     --labels) need "$@"; LABELS="$2"; shift 2;;
-    --eval-root) need "$@"; EVAL_ROOT="$2"; shift 2;;
+    --eval-root) need "$@"; EVAL_ROOT="$2"; EVAL_ROOT_SET=1; shift 2;;
     --concurrency) need "$@"; CONCURRENCY="$2"; shift 2;;
     --limit) need "$@"; LIMIT="$2"; shift 2;;
     --pin-phase1-model) need "$@"; PIN_P1="$2"; shift 2;;
@@ -87,6 +87,8 @@ while [ $# -gt 0 ]; do
     *) die "unknown argument $1 (see --help)";;
   esac
 done
+# a dry run never shares a root (out/, snapshot, arms) with a real eval
+if [ -n "$DRY" ] && [ -z "$EVAL_ROOT_SET" ]; then EVAL_ROOT="$EVAL_ROOT-dry"; fi
 stage() { [ -z "$ONLY" ] || case "$ONLY" in *",$1,"*) return 0;; *) return 1;; esac; }
 log() { echo "$(date -u +%FT%TZ) eval-run: $*"; }
 
