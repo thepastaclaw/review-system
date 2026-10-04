@@ -29,7 +29,8 @@ tested, one daemon, one SQLite file, no lock files.
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
-| `ledger.py` | the issue ledger: every issue raised on a PR and where it stands, folded from its event history; write-only under policy v11 |
+| `ledger.py` | the issue ledger: every issue raised on a PR and where it stands, folded from its event history; write-only under policy v11, what policy v12 decides from |
+| `rules.py` | policy v12, pure: the finder candidate contract, verify+match parsing, the code rules over it and the ledger verdict |
 | `quality.py` | `reviewsys quality`: late finds, fate coverage, silent drops, re-raises, contract failures |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
 | `status.py` | `reviewsys status --json` + watchdog predicate |
@@ -664,6 +665,55 @@ same fact.
 - silent drops: vanished blockers whose file did not change by the next reviewed head;
 - contract failures, by class (reconciliation, echo field, other).
 
+## Policy v12: unanchored finders, a thread lane, verdicts from the ledger
+
+Inert until the skills config carries `review_model_policy.pipeline` (v12 design
+`reviewsys-v12-design/DESIGN.md` §2–4); every switch defaults to v11 and a v11 config runs
+exactly as v0.24 did. The switches and where they live:
+
+- `finders.anchoring: unanchored` — reviewer lanes become finders (`prompts.finder_prompt`,
+  skills `prompts/v12/finder.md` around `prompts/v12/<role>.md`): no prior checklist,
+  reconciliation, echo fields or confidence; the whole merge-base range every round, a
+  pointer to what changed since the last review, and a settled list (≤10 withdrawn or
+  deferred issues). Our own finding threads are left out of their evidence. Candidates get
+  harness ids (`p2-general-3`, `findings.candidate_id`).
+- `threads.lane` (needs `verifier.contract: v12`) — one thread lane (`converse.parse_threads`,
+  skills `prompts/v12/thread.md`) owns every open issue's status and reply. On a new push it
+  runs beside the first finders, only over a code-computed work set: threads with a human
+  reply newer than ours, standing issues whose anchored code changed since they were last
+  judged, and what the one-shot reconcile left. On a reply to a reviewed commit it replaces
+  the conversation lane. FIXED where the code did not change is FIX_PENDING; a deferral needs
+  a maintainer on both paths. A thread lane that fails leaves every issue as it was (no
+  approval that round).
+- `verifier.contract: v12` (needs unanchored finders) — one verify+match lane per phase
+  (`worker._verify12`; ≤3 shards by file above 12 candidates), answering per candidate group:
+  match (`new | open:<h> | settled:<h> | fixed:<h> | coderabbit:<id>`), verdict
+  (`CONFIRMED | PLAUSIBLE | REFUTED`) with evidence, and the final wording. The code rules
+  (`rules.apply_rules`): blocking needs CONFIRMED; `open:` corroborates (no new thread, and
+  suppresses the thread lane's FIXED); `settled:` comes back only when `git diff` shows its
+  anchor changed since it closed; `fixed:` refound is a regression. The verdict comes from the
+  ledger: any standing blocker requests changes; APPROVE needs nothing above a nitpick
+  standing, a full-strength final review and the confirmation pass when due. The body lists
+  carried issues under "Still open from earlier rounds" instead of re-posting them. A shard
+  that fails twice drops its candidates when none is blocking (no approval), else fails the run.
+- `confirmation {roles, trigger}` — `no_blockers`: when no blocker stands on a full-strength
+  run, the roles review the whole change once more and only their candidates are verified,
+  against this round's own issues; `rereview`: the same on re-reviews only; `off`. Skipped in
+  degraded mode. The #38 same-sha approval needs it, and queues one re-review when it is missing.
+- `late_nonblocking: note` — this round's non-blocking issues on lines unchanged since the last
+  final review go into a collapsed "Also noticed" (not posted, not in the ledger, never holding
+  APPROVE); `post` posts them. Either way their count is an event (`v12.late_nonblocking`).
+- `lane_env_isolation` — lanes start without CLAUDE.md discovery or Claude Code's git
+  instructions; the reviewed repo's CLAUDE.md / AGENTS.md reach the prompts as evidence.
+  `structured_output` — the finder, verify+match and thread lanes answer through
+  `--json-schema` (`schemas.py`); correction turns stay the fallback.
+
+Before switching v12 on, `reviewsys ledger reconcile` outdates what the backfilled ledger
+still holds open but cannot stand (a closed PR's issues; an open PR's issues with no open
+thread whose code changed); the first v12 round on a PR does the same if it was not run, and
+until a PR is reconciled only issues with an open thread or last seen at the previous reviewed
+head count toward its verdict.
+
 ## Ad hoc reviews (repos without a skill)
 
 `@thepastaclaw review` on a PR in a repo that has no entry in the skills `config.json`
@@ -955,6 +1005,7 @@ minute if it dies. `~/.reviewsys/mode` records live/shadow for the watchdog.
     $R degraded [on|off|auto]     # show / force the stand-in-models mode (see above)
     $R import-legacy PATH         # one-off: mark legacy queue.json `done` rows as reviewed
     $R ledger backfill [--repo R --number N] [--github]  # replay history into the ledger
+    $R ledger reconcile [--repo R --number N]            # policy v12: one-shot, before the flip
     $R ledger show OWNER/REPO N [--history] [--json]     # a PR's issues (and their events)
     $R quality [--since DATE] [--json]                   # review-quality metrics (see above)
 
