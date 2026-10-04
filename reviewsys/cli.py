@@ -120,6 +120,20 @@ def cmd_replay(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replay_set(args: argparse.Namespace) -> int:
+    """Replay a set of past runs under several policies (replayset.py)."""
+    from .replayset import main_set
+
+    return main_set(args, args.config)
+
+
+def cmd_replay_score(args: argparse.Namespace) -> int:
+    """Score a replay set's reports against labels, arm against arm (replayscore.py)."""
+    from .replayscore import main_score
+
+    return main_score(args)
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     conn = db_mod.connect(cfg.db_path)
@@ -401,6 +415,32 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--sample", type=int, default=0, help="repeat sample number (dir run-<id>-r<k>)")
     s.add_argument("--policy-name", help="eval arm name (replay.policy_overrides)")
     s.set_defaults(fn=cmd_replay)
+    s = sub.add_parser(
+        "replay-set", help="replay a set of past runs under several policies (eval arms)"
+    )
+    s.add_argument("setfile", help="JSON/JSONL list of {run_id, set, samples}")
+    s.add_argument(
+        "--policy",
+        action="append",
+        required=True,
+        help="NAME=SKILLS_DIR, one per arm (repeatable); NAME is a directory under --out",
+    )
+    s.add_argument("--out", required=True, help="reports go to OUT/<policy>/run-<id>[-r<k>]/")
+    s.add_argument("--concurrency", type=int, default=2, help="replays at once (default 2)")
+    s.add_argument("--force-phase2", action="store_true")
+    s.add_argument("--pin-phase1-model")
+    s.add_argument("--source-db")
+    s.add_argument(
+        "--retry-failed", action="store_true", help="also re-run failed and invalid replays"
+    )
+    s.set_defaults(fn=cmd_replay_set)
+    s = sub.add_parser("replay-score", help="score a replay set against labels, arm against arm")
+    s.add_argument("setfile")
+    s.add_argument("labels", help="JSON/JSONL labels (see replayscore.py)")
+    s.add_argument("--out", required=True, help="the replay-set's --out; score.json goes there")
+    s.add_argument("--baseline", help="arm the others are compared with (default: the first)")
+    s.add_argument("--seed", type=int, default=0, help="shuffle seed for to_judge.jsonl")
+    s.set_defaults(fn=cmd_replay_score)
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
