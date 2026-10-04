@@ -9,12 +9,15 @@ from typing import Any
 
 from reviewsys import config as cfg_mod
 from reviewsys import ledger, worker
+from reviewsys.contract import Finding
 from reviewsys.db import tx
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import RunStatus, Trigger
 from reviewsys.scheduler import schedule
+from tests.conftest import group
 
 REPO = "dashpay/platform"
+A, B = "a" * 40, "c" * 40
 V12 = {
     "version": "v12",
     "lane_env_isolation": True,
@@ -91,13 +94,19 @@ def cand(title: str, *, severity: str = "blocking", file: str = "f.rs", line: in
     }
 
 
-def run_round(cfg, conn, gh, lanes, sha: str, trigger=Trigger.MENTION) -> int:
+def try_round(cfg, conn, gh, lanes, sha: str, trigger=Trigger.MENTION) -> tuple[int, RunStatus]:
+    """Queue `sha` (the PR's live head now) and run its review: (run id, status)."""
     lanes.head = sha
     gh.pr["head"]["sha"] = sha
     with tx(conn):
         enqueue_head(conn, cfg, REPO, 1, sha, trigger)
     (rid,) = schedule(conn, cfg, spawn=False)
-    status = worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+    return rid, worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+
+
+def run_round(cfg, conn, gh, lanes, sha: str, trigger=Trigger.MENTION) -> int:
+    """`try_round`, which must end DONE: the run id."""
+    rid, status = try_round(cfg, conn, gh, lanes, sha, trigger)
     assert status == RunStatus.DONE, conn.execute(
         "SELECT reason FROM runs WHERE id=?", (rid,)
     ).fetchone()["reason"]
@@ -202,3 +211,57 @@ def issues(conn) -> dict[str, ledger.Issue]:
 
 def by_title(conn) -> dict[str, ledger.Issue]:
     return {i.title: i for i in issues(conn).values()}
+
+
+# ---- fake verify+match answers (`FakeLanes.verify12`) ----
+
+
+def refuted(cands: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"summary": "-", "groups": [group(c, verdict="REFUTED") for c in cands]}
+
+
+def refute_gate(label, cands, prompt):
+    """The gate refutes Phase 1's claims; every other verifier confirms each as new."""
+    if label == "verify1":
+        return refuted(cands)
+    return {"summary": "ok", "groups": [group(c) for c in cands]}
+
+
+def confirm_matches(label, cands, prompt):
+    """`refute_gate`, except that a candidate whose title says which ledger issue it restates
+    (`... [open:<hash>]`) is matched to it, under its plain title."""
+    if label == "verify1":
+        return refuted(cands)
+    groups = []
+    for c in cands:
+        match = c["title"].rsplit("[", 1)[1].rstrip("]") if "[" in c["title"] else "new"
+        groups.append(group(c, match=match, title=c["title"].split(" [")[0]))
+    return {"summary": "Verified.", "groups": groups}
+
+
+def shard_setup(lanes, *, blocking_in_failing: bool) -> None:
+    """13 Phase-2 candidates in two files (two verifier shards): the a.rs shard never answers
+    validly; `blocking_in_failing` puts a blocker in it."""
+    a = [cand(f"a{i}", severity="suggestion", file="a.rs", line=i) for i in range(1, 8)]
+    if blocking_in_failing:
+        a[0]["severity"] = "blocking"
+    b = [cand(f"b{i}", severity="nitpick", file="b.rs", line=i) for i in range(1, 7)]
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = a + b
+
+    def verify(label, cands, prompt):
+        if any(c["file"] == "a.rs" for c in cands) and label != "verify1":
+            return {"summary": "x", "groups": "not a list"}  # never valid, corrections or not
+        return refute_gate(label, cands, prompt)
+
+    lanes.verify12 = verify
+
+
+def backfilled(conn, title: str, *, line: int, sha: str = "0" * 40) -> str:
+    """A blocker the ledger backfill recorded on `sha`, with no thread."""
+    f = Finding(
+        file="f.rs", title=title, body="old", severity="blocking", line_start=line, line_end=line
+    )
+    with tx(conn):
+        ledger.append(conn, REPO, 1, [ledger._posted(f, run_id=None, sha=sha, source="backfill")])
+    return f.hash

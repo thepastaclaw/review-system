@@ -12,80 +12,33 @@ from reviewsys import ledger, prompts, worker
 from reviewsys.contract import Finding
 from reviewsys.db import tx
 from reviewsys.models import RunStatus, Trigger
-from reviewsys.scheduler import schedule
-from tests.conftest import group
-from tests.test_worker_e2e import (
-    fake_git,  # noqa: F401  (autouse: fake mirror/worktree)
-)
+from tests.test_worker_e2e import fake_git  # noqa: F401  (autouse: fake mirror/worktree)
 from tests.v12_support import (
     REPO,
-    Git,
+    A,
+    B,
+    backfilled,
     cand,
     issues,
     publish_threads,
+    refute_gate,
     reply,
     run_round,
+    shard_setup,
+    try_round,
     v12_cfg,
 )
 
-A, B = "a" * 40, "c" * 40
-
-
-@pytest.fixture(autouse=True)
-def wide_diff(gh):
-    gh.diff = "diff --git a/f.rs b/f.rs\n+++ b/f.rs\n@@ -1,3 +1,60 @@\n+x\n"
-
-
-@pytest.fixture
-def git(monkeypatch) -> Git:
-    g = Git()
-    monkeypatch.setattr(worker, "_lines_changed", g)
-    return g
-
-
-def refute_gate(label, cands, prompt):
-    if label == "verify1":
-        return {"summary": "-", "groups": [group(c, verdict="REFUTED") for c in cands]}
-    return {"summary": "ok", "groups": [group(c) for c in cands]}
-
-
-def _try_round(cfg, conn, gh, lanes, sha):
-    lanes.head = sha
-    gh.pr["head"]["sha"] = sha
-    from reviewsys.ingest import enqueue_head
-
-    with tx(conn):
-        enqueue_head(conn, cfg, REPO, 1, sha, Trigger.MENTION)
-    (rid,) = schedule(conn, cfg, spawn=False)
-    return rid, worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
-
+pytestmark = pytest.mark.usefixtures("wide_diff")
 
 # ---- verifier shards ----
-
-
-def _shard_setup(lanes, *, blocking_in_failing: bool):
-    a = [cand(f"a{i}", severity="suggestion", file="a.rs", line=i) for i in range(1, 8)]
-    if blocking_in_failing:
-        a[0]["severity"] = "blocking"
-    b = [cand(f"b{i}", severity="nitpick", file="b.rs", line=i) for i in range(1, 7)]
-    lanes.candidates["default"] = []
-    lanes.candidates["general"] = a + b
-
-    def verify(label, cands, prompt):
-        if label == "verify1":
-            return {"summary": "-", "groups": [group(c, verdict="REFUTED") for c in cands]}
-        if any(c["file"] == "a.rs" for c in cands):
-            return {"summary": "x", "groups": "not a list"}  # never valid, corrections or not
-        return {"summary": "ok", "groups": [group(c) for c in cands]}
-
-    lanes.verify12 = verify
 
 
 def test_more_than_twelve_candidates_split_and_a_failed_shard_without_blockers_is_dropped(
     cfg, skills_dir, conn, gh, lanes, git
 ):
     v12 = v12_cfg(cfg, skills_dir)
-    _shard_setup(lanes, blocking_in_failing=False)
+    shard_setup(lanes, blocking_in_failing=False)
     rid = run_round(v12, conn, gh, lanes, A)
     shards = sorted(
         {tuple(i) for k, label, i in lanes.v12_calls if k == "verify" and label == "verify2"}
@@ -105,8 +58,8 @@ def test_more_than_twelve_candidates_split_and_a_failed_shard_without_blockers_i
 
 def test_a_failed_shard_holding_a_blocker_fails_the_run(cfg, skills_dir, conn, gh, lanes, git):
     v12 = v12_cfg(cfg, skills_dir)
-    _shard_setup(lanes, blocking_in_failing=True)
-    rid, status = _try_round(v12, conn, gh, lanes, A)
+    shard_setup(lanes, blocking_in_failing=True)
+    rid, status = try_round(v12, conn, gh, lanes, A)
     assert status == RunStatus.FAILED
     row = conn.execute("SELECT reason, fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
     assert (
@@ -129,22 +82,13 @@ def test_no_candidates_no_verifier_lane(cfg, skills_dir, conn, gh, lanes, git):
 # ---- the one-shot reconcile ----
 
 
-def _backfilled(conn, title, *, line, sha="0" * 40):
-    f = Finding(
-        file="f.rs", title=title, body="old", severity="blocking", line_start=line, line_end=line
-    )
-    with tx(conn):
-        ledger.append(conn, REPO, 1, [ledger._posted(f, run_id=None, sha=sha, source="backfill")])
-    return f.hash
-
-
 def test_the_first_v12_round_reconciles_the_backfilled_ledger(
     cfg, skills_dir, conn, gh, lanes, git
 ):
     v12 = v12_cfg(cfg, skills_dir)
-    gone = _backfilled(conn, "Vanished blocker", line=5)
-    kept = _backfilled(conn, "Unchanged blocker", line=40)
-    threaded = _backfilled(conn, "Threaded blocker", line=50)
+    gone = backfilled(conn, "Vanished blocker", line=5)
+    kept = backfilled(conn, "Unchanged blocker", line=40)
+    threaded = backfilled(conn, "Threaded blocker", line=50)
     git.change("f.rs", 5, at=A)
     gh.threads = [
         {
@@ -188,7 +132,7 @@ def test_the_first_v12_round_reconciles_the_backfilled_ledger(
 
 def test_unknown_git_puts_open_issues_in_the_work_set(cfg, skills_dir, conn, gh, lanes, git):
     v12 = v12_cfg(cfg, skills_dir)
-    h = _backfilled(conn, "Some blocker", line=5)
+    h = backfilled(conn, "Some blocker", line=5)
     with tx(conn):
         ledger.reconcile(conn, REPO, 1, pr_open=True, open_threads=set(), moved={})
         ledger.settle_pending(conn, REPO, 1, [h])
@@ -443,7 +387,7 @@ def test_a_reconcile_leftover_does_not_count_until_judged(cfg, skills_dir, conn,
     when that lane fails, the leftover must not request changes on its own (it may be one of
     the blockers that vanished without an outcome), though nothing can approve either."""
     v12 = v12_cfg(cfg, skills_dir)
-    h = _backfilled(conn, "Old blocker", line=40)
+    h = backfilled(conn, "Old blocker", line=40)
     lanes.candidates["default"] = []
     lanes.thread_out[h] = {"status": "WITHDRAWN", "reply": "NO_REPLY"}  # never valid
     rid = run_round(v12, conn, gh, lanes, A)
@@ -458,7 +402,7 @@ def test_a_reconcile_leftover_does_not_count_until_judged(cfg, skills_dir, conn,
 def _judged_backfill(conn, n):
     """`n` backfilled blockers the reconcile already handed over and the lane already judged
     once (nothing pending): from here on only replies and code changes bring them back."""
-    hs = [_backfilled(conn, f"Old blocker {i}", line=10 * (i + 1)) for i in range(n)]
+    hs = [backfilled(conn, f"Old blocker {i}", line=10 * (i + 1)) for i in range(n)]
     with tx(conn):
         ledger.reconcile(conn, REPO, 1, pr_open=True, open_threads=set(), moved={})
         ledger.settle_pending(conn, REPO, 1, hs)

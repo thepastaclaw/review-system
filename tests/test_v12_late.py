@@ -6,25 +6,21 @@ from __future__ import annotations
 
 import pytest
 
-from reviewsys import worker
 from tests.test_pipeline_policy import load_with
-from tests.test_v12_worker import refute_gate
-from tests.test_worker_e2e import fake_git  # noqa: F401  (autouse: fake mirror/worktree)
-from tests.v12_support import Git, by_title, cand, run_round, v12_cfg
+from tests.test_worker_e2e import (
+    fake_git,  # noqa: F401  (autouse: fake mirror/worktree)
+)
+from tests.v12_support import (
+    A,
+    B,
+    by_title,
+    cand,
+    refute_gate,
+    run_round,
+    v12_cfg,
+)
 
-A, B = "a" * 40, "c" * 40
-
-
-@pytest.fixture(autouse=True)
-def wide_diff(gh):
-    gh.diff = "diff --git a/f.rs b/f.rs\n+++ b/f.rs\n@@ -1,3 +1,60 @@\n+x\n"
-
-
-@pytest.fixture
-def git(monkeypatch) -> Git:
-    g = Git()
-    monkeypatch.setattr(worker, "_lines_changed", g)
-    return g
+pytestmark = pytest.mark.usefixtures("wide_diff")
 
 
 @pytest.mark.parametrize("mode", ["post", "note"])

@@ -11,29 +11,26 @@ from reviewsys.contract import Finding
 from reviewsys.models import Trigger
 from tests.conftest import group
 from tests.test_pipeline_policy import load_with
-from tests.test_v12_e2e import _confirm_phase2, _hash_of
-from tests.test_v12_worker import _shard_setup, refute_gate  # noqa: F401
-from tests.test_worker_e2e import fake_git  # noqa: F401  (autouse: fake mirror/worktree)
-from tests.v12_support import Git, cand, issues, publish_threads, reply, run_round, v12_cfg
+from tests.test_worker_e2e import (
+    fake_git,  # noqa: F401  (autouse: fake mirror/worktree)
+)
+from tests.v12_support import (
+    A,
+    B,
+    by_title,
+    cand,
+    confirm_matches,
+    issues,
+    publish_threads,
+    refuted,
+    reply,
+    run_round,
+    shard_setup,
+    try_round,
+    v12_cfg,
+)
 
-A, B = "a" * 40, "c" * 40
-
-
-@pytest.fixture(autouse=True)
-def wide_diff(gh):
-    gh.diff = "diff --git a/f.rs b/f.rs\n+++ b/f.rs\n@@ -1,3 +1,60 @@\n+x\n"
-
-
-@pytest.fixture
-def git(monkeypatch) -> Git:
-    g = Git()
-    monkeypatch.setattr(worker, "_lines_changed", g)
-    return g
-
-
-@pytest.fixture
-def v12(cfg, skills_dir):
-    return v12_cfg(cfg, skills_dir)
+pytestmark = pytest.mark.usefixtures("wide_diff")
 
 
 @pytest.mark.parametrize("trigger", ["off", "rereview", "no_blockers"])
@@ -83,7 +80,7 @@ def test_a_confirmation_finding_is_verified_against_this_rounds_issues(
 
     def verify(label, cands, prompt):
         if label == "verify1":
-            return {"summary": "-", "groups": [group(c, verdict="REFUTED") for c in cands]}
+            return refuted(cands)
         if label == "confirm":
             assert '"status": "raised this round"' in prompt and raised in prompt
             assert {c["id"].split("-")[0] for c in cands} == {"cf"}
@@ -115,12 +112,12 @@ def test_same_sha_reply_without_the_confirmation_pass_queues_it(v12, conn, gh, l
     and then approves."""
     from reviewsys.db import kv_get
 
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
     run_round(v12, conn, gh, lanes, A)
     ids = publish_threads(gh)
-    fee = _hash_of(conn, "Fee estimate omits drainage")
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
     reply(gh, ids[fee], "The caller adds it.", rid=903)
     lanes.thread_out[fee] = {"status": "WITHDRAWN", "reply": "Agreed, the caller adds it."}
     before = len(gh.posted_reviews)
@@ -147,7 +144,7 @@ def test_same_sha_reply_without_the_confirmation_pass_queues_it(v12, conn, gh, l
 
 
 def test_the_pass_runs_the_configured_roles_only(v12, conn, gh, lanes, git):
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Add a regression test", severity="suggestion", line=20)]
     rid = run_round(v12, conn, gh, lanes, A)
@@ -163,7 +160,7 @@ def test_the_pass_runs_the_configured_roles_only(v12, conn, gh, lanes, git):
 
 
 def test_blockers_skip_the_pass(v12, conn, gh, lanes, git):
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
     rid = run_round(v12, conn, gh, lanes, A)
@@ -177,7 +174,7 @@ def test_blockers_skip_the_pass(v12, conn, gh, lanes, git):
 
 def test_an_incomplete_verification_skips_the_pass(cfg, skills_dir, conn, gh, lanes, git):
     v12 = v12_cfg(cfg, skills_dir)
-    _shard_setup(lanes, blocking_in_failing=False)
+    shard_setup(lanes, blocking_in_failing=False)
     run_round(v12, conn, gh, lanes, A)
     assert (
         conn.execute("SELECT detail FROM events WHERE kind='confirmation.skipped'").fetchone()[
@@ -200,7 +197,7 @@ def test_no_same_sha_approval_over_a_review_that_dropped_candidates(
     discussion lifting its last blocker comments, whatever the confirmation trigger."""
     v12 = v12_cfg(cfg, skills_dir, confirmation={"trigger": trigger})
     gh.diff = "diff --git a/b.rs b/b.rs\n+++ b/b.rs\n@@ -1,3 +1,60 @@\n+x\n"
-    _shard_setup(lanes, blocking_in_failing=False)
+    shard_setup(lanes, blocking_in_failing=False)
     lanes.candidates["general"][-1]["severity"] = "blocking"  # in the shard that verifies
     run_round(v12, conn, gh, lanes, A)
     assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
@@ -224,7 +221,6 @@ def test_an_unchecked_blocker_in_the_confirmation_pass_fails_the_run(
     """§2.2 holds in the confirmation pass too: its verify+match failing with a blocking
     candidate fails the run (INFRA) instead of publishing an approval nobody checked."""
     from reviewsys.models import RunStatus
-    from tests.test_v12_worker import _try_round
 
     v12 = v12_cfg(cfg, skills_dir)
     lanes.candidates["default"] = []
@@ -238,7 +234,7 @@ def test_an_unchecked_blocker_in_the_confirmation_pass_fails_the_run(
         return {"summary": "ok", "groups": [group(c) for c in cands]}
 
     lanes.verify12 = verify
-    rid, status = _try_round(v12, conn, gh, lanes, A)
+    rid, status = try_round(v12, conn, gh, lanes, A)
     assert status == RunStatus.FAILED
     row = conn.execute("SELECT reason, fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
     assert row["fail_kind"] == "infra" and "blocking candidates unchecked" in row["reason"]

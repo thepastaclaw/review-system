@@ -573,3 +573,32 @@ def _fast_lane_slots(monkeypatch):
     from reviewsys import lanepool
 
     monkeypatch.setattr(lanepool, "POLL_SECONDS", 0.005)
+
+
+# ---- policy v12 tests (tests/v12_support.py) ----
+
+
+@pytest.fixture
+def wide_diff(gh: FakeGh) -> None:
+    """Every line the v12 tests anchor on in f.rs is in the PR's diff, so findings post inline
+    (`pytestmark = pytest.mark.usefixtures("wide_diff")`)."""
+    gh.diff = "diff --git a/f.rs b/f.rs\n+++ b/f.rs\n@@ -1,3 +1,60 @@\n+x\n"
+
+
+@pytest.fixture
+def git(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """`worker._lines_changed` answered by `v12_support.Git` (a sha-aware fake history)."""
+    from reviewsys import worker
+    from tests.v12_support import Git
+
+    g = Git()
+    monkeypatch.setattr(worker, "_lines_changed", g)
+    return g
+
+
+@pytest.fixture
+def v12(cfg: cfg_mod.Config, skills_dir: Path) -> cfg_mod.Config:
+    """The fixture config under the policy v12 pipeline (`v12_support.V12`)."""
+    from tests.v12_support import v12_cfg
+
+    return v12_cfg(cfg, skills_dir)

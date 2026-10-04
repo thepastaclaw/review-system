@@ -9,40 +9,24 @@ from pathlib import Path
 
 import pytest
 
-from reviewsys import worker
 from reviewsys.models import Trigger
 from tests.conftest import group
 from tests.test_worker_e2e import fake_git  # noqa: F401  (autouse: fake mirror/worktree)
 from tests.v12_support import (
-    Git,
+    A,
+    B,
     by_title,
     cand,
+    confirm_matches,
     publish_threads,
+    refuted,
     reply,
     resolve,
     run_round,
     v12_cfg,
 )
 
-A, B = "a" * 40, "c" * 40
-
-
-@pytest.fixture
-def git(monkeypatch) -> Git:
-    g = Git()
-    monkeypatch.setattr(worker, "_lines_changed", g)
-    return g
-
-
-@pytest.fixture(autouse=True)
-def wide_diff(gh):
-    """Every line the tests anchor on is in the PR's diff, so every finding posts inline."""
-    gh.diff = "diff --git a/f.rs b/f.rs\n+++ b/f.rs\n@@ -1,3 +1,60 @@\n+x\n"
-
-
-@pytest.fixture
-def v12(cfg, skills_dir):
-    return v12_cfg(cfg, skills_dir)
+pytestmark = pytest.mark.usefixtures("wide_diff")
 
 
 def test_first_round(v12, conn, gh, lanes, git):
@@ -50,7 +34,7 @@ def test_first_round(v12, conn, gh, lanes, git):
 
     def verify(label, cands, prompt):
         if label == "verify1":  # the gate refutes Phase 1's claims
-            return {"summary": "-", "groups": [group(c, verdict="REFUTED") for c in cands]}
+            return refuted(cands)
         return {
             "summary": "Two problems.",
             "groups": [
@@ -91,24 +75,8 @@ def test_first_round(v12, conn, gh, lanes, git):
     assert not any(k == "thread" for k, *_ in lanes.v12_calls)  # nothing to judge
 
 
-def _confirm_phase2(label, cands, prompt):
-    """The gate refutes Phase 1's claims; the final verifier confirms everything as new,
-    except candidates whose title says which ledger issue they restate (`... [open:<h>]`)."""
-    if label == "verify1":
-        return {"summary": "-", "groups": [group(c, verdict="REFUTED") for c in cands]}
-    groups = []
-    for c in cands:
-        match = c["title"].rsplit("[", 1)[1].rstrip("]") if "[" in c["title"] else "new"
-        groups.append(group(c, match=match, title=c["title"].split(" [")[0]))
-    return {"summary": "Verified.", "groups": groups}
-
-
-def _hash_of(conn, title):
-    return by_title(conn)[title].hash
-
-
 def test_rereview_after_a_maintainer_withdrawal(v12, conn, gh, lanes, git):
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [
         cand("Fee estimate omits drainage"),
@@ -119,7 +87,7 @@ def test_rereview_after_a_maintainer_withdrawal(v12, conn, gh, lanes, git):
     assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
     ids = publish_threads(gh)
     fee, test_, name = (
-        _hash_of(conn, t)
+        by_title(conn)[t].hash
         for t in ("Fee estimate omits drainage", "Add a regression test", "Name the constant")
     )
     reply(gh, ids[fee], "The caller adds the drainage cost; see wallet.rs:40.", rid=901)
@@ -183,12 +151,12 @@ def test_rereview_after_a_maintainer_withdrawal(v12, conn, gh, lanes, git):
 def test_a_refound_issue_is_not_fixed_by_the_thread_lane(v12, conn, gh, lanes, git):
     """The thread lane calls a blocker FIXED, but a finder restated it on this head: it stays
     open, the FIXED reply is never posted, and the review still requests changes."""
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
     run_round(v12, conn, gh, lanes, A)
     publish_threads(gh)
-    fee = _hash_of(conn, "Fee estimate omits drainage")
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
     git.change("f.rs", 11, at=B)
     lanes.thread_out[fee] = {"status": "FIXED", "reply": "Fixed by the new branch."}
     lanes.candidates["general"] = [cand(f"Fee estimate omits drainage [open:{fee}]")]
@@ -208,13 +176,13 @@ def test_a_refound_issue_is_not_fixed_by_the_thread_lane(v12, conn, gh, lanes, g
 def test_same_sha_reply_withdrawing_the_last_finding_approves(v12, conn, gh, lanes, git):
     """#38 over the ledger: a full-strength review leaves one suggestion; a maintainer argues
     it away on the same commit, and the follow-up approves."""
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Add a regression test", severity="suggestion", line=20)]
     run_round(v12, conn, gh, lanes, A)
     assert gh.posted_reviews[-1]["event"] == "COMMENT"
     ids = publish_threads(gh)
-    sugg = _hash_of(conn, "Add a regression test")
+    sugg = by_title(conn)["Add a regression test"].hash
     reply(gh, ids[sugg], "There is a test in tests/fee.rs already.", rid=902)
     lanes.thread_out[sugg] = {"status": "WITHDRAWN", "reply": "Right, tests/fee.rs covers it."}
     before = len(gh.posted_reviews)
@@ -241,7 +209,7 @@ def test_critical_tier_is_single_stage_with_the_thread_lane_beside(
     assert {i.split("-")[0] for i in ids_} == {"p1", "p2"}  # both phases, one verifier
     assert ("verify", "verify1", ids_) not in lanes.v12_calls
     ids = publish_threads(gh)
-    fee = _hash_of(conn, "Fee estimate omits drainage")
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
     reply(gh, ids[fee], "Not reachable: amounts are validated upstream.", rid=904)
     lanes.thread_out[fee] = {"status": "WITHDRAWN", "reply": "Right, validated upstream."}
     lanes.candidates["general"] = []
@@ -257,12 +225,12 @@ def test_critical_tier_is_single_stage_with_the_thread_lane_beside(
 
 
 def test_a_settled_issue_comes_back_only_when_its_code_changed(v12, conn, gh, lanes, git):
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
     run_round(v12, conn, gh, lanes, A)
     ids = publish_threads(gh)
-    fee = _hash_of(conn, "Fee estimate omits drainage")
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
     reply(gh, ids[fee], "The caller adds it.", rid=905)
     lanes.thread_out[fee] = {"status": "WITHDRAWN", "reply": "Right."}
     run_round(v12, conn, gh, lanes, B)
@@ -284,12 +252,12 @@ def test_a_maintainer_concession_wins_over_a_blind_refind(v12, conn, gh, lanes, 
     never saw the reply, restates it as a CONFIRMED blocker. The concession stands: no
     "raising this to blocking" note on the thread it just resolved, no upgrade, the
     disagreement recorded for the eval, and no approval this round."""
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Add a regression test", severity="suggestion", line=12)]
     run_round(v12, conn, gh, lanes, A)
     ids = publish_threads(gh)
-    sugg = _hash_of(conn, "Add a regression test")
+    sugg = by_title(conn)["Add a regression test"].hash
     reply(gh, ids[sugg], "tests/fee.rs covers it already.", rid=906)
     lanes.thread_out[sugg] = {"status": "WITHDRAWN", "reply": "Right, tests/fee.rs covers it."}
     lanes.candidates["general"] = [cand(f"Add a regression test [open:{sugg}]", line=12)]
@@ -314,12 +282,12 @@ def test_a_maintainer_concession_wins_over_a_blind_refind(v12, conn, gh, lanes, 
 def _fixed_blocker(v12, conn, gh, lanes, git, *, status="FIXED"):
     """Round 1 raises a blocker on line 11; round 2 (its code changed) the thread lane closes
     it, and its thread is resolved. Returns (hash, root comment id)."""
-    lanes.verify12 = _confirm_phase2
+    lanes.verify12 = confirm_matches
     lanes.candidates["default"] = []
     lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
     run_round(v12, conn, gh, lanes, A)
     ids = publish_threads(gh)
-    fee = _hash_of(conn, "Fee estimate omits drainage")
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
     reply(gh, ids[fee], "Changed it.", rid=907)
     git.change("f.rs", 11, at=B)
     lanes.thread_out[fee] = {"status": status, "reply": "Agreed."}
