@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import os
+import sqlite3
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -17,6 +19,8 @@ from . import db as db_mod
 from . import degraded as degraded_mod
 from . import doctor as doctor_mod
 from . import exporter as exporter_mod
+from . import ledger as ledger_mod
+from . import quality as quality_mod
 from . import slots as slots_mod
 from . import status as status_mod
 from . import worker as worker_mod
@@ -299,6 +303,70 @@ def cmd_compare(args: argparse.Namespace) -> int:
     return 0
 
 
+def _conn(args: argparse.Namespace) -> sqlite3.Connection | None:
+    """`--db` when given (a copy of the database, say), else the configured one. None (said on
+    stderr) for a `--db` that does not exist: never create an empty database by mistake."""
+    if not args.db:
+        return db_mod.connect(_cfg(args).db_path)
+    path = Path(args.db).expanduser()
+    if not path.is_file():
+        print(f"no database at {path}", file=sys.stderr)
+        return None
+    return db_mod.connect(path)
+
+
+def cmd_ledger(args: argparse.Namespace) -> int:
+    """The issue ledger: replay history into it, or show a PR's issues."""
+    if args.action == "backfill" and args.number is not None and not args.repo:
+        print("--number needs --repo", file=sys.stderr)
+        return 1
+    conn = _conn(args)
+    if conn is None:
+        return 1
+    if args.action == "backfill":
+        res: dict[str, object] = ledger_mod.backfill(conn, repo=args.repo, number=args.number)
+        if args.github:
+            cfg = _cfg(args)
+            res["threads"] = ledger_mod.backfill_threads(
+                conn, Gh(cfg.gh_bin), cfg.bot_login, repo=args.repo, number=args.number
+            )
+        print(json.dumps(res, indent=1))
+        return 0
+    issues = ledger_mod.load(conn, args.repo, args.number)
+    events = ledger_mod.history(conn, args.repo, args.number) if args.history else None
+    if args.json:
+        rows = [dataclasses.asdict(i) for i in issues.values()]
+        print(json.dumps({"issues": rows, "events": events}, indent=1))
+    else:
+        print(ledger_mod.render(issues, events), end="")
+    return 0
+
+
+def cmd_quality(args: argparse.Namespace) -> int:
+    """Production review-quality metrics from the ledger and the repo mirrors (quality.py)."""
+    conn = _conn(args)
+    if conn is None:
+        return 1
+    mirrors = Path(args.mirrors).expanduser() if args.mirrors else None
+    if mirrors is None and not args.db:
+        mirrors = _cfg(args).mirrors_dir
+    overrides: dict[str, Path] = {}
+    for spec in args.repo_path or []:
+        repo, sep, path = spec.partition("=")
+        if not sep or "/" not in repo:
+            print(f"--repo-path wants OWNER/NAME=PATH, got {spec!r}", file=sys.stderr)
+            return 1
+        overrides[repo] = Path(path).expanduser()
+    rep = quality_mod.report(
+        conn, since=args.since, paths=quality_mod.RepoPaths(mirrors, overrides)
+    )
+    if args.json:
+        print(json.dumps(rep, indent=1))
+    else:
+        print(quality_mod.render(rep), end="")
+    return 0
+
+
 def cmd_init_config(args: argparse.Namespace) -> int:
     path = Path(args.config) if args.config else cfg_mod.DEFAULT_CONFIG_PATH
     if path.exists() and not args.force:
@@ -381,6 +449,37 @@ def build_parser() -> argparse.ArgumentParser:
         "--value", type=int, help="concurrency: audit runs at once (-1 = back to the config value)"
     )
     s.set_defaults(fn=cmd_audit)
+    s = sub.add_parser("ledger", help="the issue ledger: backfill history, show a PR's issues")
+    lsub = s.add_subparsers(dest="action", required=True)
+    b = lsub.add_parser("backfill", help="replay recorded history into the ledger (idempotent)")
+    b.add_argument("--repo", help="only this repo (owner/name)")
+    b.add_argument("--number", type=int, help="only this PR (with --repo)")
+    b.add_argument(
+        "--github", action="store_true", help="also sync open/resolved threads from GitHub"
+    )
+    b.add_argument("--db", help="database file (default: the configured one)")
+    b.set_defaults(fn=cmd_ledger)
+    v = lsub.add_parser("show", help="a PR's issues")
+    v.add_argument("repo")
+    v.add_argument("number", type=int)
+    v.add_argument("--history", action="store_true", help="also every event, in fold order")
+    v.add_argument("--json", action="store_true")
+    v.add_argument("--db", help="database file (default: the configured one)")
+    v.set_defaults(fn=cmd_ledger)
+    s = sub.add_parser("quality", help="review-quality metrics: late finds, fates, re-raises")
+    s.add_argument("--since", help="only findings posted (runs started) at or after this date")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--db", help="database file (default: the configured one)")
+    s.add_argument(
+        "--mirrors",
+        help="directory of bare mirrors (default: the configured one, or none with --db)",
+    )
+    s.add_argument(
+        "--repo-path",
+        action="append",
+        help="OWNER/NAME=PATH: a clone to diff in for that repo (repeatable)",
+    )
+    s.set_defaults(fn=cmd_quality)
     s = sub.add_parser("init-config")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_init_config)

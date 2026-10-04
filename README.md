@@ -29,11 +29,13 @@ tested, one daemon, one SQLite file, no lock files.
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
+| `ledger.py` | the issue ledger: every issue raised on a PR and where it stands, folded from its event history; write-only under policy v11 |
+| `quality.py` | `reviewsys quality`: late finds, fate coverage, silent drops, re-raises, contract failures |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
 | `status.py` | `reviewsys status --json` + watchdog predicate |
 | `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model, quota per Phase-1 rung |
 
-State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps, lanes, findings, posted_findings, reviews, inbox, events, kv`.
+State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps, lanes, findings, posted_findings, reviews, inbox, events, kv, audits, audit_findings, issues, issue_events`.
 
 ## Model policy and effort tiers
 
@@ -632,6 +634,36 @@ thread in context, and `reviewsys enqueue` / a manual trigger on a reviewed comm
 forces a full re-review (with the reconciliation-based thread answers above), so the old
 path remains available for "look at this again from scratch".
 
+## Issue ledger and `reviewsys quality`
+
+The ledger (`ledger.py`, schema v6) keeps one `issues` row per issue the bot raised on a PR,
+keyed by the `finding_hash` it was first posted under (the hash in the GitHub marker; never
+recomputed), with its anchor, status (`open`, `fixed`, `outdated`, `withdrawn`, `deferred`,
+`deferral_pending`, `resolved`) and who set it. Each row is folded from `issue_events`, one per
+fact (`posted`, `seen` (carried by a later verifier set), `outcome` (a thread answer that
+reached GitHub), `thread`, `status`), so the order facts are recorded in does not matter.
+
+Under policy v11 every run writes through to it and nothing reads it: publications, the full
+path's thread answers, conversation replies and concessions, and the PR's threads (legacy
+findings, hand-resolved threads) at context. A failed ledger write never fails a run; it is
+logged and recorded as a `ledger.write_failed` event. `reviewsys ledger backfill` replays the
+history recorded before the write-through (`findings` stage `posted`, later verifier sets,
+`thread.answered` events, `conceded` rows; `--github` also syncs open and hand-resolved
+threads). It is idempotent and safe beside the live writes: both derive the same key for the
+same fact.
+
+`reviewsys quality` reports, from the ledger plus `git diff -U0` on the mirrors (or
+`--repo-path OWNER/NAME=PATH` clones; a repo without either is skipped with a note):
+
+- late-find rate: posted blockers raised in round ≥ 2 on lines (anchor ±3) unchanged since
+  the previous reviewed head;
+- pushback: blockers with a later round that were withdrawn or deferred;
+- re-raises: withdrawn or deferred issues posted again (same title, or same file ±15 lines)
+  with their own lines unchanged;
+- fate coverage: blockers with a later round whose fate is on record, the rest "vanished";
+- silent drops: vanished blockers whose file did not change by the next reviewed head;
+- contract failures, by class (reconciliation, echo field, other).
+
 ## Ad hoc reviews (repos without a skill)
 
 `@thepastaclaw review` on a PR in a repo that has no entry in the skills `config.json`
@@ -922,6 +954,9 @@ minute if it dies. `~/.reviewsys/mode` records live/shadow for the watchdog.
     $R retry OWNER/REPO N         # re-queue a PR whose head ended `failed`
     $R degraded [on|off|auto]     # show / force the stand-in-models mode (see above)
     $R import-legacy PATH         # one-off: mark legacy queue.json `done` rows as reviewed
+    $R ledger backfill [--repo R --number N] [--github]  # replay history into the ledger
+    $R ledger show OWNER/REPO N [--history] [--json]     # a PR's issues (and their events)
+    $R quality [--since DATE] [--json]                   # review-quality metrics (see above)
 
 Where to look when something is off, in order:
 
