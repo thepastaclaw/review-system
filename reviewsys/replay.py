@@ -168,14 +168,12 @@ def reconcile_as_of(
     network beyond the pinned view's reads. Records the reconcile in the scratch kv, where
     the worker (which skips it in a dry run) reads its pending list."""
     repo, number, head = pin.repo, pin.number, pin.sha
-    keep = ledger.STANDING | {"resolved"}
-    before = {h for h, i in ledger.load(scratch_db, repo, number).items() if i.status in keep}
+    issues = ledger.load(scratch_db, repo, number)
+    before = {h for h, i in issues.items() if i.status in ledger.COUNTING}
     closed = closed_before(source_db, repo, number, pin.cutoff)
     if closed:
         with tx(scratch_db):
-            ledger.reconcile(
-                scratch_db, repo, number, pr_open=False, open_threads=(), moved=lambda i: None
-            )
+            ledger.reconcile(scratch_db, repo, number, pr_open=False, open_threads=(), moved={})
         return {"pr_open": False, "closed": closed, "standing": len(before), "pending": 0}
     threads = github.review_threads(gh, repo, number)
     open_ = set(github.finding_threads(threads, bot_login))
@@ -186,11 +184,7 @@ def reconcile_as_of(
     def changed(a: str, b: str, file: str, ls: int | None, le: int | None) -> bool | None:
         return ledger.lines_changed(git_dir, a, b, file, ls, le) if file else None
 
-    moved = {
-        h: ledger.anchor_moved(i, head, changed)
-        for h, i in ledger.load(scratch_db, repo, number).items()
-        if h in before and h not in open_
-    }
+    moved = ledger.moved_anchors(issues, head, changed, open_threads=open_)
     with tx(scratch_db):
         ledger.sync_threads(
             scratch_db,
@@ -208,7 +202,7 @@ def reconcile_as_of(
             number,
             pr_open=True,
             open_threads=open_,
-            moved=lambda i: moved.get(i.hash),
+            moved=moved,
             sha=head,
         )
     return {
