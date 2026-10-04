@@ -208,7 +208,9 @@ class PipelinePolicy:
     behavior is opted into by its own field, each defaulting to v11.
 
     `lane_env_isolation`: lanes run without CLAUDE.md discovery or Claude Code's git
-    instructions (`lane.LANE_ENV`).
+    instructions (`lane.LANE_ENV`); the reviewed repo's own agent guidance (CLAUDE.md,
+    AGENTS.md at the worktree root) reaches the reviewer and verifier prompts as evidence
+    instead (`prompts.repo_guidance`).
     `structured_output`: a lane given a schema (`schemas.py`) answers through `--json-schema`
     (`worker._run_checked_lane(schema=...)`). Parsed and honoured, but no lane passes a schema
     yet: the v12 finder, verifier and thread lanes wire it (pieces B1-B3), so on its own it

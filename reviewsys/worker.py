@@ -59,6 +59,7 @@ from .prompts import (
     correction_prompt,
     prior_for_prompt,
     repair_prompt,
+    repo_guidance,
     reviewer_prompt,
     skill_texts,
     verifier_prompt,
@@ -1401,6 +1402,7 @@ def _reviewer_lanes(
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
     stamp = ctx.cfg.policy.stamps_echo_fields
+    guidance = repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else ""
     prompts = {
         role: reviewer_prompt(
             ctx.cfg,
@@ -1416,6 +1418,7 @@ def _reviewer_lanes(
             prior_sha=review_prior_sha,
             fresh=fresh,
             stamp_echo=stamp,
+            guidance=guidance,
         )
         for role in roles
     }
@@ -1636,6 +1639,7 @@ def _verifier_lane(
         fresh_final=fresh_final,
         single_stage=ctx.single_stage,
         stamp_echo=stamp,
+        guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
     )
     prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
 

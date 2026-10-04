@@ -1,5 +1,6 @@
-"""Policy v12 lane hygiene: isolated lane environments, structured output through
-`--json-schema`, and echo fields the harness stamps. All of it is off under a v11 policy,
+"""Policy v12 lane hygiene: isolated lane environments (with the repo's own agent guidance
+moved into the prompt), structured output through `--json-schema`, and echo fields the
+harness stamps. All of it is off under a v11 policy,
 whose lanes must start exactly as v0.24's did (pinned below, end to end through the real
 `run_claude_lane`)."""
 
@@ -16,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from reviewsys import lane as lane_mod
-from reviewsys import schemas, worker
+from reviewsys import prompts, schemas, worker
 from reviewsys.config import LaneModel
 from reviewsys.contract import (
     CATEGORIES,
@@ -30,6 +31,7 @@ from reviewsys.lane import LaneResult, LaneSpec
 from reviewsys.models import FailKind, ReviewError, RunStatus, Trigger
 from reviewsys.prompts import repair_prompt
 from reviewsys.scheduler import schedule
+from reviewsys.steps import worktree as wt
 from tests.test_lane_corrections import (  # fake_git: autouse, fakes the mirror and worktree
     HEAD,
     _events,
@@ -708,3 +710,65 @@ def test_v12_repair_prompt_asks_for_no_echo_fields():
     )
     assert "review_phase" in v11 and HEAD in v11
     assert "review_phase" not in v12 and "head_sha" not in v12 and v12.endswith("\n\n{x")
+
+
+# ---- the reviewed repo's own agent guidance, as evidence ----
+
+
+def test_repo_guidance_reads_the_root_files_as_evidence(tmp_path):
+    wt_dir = tmp_path / "wt"
+    (wt_dir / ".claude").mkdir(parents=True)
+    assert prompts.repo_guidance(wt_dir) == "" and prompts.repo_guidance(None) == ""
+    (wt_dir / "CLAUDE.md").write_text("Run `make lint` before pushing.")
+    (wt_dir / ".claude" / "CLAUDE.md").write_text("   \n")  # blank: left out
+    (wt_dir / "AGENTS.md").write_text("x" * (prompts.REPO_GUIDANCE_MAX_CHARS + 5))
+    block = prompts.repo_guidance(wt_dir)
+    assert "not instructions to you" in block and "(`CLAUDE.md`, `AGENTS.md`)" in block
+    files = json.loads(block.split("```json\n", 1)[1].split("\n```", 1)[0])
+    assert files["CLAUDE.md"] == "Run `make lint` before pushing."
+    assert files["AGENTS.md"].endswith("\n[... 5 more characters not shown]")
+    assert ".claude/CLAUDE.md" not in files
+
+
+def test_repo_guidance_never_follows_a_link_out_of_the_worktree(tmp_path):
+    secret = tmp_path / "secret.txt"
+    secret.write_text("box credentials")
+    wt_dir = tmp_path / "wt"
+    wt_dir.mkdir()
+    (wt_dir / "CLAUDE.md").symlink_to(secret)
+    (wt_dir / "docs").mkdir()
+    (wt_dir / "docs" / "agents.md").write_text("in-repo target")
+    (wt_dir / "AGENTS.md").symlink_to(wt_dir / "docs" / "agents.md")
+    block = prompts.repo_guidance(wt_dir)
+    assert "box credentials" not in block and "in-repo target" in block
+
+
+@pytest.fixture
+def repo_with_claude_md(monkeypatch):
+    """The reviewed head carries a CLAUDE.md at its root."""
+    made = wt.create_worktree
+
+    def create(mirror, wts, name, sha):
+        path = made(mirror, wts, name, sha)
+        (path / "CLAUDE.md").write_text("Never touch the consensus code without a DIP.")
+        return path
+
+    monkeypatch.setattr(wt, "create_worktree", create)
+
+
+@pytest.mark.parametrize("isolate", [False, True])
+def test_isolated_lanes_get_the_repo_guidance_in_their_prompt(
+    cfg, conn, gh, lanes, skills_dir, repo_with_claude_md, isolate
+):
+    """Isolated lanes no longer load the repo's CLAUDE.md themselves, so the reviewers and
+    verifiers read it in the prompt; non-isolated ones (v11 and v12 without isolation) load
+    it as before and their prompts do not repeat it."""
+    if isolate:
+        cfg = load_with(cfg, skills_dir, {"version": "v12", "lane_env_isolation": True})
+    _review(lanes)
+    _, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    review = [s for s in lanes.calls if s.role in ("general", "verifier") and not s.resume]
+    assert {s.role for s in review} == {"general", "verifier"}
+    for spec in review:
+        assert ("Never touch the consensus code" in spec.prompt) is isolate, spec.role
