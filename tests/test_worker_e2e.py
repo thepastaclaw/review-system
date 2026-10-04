@@ -422,6 +422,83 @@ def test_dry_run_posts_nothing_but_writes_body(cfg, conn, gh, lanes):
     assert (cfg.runs_dir / f"run-{rid}" / "review-final.md").exists()
 
 
+def test_dry_run_records_what_it_would_have_posted(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_sugg()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["default"] = _verifier([_sugg()])
+    rid, _ = _run(cfg, conn, gh, lanes, dry_run=True)
+    pub = json.loads((cfg.runs_dir / f"run-{rid}" / "publication-final.json").read_text())
+    assert pub["event"] == "COMMENT" and "phase=final" in pub["body"]
+    assert [(f["title"], f["severity"], f["line_start"]) for f in pub["kept"]] == [
+        ("Add a regression test", "suggestion", 12)
+    ]
+    assert pub["kept"][0]["hash"]
+
+
+def _forced(cfg, conn, gh, lanes, **kw):
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    status = worker.main(
+        cfg, conn, rid, gh=gh, lane_runner=lanes, dry_run=True, heartbeat=False, **kw
+    )
+    return rid, status
+
+
+def test_force_phase2_runs_phase2_past_the_gate_and_records_the_decision(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_blocking()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([_blocking()])  # any blocker holds Phase 2
+    lanes.verifier["final"] = _verifier([_blocking(), _sugg()])
+    rid, status = _forced(cfg, conn, gh, lanes, force_phase2=True)
+    assert status == RunStatus.DONE and not gh.posted_reviews
+    gate = json.loads(
+        conn.execute("SELECT detail FROM steps WHERE run_id=? AND name='gate'", (rid,)).fetchone()[
+            "detail"
+        ]
+    )
+    assert gate["admit_phase2"] is False and gate["forced_phase2"] is True
+    phases = {r["phase"] for r in conn.execute("SELECT phase FROM lanes WHERE run_id=?", (rid,))}
+    assert {"phase1", "verify1", "phase2", "verify2"} <= phases
+    run_dir = cfg.runs_dir / f"run-{rid}"
+    would = json.loads((run_dir / "gate-would-publish.json").read_text())
+    assert would["phase"] == "preliminary" and would["blockers"] == 1
+    assert "phase=preliminary" in would["body"] and len(would["kept"]) == 1
+    final = json.loads((run_dir / "publication-final.json").read_text())
+    assert sorted(f["severity"] for f in final["kept"]) == ["blocking", "suggestion"]
+    assert not (run_dir / "publication-preliminary.json").exists()
+    assert conn.execute(
+        "SELECT 1 FROM events WHERE run_id=? AND kind='replay.phase2_forced'", (rid,)
+    ).fetchone()
+
+
+def test_without_force_the_gate_still_holds_phase2(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_blocking()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["default"] = _verifier([_blocking()])
+    rid, _ = _forced(cfg, conn, gh, lanes)
+    assert not any(s.role != "verifier" and "phase2" in str(s.agent) for s in lanes.calls)
+    assert not (cfg.runs_dir / f"run-{rid}" / "gate-would-publish.json").exists()
+    assert (cfg.runs_dir / f"run-{rid}" / "publication-preliminary.json").exists()
+
+
+def test_a_fixed_coverage_base_replaces_the_merge_base_with_todays_base(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+    _forced(cfg, conn, gh, lanes, coverage_base="c" * 40)
+    reviewer = next(s for s in lanes.calls if s.role == "general")
+    assert f"`{'c' * 40}..{HEAD}`" in reviewer.prompt and "b" * 40 not in reviewer.prompt
+
+
 def test_coderabbit_reactions_posted(cfg, conn, gh, lanes):
     gh.threads = [
         {

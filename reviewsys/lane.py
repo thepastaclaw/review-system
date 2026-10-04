@@ -78,6 +78,10 @@ class LaneSpec:
     pool: str | None = None
     # macOS sandbox profile the lane runs under ("" = none); see `exec_deny_profile`
     sandbox_profile: str = ""
+    # set in the lane's environment on top of the worker's own, and Claude Code tools the
+    # lane may not use (see `with_overrides`)
+    env: tuple[tuple[str, str], ...] = ()
+    disallowed_tools: tuple[str, ...] = ()
     # Correction turns (see `run_with_corrections`). `session_id` (a UUID) makes the lane keep
     # its Claude Code session under that id instead of `--no-session-persistence`; with
     # `resume` the lane continues that session, `prompt` being the next user turn. `check` looks
@@ -231,11 +235,37 @@ def isolated(runner: LaneRunner, on: bool) -> LaneRunner:
     return run
 
 
+def with_overrides(
+    runner: LaneRunner, *, env: dict[str, str], disallowed_tools: tuple[str, ...] = ()
+) -> LaneRunner:
+    """`runner`, with `env` set in every lane's environment on top of the worker's own and
+    `disallowed_tools` refused to every lane (no change when both are empty). `reviewsys
+    replay` puts its pinned `gh` first on PATH and takes the web tools away this way."""
+    if not env and not disallowed_tools:
+        return runner
+    pairs = tuple(env.items())
+
+    def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
+        spec = dataclasses.replace(
+            spec,
+            env=(*spec.env, *pairs),
+            disallowed_tools=(*spec.disallowed_tools, *disallowed_tools),
+        )
+        return runner(spec, artifact_dir, worktree)
+
+    return run
+
+
 def lane_env(spec: LaneSpec) -> dict[str, str]:
     """The environment a lane runs in: the worker's own (CLAUDE_CONFIG_DIR included, so a
     correction turn resumes its session where the first turn saved it) plus BASE_LANE_ENV,
-    plus LANE_ENV for an isolated lane."""
-    return {**os.environ, **BASE_LANE_ENV, **(LANE_ENV if spec.isolate_env else {})}
+    plus LANE_ENV for an isolated lane, plus the lane's own `env` (replay's pinned PATH)."""
+    return {
+        **os.environ,
+        **BASE_LANE_ENV,
+        **(LANE_ENV if spec.isolate_env else {}),
+        **dict(spec.env),
+    }
 
 
 def session_args(spec: LaneSpec) -> list[str]:
@@ -373,6 +403,7 @@ def argv_for(spec: LaneSpec) -> list[str]:
         str(spec.add_dir),
         "--output-format",
         "json",
+        *(["--disallowedTools", ",".join(spec.disallowed_tools)] if spec.disallowed_tools else []),
         *session_args(spec),
         "--print",
     ]

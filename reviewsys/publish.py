@@ -1427,6 +1427,7 @@ def publish_verdict_update(
     lifted_blockers: list[str],
     bot_login: str,
     note: str = "",
+    dry_run: bool = False,
 ) -> PublishResult:
     event = verdict_event(verified, provenance)
     body = render_verdict_update(
@@ -1443,6 +1444,14 @@ def publish_verdict_update(
     transport = transport_event(event, own_pr=own)
     if transport != event:
         body += f"\n\n_Canonical verifier result: `{event}`; submitted as `COMMENT` because GitHub does not allow authors to approve or request changes on their own pull requests._"
+    if dry_run:
+        return PublishResult(
+            posted=False,
+            event=event,
+            transport_event=transport,
+            body=body,
+            skipped_reason="dry_run",
+        )
     resp = github.post_review(
         gh, repo, number, {"commit_id": head_sha, "body": body, "event": transport, "comments": []}
     )

@@ -77,6 +77,70 @@ def cmd_worker(args: argparse.Namespace) -> int:
     return 0 if status.value == "done" else 1
 
 
+def _path(value: str | None) -> Path | None:
+    return Path(value).expanduser() if value else None
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Re-review past runs' exact heads under a skills checkout (replay.py); posts nothing."""
+    from .replay import EXIT_ABORTED, ReplayAborted, replay
+
+    cfg = _cfg(args)
+    token = os.environ.get(args.gh_token_env) or None
+    out = Path(args.out).expanduser()
+    for rid in args.run_id:
+        try:
+            report = replay(
+                cfg,
+                run_id=rid,
+                out=out,
+                skills=_path(args.skills),
+                source_db=_path(args.source_db),
+                source_runs=_path(args.source_runs),
+                force_phase2=args.force_phase2,
+                pin_phase1_model=args.pin_phase1_model,
+                sample=args.sample,
+                policy_name=args.policy_name,
+                gh_token=token,
+            )
+        except ReplayAborted as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_ABORTED
+        published = report["published"]
+        print(
+            json.dumps(
+                {k: report[k] for k in ("source_run", "repo", "number", "status", "reason")}
+                | {
+                    "published": len(published),
+                    "blockers": sum(f["severity"] == "blocking" for f in published),
+                    "historical": len(report["historical_posted"]),
+                    "forced_phase2": report["gate"]["forced_phase2"],
+                    "gpt_lanes": report["gpt"]["lanes"],
+                    "wall_clock_s": report["wall_clock_s"],
+                }
+            )
+        )
+        if report["invalid"]:
+            print(f"run {rid}: replay invalid ({report['invalid']})", file=sys.stderr)
+            # dry models stop a replay set; any other invalid replay is that replay's failure
+            return EXIT_ABORTED if report["invalid"].startswith("quota") else 1
+    return 0
+
+
+def cmd_replay_set(args: argparse.Namespace) -> int:
+    """Replay a set of past runs under several policies (replayset.py)."""
+    from .replayset import main_set
+
+    return main_set(args)
+
+
+def cmd_replay_score(args: argparse.Namespace) -> int:
+    """Score a replay set's reports against labels, arm against arm (replayscore.py)."""
+    from .replayscore import main_score
+
+    return main_score(args)
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     conn = db_mod.connect(cfg.db_path)
@@ -419,6 +483,64 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--run-id", type=int, required=True)
     s.add_argument("--dry-run", action="store_true", help="do everything except post to GitHub")
     s.set_defaults(fn=cmd_worker)
+    s = sub.add_parser(
+        "replay",
+        help="re-review past runs' exact heads under a skills checkout; read-only, posts nothing",
+    )
+    s.add_argument("run_id", type=int, nargs="+")
+    s.add_argument("--out", required=True, help="directory for scratch DBs, worktrees, reports")
+    s.add_argument("--skills", help="skills checkout holding the policy to replay under")
+    s.add_argument("--source-db", help="database the runs come from (default: the configured one)")
+    s.add_argument(
+        "--source-runs",
+        help="run artifact dir holding the runs' evidence.json (default: work/runs)",
+    )
+    s.add_argument(
+        "--force-phase2",
+        action="store_true",
+        help="record the gate's decision, then run Phase 2 anyway",
+    )
+    s.add_argument("--pin-phase1-model", help="run every Phase-1 lane on this model")
+    s.add_argument("--sample", type=int, default=0, help="repeat sample number (dir run-<id>-r<k>)")
+    s.add_argument("--policy-name", help="eval arm name (replay.policy_overrides)")
+    s.add_argument(
+        "--gh-token-env",
+        default="REVIEWSYS_REPLAY_GH_TOKEN",
+        help="env var holding a read-only GitHub token for every read the replay makes",
+    )
+    s.set_defaults(fn=cmd_replay)
+    s = sub.add_parser(
+        "replay-set", help="replay a set of past runs under several policies (eval arms)"
+    )
+    s.add_argument("setfile", help="JSON/JSONL list of {run_id, set, samples}")
+    s.add_argument(
+        "--policy",
+        action="append",
+        required=True,
+        help="NAME=SKILLS_DIR, one per arm (repeatable); NAME is a directory under --out",
+    )
+    s.add_argument("--out", required=True, help="reports go to OUT/<policy>/run-<id>[-r<k>]/")
+    s.add_argument("--concurrency", type=int, default=2, help="replays at once (default 2)")
+    s.add_argument("--force-phase2", action="store_true")
+    s.add_argument("--pin-phase1-model")
+    s.add_argument("--source-db")
+    s.add_argument("--source-runs", help="run artifact dir holding the runs' evidence.json")
+    s.add_argument(
+        "--gh-token-env",
+        default="REVIEWSYS_REPLAY_GH_TOKEN",
+        help="env var holding a read-only GitHub token (passed to every replay)",
+    )
+    s.add_argument(
+        "--retry-failed", action="store_true", help="also re-run failed and invalid replays"
+    )
+    s.set_defaults(fn=cmd_replay_set)
+    s = sub.add_parser("replay-score", help="score a replay set against labels, arm against arm")
+    s.add_argument("setfile")
+    s.add_argument("labels", help="JSON/JSONL labels (see replayscore.py)")
+    s.add_argument("--out", required=True, help="the replay-set's --out; score.json goes there")
+    s.add_argument("--baseline", help="arm the others are compared with (default: the first)")
+    s.add_argument("--seed", type=int, default=0, help="shuffle seed for to_judge.jsonl")
+    s.set_defaults(fn=cmd_replay_score)
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
