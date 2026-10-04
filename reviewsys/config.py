@@ -208,8 +208,11 @@ class PipelinePolicy:
     behavior is opted into by its own field, each defaulting to v11.
 
     `lane_env_isolation`: lanes run without CLAUDE.md discovery or Claude Code's git
-    instructions (`lane.LANE_ENV`); the reviewed repo's CLAUDE.md reaches a prompt as evidence.
-    `structured_output`: lanes given a schema (`schemas.py`) answer through `--json-schema`.
+    instructions (`lane.LANE_ENV`).
+    `structured_output`: a lane given a schema (`schemas.py`) answers through `--json-schema`
+    (`worker._run_checked_lane(schema=...)`). Parsed and honoured, but no lane passes a schema
+    yet: the v12 finder, verifier and thread lanes wire it (pieces B1-B3), so on its own it
+    changes nothing.
     `late_nonblocking` (owner decision D2): "post" = later-round suggestions on lines unchanged
     since the last final review post as today; "note" = a collapsed note that does not hold
     APPROVE. Not read yet (piece B5).
@@ -272,6 +275,14 @@ class ModelPolicy:
         """Policy v12: lanes are not asked for `review_phase` / `head_sha`; the harness
         stamps them on every reviewer and verifier answer."""
         return self.pipeline is not None
+
+    @property
+    def isolates_lane_env(self) -> bool:
+        return self.pipeline is not None and self.pipeline.lane_env_isolation
+
+    @property
+    def structured_output(self) -> bool:
+        return self.pipeline is not None and self.pipeline.structured_output
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -719,26 +730,30 @@ def _comparison(
 def policy_fingerprint(pol: dict[str, Any]) -> str:
     """The skills repo's fingerprint of a `review_model_policy` object: sha256 of the object
     without its own `fingerprint`, as compact sorted-key JSON (the rewrite scripts that cut
-    v6-v11 compute it this way). Everything in the object counts, `pipeline` included."""
+    v6-v11 compute it this way). Everything in the object counts, `pipeline` included.
+    `json.dumps` keeps its default `ensure_ascii=True`, as those scripts do: the policy text has
+    non-ASCII characters ("—"), and only the escaped form reproduces the stored hashes."""
     body = {k: v for k, v in pol.items() if k != "fingerprint"}
     return hashlib.sha256(
         json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
 
 
-def _keys(node: dict[str, Any], where: str, allowed: tuple[str, ...]) -> None:
+def _keys(node: dict[str, Any], where: str, cls: type) -> None:
+    """`node` has no key that is not a field of the dataclass `cls`."""
+    allowed = [f.name for f in dataclasses.fields(cls)]
     unknown = sorted(set(node) - set(allowed))
     if unknown:
-        raise ValueError(f"{where}: unknown keys {unknown}; allowed {list(allowed)}")
+        raise ValueError(f"{where}: unknown keys {unknown}; allowed {allowed}")
 
 
-def _section(node: dict[str, Any], key: str, allowed: tuple[str, ...]) -> dict[str, Any]:
+def _section(node: dict[str, Any], key: str, cls: type) -> dict[str, Any]:
     sub = node.get(key)
     if sub is None:
         return {}
     if not isinstance(sub, dict):
         raise ValueError(f"pipeline.{key} must be an object")
-    _keys(sub, f"pipeline.{key}", allowed)
+    _keys(sub, f"pipeline.{key}", cls)
     return sub
 
 
@@ -766,26 +781,13 @@ def _pipeline(node: Any, specialists: tuple[Specialist, ...]) -> PipelinePolicy 
         node = {"version": node}
     if not isinstance(node, dict):
         raise ValueError('pipeline must be an object like {"version": "v12"}')
-    _keys(
-        node,
-        "pipeline",
-        (
-            "version",
-            "lane_env_isolation",
-            "structured_output",
-            "finders",
-            "threads",
-            "verifier",
-            "confirmation",
-            "late_nonblocking",
-        ),
-    )
+    _keys(node, "pipeline", PipelinePolicy)
     if node.get("version") not in PIPELINE_VERSIONS:
         raise ValueError(f"pipeline.version {node.get('version')!r} not in {PIPELINE_VERSIONS}")
-    finders = _section(node, "finders", ("anchoring",))
-    threads = _section(node, "threads", ("lane",))
-    verifier = _section(node, "verifier", ("contract",))
-    confirm = _section(node, "confirmation", ("roles", "trigger"))
+    finders = _section(node, "finders", FinderPolicy)
+    threads = _section(node, "threads", ThreadsPolicy)
+    verifier = _section(node, "verifier", VerifierPolicy)
+    confirm = _section(node, "confirmation", ConfirmationPolicy)
     roles = confirm.get("roles")
     if roles is not None:
         if not isinstance(roles, list) or not all(isinstance(r, str) for r in roles):

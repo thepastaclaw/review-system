@@ -31,6 +31,9 @@ STATIC_REVIEW = (
     "still running; say what is pending instead.\n"
 )
 
+# For pieces B1-B3: a lane answering through `--json-schema` must not also get this (nor
+# correction_prompt's closing "one raw JSON object" line): Claude Code tells it to answer by
+# calling its StructuredOutput tool, and two contradicting output rules cost retries.
 RAW_JSON_CONTRACT = (
     "\n\n## Mandatory machine-output contract\n"
     "Emit exactly one raw JSON object and nothing else. Do not use Markdown fences, "
@@ -125,9 +128,9 @@ def reviewer_prompt(
     prior: list[dict[str, Any]],
     prior_sha: str | None,
     fresh: bool = False,
-    echo: bool = True,
+    stamp_echo: bool = False,
 ) -> str:
-    """`echo` False (policy v12): the lane is not asked for `review_phase` / `head_sha`;
+    """`stamp_echo` (policy v12): the lane is not asked for `review_phase` / `head_sha`;
     the harness stamps them."""
     template_rel = "prompts/review-agent.md" if role == "general" else f"prompts/{role}.md"
     project_skill, review_skill = skill_texts(cfg, repo)
@@ -148,7 +151,7 @@ def reviewer_prompt(
     )
     echo_ask = (
         f"Include `review_phase` set to `{phase}` and `head_sha` set to exact head `{head_sha}`. "
-        if echo
+        if not stamp_echo
         else ""
     )
     if fresh:
@@ -204,9 +207,9 @@ def verifier_prompt(
     phase1_skipped: str | None = None,
     fresh_final: bool = False,
     single_stage: bool = False,
-    echo: bool = True,
+    stamp_echo: bool = False,
 ) -> str:
-    """`echo` False (policy v12): the lane is not asked for `review_phase`; the harness
+    """`stamp_echo` (policy v12): the lane is not asked for `review_phase`; the harness
     stamps it."""
     project_skill, review_skill = skill_texts(cfg, repo)
     template = read_template(cfg, "prompts/verifier-agent.md")
@@ -230,7 +233,7 @@ def verifier_prompt(
         phase1_note = ""
     requirements = (
         "\n\n## Exact evidence, source-of-truth, phase, adjudication, and provenance requirements\n\n"
-        + (f"- `review_phase` must be `{phase}`.\n" if echo else "")
+        + ("" if stamp_echo else f"- `review_phase` must be `{phase}`.\n")
         + f"- Exact head: `{head_sha}`.\n"
         "- In the template above, 'Codex' findings are the Phase-1 reviewer lanes and 'Claude' findings are the Phase-2 reviewer lanes; the model names are historical.\n"
         + phase1_note
@@ -265,18 +268,19 @@ OUTPUT_KEYS = {
     "coderabbit_reactions[], prerequisite_adjudications[], adjudication_complete, review_phase, "
     "and prior_finding_reconciliation[] when prior findings were supplied",
 }
-# the same without the echo fields, for policy v12 lanes (the harness stamps them)
-STAMPED_OUTPUT_KEYS = {
-    "reviewer": "summary, findings[], out_of_scope_findings[], and "
-    "prior_finding_reconciliation[] when prior findings were supplied",
-    "verifier": "summary, review_action, findings[], dropped_findings[], out_of_scope_findings[], "
-    "coderabbit_reactions[], prerequisite_adjudications[], adjudication_complete, "
-    "and prior_finding_reconciliation[] when prior findings were supplied",
-}
 
 
-def _echo_facts(kind: str, expected_phase: str, head_sha: str, echo: bool = True) -> list[str]:
-    if not echo:
+def _output_keys(kind: str, stamp_echo: bool) -> str | None:
+    """OUTPUT_KEYS[kind] (None for a kind without one), less the echo fields when the
+    harness stamps them (policy v12)."""
+    keys = OUTPUT_KEYS.get(kind)
+    if keys is None or not stamp_echo:
+        return keys
+    return keys.replace("review_phase, ", "").replace("head_sha, ", "")
+
+
+def _echo_facts(kind: str, expected_phase: str, head_sha: str, stamp_echo: bool) -> list[str]:
+    if stamp_echo:
         return []
     facts = [f'`review_phase` is exactly "{expected_phase}"'] if expected_phase else []
     if kind == "reviewer" and head_sha:
@@ -291,15 +295,15 @@ def repair_prompt(
     expected_phase: str,
     head_sha: str,
     prior_hashes: list[str],
-    echo: bool = True,
+    stamp_echo: bool = False,
 ) -> str:
     """The context-free repair lane's prompt (the fallback when the lane's own session cannot
     be resumed). It is told the values it cannot know, so it never has to guess an echo field
     or a prior hash; the worker normalizes its output the same way as a lane's anyway. `raw`
-    stays the last thing in the prompt. `echo` False (policy v12): no echo fields asked."""
-    keys = OUTPUT_KEYS if echo else STAMPED_OUTPUT_KEYS
-    schema = f" matching a code-review schema (keys: {keys[kind]})" if kind in keys else ""
-    facts = _echo_facts(kind, expected_phase, head_sha, echo)
+    stays the last thing in the prompt. `stamp_echo` (policy v12): no echo fields asked."""
+    keys = _output_keys(kind, stamp_echo)
+    schema = f" matching a code-review schema (keys: {keys})" if keys else ""
+    facts = _echo_facts(kind, expected_phase, head_sha, stamp_echo)
     if prior_hashes:
         facts.append(
             "every `finding_hash` in prior_finding_reconciliation is one of "
@@ -324,11 +328,11 @@ def correction_prompt(
     coderabbit_ids: list[int],
     turn: int,
     turns: int,
-    echo: bool = True,
+    stamp_echo: bool = False,
 ) -> str:
     """The follow-up turn sent into a lane's own session when its answer broke the output
-    contract: the exact validation errors, the schema and the values it must echo (`echo`
-    False, policy v12: none, the harness stamps them), and for a reconciliation problem every
+    contract: the exact validation errors, the schema and the values it must echo
+    (`stamp_echo`, policy v12: none, the harness stamps them), and for a reconciliation problem every
     prior hash with the rules. It asks for the whole object again, because only the last
     answer of the session is read."""
     lines = [
@@ -342,9 +346,9 @@ def correction_prompt(
         "wording, severities and reasoning) unless an error requires a change; there is no need "
         "to inspect the code again.",
         "",
-        "The answer must be one JSON object with the keys "
-        f"{(OUTPUT_KEYS if echo else STAMPED_OUTPUT_KEYS)[kind]}, where:",
-        *(f"- {fact}" for fact in _echo_facts(kind, expected_phase, head_sha, echo)),
+        f"The answer must be one JSON object with the keys {_output_keys(kind, stamp_echo)}, "
+        "where:",
+        *(f"- {fact}" for fact in _echo_facts(kind, expected_phase, head_sha, stamp_echo)),
     ]
     if kind == "verifier":
         lines += [

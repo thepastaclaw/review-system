@@ -22,6 +22,16 @@ from .contract import parse_json_object
 from .models import FailKind, ReviewError
 
 LaneRunner = Callable[["LaneSpec", Path, Path], "LaneResult"]
+STRUCTURED_RETRIES_EXHAUSTED = "error_max_structured_output_retries"
+
+
+class SchemaRetriesExhausted(ReviewError):
+    """Claude Code gave up on a `--json-schema` answer: the model kept answering off-schema.
+    Always a CONTRACT failure; its own type because the message quotes Claude Code's
+    validation error, which may contain any word (`worker.LaneFailed` reads "exit" and "timed
+    out" in a message as infrastructure)."""
+
+
 STOP_POLL_SECONDS = 5  # how often a running lane checks `LaneSpec.should_stop`
 PIPE_GRACE_SECONDS = 10  # after claude exits, how long a child may hold its pipes open
 LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is never starved
@@ -104,12 +114,24 @@ class LaneResult:
     started: bool = True  # False: stopped while waiting for a lane slot, never ran
     session_id: str | None = None  # the envelope's, when the CLI reported one
     structured: dict[str, Any] | None = None  # the envelope's schema-validated answer, if any
+    errors: list[str] = field(default_factory=list)  # an error envelope's `errors`, if any
     # the correction turns run in this lane's session and slot after it, in order
     followups: list[LaneResult] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return self.exit_code == 0 and not self.timed_out and not self.cancelled
+
+    @property
+    def answered(self) -> bool:
+        """The turn finished with an answer to judge: `ok`, or Claude Code gave up on the
+        answer's schema. The latter is the model's broken answer, not a broken lane, so it
+        gets correction turns in its session and the repair lane like any other."""
+        return self.ok or (
+            self.subtype == STRUCTURED_RETRIES_EXHAUSTED
+            and not self.timed_out
+            and not self.cancelled
+        )
 
     @property
     def api_error(self) -> str:
@@ -287,8 +309,8 @@ def run_with_corrections(
     (same model, effort, launcher, sandbox, stop polling), with its own artifacts in
     `correction-<n>/` and a timeout of at most CORRECTION_TIMEOUT_SECONDS. Called by the slot
     holder (lanepool.gated), so the corrections run in the lane's slot: never released, never
-    lined up again. A turn that did not finish (failed, timed out, stopped) ends the
-    corrections; the caller reads every turn in `followups` and decides. The saved session is
+    lined up again. A turn that did not finish (failed, timed out, stopped; see
+    `LaneResult.answered`) ends the corrections; the caller reads every turn in `followups` and decides. The saved session is
     deleted at the end however it went."""
     try:
         res = runner(spec, artifact_dir, worktree)
@@ -296,7 +318,7 @@ def run_with_corrections(
         while (
             spec.check is not None
             and spec.session_id
-            and turn.ok
+            and turn.answered
             and len(res.followups) < spec.corrections
         ):
             prompt = spec.check(turn)
@@ -487,6 +509,9 @@ def _extract_result(res: LaneResult) -> None:
     structured = env.get("structured_output")
     if isinstance(structured, dict):
         res.structured = structured
+    errors = env.get("errors")
+    if isinstance(errors, list):
+        res.errors = [str(e) for e in errors if e]
     usage = env.get("usage") or {}
     if isinstance(usage, dict):
         res.tokens_in = int(usage.get("input_tokens") or 0) + int(
@@ -518,14 +543,11 @@ def lane_output(res: LaneResult) -> dict[str, Any]:
     if res.timed_out:
         raise ReviewError(FailKind.INFRA, "lane timed out")
     if res.exit_code != 0:
-        if res.subtype == "error_max_structured_output_retries":
-            # the model kept answering off-schema until Claude Code gave up: its contract
-            # failure, not infrastructure (no "exit" here: LaneFailed reads that as INFRA)
-            raise ReviewError(
-                FailKind.CONTRACT,
-                f"no schema-valid answer: structured output retries ran out after "
-                f"{res.turns or '?'} turns",
-            )
+        if res.subtype == STRUCTURED_RETRIES_EXHAUSTED:
+            # Claude Code's own account ("Failed to provide valid structured output after 5
+            # attempts - last StructuredOutput error: ..."): what a correction turn must fix
+            said = res.errors[0][:400] if res.errors else f"after {res.turns or '?'} turns"
+            raise SchemaRetriesExhausted(FailKind.CONTRACT, f"no schema-valid answer: {said}")
         if res.subtype and res.subtype.startswith("error_"):
             raise ReviewError(
                 FailKind.INFRA,

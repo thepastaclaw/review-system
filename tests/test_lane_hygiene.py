@@ -30,27 +30,18 @@ from reviewsys.lane import LaneResult, LaneSpec
 from reviewsys.models import FailKind, ReviewError, RunStatus, Trigger
 from reviewsys.prompts import repair_prompt
 from reviewsys.scheduler import schedule
-from reviewsys.steps import worktree as wt
+from tests.test_lane_corrections import (  # fake_git: autouse, fakes the mirror and worktree
+    HEAD,
+    _events,
+    _run,
+    _spec,
+    _verifier,
+    fake_git,  # noqa: F401
+)
 from tests.test_pipeline_policy import load_with
 
-HEAD = "a" * 40
 V024_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
 ISOLATION = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1"}
-
-
-@pytest.fixture(autouse=True)
-def fake_git(monkeypatch, tmp_path):
-    monkeypatch.setattr(wt, "ensure_mirror", lambda mirrors, repo: tmp_path / "mirror")
-    monkeypatch.setattr(wt, "fetch_head", lambda mirror, number, sha: None)
-
-    def create(mirror, wts, name, sha):
-        p = wts / name
-        p.mkdir(parents=True, exist_ok=True)
-        return p
-
-    monkeypatch.setattr(wt, "create_worktree", create)
-    monkeypatch.setattr(wt, "remove_worktree", lambda mirror, path: None)
-    monkeypatch.setattr(wt, "merge_base", lambda worktree, base, sha: "b" * 40)
 
 
 def v024_argv(spec: LaneSpec) -> list[str]:
@@ -128,26 +119,6 @@ class ClaudeProcesses:
             del self._lane.spec
 
 
-def _run(cfg, conn, gh, runner):
-    with tx(conn):
-        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
-    (rid,) = schedule(conn, cfg, spawn=False)
-    return rid, worker.main(cfg, conn, rid, gh=gh, lane_runner=runner, heartbeat=False)
-
-
-def _verifier():
-    return {
-        "summary": "ok",
-        "review_action": "COMMENT",
-        "findings": [],
-        "dropped_findings": [],
-        "out_of_scope_findings": [],
-        "coderabbit_reactions": [],
-        "prerequisite_adjudications": [],
-        "adjudication_complete": True,
-    }
-
-
 def _review(lanes) -> None:
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier()
@@ -182,25 +153,11 @@ def test_isolated_runner_marks_every_lane_and_only_when_on(tmp_path):
         return LaneResult(exit_code=0, stdout="", stderr="", duration_s=0)
 
     assert lane_mod.isolated(runner, False) is runner
-    spec = LaneSpec(
-        role="general",
-        agent="a",
-        model="m",
-        effort="high",
-        prompt="p",
-        cwd=tmp_path,
-        add_dir=tmp_path,
-        timeout_seconds=60,
-        claude_bin="claude",
-    )
+    spec = _spec(tmp_path)
     lane_mod.isolated(runner, True)(spec, tmp_path, tmp_path)
-    assert seen[0].isolate_env and seen[0] == LaneSpec(**{**_fields(spec), "isolate_env": True})
+    assert seen == [dataclasses.replace(spec, isolate_env=True)]
     assert lane_mod.lane_env(seen[0]) == {**os.environ, **V024_ENV, **ISOLATION}
     assert lane_mod.lane_env(spec) == {**os.environ, **V024_ENV}
-
-
-def _fields(spec: LaneSpec) -> dict:
-    return {f: getattr(spec, f) for f in LaneSpec.__dataclass_fields__}
 
 
 def test_v12_isolation_reaches_every_lane_and_correction_turn(
@@ -240,22 +197,12 @@ def test_v12_without_isolation_keeps_the_v11_environment(
 SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
 
 
-def _spec(tmp_path, **kw) -> LaneSpec:
-    base = {
-        "role": "verifier",
-        "agent": "a",
-        "model": "gpt-6.1-sol",
-        "effort": "high",
-        "prompt": "p",
-        "cwd": tmp_path,
-        "add_dir": tmp_path,
-        "timeout_seconds": 60,
-        "claude_bin": "claude",
-    }
-    return LaneSpec(**{**base, **kw})
+OFF_SCHEMA = "error_max_structured_output_retries"
 
 
-def _envelope(structured=None, *, result="Done.", subtype="success", session=None) -> LaneResult:
+def _envelope(
+    structured=None, *, result="Done.", subtype="success", session=None, errors=None
+) -> LaneResult:
     """A finished lane as `run_claude_lane` reads Claude Code's JSON envelope."""
     env = {
         "type": "result",
@@ -269,6 +216,8 @@ def _envelope(structured=None, *, result="Done.", subtype="success", session=Non
         env["structured_output"] = structured
     if session:
         env["session_id"] = session
+    if errors:
+        env["errors"] = errors
     res = LaneResult(exit_code=0, stdout=json.dumps(env), stderr="", duration_s=1)
     lane_mod._extract_result(res)
     return res
@@ -293,12 +242,20 @@ def test_structured_output_is_read_before_the_text():
 
 
 def test_exhausted_structured_retries_are_a_contract_failure():
-    res = _envelope(None, result="", subtype="error_max_structured_output_retries")
-    assert not res.ok
-    with pytest.raises(ReviewError) as exc:
+    res = _envelope(None, result="", subtype=OFF_SCHEMA)
+    assert not res.ok and res.answered, "a broken answer, not a broken lane"
+    with pytest.raises(lane_mod.SchemaRetriesExhausted) as exc:
         lane_mod.lane_output(res)
     assert exc.value.kind is FailKind.CONTRACT
-    assert "4 turns" in exc.value.message and "exit" not in exc.value.message
+    assert exc.value.message == "no schema-valid answer: after 4 turns"
+    said = (
+        "Failed to provide valid structured output after 5 attempts \u2014 last "
+        "StructuredOutput error: /candidates/0/severity must be one of the allowed values"
+    )
+    with pytest.raises(lane_mod.SchemaRetriesExhausted) as quoted:
+        lane_mod.lane_output(_envelope(None, result="", subtype=OFF_SCHEMA, errors=[said]))
+    assert quoted.value.message == f"no schema-valid answer: {said}"
+    assert not dataclasses.replace(res, timed_out=True).answered
     budget = _envelope(None, result="", subtype="error_max_budget_usd")
     with pytest.raises(ReviewError) as other:
         lane_mod.lane_output(budget)
@@ -397,7 +354,13 @@ def test_correction_turns_stay_the_fallback_for_a_schema_valid_answer(
     assert row["status"] == "corrected"
 
 
-def test_exhausted_structured_retries_fail_the_lane_as_a_contract_failure(
+def _off_schema(n: int, *, text: str = "", session=None) -> LaneResult:
+    # "exit" in Claude Code's quoted error must not make the failure look like infrastructure
+    said = f"Failed to provide valid structured output after 5 attempts: /exit_code ({n})"
+    return _envelope(None, result=text, subtype=OFF_SCHEMA, session=session, errors=[said])
+
+
+def test_an_off_schema_answer_is_corrected_in_the_lanes_own_session(
     cfg, conn, skills_dir, tmp_path, _claude_config_dir
 ):
     cfg = load_with(cfg, skills_dir, {"version": "v12", "structured_output": True})
@@ -405,18 +368,65 @@ def test_exhausted_structured_retries_fail_the_lane_as_a_contract_failure(
 
     def runner(spec, art, worktree):
         calls.append(spec)
-        return _envelope(None, result="", subtype="error_max_structured_output_retries")
+        if spec.resume:
+            return _envelope({"ok": True}, session=spec.session_id)
+        return _off_schema(1, session=spec.session_id)
+
+    ctx = _checked_ctx(cfg, conn, tmp_path, runner)
+    assert _checked(ctx) == {"ok": True}
+    first, again = calls
+    assert again.resume and again.session_id == first.session_id and again.json_schema == SCHEMA
+    assert "/exit_code (1)" in again.prompt, "told Claude Code's schema error"
+    row = conn.execute("SELECT status FROM lanes WHERE run_id=?", (ctx.run_id,)).fetchone()
+    assert row["status"] == "corrected"
+
+
+def test_an_answer_never_on_schema_fails_as_a_contract_failure(
+    cfg, conn, skills_dir, tmp_path, _claude_config_dir
+):
+    """Every turn of both attempts runs out of structured retries with nothing in its text:
+    no repair lane (nothing to repair), CONTRACT, and the error reported is the last turn's,
+    not a "resume failed"."""
+    cfg = load_with(cfg, skills_dir, {"version": "v12", "structured_output": True})
+    calls: list[LaneSpec] = []
+
+    def runner(spec, art, worktree):
+        calls.append(spec)
+        return _off_schema(len(calls), session=spec.session_id)
 
     ctx = _checked_ctx(cfg, conn, tmp_path, runner)
     with pytest.raises(worker.LaneFailed) as exc:
         _checked(ctx)
     assert exc.value.kind is FailKind.CONTRACT
-    assert len(calls) == 2 and not any(c.resume for c in calls), "retried whole, not resumed"
+    assert [c.resume for c in calls] == [False, True, True] * 2, "two corrections per attempt"
     assert not any(c.role == "repair" for c in calls)
-    reasons = [
-        r["reason"] for r in conn.execute("SELECT reason FROM lanes WHERE run_id=?", (ctx.run_id,))
-    ]
-    assert len(reasons) == 2 and all("structured output retries" in r for r in reasons)
+    failed = _events(conn, ctx.run_id, "lane.correction_failed")
+    assert len(failed) == 2 and all("(still invalid)" in e for e in failed)
+    assert "/exit_code (3)" in failed[0] and "/exit_code (6)" in failed[1]
+    assert not any("resume failed" in e for e in failed)
+    reasons = [r[0] for r in conn.execute("SELECT reason FROM lanes WHERE run_id=?", (ctx.run_id,))]
+    assert len(reasons) == 2 and all("no schema-valid answer" in r for r in reasons)
+
+
+def test_an_off_schema_answer_with_text_goes_to_the_repair_lane(
+    cfg, conn, skills_dir, tmp_path, _claude_config_dir
+):
+    cfg = load_with(cfg, skills_dir, {"version": "v12", "structured_output": True})
+    calls: list[LaneSpec] = []
+
+    def runner(spec, art, worktree):
+        calls.append(spec)
+        if spec.role == "repair":
+            return _envelope(None, result='{"ok": true}')
+        return _off_schema(len(calls), text='Here: {"ok": true', session=spec.session_id)
+
+    ctx = _checked_ctx(cfg, conn, tmp_path, runner)
+    assert _checked(ctx) == {"ok": True}
+    repair = calls[-1]
+    assert repair.role == "repair" and repair.json_schema is None
+    assert repair.prompt.endswith('Here: {"ok": true')
+    row = conn.execute("SELECT status FROM lanes WHERE run_id=?", (ctx.run_id,)).fetchone()
+    assert row["status"] == "repaired"
 
 
 # ---- the schemas ----
@@ -501,6 +511,29 @@ def test_match_pattern(match, ok):
     assert bool(re.match(schemas.MATCH_PATTERN, match)) is ok
 
 
+def test_thread_coverage_needs_every_hash_exactly_once():
+    """What the schema cannot say: a duplicate plus an omission has the right count and only
+    listed hashes, so it validates, and only this check catches it."""
+    hashes = ["0123456789ab", "ba9876543210"]
+
+    def rows(*hs):
+        return {"threads": [{"finding_hash": h, "status": "FIXED", "reply": "x"} for h in hs]}
+
+    assert schemas.check_thread_coverage(rows(*hashes), hashes) == []
+    assert schemas.check_thread_coverage(rows(hashes[0], hashes[0]), hashes) == [
+        "threads: 0123456789ab answered more than once",
+        "threads: no entry for ['ba9876543210']",
+    ]
+    assert schemas.check_thread_coverage(rows(hashes[0], "ffffffffffff"), hashes) == [
+        "threads: 'ffffffffffff' is not one of the listed finding_hash values",
+        "threads: no entry for ['ba9876543210']",
+    ]
+    assert schemas.check_thread_coverage({"threads": [None]}, []) == [
+        "threads: '' is not one of the listed finding_hash values"
+    ]
+    assert schemas.check_thread_coverage({}, hashes) == ["threads must be a list"]
+
+
 def test_narrowed_schemas_pin_the_ids_and_leave_the_base_alone():
     ids = ["p1-general-1", "p2-general-3"]
     v = schemas.verifier_schema(ids)
@@ -518,15 +551,6 @@ def test_narrowed_schemas_pin_the_ids_and_leave_the_base_alone():
 # ---- harness-stamped echo fields ----
 
 ECHO_ASK = ("Include `review_phase`", "`review_phase` must be", "`review_phase` is exactly")
-
-
-def _events(conn, rid, kind):
-    return [
-        r[0]
-        for r in conn.execute(
-            "SELECT detail FROM events WHERE run_id=? AND kind=? ORDER BY id", (rid, kind)
-        )
-    ]
 
 
 class WithoutEcho:
@@ -600,6 +624,32 @@ def test_a_volunteered_head_sha_is_still_checked():
     assert exc.value.kind is FailKind.CONTRACT
 
 
+@pytest.mark.parametrize("placeholder", ["HEAD", "<sha>", "<head_sha>", "abc", "", "n/a"])
+def test_a_volunteered_placeholder_head_sha_is_overwritten(placeholder):
+    """A lane never asked for `head_sha` that writes one anyway is not claiming a commit
+    unless it wrote one: only a sha-shaped value is held to the head."""
+    out = parse_reviewer_output(
+        {"summary": "s", "findings": [], "head_sha": placeholder},
+        expected_phase="final",
+        head_sha=HEAD,
+        source="x",
+        prior_hashes=set(),
+        stamp_echo=True,
+    )
+    assert out.raw["head_sha"] == HEAD and out.normalized == []
+
+
+def test_v11_still_rejects_a_placeholder_head_sha():
+    with pytest.raises(ReviewError):
+        parse_reviewer_output(
+            {"summary": "s", "findings": [], "head_sha": "HEAD"},
+            expected_phase="final",
+            head_sha=HEAD,
+            source="x",
+            prior_hashes=set(),
+        )
+
+
 def test_v11_still_notes_missing_echo_fields():
     out = parse_reviewer_output(
         {"summary": "s", "findings": []},
@@ -649,7 +699,12 @@ def test_v12_repair_prompt_asks_for_no_echo_fields():
         "{x", kind="reviewer", expected_phase="final", head_sha=HEAD, prior_hashes=[]
     )
     v12 = repair_prompt(
-        "{x", kind="reviewer", expected_phase="final", head_sha=HEAD, prior_hashes=[], echo=False
+        "{x",
+        kind="reviewer",
+        expected_phase="final",
+        head_sha=HEAD,
+        prior_hashes=[],
+        stamp_echo=True,
     )
     assert "review_phase" in v11 and HEAD in v11
     assert "review_phase" not in v12 and "head_sha" not in v12 and v12.endswith("\n\n{x")

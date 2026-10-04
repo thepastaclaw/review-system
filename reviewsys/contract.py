@@ -240,9 +240,11 @@ def parse_json_object(text: str) -> dict[str, Any]:
 # thing still rejected is a head_sha naming another commit: that lane may have reviewed the
 # wrong code. Prior-finding hashes get the same treatment where exactly one prior hash fits.
 #
-# Policy v12 goes one step further (`stamp`): lanes are not asked for the echo fields at all,
-# so the harness stamps them. A missing one is expected and goes unnoted; `review_phase` is
-# set whatever came back; a `head_sha` a lane volunteers anyway is still checked as above.
+# Policy v12 goes one step further (`stamp_echo`): lanes are not asked for the echo fields at
+# all, so the harness pre-fills them before the normalization above runs. A missing one is
+# expected and goes unnoted, and so does any `review_phase` or a non-sha `head_sha` ("HEAD",
+# "<sha>") a lane volunteers. A volunteered value that looks like a sha is still checked as
+# above, since it says which code the lane read.
 
 
 def _expand(value: str, full: set[str]) -> str | None:
@@ -329,14 +331,15 @@ def _normalize_prior_hashes(out: dict[str, Any], prior: set[str], notes: list[st
         out["findings"] = [_full_hash(f, prior, notes, "carried finding") for f in findings]
 
 
-def _stamp_echo(out: dict[str, Any], expected_phase: str, head_sha: str, notes: list[str]) -> None:
-    """Policy v12: the harness's echo fields, unnoted; `head_sha` "" for a verifier."""
+def _prefill_echo(out: dict[str, Any], expected_phase: str, head_sha: str) -> None:
+    """Policy v12: the harness's echo values, written over whatever a lane that was never
+    asked for them put there, except a `head_sha` that looks like a commit (left for
+    `_normalize_head` to check). `head_sha` "" for a verifier, which has none."""
     out["review_phase"] = expected_phase
     if not head_sha:
         return
-    if str(out.get("head_sha") or "").strip():
-        _normalize_head(out, head_sha, notes)
-    else:
+    got = str(out.get("head_sha") or "").strip().lower()
+    if len(got) < MIN_SHA_PREFIX or not _HEX_RE.fullmatch(got):
         out["head_sha"] = head_sha
 
 
@@ -346,18 +349,17 @@ def normalize_reviewer_output(
     expected_phase: str,
     head_sha: str,
     prior_hashes: set[str],
-    stamp: bool = False,
+    stamp_echo: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """A copy of `raw` with the echo fields and unambiguous prior-hash slips fixed, and one
-    note per fix (`stamp`: the echo fields stamped instead, see above). Raises (CONTRACT)
-    only for a head_sha that names another commit."""
+    note per fix (`stamp_echo`: the echo fields pre-filled first, see above). Raises
+    (CONTRACT) only for a head_sha that names another commit."""
     out = dict(raw)
     notes: list[str] = []
-    if stamp:
-        _stamp_echo(out, expected_phase, head_sha, notes)
-    else:
-        _normalize_phase(out, expected_phase, notes)
-        _normalize_head(out, head_sha, notes)
+    if stamp_echo:
+        _prefill_echo(out, expected_phase, head_sha)
+    _normalize_phase(out, expected_phase, notes)
+    _normalize_head(out, head_sha, notes)
     if prior_hashes:
         _normalize_prior_hashes(out, prior_hashes, notes)
     return out, notes
@@ -409,7 +411,7 @@ def parse_reviewer_output(
         expected_phase=expected_phase,
         head_sha=head_sha,
         prior_hashes=prior_hashes,
-        stamp=stamp_echo,
+        stamp_echo=stamp_echo,
     )
     findings_raw = raw.get("findings")
     if not isinstance(findings_raw, list):
@@ -450,9 +452,8 @@ def parse_verifier_output(
     raw = dict(raw)
     notes: list[str] = []
     if stamp_echo:
-        _stamp_echo(raw, expected_phase, "", notes)
-    else:
-        _normalize_phase(raw, expected_phase, notes)
+        _prefill_echo(raw, expected_phase, "")
+    _normalize_phase(raw, expected_phase, notes)
     if prior_hashes:
         _normalize_prior_hashes(raw, prior_hashes, notes)
     if raw.get("adjudication_complete") is not True:

@@ -15,6 +15,10 @@ Rules every schema here follows:
   is the contract, not a cap.)
 - No `additionalProperties: false`: a model that adds an unasked field would burn its
   structured-output retries on it, and the parser ignores extra fields.
+
+Nothing passes these schemas yet: the v12 finder, verifier and thread lanes do (pieces
+B1-B3). When they do, their prompts must drop the text-output rules that contradict
+answering through the StructuredOutput tool (see `prompts.RAW_JSON_CONTRACT`).
 """
 
 from __future__ import annotations
@@ -173,19 +177,42 @@ THREAD_SCHEMA: dict[str, Any] = {
 def verifier_schema(candidate_ids: list[str]) -> dict[str, Any]:
     """VERIFIER_SCHEMA with `members` held to this run's candidate ids."""
     schema = copy.deepcopy(VERIFIER_SCHEMA)
-    member = schema["properties"]["groups"]["items"]["properties"]["members"]["items"]
-    member["enum"] = list(candidate_ids)
-    member["description"] += " Exactly one of: " + " | ".join(candidate_ids) + "."
+    members = schema["properties"]["groups"]["items"]["properties"]["members"]
+    members["items"] = _one_of(tuple(candidate_ids), members["items"]["description"])
     return schema
 
 
 def thread_schema(hashes: list[str]) -> dict[str, Any]:
-    """THREAD_SCHEMA held to this run's work set: one entry per hash. Code supplies the list,
-    so a missing or invented hash fails validation before the answer is even read."""
+    """THREAD_SCHEMA held to this run's work set: as many entries as hashes, each naming one
+    of them. That bounds the count and rejects an invented hash, but JSON Schema cannot say
+    "each hash exactly once" for objects (a duplicate plus an omission still validates), so
+    the parser must also call `check_thread_coverage`."""
     schema = copy.deepcopy(THREAD_SCHEMA)
     threads = schema["properties"]["threads"]
     threads["minItems"] = threads["maxItems"] = len(hashes)
-    item = threads["items"]["properties"]["finding_hash"]
-    item["enum"] = list(hashes)
-    item["description"] += " Exactly one of: " + " | ".join(hashes) + "."
+    row = threads["items"]["properties"]
+    row["finding_hash"] = _one_of(tuple(hashes), row["finding_hash"]["description"])
     return schema
+
+
+def check_thread_coverage(answer: dict[str, Any], hashes: list[str]) -> list[str]:
+    """Every way a thread-lane answer misses the work set: a hash outside it, one answered
+    twice, one never answered. [] when each hash is answered exactly once. All problems, not
+    just the first, so one correction turn can fix them together."""
+    rows = answer.get("threads")
+    if not isinstance(rows, list):
+        return ["threads must be a list"]
+    expected = set(hashes)
+    seen: set[str] = set()
+    problems: list[str] = []
+    for row in rows:
+        h = str(row.get("finding_hash") or "") if isinstance(row, dict) else ""
+        if h not in expected:
+            problems.append(f"threads: {h!r} is not one of the listed finding_hash values")
+        elif h in seen:
+            problems.append(f"threads: {h} answered more than once")
+        seen.add(h)
+    missing = [h for h in hashes if h not in seen]
+    if missing:
+        problems.append(f"threads: no entry for {missing}")
+    return problems

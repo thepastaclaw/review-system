@@ -45,6 +45,7 @@ from .lane import (
     LaneResult,
     LaneRunner,
     LaneSpec,
+    SchemaRetriesExhausted,
     exec_deny_profile,
     isolated,
     lane_output,
@@ -149,9 +150,6 @@ class OutputCheck[T]:
     expected_phase: str = ""
     prior: list[dict[str, Any]] = field(default_factory=list)  # prior findings, as prompted
     coderabbit_ids: list[int] = field(default_factory=list)
-    # policy v12: the lane was not asked for the echo fields, so the correction turns and the
-    # repair lane do not ask for them either (`validate` stamps them)
-    stamp_echo: bool = False
 
 
 def _as_is(raw: dict[str, Any]) -> dict[str, Any]:
@@ -191,7 +189,9 @@ def _evaluate[T](turn: LaneResult, check: OutputCheck[T]) -> _Verdict:
     try:
         raw = lane_output(turn)
     except ReviewError as exc:
-        unparsed = exc.kind is FailKind.CONTRACT and turn.ok and bool(turn.result_text.strip())
+        unparsed = (
+            exc.kind is FailKind.CONTRACT and turn.answered and bool(turn.result_text.strip())
+        )
         return _Verdict(error=exc, unparsed=unparsed)
     return _validated(raw, check)
 
@@ -1039,9 +1039,9 @@ def _run_checked_lane[T](
     key = f"{role}{COMPARE_SUFFIX}" if comparison else role
     pool = lanepool.COMPARE_POOL if comparison else None
     corrections = ctx.cfg.lane_correction_turns if check.kind else 0
-    pipeline = ctx.cfg.policy.pipeline
-    json_schema = schema if pipeline is not None and pipeline.structured_output else None
+    json_schema = schema if ctx.cfg.policy.structured_output else None
     last = cause = ""
+    off_schema = False  # the last failure was Claude Code giving up on the schema
     attempt, budget = 0, 1 if comparison else 2
     while attempt < budget:
         attempt += 1
@@ -1073,7 +1073,7 @@ def _run_checked_lane[T](
                 coderabbit_ids=check.coderabbit_ids,
                 turn=len(asked),
                 turns=corrections,
-                echo=not check.stamp_echo,
+                stamp_echo=ctx.cfg.policy.stamps_echo_fields,
             )
 
         session = new_session_id() if corrections else ""
@@ -1131,8 +1131,8 @@ def _run_checked_lane[T](
             raise stopped(res.started)
         # the newest turn that finished: a correction that could not resume the session (or
         # died on its own) leaves the answer before it standing
-        basis = next((t for t in reversed(turns) if t.ok), res)
-        failed_turn = turns[-1] if res.followups and not turns[-1].ok else None
+        basis = next((t for t in reversed(turns) if t.answered), res)
+        failed_turn = turns[-1] if res.followups and not turns[-1].answered else None
         verdict = _evaluate(basis, check)
         if verdict.error is not None and stop():
             # told to stop between turns (the phase was abandoned, the run cancelled): not a
@@ -1180,6 +1180,7 @@ def _run_checked_lane[T](
         after = f" (after {len(res.followups)} correction turns)" if res.followups else ""
         row(status="failed", reason=f"{exc}{after}")
         last, cause = f"{exc}{after}", exc.message
+        off_schema = isinstance(exc, SchemaRetriesExhausted)
         # a correction turn that died on a dry pool says so as surely as a first turn would
         quota_turn, quota_exc = failed_turn or res, exc
         if failed_turn is not None:  # did not finish: lane_output names its infra error
@@ -1191,7 +1192,9 @@ def _run_checked_lane[T](
         if switched is not None:
             lm, budget = switched, attempt + 2
     raise LaneFailed(
-        FailKind.INFRA if "timed out" in last or "exit" in last else FailKind.CONTRACT,
+        FailKind.INFRA
+        if not off_schema and ("timed out" in last or "exit" in last)
+        else FailKind.CONTRACT,
         f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}",
         cause,
     )
@@ -1287,7 +1290,7 @@ def _repair[T](
             expected_phase=check.expected_phase,
             head_sha=ctx.sha,
             prior_hashes=[str(p["finding_hash"]) for p in check.prior],
-            echo=not check.stamp_echo,
+            stamp_echo=ctx.cfg.policy.stamps_echo_fields,
         ),
         cwd=ctx.worktree,
         add_dir=ctx.run_dir,
@@ -1412,7 +1415,7 @@ def _reviewer_lanes(
             prior=review_prior,
             prior_sha=review_prior_sha,
             fresh=fresh,
-            echo=not stamp,
+            stamp_echo=stamp,
         )
         for role in roles
     }
@@ -1467,11 +1470,7 @@ def _reviewer_lanes(
             )
 
         check = OutputCheck(
-            validate=validate,
-            kind="reviewer",
-            expected_phase=expected_phase,
-            prior=review_prior,
-            stamp_echo=stamp,
+            validate=validate, kind="reviewer", expected_phase=expected_phase, prior=review_prior
         )
         try:
             return _reviewer_lane(
@@ -1636,7 +1635,7 @@ def _verifier_lane(
         phase1_skipped=ctx.phase1_skipped,
         fresh_final=fresh_final,
         single_stage=ctx.single_stage,
-        echo=not stamp,
+        stamp_echo=stamp,
     )
     prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
 
@@ -1662,7 +1661,6 @@ def _verifier_lane(
             expected_phase=expected_phase,
             prior=ctx.prior,
             coderabbit_ids=ctx.coderabbit_ids,
-            stamp_echo=stamp,
         ),
     )
     lane_findings = {
@@ -3457,13 +3455,9 @@ def main(
             raise SystemExit(f"run {run_id}: audit head without an audits row")
     # every lane of this run, parallel reviewers and side lanes alike, lines up for a slot in
     # its model's machine-wide pool (lanepool.py); under policy v12 it may run isolated
-    pipeline = cfg.policy.pipeline
     ctx.lane_runner = lanepool.gated(
         sandboxed(
-            isolated(
-                lane_runner or run_claude_lane,
-                pipeline is not None and pipeline.lane_env_isolation,
-            ),
+            isolated(lane_runner or run_claude_lane, cfg.policy.isolates_lane_env),
             exec_deny_profile(cfg.lane_deny_exec),
         ),
         lambda: ctx.conn,
