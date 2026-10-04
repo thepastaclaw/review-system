@@ -1051,6 +1051,70 @@ def anchor_moved(
     return touched
 
 
+def _hunks(diff_text: str) -> list[tuple[int, int, int, int]] | None:
+    """The (old start, old count, new start, new count) of every `-U0` hunk; None when one
+    cannot be read."""
+    out: list[tuple[int, int, int, int]] = []
+    for line in diff_text.splitlines():
+        if not line.startswith("@@"):
+            continue
+        try:
+            old, new = line.split()[1:3]
+            a, _, b = old[1:].partition(",")
+            c, _, d = new[1:].partition(",")
+            out.append((int(a), int(b) if b else 1, int(c), int(d) if d else 1))
+        except (IndexError, ValueError):
+            return None
+    return out
+
+
+def _map_line(hunks: list[tuple[int, int, int, int]], line: int, *, end: bool) -> int:
+    """`line` of the old side of a diff on its new side: shifted by what the hunks before it
+    inserted and deleted; a line a hunk replaced is that hunk's new lines (their first for a
+    range's start, their last for its end)."""
+    offset = 0
+    for a, b, c, d in hunks:
+        if b == 0:  # an insertion after old line `a`
+            if a < line:
+                offset += d
+                continue
+            break
+        if a + b - 1 < line:
+            offset += d - b
+            continue
+        if a <= line:
+            return max(c, 1) if not end or d == 0 else c + d - 1
+        break
+    return line + offset
+
+
+def map_lines(
+    repo_path: Path,
+    from_sha: str,
+    to_sha: str,
+    file: str,
+    line_start: int | None,
+    line_end: int | None,
+) -> tuple[int | None, int | None] | None:
+    """`line_start..line_end` of `file` as numbered at `from_sha`, re-located at `to_sha` by
+    the diff between them (lines a hunk rewrote become that hunk's new lines). No anchor: no
+    lines either. None when git cannot tell, or the file is gone at `to_sha`."""
+    if from_sha == to_sha or not line_start:
+        return line_start, line_end
+    diff = git_diff_u0(repo_path, from_sha, to_sha, file)
+    if diff is None or "+++ /dev/null" in diff.splitlines():
+        return None
+    if not diff.strip():
+        return (line_start, line_end) if git_has(repo_path, to_sha, file) else None
+    hunks = _hunks(diff)
+    if hunks is None:
+        return None
+    return (
+        _map_line(hunks, line_start, end=False),
+        _map_line(hunks, line_end or line_start, end=True),
+    )
+
+
 def lines_changed(
     repo_path: Path,
     from_sha: str,

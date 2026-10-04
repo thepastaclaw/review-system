@@ -587,12 +587,14 @@ def wide_diff(gh: FakeGh) -> None:
 
 @pytest.fixture
 def git(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """`worker._lines_changed` answered by `v12_support.Git` (a sha-aware fake history)."""
+    """`worker._lines_changed` and `_map_lines` answered by `v12_support.Git` (a sha-aware fake
+    history)."""
     from reviewsys import worker
     from tests.v12_support import Git
 
     g = Git()
     monkeypatch.setattr(worker, "_lines_changed", g)
+    monkeypatch.setattr(worker, "_map_lines", g.map)
     return g
 
 

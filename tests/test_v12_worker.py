@@ -450,3 +450,72 @@ def test_an_issue_git_cannot_place_waits_for_a_reply(cfg, skills_dir, conn, gh, 
     run_round(v12, conn, gh, lanes, B)
     judged = [i for k, _, i in lanes.v12_calls if k == "thread"]
     assert judged == [[anchorless]]  # the first round's reconcile handed it over, once
+
+
+def test_an_outdated_issue_is_revived_only_by_its_rewritten_lines(cfg, conn, tmp_path):
+    """Its lines were rewritten before it closed (OUTDATED at b): a later edit elsewhere in the
+    file revives nothing; an edit to the rewritten lines, where they sit at b, does; and when
+    git cannot place them, nothing is revived."""
+    from tests.test_v12_rules import issue
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    commit = _git_repo(repo)
+    base = [f"line {n}" for n in range(1, 101)]
+    a = commit(base)
+    rewritten = [*base[:10], "new 1", "new 2", "new 3", *base[12:]]  # 11-12 become 11-13
+    b = commit(rewritten)
+    elsewhere = list(rewritten)
+    elsewhere[80] = "changed: far from it"
+    c1 = commit(elsewhere)
+    commit(rewritten)
+    own = list(rewritten)
+    own[12] = "changed: its rewritten code"  # line 13 at b
+    c2 = commit(own)
+    o = issue(
+        "a" * 12,
+        "outdated",
+        line_start=11,
+        line_end=12,
+        anchor_sha=a,
+        opened_sha=a,
+        last_seen_sha=a,
+        closed_sha=b,
+    )
+    ctx = worker.RunContext(
+        cfg=cfg,
+        main_conn=conn,
+        gh=None,
+        run_id=1,
+        head_id=1,
+        repo=REPO,
+        number=1,
+        sha=c1,
+        token="t",
+        run_dir=tmp_path,
+        worktree=repo,
+    )
+    assert worker._closed_changed(ctx, o) is False
+    # what anchor_moved(since=closed) said: the anchor changed (before closing) + the file
+    # changed since closing, so any later edit in the file revived it
+    from reviewsys import ledger as ledger_mod
+
+    def changed(x, y, file, ls, le):
+        return ledger_mod.lines_changed(repo, x, y, file, ls, le)
+
+    assert ledger_mod.anchor_moved(o, c1, changed, since=b) is True
+    ctx.sha = c2
+    assert worker._closed_changed(ctx, o) is True
+    ctx.sha = "f" * 40  # a commit the mirror does not have
+    assert worker._closed_changed(ctx, o) is None
+
+
+def test_lines_are_relocated_through_a_diff():
+    from reviewsys import ledger as ledger_mod
+
+    hunks = [(5, 0, 6, 3), (20, 2, 23, 1), (40, 1, 41, 0)]  # +3 after 5; 20-21 -> 23; 40 gone
+    m = ledger_mod._map_line
+    assert [m(hunks, n, end=False) for n in (3, 5, 6, 19)] == [3, 5, 9, 22]
+    assert (m(hunks, 20, end=False), m(hunks, 21, end=True)) == (23, 23)  # rewritten
+    assert m(hunks, 30, end=False) == 32  # +3 -1
+    assert m(hunks, 40, end=False) == 41 and m(hunks, 50, end=False) == 51

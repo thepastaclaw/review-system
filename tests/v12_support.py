@@ -66,6 +66,12 @@ class Git:
         assert at in self.history, at
         self.changes.add((at, file, line))
 
+    def map(self, ctx, a: str, b: str, file: str, ls: int | None, le: int | None):
+        """`worker._map_lines`: lines never move in this history (None for an unknown sha)."""
+        if self.unknown or a not in self.history or b not in self.history:
+            return None
+        return ls, le
+
     def __call__(self, ctx, a: str, b: str, file: str, ls: int | None, le: int | None):
         self.asked.append((a, b, file, ls))
         if self.unknown or a not in self.history or b not in self.history:

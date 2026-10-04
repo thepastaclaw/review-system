@@ -1095,16 +1095,31 @@ def _issue_moved(ctx: RunContext, i: ledger.Issue) -> bool | None:
     )
 
 
+def _map_lines(
+    ctx: RunContext, from_sha: str, to_sha: str, file: str, ls: int | None, le: int | None
+) -> tuple[int | None, int | None] | None:
+    """`ledger.map_lines` in this run's worktree; None when git cannot tell."""
+    if ctx.worktree is None or not file:
+        return None
+    return ledger.map_lines(ctx.worktree, from_sha, to_sha, file, ls, le)
+
+
 def _closed_changed(ctx: RunContext, i: ledger.Issue) -> bool | None:
-    """Whether the code at a settled issue's anchor changed since it was closed (the revival
-    rule): its lines changed from the commit they are numbered in (`anchor_sha`), and its file
-    changed since the commit it was closed at."""
-    return ledger.anchor_moved(
-        i,
-        ctx.sha,
-        lambda a, b, file, ls, le: _lines_changed(ctx, a, b, file, ls, le),
-        since=i.closed_sha or i.last_seen_sha,
-    )
+    """Whether the code at a settled issue changed since it was closed (the revival rule):
+    its anchored lines, re-located at the commit it was closed at (`_map_lines`: the anchor is
+    numbered in `anchor_sha`, and a typical OUTDATED issue's lines were rewritten before it
+    closed), changed between that commit and this head. Not some other edit in the file. None
+    when git cannot tell, which never revives anything."""
+    since = i.closed_sha or i.last_seen_sha
+    anchor = i.anchor_sha or i.opened_sha
+    if not since or not anchor:
+        return None
+    if since == ctx.sha:
+        return False
+    lines = _map_lines(ctx, anchor, since, i.file, i.line_start, i.line_end)
+    if lines is None:
+        return None
+    return _lines_changed(ctx, since, ctx.sha, i.file, *lines)
 
 
 def _issue_url(ctx: RunContext, i: ledger.Issue) -> str:
