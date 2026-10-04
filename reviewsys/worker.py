@@ -249,8 +249,11 @@ class RunContext:
     reviewers: list[dict[str, Any]] = field(default_factory=list)
     lane_runner: LaneRunner = run_claude_lane
     dry_run: bool = False
-    # `reviewsys replay` only: run Phase 2 whatever the gate decides (the decision is still
-    # recorded), and review from this merge base instead of one with the base branch as of now
+    # `reviewsys replay` only: `replay` (its gh is pinned and refuses writes, so the dry-run
+    # shortcuts that stand in for GitHub reads are not taken), run Phase 2 whatever the gate
+    # decides (the decision is still recorded), and review from this merge base instead of
+    # one with the base branch as of now
+    replay: bool = False
     force_phase2: bool = False
     coverage_base: str | None = None
     cancel_flag: threading.Event = field(default_factory=threading.Event)
@@ -1863,7 +1866,7 @@ def _verdict_update(
     Compares against the bot's LATEST review state for this (sha, phase), which includes
     earlier follow-ups, so the same correction is never posted twice. A review a maintainer
     dismissed is left dismissed: we only ever move from a state we set ourselves."""
-    if ctx.dry_run:
+    if ctx.dry_run and not ctx.replay:
         return None
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
@@ -1924,7 +1927,11 @@ def _verdict_update(
         previous_event=state,
         lifted_blockers=titles,
         bot_login=ctx.cfg.bot_login,
+        dry_run=ctx.dry_run,
     )
+    if not result.posted:
+        _record_dry_publication(ctx, phase, result, verified.findings, verdict_update=True)
+        return result
     with tx(ctx.conn):
         ctx.conn.execute(
             "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -2182,6 +2189,37 @@ def _triage_provenance(ctx: RunContext) -> dict[str, Any] | None:
     }
 
 
+def _finding_record(f: Finding) -> dict[str, Any]:
+    return {**f.to_dict(), "hash": f.hash}
+
+
+def _record_dry_publication(
+    ctx: RunContext,
+    phase: str,
+    result: publish.PublishResult,
+    kept: list[Finding],
+    *,
+    verdict_update: bool = False,
+) -> None:
+    """A dry run posts nothing and writes no `posted` rows: keep what would have been posted
+    as `publication-<phase>.json` (read by `reviewsys replay`'s report). A same-sha verdict
+    follow-up stands on the verifier's findings (`verdict_update`)."""
+    (ctx.run_dir / f"publication-{phase}.json").write_text(
+        json.dumps(
+            {
+                "phase": phase,
+                "event": result.event,
+                "transport_event": result.transport_event,
+                "verdict_update": verdict_update,
+                "kept": [_finding_record(f) for f in kept],
+                "suppressed": len(result.suppressed),
+                "body": result.body,
+            },
+            indent=1,
+        )
+    )
+
+
 def _record_publication(
     ctx: RunContext,
     phase: str,
@@ -2190,21 +2228,7 @@ def _record_publication(
     verified: VerifierOutput,
 ) -> None:
     if ctx.dry_run:
-        # nothing reaches GitHub or `posted` rows: keep what would have been posted (read by
-        # `reviewsys replay`'s report)
-        (ctx.run_dir / f"publication-{phase}.json").write_text(
-            json.dumps(
-                {
-                    "phase": phase,
-                    "event": result.event,
-                    "transport_event": result.transport_event,
-                    "kept": [{**f.to_dict(), "hash": f.hash} for f in model.kept],
-                    "suppressed": len(result.suppressed),
-                    "body": result.body,
-                },
-                indent=1,
-            )
-        )
+        _record_dry_publication(ctx, phase, result, model.kept)
     with tx(ctx.conn):
         if result.posted:
             ctx.conn.execute(
@@ -3219,7 +3243,7 @@ def _record_gate_would_publish(ctx: RunContext, *, gate_deferred: bool) -> None:
         "phase": "preliminary",
         "gate_deferred": gate_deferred,
         "blockers": ctx.verify1.blocker_count,
-        "findings": [{**f.to_dict(), "hash": f.hash} for f in ctx.verify1.findings],
+        "findings": [_finding_record(f) for f in ctx.verify1.findings],
     }
     try:
         model = _build_review(
@@ -3232,7 +3256,7 @@ def _record_gate_would_publish(ctx: RunContext, *, gate_deferred: bool) -> None:
         )
         out.update(
             event=model.canonical_event,
-            kept=[{**f.to_dict(), "hash": f.hash} for f in model.kept],
+            kept=[_finding_record(f) for f in model.kept],
             body=publish.render(model),
         )
     except ReviewError as exc:  # evidence for the eval only, never the run's problem
@@ -3286,7 +3310,7 @@ def _final_review(ctx: RunContext, effort: TierEffort) -> RunStatus:
 
 def _final_review_stands(ctx: RunContext) -> bool:
     """A final review for this exact head is already on the PR (a same-sha re-review)."""
-    if ctx.dry_run:
+    if ctx.dry_run and not ctx.replay:
         return False
     try:
         return (
@@ -3465,6 +3489,7 @@ def main(
     heartbeat: bool = True,
     quota_reader: quota.QuotaReader | None = None,
     prober: Prober | None = None,
+    replay: bool = False,
     force_phase2: bool = False,
     coverage_base: str | None = None,
 ) -> RunStatus:
@@ -3489,6 +3514,7 @@ def main(
         run_dir=cfg.runs_dir / f"run-{run_id}",
         trigger=str(row["trigger"] or ""),
         dry_run=dry_run,
+        replay=replay,
         force_phase2=force_phase2,
         coverage_base=coverage_base,
     )
