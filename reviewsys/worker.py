@@ -249,6 +249,10 @@ class RunContext:
     reviewers: list[dict[str, Any]] = field(default_factory=list)
     lane_runner: LaneRunner = run_claude_lane
     dry_run: bool = False
+    # `reviewsys replay` only: run Phase 2 whatever the gate decides (the decision is still
+    # recorded), and review from this merge base instead of one with the base branch as of now
+    force_phase2: bool = False
+    coverage_base: str | None = None
     cancel_flag: threading.Event = field(default_factory=threading.Event)
     # the reviewer lanes of a phase run in parallel threads: this guards the run-wide
     # decisions they can race on (falling down the Phase-1 ladder, flipping to degraded)
@@ -684,7 +688,9 @@ def step_worktree(ctx: RunContext) -> None:
     # leaves the comment to the newer head's writer): the checkout shows as the running step
     _gate_comment(ctx, "in_progress")
     ctx.worktree = _checkout_head(ctx)
-    base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
+    base = ctx.coverage_base or (
+        wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
+    )
     ctx.coverage_from = base or f"{ctx.sha}~1"
     _record_worktree(ctx)
 
@@ -1768,6 +1774,7 @@ def step_publish(
             dry_run=ctx.dry_run,
             force_comment=True,
         )
+        (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
         _record_publication(ctx, phase, model, result, verified)
         return result
     model = _build_review(
@@ -2182,6 +2189,22 @@ def _record_publication(
     result: publish.PublishResult,
     verified: VerifierOutput,
 ) -> None:
+    if ctx.dry_run:
+        # nothing reaches GitHub or `posted` rows: keep what would have been posted (read by
+        # `reviewsys replay`'s report)
+        (ctx.run_dir / f"publication-{phase}.json").write_text(
+            json.dumps(
+                {
+                    "phase": phase,
+                    "event": result.event,
+                    "transport_event": result.transport_event,
+                    "kept": [{**f.to_dict(), "hash": f.hash} for f in model.kept],
+                    "suppressed": len(result.suppressed),
+                    "body": result.body,
+                },
+                indent=1,
+            )
+        )
     with tx(ctx.conn):
         if result.posted:
             ctx.conn.execute(
@@ -3141,6 +3164,7 @@ def run(ctx: RunContext) -> RunStatus:
         # nobody will push a fix and re-run the gate on a merged PR: an audit needs the
         # complete finding set, so Phase 2 runs whether or not Phase 1 found blockers
         admit = pol.phase2_enabled and tier_allows
+    forced = ctx.force_phase2 and blocks and not admit and not ctx.is_audit
     _step_end(
         ctx,
         StepName.GATE,
@@ -3151,8 +3175,12 @@ def run(ctx: RunContext) -> RunStatus:
             "phase2_effort": effort.phase2,
             "blockers": ctx.verify1.blocker_count,
             **gate_score(ctx.verify1, pol.phase1_gate),
+            **({"forced_phase2": True} if forced else {}),
         },
     )
+    if forced:
+        _record_gate_would_publish(ctx, gate_deferred=not ctx.verify1.blocker_count)
+        return _phase2_only(ctx, effort)
     if not admit:
         ctx.check_cancel()
         verifier1 = ctx.lane_model(pol.phase1_verifier)
@@ -3180,6 +3208,45 @@ def run(ctx: RunContext) -> RunStatus:
             )
         return RunStatus.DONE
     return _phase2_only(ctx, effort)
+
+
+def _record_gate_would_publish(ctx: RunContext, *, gate_deferred: bool) -> None:
+    """A replay forcing Phase 2 past the gate (`force_phase2`): write the preliminary review
+    the gate would have published instead (`gate-would-publish.json`), so the eval can score
+    both what the gate published and what the whole pipeline finds."""
+    assert ctx.verify1 is not None
+    out: dict[str, Any] = {
+        "phase": "preliminary",
+        "gate_deferred": gate_deferred,
+        "blockers": ctx.verify1.blocker_count,
+        "findings": [{**f.to_dict(), "hash": f.hash} for f in ctx.verify1.findings],
+    }
+    try:
+        model = _build_review(
+            ctx,
+            phase="preliminary",
+            verified=ctx.verify1,
+            verifier_lm=ctx.lane_model(ctx.cfg.policy.phase1_verifier),
+            phase2_skipped=PHASE2_DEFERRED if gate_deferred else None,
+            rereview=ctx.has_prior_review,
+        )
+        out.update(
+            event=model.canonical_event,
+            kept=[{**f.to_dict(), "hash": f.hash} for f in model.kept],
+            body=publish.render(model),
+        )
+    except ReviewError as exc:  # evidence for the eval only, never the run's problem
+        out["error"] = exc.message
+    (ctx.run_dir / "gate-would-publish.json").write_text(json.dumps(out, indent=1))
+    with tx(ctx.conn):
+        event(
+            ctx.conn,
+            "replay.phase2_forced",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"gate held Phase 2 ({ctx.verify1.blocker_count} blockers); running it anyway",
+        )
 
 
 def _phase2_only(ctx: RunContext, effort: TierEffort) -> RunStatus:
@@ -3398,6 +3465,8 @@ def main(
     heartbeat: bool = True,
     quota_reader: quota.QuotaReader | None = None,
     prober: Prober | None = None,
+    force_phase2: bool = False,
+    coverage_base: str | None = None,
 ) -> RunStatus:
     row = conn.execute(
         "SELECT r.*, h.repo, h.number, h.sha, h.trigger, h.queue, h.priority FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
@@ -3420,6 +3489,8 @@ def main(
         run_dir=cfg.runs_dir / f"run-{run_id}",
         trigger=str(row["trigger"] or ""),
         dry_run=dry_run,
+        force_phase2=force_phase2,
+        coverage_base=coverage_base,
     )
     if row["queue"] == "audit":
         ctx.audit = audit.load(conn, ctx.head_id)
