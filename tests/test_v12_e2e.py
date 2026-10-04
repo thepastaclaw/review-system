@@ -22,6 +22,7 @@ from tests.v12_support import (
     refuted,
     reply,
     resolve,
+    resolve_with_answers,
     run_round,
     v12_cfg,
 )
@@ -347,3 +348,100 @@ def test_a_new_issue_folded_onto_a_closed_thread_reopens_that_issue(v12, conn, g
     lanes.candidates["general"] = []
     run_round(v12, conn, gh, lanes, "e" * 40)
     assert "Still open from earlier rounds (1)" in gh.posted_reviews[before]["body"]
+
+
+def _withdrawn_blocker(v12, conn, gh, lanes):
+    """Round 1 (A) raises a blocker on line 11; round 2 (B) a maintainer argues it away, the
+    thread lane withdraws it, and the bot resolves its thread. Returns (hash, root id)."""
+    lanes.verify12 = confirm_matches
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
+    reply(gh, ids[fee], "The caller adds the drainage cost.", rid=909)
+    lanes.thread_out[fee] = {"status": "WITHDRAWN", "reply": "Right, the caller adds it."}
+    lanes.candidates["general"] = []
+    run_round(v12, conn, gh, lanes, B)
+    resolve_with_answers(gh, ids[fee])
+    lanes.thread_out = {}
+    assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
+    return fee, ids[fee]
+
+
+def test_a_reworded_refind_of_a_withdrawn_issue_on_unchanged_code_does_not_block(
+    v12, conn, gh, lanes, git
+):
+    """The reviewer's probe: a finder repeats a withdrawn blocker under a reworded title on
+    lines nobody touched, and publish-time dedupe would fold it onto the withdrawn thread. It
+    is dropped like a `settled:` match on unchanged code: no block, the issue stays withdrawn,
+    and the next push can approve; nothing reads as resolved by hand."""
+    _withdrawn_blocker(v12, conn, gh, lanes)
+    lanes.candidates["general"] = [cand("Fee estimate still omits the drainage cost")]
+    before = len(gh.posted_reviews)
+    rid = run_round(v12, conn, gh, lanes, "d" * 40)
+    review = gh.posted_reviews[before]
+    assert review["event"] != "REQUEST_CHANGES" and review["comments"] == []
+    assert "carried-forward" not in review["body"]
+    assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
+    (refold,) = conn.execute(
+        "SELECT detail FROM events WHERE kind='v12.settled_refold' AND run_id=?", (rid,)
+    ).fetchone()
+    assert refold.endswith(by_title(conn)["Fee estimate omits drainage"].hash)
+    lanes.candidates["general"] = []
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, "e" * 40)
+    review = gh.posted_reviews[before]
+    assert review["event"] == "APPROVE"
+    assert "resolved by hand" not in review["body"]
+    assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
+
+
+def test_a_reworded_refind_on_changed_code_revives_the_issue_on_its_own_thread(
+    v12, conn, gh, lanes, git
+):
+    _, root = _withdrawn_blocker(v12, conn, gh, lanes)
+    git.change("f.rs", 11, at="d" * 40)
+    lanes.candidates["general"] = [cand("Fee estimate still omits the drainage cost")]
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, "d" * 40)
+    review = gh.posted_reviews[before]
+    assert review["event"] == "REQUEST_CHANGES" and review["comments"] == []  # its own thread
+    issue = by_title(conn)["Fee estimate omits drainage"]
+    assert (issue.status, issue.comment_id) == ("open", root)
+    lanes.candidates["general"] = []
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, "e" * 40)
+    review = gh.posted_reviews[before]
+    assert review["event"] == "REQUEST_CHANGES"
+    assert "resolved by hand" not in review["body"]  # the bot resolved it, then it came back
+    assert by_title(conn)["Fee estimate omits drainage"].status == "open"
+
+
+def test_a_reworded_refind_of_an_issue_conceded_this_round_is_a_conflict(v12, conn, gh, lanes, git):
+    """H1 through dedupe: the thread lane withdraws a blocker while a finder, who never saw
+    the reply, repeats it under another title that dedupe folds onto its thread. The
+    concession wins: the re-find is dropped, the issue stays withdrawn, the disagreement is
+    recorded and the round does not approve."""
+    lanes.verify12 = confirm_matches
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
+    reply(gh, ids[fee], "The caller adds the drainage cost.", rid=910)
+    lanes.thread_out[fee] = {"status": "WITHDRAWN", "reply": "Right, the caller adds it."}
+    lanes.candidates["general"] = [cand("Fee estimate still omits the drainage cost")]
+    before = len(gh.posted_reviews)
+    rid = run_round(v12, conn, gh, lanes, B)
+    review = gh.posted_reviews[before]
+    assert review["event"] == "COMMENT" and review["comments"] == []
+    assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
+    (detail,) = conn.execute(
+        "SELECT detail FROM events WHERE kind='threads.conflict' AND run_id=?", (rid,)
+    ).fetchone()
+    assert json.loads(detail) == {
+        "finding_hash": fee,
+        "outcome": "WITHDRAWN",
+        "verdict": "CONFIRMED",
+    }

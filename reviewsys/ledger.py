@@ -45,6 +45,9 @@ from . import github
 from .contract import SEVERITIES, Finding
 from .db import event, kv_get, kv_set, now, tx
 from .dedupe import FINDING_MARKER_RE
+from .publish import shown_status
+
+THREAD_ANSWER_PREFIX = "<!-- thepastaclaw-thread-answer v1"
 
 log = logging.getLogger(__name__)
 
@@ -494,19 +497,36 @@ def _thread_facts(
     threads: list[dict[str, Any]], bot_login: str
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     """(open, resolved): the PR's bot finding threads by hash. A hash with any unresolved
-    thread is open; `resolved` only has hashes all of whose threads a human resolved."""
+    thread is open; `resolved` only has hashes all of whose threads a human resolved. A thread
+    whose latest bot answer retired the finding (withdrawn, fixed, no longer applies) was
+    resolved by the bot itself, never by hand: if its issue stands again later (revived on
+    changed code), that is no reason to count it as resolved."""
     open_ = github.finding_threads(threads, bot_login)
     resolved: dict[str, dict[str, Any]] = {}
     for t in threads:
         cs = t.get("comments") or []
         if not t.get("is_resolved") or not cs:
             continue
-        if not github._is_bot(cs[0], bot_login):
+        if not github._is_bot(cs[0], bot_login) or _bot_retired(cs[1:], bot_login):
             continue
         m = FINDING_MARKER_RE.search(str(cs[0].get("body") or ""))
         if m and m.group(1) not in open_:
             resolved[m.group(1)] = {"thread_id": t.get("thread_id"), "comment_id": cs[0].get("id")}
     return open_, resolved
+
+
+_RETIRING = frozenset({"WITHDRAWN", "FIXED", "OUTDATED"})
+
+
+def _bot_retired(replies: list[dict[str, Any]], bot_login: str) -> bool:
+    """The latest bot answer on a finding thread retired the finding (and resolved the
+    thread with it)."""
+    answers = [
+        str(c.get("body") or "")
+        for c in replies
+        if github._is_bot(c, bot_login) and THREAD_ANSWER_PREFIX in str(c.get("body") or "")
+    ]
+    return bool(answers) and shown_status(answers[-1]) in _RETIRING
 
 
 def sync_threads(
@@ -665,11 +685,13 @@ def attach_folded(
     comment_hash: str,
     comment_id: int | str | None,
     source: str = "verifier",
+    reopens: Callable[[Issue], bool] = lambda i: True,
 ) -> None:
     """A new issue publishing folded onto an existing finding comment (dedupe): it is that
     comment's issue now, so it can be judged and withdrawn on that thread. A standing issue is
-    affirmed (`seen`), a closed one re-opened, and one the ledger does not know yet is recorded
-    under the comment's hash and id. Caller holds the transaction."""
+    affirmed (`seen`), a closed one re-opened when `reopens` allows it (a settled one only on
+    changed code), and one the ledger does not know yet is recorded under the comment's hash
+    and id. Caller holds the transaction."""
     cid = int(comment_id) if comment_id not in (None, "") else None
     h = comment_hash
     if not h and cid is not None:
@@ -687,7 +709,7 @@ def attach_folded(
         append(conn, repo, number, [ev])
     elif cur.status in COUNTING:
         append(conn, repo, number, [_seen(h, run_id=run_id, sha=sha, source=source)])
-    else:
+    elif reopens(cur):
         transition(
             conn,
             repo,

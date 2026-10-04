@@ -208,6 +208,19 @@ def resolve(gh, root_id: int) -> None:
     ] = True
 
 
+def resolve_with_answers(gh, root_id: int, *, at: str = "2026-10-03T00:00:00Z") -> None:
+    """What GitHub shows once the bot answered and resolved a finding thread: every answer it
+    posted on that finding (`gh.replies`) under the root, and the thread resolved."""
+    t = next(t for t in gh.threads if t["comments"]["nodes"][0]["databaseId"] == root_id)
+    h = t["comments"]["nodes"][0]["body"].split("finding=", 1)[1].split()[0]
+    for n, r in enumerate(gh.replies):
+        if f"finding={h}" in r["body"]:
+            t["comments"]["nodes"].append(
+                gql({"id": 5000 + n, "author": "thepastaclaw", "body": r["body"], "created_at": at})
+            )
+    t["isResolved"] = True
+
+
 def issues(conn) -> dict[str, ledger.Issue]:
     return ledger.load(conn, REPO, 1)
 

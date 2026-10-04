@@ -55,6 +55,7 @@ from .contract import (
     parse_verifier_output,
 )
 from .db import connect_existing, event, fmt_ts, kv_get, kv_set, now, now_dt, tx
+from .dedupe import ExistingComment, find_duplicate
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
@@ -4639,13 +4640,19 @@ def _resolve_conflicts(ctx: RunContext, verified: VerifierOutput) -> None:
         for h in outcome.corroborated
         if h in outs and outs[h].status in converse.LIFTING_STATUSES
     }
+    for h in conflicts:
+        outcome.upgrades.pop(h, None)
+    _record_conflicts(ctx, list(conflicts.values()))
+
+
+def _record_conflicts(ctx: RunContext, conflicts: list[dict[str, Any]]) -> None:
+    """Concessions this round that a finder contradicted (`threads.conflict`, for the eval):
+    the round cannot approve."""
     if not conflicts:
         return
     ctx.thread_conflict = True
-    for h in conflicts:
-        outcome.upgrades.pop(h, None)
     with tx(ctx.conn):
-        for c in conflicts.values():
+        for c in conflicts:
             event(
                 ctx.conn,
                 "threads.conflict",
@@ -4654,6 +4661,61 @@ def _resolve_conflicts(ctx: RunContext, verified: VerifierOutput) -> None:
                 run_id=ctx.run_id,
                 detail=json.dumps(c),
             )
+
+
+def _drop_settled_refolds(ctx: RunContext, verified: VerifierOutput) -> None:
+    """A new issue that publish-time dedupe would fold onto a settled issue's thread (the
+    verifier saw a new title; dedupe sees the same lines and a similar title) is that issue
+    raised again, so it gets the rule `rules.apply_rules` gives a `settled:` match: dropped
+    unless the code at it changed since it was settled (`_closed_changed`). One conceded on its
+    thread this very round is settled too, and the re-find is a conflict (H1: the concession
+    wins). Runs before the verdict, so a dropped one blocks nothing."""
+    if not verified.findings:
+        return
+    records = [
+        ExistingComment.from_github(c)
+        for c in github.inline_comments(ctx.gh, ctx.repo, ctx.number)
+        if (c.get("user") or {}).get("login") == ctx.cfg.bot_login
+    ]
+    if not records:
+        return
+    fresh = _fresh_threads(ctx)
+    outs = _thread_outcomes(ctx)
+    by_comment = {str(i.comment_id): i for i in ctx.issues.values() if i.comment_id}
+    keep: list[Finding] = []
+    conflicts: list[dict[str, Any]] = []
+    for f in verified.findings:
+        candidates = records if fresh is None else [r for r in records if not fresh(f, r)]
+        match, _ = find_duplicate(f, candidates)
+        issue = (ctx.issues.get(match.finding_hash) or by_comment.get(match.id)) if match else None
+        o = outs.get(issue.hash) if issue is not None else None
+        conceded = o is not None and o.status in converse.LIFTING_STATUSES
+        settled = issue is not None and issue.status in rules.MATCH_SETTLED
+        if issue is None or not (conceded or settled):
+            keep.append(f)
+            continue
+        if conceded:
+            conflicts.append(
+                {
+                    "finding_hash": issue.hash,
+                    "outcome": outs[issue.hash].status,
+                    "verdict": str(f.extra.get("verdict") or ""),
+                }
+            )
+        elif _closed_changed(ctx, issue) is True:
+            keep.append(f)  # revived: publishing folds it onto its own thread, re-opening it
+            continue
+        verified.dropped.append(
+            {
+                "original_title": f.title,
+                "members": f.extra.get("members") or [],
+                "reason": f"SETTLED: restates {issue.status if settled else 'conceded'} issue "
+                f"{issue.hash} on its thread; the code at it has not changed since",
+            }
+        )
+        _lane_event(ctx, "v12.settled_refold", f"{f.title[:200]} -> {issue.hash}")
+    verified.findings = keep
+    _record_conflicts(ctx, conflicts)
 
 
 def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
@@ -4718,6 +4780,7 @@ def _publish12(
     the carried ones under "Still open from earlier rounds" (never re-posted)."""
     _require_live_base(ctx)
     before = dict(ctx.issues)
+    _drop_settled_refolds(ctx, verified)
     _apply_budget(ctx, verified)
     _resolve_conflicts(ctx, verified)
     lifted = _apply_thread_outcomes(ctx, verified, phase)
@@ -4808,6 +4871,10 @@ def _record_folds(ctx: RunContext, model: publish.ReviewModel) -> None:
     if not folds:
         return
 
+    def reopens(i: ledger.Issue) -> bool:
+        # a settled issue only comes back on code that changed since (as `settled:` does)
+        return i.status not in rules.MATCH_SETTLED or _closed_changed(ctx, i) is True
+
     def record(c: sqlite3.Connection) -> None:
         for s in folds:
             ledger.attach_folded(
@@ -4819,6 +4886,7 @@ def _record_folds(ctx: RunContext, model: publish.ReviewModel) -> None:
                 finding=s.finding,
                 comment_hash=s.comment_hash,
                 comment_id=s.comment_id,
+                reopens=reopens,
             )
 
     _ledger_write(ctx, "folds", record)
