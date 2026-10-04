@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -123,6 +123,35 @@ MIGRATIONS: dict[int, str] = {
     UPDATE runs SET path=(SELECT CASE WHEN h.queue='audit' THEN 'audit'
         WHEN h.priority<>0 THEN 'priority' ELSE 'normal' END
         FROM heads h WHERE h.id=runs.head_id AND h.queued_at<=runs.started_at);
+    """,
+    # the issue ledger (ledger.py): one row per issue the bot raised on a PR, keyed by its
+    # `finding_hash` (byte-compatible with the markers on GitHub), and the event history it is
+    # folded from. `issue_events.key` names the fact an event records (`posted:<run>:<hash>`,
+    # ...): the backfill and the live write-through derive the same key for the same fact, so
+    # either can run first and neither duplicates the other. Only additive statements: the old
+    # code keeps working against this schema (it never names these tables or the new column).
+    # `findings.candidate_id` is the harness-assigned candidate id of v12 finder lanes.
+    6: """
+    CREATE TABLE IF NOT EXISTS issues (
+        repo TEXT NOT NULL, number INTEGER NOT NULL, hash TEXT NOT NULL,
+        file TEXT NOT NULL DEFAULT '', line_start INTEGER, line_end INTEGER, anchor_sha TEXT,
+        severity TEXT NOT NULL, category TEXT NOT NULL DEFAULT 'general',
+        title TEXT NOT NULL, body TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL, status_sha TEXT, status_source TEXT NOT NULL,
+        opened_run INTEGER, opened_sha TEXT, last_seen_run INTEGER, last_seen_sha TEXT,
+        closed_sha TEXT, closed_reason TEXT, thread_id TEXT, comment_id INTEGER,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (repo, number, hash));
+    CREATE INDEX IF NOT EXISTS issues_status ON issues (status);
+    CREATE TABLE IF NOT EXISTS issue_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
+        repo TEXT NOT NULL, number INTEGER NOT NULL, hash TEXT NOT NULL, key TEXT NOT NULL,
+        kind TEXT NOT NULL, run_id INTEGER, sha TEXT, source TEXT NOT NULL,
+        from_status TEXT, to_status TEXT, detail TEXT NOT NULL DEFAULT '{}',
+        UNIQUE (repo, number, key));
+    CREATE INDEX IF NOT EXISTS issue_events_issue ON issue_events (repo, number, hash);
+    CREATE INDEX IF NOT EXISTS issue_events_run ON issue_events (run_id);
+    ALTER TABLE findings ADD COLUMN candidate_id TEXT;
     """,
 }
 
