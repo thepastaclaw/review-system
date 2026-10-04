@@ -304,6 +304,11 @@ class ModelPolicy:
         return self.pipeline is not None and self.pipeline.verifier.contract == "v12"
 
     @property
+    def confirmation_trigger(self) -> str:
+        """When policy v12's confirmation pass runs ("off" without a pipeline block)."""
+        return self.pipeline.confirmation.trigger if self.pipeline is not None else "off"
+
+    @property
     def has_phase1_ladder(self) -> bool:
         """More than one rung, so which one ran is worth recording and disclosing."""
         return len(self.phase1_candidates) > 1

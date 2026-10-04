@@ -2742,28 +2742,8 @@ def step_publish(
             verifier_lm=verifier_lm,
             phase2_skipped=phase2_skipped,
         )
-    # The review may have taken long enough for a push to land after the initial
-    # worktree check. Never publish an approval (or any verdict) against an
-    # obsolete head; the run ends superseded (HeadObsolete) and ingest queues the
-    # live commit.
-    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
-    _require_live(ctx, live)
-    if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
-        raise ReviewError(
-            FailKind.FATAL,
-            f"live base {live.base_sha[:8]} != assigned {ctx.base_sha[:8]}",
-        )
-    existing = github.existing_review_for_sha(
-        ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
-    )
-    if existing is None and phase == "preliminary":
-        # a same-sha re-review that now finds blockers after a FINAL review stood: correct the
-        # final verdict with a follow-up rather than stacking a second full review
-        existing = github.existing_review_for_sha(
-            ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
-        )
-        if existing:
-            phase = "final"
+    _require_live_base(ctx)
+    existing, phase = _existing_review(ctx, phase)
     if existing:
         # Either a prior attempt posted but died before recording it, or this is a reply-
         # triggered re-review of an already-reviewed commit. Backfill so future rounds still
@@ -2775,14 +2755,76 @@ def step_publish(
         update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
         if update is not None:
             return update
-        model = _build_review(
+        return _publish_review(
             ctx,
             phase=phase,
             verified=verified,
             verifier_lm=verifier_lm,
             phase2_skipped=phase2_skipped,
             rereview=True,
+        )[1]
+    result = _publish_review(
+        ctx,
+        phase=phase,
+        verified=verified,
+        verifier_lm=verifier_lm,
+        phase2_skipped=phase2_skipped,
+        rereview=False,
+    )[1]
+    _answer_threads(ctx, phase, verified)
+    return result
+
+
+def _require_live_base(ctx: RunContext) -> None:
+    """The review may have taken long enough for a push to land after the initial worktree
+    check. Never publish an approval (or any verdict) against an obsolete head; the run ends
+    superseded (HeadObsolete) and ingest queues the live commit. A moved base is fatal."""
+    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
+    _require_live(ctx, live)
+    if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
+        raise ReviewError(
+            FailKind.FATAL,
+            f"live base {live.base_sha[:8]} != assigned {ctx.base_sha[:8]}",
         )
+
+
+def _existing_review(ctx: RunContext, phase: str) -> tuple[dict[str, Any] | None, str]:
+    """The bot's review of this commit and `phase` already on the PR, and the phase it is: a
+    same-sha re-review that now finds blockers after a FINAL review stood corrects the final
+    verdict with a follow-up rather than stacking a second full review."""
+    existing = github.existing_review_for_sha(
+        ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
+    )
+    if existing is None and phase == "preliminary":
+        existing = github.existing_review_for_sha(
+            ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
+        )
+        if existing:
+            phase = "final"
+    return existing, phase
+
+
+def _publish_review(
+    ctx: RunContext,
+    *,
+    phase: str,
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+    phase2_skipped: str | None,
+    rereview: bool,
+) -> tuple[publish.ReviewModel, publish.PublishResult]:
+    """Build, post and record the review. `rereview`: a same-sha re-review whose review
+    already stands, posted as an informational COMMENT; otherwise the review proper, with its
+    CodeRabbit reactions. Either way its body is kept as `review-<phase>.md`."""
+    model = _build_review(
+        ctx,
+        phase=phase,
+        verified=verified,
+        verifier_lm=verifier_lm,
+        phase2_skipped=phase2_skipped,
+        rereview=rereview or ctx.has_prior_review,
+    )
+    if rereview:
         result = publish.publish(
             ctx.gh,
             model,
@@ -2792,15 +2834,7 @@ def step_publish(
         )
         (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
         _record_publication(ctx, phase, model, result, verified)
-        return result
-    model = _build_review(
-        ctx,
-        phase=phase,
-        verified=verified,
-        verifier_lm=verifier_lm,
-        phase2_skipped=phase2_skipped,
-        rereview=ctx.has_prior_review,
-    )
+        return model, result
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
     result = publish.publish(
         ctx.gh,
@@ -2813,8 +2847,7 @@ def step_publish(
         publish.post_coderabbit_reactions(
             ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
         )
-    _answer_threads(ctx, phase, verified)
-    return result
+    return model, result
 
 
 def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
@@ -4052,6 +4085,33 @@ def _open_blockers(ctx: RunContext, phase: str, *, lifted: set[str] | None = Non
     return _standing_findings(ctx, phase, lifted=lifted).blockers
 
 
+def _strength_row(ctx: RunContext, run_id: int) -> sqlite3.Row | None:
+    """What makes a run's review strong enough to carry an approval: degraded mode, its Phase
+    2 and second-pass steps, whether it was a later round, and (policy v12) dropped verifier
+    shards and why its confirmation pass did not run."""
+    row: sqlite3.Row | None = ctx.conn.execute(
+        "SELECT r.degraded, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh_phase2, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh_verify2, "
+        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later, "
+        "EXISTS (SELECT 1 FROM events WHERE run_id=r.id AND kind='verify.shard_dropped') "
+        "AS dropped, "
+        "(SELECT kind || ':' || detail FROM events WHERE run_id=r.id AND kind IN "
+        "('confirmation.skipped', 'confirmation.failed') ORDER BY id DESC LIMIT 1) AS skipped "
+        "FROM runs r WHERE r.id=?",
+        (
+            StepName.PHASE2.value,
+            StepName.FRESH_PHASE2.value,
+            StepName.FRESH_VERIFY2.value,
+            ctx.repo,
+            ctx.number,
+            run_id,
+        ),
+    ).fetchone()
+    return row
+
+
 def _review_strength(ctx: RunContext, run_id: int | None) -> str:
     """Whether the run that published a commit's standing review is one an APPROVE may rest
     on, by the pipeline's own bar: Phase 2 completed on the primary models (`verdict_event`),
@@ -4059,17 +4119,10 @@ def _review_strength(ctx: RunContext, run_id: int | None) -> str:
     which skips it while blockers stand). "ok", "needs_fresh" or "weak"."""
     if run_id is None:
         return "weak"
-    row = ctx.conn.execute(
-        "SELECT r.degraded, "
-        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2, "
-        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh, "
-        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later "
-        "FROM runs r WHERE r.id=?",
-        (StepName.PHASE2.value, StepName.FRESH_PHASE2.value, ctx.repo, ctx.number, run_id),
-    ).fetchone()
+    row = _strength_row(ctx, run_id)
     if not row or row["degraded"] or row["phase2"] != "ok":
         return "weak"
-    return "needs_fresh" if row["later"] and row["fresh"] != "ok" else "ok"
+    return "needs_fresh" if row["later"] and row["fresh_phase2"] != "ok" else "ok"
 
 
 def _request_fresh_audit(ctx: RunContext) -> bool:
@@ -4110,35 +4163,14 @@ def _conversation_verdict_update(
     move."""
     if standing.blockers or not lifted:
         return None
-    # the lane ran for minutes: a push or a dismissal since then must not get an approval
-    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
-    state = publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login)
-    if state not in {"CHANGES_REQUESTED", "COMMENTED"}:
-        return None  # approved already, or dismissed: a human overrode us; do not re-assert
+    state = _live_verdict_state(ctx, phase)
+    if state is None:
+        return None
     left = sum(1 for sev in standing.findings.values() if sev != "nitpick")
     strength = _review_strength(ctx, standing.run_id)
     clear = standing.verified and standing.lifted_any and not left
-    prov = publish.Provenance(
-        reviewers=[],
-        verifier=_lane_provenance(lm, "conversation"),
-        policy_fingerprint=ctx.cfg.policy.fingerprint,
-        adhoc=ctx.adhoc,
-        conversation=True,
-        degraded=_degraded_provenance(ctx),
-    )
-    verified = VerifierOutput(
-        summary="",
-        review_action="APPROVE" if clear and strength == "ok" else "COMMENT",
-        findings=[],
-        dropped=[],
-        out_of_scope=[],
-        coderabbit_reactions=[],
-        prerequisite_adjudications=[],
-        adjudication_complete=True,
-        review_phase=phase,
-        raw={},
-    )
+    prov = _conversation_provenance(ctx, lm)
+    verified = _verdict_only(phase, "APPROVE" if clear and strength == "ok" else "COMMENT")
     new_event = publish.verdict_event(verified, prov)
     source = f"the full review of `{ctx.sha[:8]}`" + (
         f" (run {standing.run_id})" if standing.run_id else ""
@@ -4183,6 +4215,44 @@ def _conversation_verdict_update(
     ]
     return _post_conversation_update(
         ctx, phase, verified, prov, state=state, new_event=new_event, titles=titles, note=note
+    )
+
+
+def _live_verdict_state(ctx: RunContext, phase: str) -> str | None:
+    """The bot's standing verdict on this commit's `phase` review when a conversation may move
+    it, else None (approved already, or dismissed: a human overrode us; do not re-assert). The
+    lane ran for minutes: a push or a dismissal since then must not get an approval, so the
+    head is checked live first."""
+    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
+    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    state = publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login)
+    return state if state in {"CHANGES_REQUESTED", "COMMENTED"} else None
+
+
+def _conversation_provenance(ctx: RunContext, lm: LaneModel) -> publish.Provenance:
+    return publish.Provenance(
+        reviewers=[],
+        verifier=_lane_provenance(lm, "conversation"),
+        policy_fingerprint=ctx.cfg.policy.fingerprint,
+        adhoc=ctx.adhoc,
+        conversation=True,
+        degraded=_degraded_provenance(ctx),
+    )
+
+
+def _verdict_only(phase: str, action: str) -> VerifierOutput:
+    """A verdict with nothing else: what a conversation's follow-up review stands on."""
+    return VerifierOutput(
+        summary="",
+        review_action=action,
+        findings=[],
+        dropped=[],
+        out_of_scope=[],
+        coderabbit_reactions=[],
+        prerequisite_adjudications=[],
+        adjudication_complete=True,
+        review_phase=phase,
+        raw={},
     )
 
 
@@ -4253,8 +4323,7 @@ def _confirmation_due(ctx: RunContext) -> bool:
     """Whether the policy asks for a confirmation pass on this round (v12 design §2.5):
     "no_blockers" on every round, "rereview" on re-reviews only (today's fresh-final rounds),
     "off" never, and never on an audit."""
-    pipe = ctx.cfg.policy.pipeline
-    trigger = pipe.confirmation.trigger if pipe else "off"
+    trigger = ctx.cfg.policy.confirmation_trigger
     if trigger == "off" or ctx.is_audit:
         return False
     return trigger == "no_blockers" or ctx.has_prior_review
@@ -4448,7 +4517,7 @@ def _apply_thread_outcomes(ctx: RunContext, verified: VerifierOutput, phase: str
     outs = _thread_outcomes(ctx)
     if ctx.dry_run:
         return set()  # nothing goes on a thread, nothing is booked
-    corroborated = set(verified.rules.corroborated) if verified.rules is not None else set()
+    corroborated = _refound(verified)
     answered: list[dict[str, Any]] = []
     deliver: dict[str, converse.ThreadOutcome] = {}
     for h, o in outs.items():
@@ -4547,12 +4616,12 @@ def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
     _ledger_write(ctx, "severity", record)
 
 
-def _standing_now(ctx: RunContext, verified: VerifierOutput) -> dict[str, ledger.Issue]:
+def _ledger_after(ctx: RunContext, verified: VerifierOutput) -> dict[str, ledger.Issue]:
     """The ledger after this round's outcomes: re-read once they are recorded; projected in a
     dry run, where nothing is."""
     if not ctx.dry_run:
         return ledger.load(ctx.conn, ctx.repo, ctx.number)
-    corroborated = set(verified.rules.corroborated) if verified.rules is not None else set()
+    corroborated = _refound(verified)
     upgrades = verified.rules.upgrades if verified.rules is not None else {}
     return rules.project(
         ctx.issues, _pending_statuses(_thread_outcomes(ctx), corroborated), upgrades
@@ -4571,28 +4640,15 @@ def _publish12(
     threads first, then the verdict is computed over what the ledger now holds plus this
     round's new issues (`_verdict12`), and the review posts the new issues inline and lists
     the carried ones under "Still open from earlier rounds" (never re-posted)."""
-    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
-    _require_live(ctx, live)
-    if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
-        raise ReviewError(
-            FailKind.FATAL, f"live base {live.base_sha[:8]} != assigned {ctx.base_sha[:8]}"
-        )
+    _require_live_base(ctx)
     before = dict(ctx.issues)
-    verified.findings, over = rules.within_budget(verified.findings, ctx.cfg.comment_budget)
-    if over:
-        verified.dropped += [
-            {"original_title": f.title, "reason": "BUDGET: over the comment budget"} for f in over
-        ]
-        verified.summary += (
-            f"\n\n_{len(over)} more non-blocking finding(s) over the comment budget of "
-            f"{ctx.cfg.comment_budget} are not posted on this round._"
-        )
+    _apply_budget(ctx, verified)
     _resolve_conflicts(ctx, verified)
     lifted = _apply_thread_outcomes(ctx, verified, phase)
     _apply_upgrades(ctx, verified)
-    verified.carried = _carried12(ctx, _standing_now(ctx, verified))
+    verified.carried = _carried12(ctx, _ledger_after(ctx, verified))
     verified.review_action = _verdict12(ctx, phase, verified, phase2_skipped)
-    corroborated = set(verified.rules.corroborated) if verified.rules is not None else set()
+    corroborated = _refound(verified)
     if corroborated:
         _ledger_write(
             ctx,
@@ -4607,60 +4663,56 @@ def _publish12(
                 source="verifier",
             ),
         )
-    existing = github.existing_review_for_sha(
-        ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
-    )
-    if existing is None and phase == "preliminary":
-        existing = github.existing_review_for_sha(
-            ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
-        )
-        if existing:
-            phase = "final"
+    existing, phase = _existing_review(ctx, phase)
     if existing:
         # a same-sha re-review: as v11, never a second full review for the commit; a verdict
         # that moved gets a follow-up
         _backfill_posted(ctx, phase, existing, verified)
-        titles = [
-            before[h].title for h in lifted if h in before and before[h].severity == "blocking"
-        ]
         update = _verdict_update(
-            ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped, lifted_titles=titles
+            ctx,
+            phase,
+            verified,
+            verifier_lm,
+            phase2_skipped=phase2_skipped,
+            lifted_titles=_lifted_blocker_titles(before, lifted),
         )
         if update is not None:
             return update
-        model = _build_review(
-            ctx,
-            phase=phase,
-            verified=verified,
-            verifier_lm=verifier_lm,
-            phase2_skipped=phase2_skipped,
-            rereview=True,
-        )
-        result = publish.publish(
-            ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run, force_comment=True
-        )
-        _record_publication(ctx, phase, model, result, verified)
-        _record_folds(ctx, model)
-        _record_revivals(ctx, verified)
-        return result
-    model = _build_review(
+    model, result = _publish_review(
         ctx,
         phase=phase,
         verified=verified,
         verifier_lm=verifier_lm,
         phase2_skipped=phase2_skipped,
-        rereview=ctx.has_prior_review,
+        rereview=bool(existing),
     )
-    (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
-    result = publish.publish(ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run)
-    _record_publication(ctx, phase, model, result, verified)
     _record_folds(ctx, model)
     _record_revivals(ctx, verified)
-    if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
-        publish.post_coderabbit_reactions(
-            ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
-        )
     return result
+
+
+def _apply_budget(ctx: RunContext, verified: VerifierOutput) -> None:
+    """The comment budget (`rules.within_budget`): what is over it is dropped, and the summary
+    says how many."""
+    verified.findings, over = rules.within_budget(verified.findings, ctx.cfg.comment_budget)
+    if not over:
+        return
+    verified.dropped += [
+        {"original_title": f.title, "reason": "BUDGET: over the comment budget"} for f in over
+    ]
+    verified.summary += (
+        f"\n\n_{len(over)} more non-blocking finding(s) over the comment budget of "
+        f"{ctx.cfg.comment_budget} are not posted on this round._"
+    )
+
+
+def _refound(verified: VerifierOutput) -> set[str]:
+    """The ledger issues a candidate restated this round."""
+    return set(verified.rules.corroborated) if verified.rules is not None else set()
+
+
+def _lifted_blocker_titles(before: dict[str, ledger.Issue], lifted: set[str]) -> list[str]:
+    return [before[h].title for h in lifted if h in before and before[h].severity == "blocking"]
 
 
 def _record_folds(ctx: RunContext, model: publish.ReviewModel) -> None:
@@ -4797,26 +4849,14 @@ def _review_strength12(ctx: RunContext, run_id: int | None) -> tuple[str, str]:
     asked that run for a confirmation pass and it did not run, `reason` being why it did not."""
     if run_id is None:
         return "weak", "no full review of this commit is on record"
-    row = ctx.conn.execute(
-        "SELECT r.degraded, "
-        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2, "
-        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh, "
-        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later, "
-        "EXISTS (SELECT 1 FROM events WHERE run_id=r.id AND kind='verify.shard_dropped') "
-        "AS dropped, "
-        "(SELECT kind || ':' || detail FROM events WHERE run_id=r.id AND kind IN "
-        "('confirmation.skipped', 'confirmation.failed') ORDER BY id DESC LIMIT 1) AS skipped "
-        "FROM runs r WHERE r.id=?",
-        (StepName.PHASE2.value, StepName.FRESH_VERIFY2.value, ctx.repo, ctx.number, run_id),
-    ).fetchone()
+    row = _strength_row(ctx, run_id)
     if not row or row["degraded"] or row["phase2"] != "ok":
         return "weak", "Phase 2 or the primary models were missing"
     if row["dropped"]:
         return "weak", "some of its candidates were never verified"
-    pipe = ctx.cfg.policy.pipeline
-    trigger = pipe.confirmation.trigger if pipe else "off"
+    trigger = ctx.cfg.policy.confirmation_trigger
     required = trigger == "no_blockers" or (trigger == "rereview" and bool(row["later"]))
-    if not required or row["fresh"] == "ok":
+    if not required or row["fresh_verify2"] == "ok":
         return "ok", ""
     kind, _, reason = str(row["skipped"] or "").partition(":")
     if kind == "confirmation.failed":
@@ -4843,36 +4883,15 @@ def _conversation_verdict12(
     lifted_any = any(h in before and before[h].severity != "nitpick" for h in lifted)
     if any(i.severity == "blocking" for i in stand) or not lifted_any:
         return None
-    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
-    state = publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login)
-    if state not in {"CHANGES_REQUESTED", "COMMENTED"}:
+    state = _live_verdict_state(ctx, phase)
+    if state is None:
         return None
     left = sum(1 for i in stand if i.severity != "nitpick")
     run_id = _standing_run12(ctx, phase)
     strength, why = _review_strength12(ctx, run_id)
-    prov = publish.Provenance(
-        reviewers=[],
-        verifier=_lane_provenance(lm, "conversation"),
-        policy_fingerprint=ctx.cfg.policy.fingerprint,
-        adhoc=ctx.adhoc,
-        conversation=True,
-        degraded=_degraded_provenance(ctx),
-    )
-    verified = VerifierOutput(
-        summary="",
-        review_action="APPROVE"
-        if not left and strength == "ok" and not ctx.thread_failed
-        else "COMMENT",
-        findings=[],
-        dropped=[],
-        out_of_scope=[],
-        coderabbit_reactions=[],
-        prerequisite_adjudications=[],
-        adjudication_complete=True,
-        review_phase=phase,
-        raw={},
-    )
+    prov = _conversation_provenance(ctx, lm)
+    approve = not left and strength == "ok" and not ctx.thread_failed
+    verified = _verdict_only(phase, "APPROVE" if approve else "COMMENT")
     new_event = publish.verdict_event(verified, prov)
     source = f"the full review of `{ctx.sha[:8]}`" + (f" (run {run_id})" if run_id else "")
     if new_event == "APPROVE":
@@ -4905,9 +4924,15 @@ def _conversation_verdict12(
             "Not approved: the standing review of this commit did not run at full strength "
             f"({why}), so it cannot carry an approval."
         )
-    titles = [before[h].title for h in lifted if h in before and before[h].severity == "blocking"]
     return _post_conversation_update(
-        ctx, phase, verified, prov, state=state, new_event=new_event, titles=titles, note=note
+        ctx,
+        phase,
+        verified,
+        prov,
+        state=state,
+        new_event=new_event,
+        titles=_lifted_blocker_titles(before, lifted),
+        note=note,
     )
 
 
