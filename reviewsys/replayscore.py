@@ -24,9 +24,11 @@ every per-head quantity being the mean over that head's samples: recall of `tp` 
 as a blocker or suggestion (and blocker-only), label-weighted; known-FP blockers (`fp` and
 `deferred` labels raised as blockers); re-raises of settled issues on unchanged anchors (any
 severity); the share of heads with a blocker; new blockers (matching no label); S8 thread
-outcomes reached. `S1+S2` pools the two recall sets, as the gate does. Per arm: duplicates
-per run (same file within 3 lines, different hash), gpt lanes and tokens per run, wall clock
-p50, contract failures, ratios to the baseline.
+outcomes reached (from either shape of conversation.json) and, per S8 head, the #38 verdict
+follow-up the run decided on (`would_post`: its event, `none`, or `not_recorded` for an arm
+that records none, as v11). `S1+S2` pools the two recall sets, as the gate does. Per arm:
+duplicates per run (same file within 3 lines, different hash), gpt lanes and tokens per run,
+wall clock p50, contract failures, ratios to the baseline.
 
 Wall clock: replays share the box's lane pools behind production, so `active_p50_s` (wall
 clock less the run's slot wait, `report.slot_wait_s`) is what a wall-clock gate should read;
@@ -417,6 +419,8 @@ class _Acc:
     reraised: float = 0.0
     new_blockers: float = 0.0
     outcomes: list[float] = field(default_factory=list)  # per S8 label: share reaching it
+    # per conversation (S8) head: the #38 follow-up its samples decide on (`would_post`)
+    would_post: dict[str, float] = field(default_factory=dict)
     # blockers by what the judge (new ones) or a label (matched ones) says of them
     judged: dict[str, float] = field(
         default_factory=lambda: dict.fromkeys((*ANSWERS, "pending"), 0.0)
@@ -441,6 +445,11 @@ class _Acc:
             ),
             "thread_outcomes_reached": _mean(self.outcomes),
             "thread_outcome_labels": len(self.outcomes),
+            **(
+                {"would_post": {k: round(v, 3) for k, v in sorted(self.would_post.items())}}
+                if self.would_post
+                else {}
+            ),
         }
 
 
@@ -485,8 +494,30 @@ def duplicates(published: list[dict[str, Any]]) -> int:
     return n
 
 
+def conversation_outcomes(conv: Any) -> dict[str, Any]:
+    """A replay's `conversation` (its conversation.json) as outcomes by hash, either shape:
+    v11's conversation lane writes them flat, v12's thread lane under `outcomes` (beside
+    `work`, `shards` and, in a replay, `would_post`)."""
+    if not isinstance(conv, dict):
+        return {}
+    inner = conv.get("outcomes")
+    return inner if isinstance(inner, dict) else conv
+
+
+def would_post(sample: Sample) -> str:
+    """The #38 verdict follow-up a replayed conversation decided on (conversation.json
+    `would_post`, v12): its event, `none` when it would post none, `not_recorded` when the
+    run records no decision (v11: a replay's conversation lane delivers nothing, so its
+    follow-up is never decided)."""
+    conv = sample.report.get("conversation")
+    if not isinstance(conv, dict) or "would_post" not in conv:
+        return "not_recorded"
+    wp = conv["would_post"]
+    return str(wp.get("event") or "none") if isinstance(wp, dict) else "none"
+
+
 def _outcome_reached(sample: Sample, lab: Label) -> bool:
-    got = (sample.report.get("conversation") or {}).get(lab.hash)
+    got = conversation_outcomes(sample.report.get("conversation")).get(lab.hash)
     status = str((got or {}).get("status") or "") if isinstance(got, dict) else ""
     want = lab.thread_outcome
     return status == want or (status in DEFERRALS and want in DEFERRALS)
@@ -578,6 +609,10 @@ def score(
                     sum(f.get("severity") == "blocking" for f in rest) for _, rest in assigned
                 )
                 _count_precision(acc, verdicts, head, scored, assigned)
+                if item.set == "S8":
+                    for r in runs:
+                        ev = would_post(r)
+                        acc.would_post[ev] = acc.would_post.get(ev, 0.0) + 1 / len(runs)
             _count_precision(prec[p], verdicts, head, scored, assigned)
             for r, (got, rest) in zip(runs, assigned, strict=True):
                 for f in rest:

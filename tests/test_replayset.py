@@ -713,7 +713,13 @@ def test_subsets_pooled_recall_bootstrap_and_thread_outcomes():
             5, "HMAC erase", "deferred", "S8", hash="a77", thread_outcome="INTENTIONALLY_DEFERRED"
         ),
     ]
-    conv = {"a77": {"status": "DEFERRAL_PENDING"}}
+    # conversation.json as each arm writes it: v11 flat, v12 under "outcomes" (+ would_post)
+    conv = {
+        "work": {"a77": ["reply"]},
+        "shards": [["a77"]],
+        "outcomes": {"a77": {"status": "DEFERRAL_PENDING"}},
+        "would_post": None,
+    }
     samples = [
         _sample("v11", 1, []),
         _sample("v11", 2, [], set_="S2"),
@@ -739,6 +745,33 @@ def test_subsets_pooled_recall_bootstrap_and_thread_outcomes():
     # a pending deferral reaches an expected deferral
     assert sets["S8"]["v11"]["thread_outcomes_reached"] == 0.0
     assert sets["S8"]["v12"]["thread_outcomes_reached"] == 1.0
+    # the #38 follow-up decided on: v12 records it (none here), v11 never does
+    assert sets["S8"]["v11"]["would_post"] == {"not_recorded": 1.0}
+    assert sets["S8"]["v12"]["would_post"] == {"none": 1.0}
+    assert "would_post" not in sets["S1"]["v12"]
+
+
+def test_s8_reads_the_v12_follow_up_it_would_post():
+    items = [SetItem(6, "S8", samples=2)]
+    labels = [_label(6, "Fee drainage", "tp", "S8", hash="f33", thread_outcome="WITHDRAWN")]
+
+    def conv(status: str, event: str | None) -> dict[str, Any]:
+        wp = {"event": event, "note": "-", "lifted": ["f33"], "posts": True} if event else None
+        return {"outcomes": {"f33": {"status": status}}, "would_post": wp}
+
+    flat = {"f33": {"status": "WITHDRAWN"}}
+    samples = [
+        _sample("v11", 6, [], set_="S8", k=0, samples=2, conversation=flat),
+        _sample("v11", 6, [], set_="S8", k=1, samples=2, conversation=flat),
+        _sample("v12", 6, [], set_="S8", k=0, samples=2, conversation=conv("WITHDRAWN", "APPROVE")),
+        _sample("v12", 6, [], set_="S8", k=1, samples=2, conversation=conv("STILL_VALID", None)),
+    ]
+    result, _, _ = score(items, labels, samples, ["v11", "v12"])
+    s8 = result["sets"]["S8"]
+    assert s8["v11"]["thread_outcomes_reached"] == 1.0
+    assert s8["v12"]["thread_outcomes_reached"] == 0.5
+    assert s8["v12"]["would_post"] == {"APPROVE": 0.5, "none": 0.5}
+    assert s8["v11"]["would_post"] == {"not_recorded": 1.0}
 
 
 EVAL = Path("/Users/pasta/workspace/reviewsys-v12-design/eval")
