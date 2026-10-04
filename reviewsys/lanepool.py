@@ -27,7 +27,6 @@ order is the rank, then the older run, then arrival. The ranks:
   1 priority-run side lane   2 live-run side lane     (verifiers, selector, triage,
   3 priority-run reviewer    4 live-run reviewer       repair, conversation: `parallel`
   5 audit side lane          6 audit reviewer          False; reviewers: True)
-  7 replay lane (`reviewsys replay` / `replay-judge`, policy evals: any kind)
 
 Side lanes are short and on some run's critical path (a verifier finishes a review a
 reviewer has already paid for), so they go first; audits only ever use what live review
@@ -40,15 +39,19 @@ slot, index n-1, is kept for side lanes when n > 1):
   are), may take the top slot and only that one: an express lane, so a verifier never
   waits behind a long reviewer queue or behind a head reviewer stuck waiting for a
   reviewer slot while the top one is free.
-- A replay lane (rank 7) takes a slot only at the head of the line, so only while no
-  production lane waits for the pool, never the top slot, and only among the
-  `replay_pool_share` of the slots just below it (counting down): replays hold at most that
-  share of a pool, and production, which fills from slot 0 up, rarely meets them. A replay
-  lane that holds a slot is not preempted; the share bounds what production can lose.
-  Without replays in the line nothing above changes.
 Without the line, a run whose lane just finished would take the freed slot straight back
 for its next lane before any other run's waiter woke up. A ticket whose process died is
 pruned by the next waiter that reads the line.
+
+Replay lanes (`reviewsys replay` / `replay-judge`, policy evals; rank 7, `RANK_REPLAY`) never
+enter the line: they wait in `{pool}.replay/`, a directory no production reader looks at (the
+v0.24 code included: its comparison-lane admission and the status export read `{pool}.line`
+only), so production behaves exactly as if no replay were waiting. A replay lane at the head
+of its own line takes a slot only while `{pool}.line` holds no live production ticket, never
+the top (side-lane) slot, and only among `replay_slots` of the slots just below it, counting
+down: floor((n - 1) * `replay_pool_share`), or `replay_pool_slots[pool]` when set. A pool
+whose share is 0 (n <= 2 at the default 0.5) is not open to replays. A replay lane holding a
+slot is not preempted: the share bounds what production can lose.
 
 The directory is new (`.line`, not the `.wait` of the reviewer-only line it replaces):
 workers still running the old code during a deploy parse every ticket name in `.wait` as
@@ -88,6 +91,7 @@ from . import slots
 from .config import Config
 from .db import fmt_ts, now, parse_ts, tx
 from .lane import LaneResult, LaneRunner, LaneSpec, run_with_corrections
+from .models import FailKind, ReviewError
 
 log = logging.getLogger(__name__)
 
@@ -97,7 +101,7 @@ POLL_SECONDS = 1.0
 RANK_PRIORITY_SIDE, RANK_LIVE_SIDE = 1, 2
 RANK_PRIORITY_REVIEWER, RANK_LIVE_REVIEWER = 3, 4
 RANK_AUDIT_SIDE, RANK_AUDIT_REVIEWER = 5, 6
-RANK_REPLAY = 7
+RANK_REPLAY = 7  # replay lanes: their own directory, never the line (see the docstring)
 SIDE_RANKS = frozenset({RANK_PRIORITY_SIDE, RANK_LIVE_SIDE, RANK_AUDIT_SIDE})
 _RANKS = {
     ("priority", True): RANK_PRIORITY_SIDE,
@@ -106,10 +110,9 @@ _RANKS = {
     ("live", False): RANK_LIVE_REVIEWER,
     ("audit", True): RANK_AUDIT_SIDE,
     ("audit", False): RANK_AUDIT_REVIEWER,
-    ("replay", True): RANK_REPLAY,
-    ("replay", False): RANK_REPLAY,
 }
 LINE_SUFFIX = ".line"
+REPLAY_SUFFIX = ".replay"
 # a stall that has gone on this long is credited to the run's deadline while it lasts, so a
 # run waiting for longer than its whole deadline is not reaped before the stall ends
 STALL_FLUSH_SECONDS = 60.0
@@ -129,9 +132,9 @@ def pool_of(model: str) -> str:
 
 
 def rank_of(queue: str, *, side: bool) -> int:
-    """The line rank of a lane of a run from `queue` (`priority`, `live`, `audit` or
-    `replay`)."""
-    return _RANKS[(queue, side)]
+    """The line rank of a lane of a run from `queue` (`priority`, `live`, `audit`; `replay`
+    is RANK_REPLAY whatever the lane)."""
+    return RANK_REPLAY if queue == "replay" else _RANKS[(queue, side)]
 
 
 _capacity_conns = threading.local()
@@ -155,6 +158,8 @@ def _capacity_conn(conn: sqlite3.Connection, cfg: Config) -> sqlite3.Connection:
 def limit(conn: sqlite3.Connection, cfg: Config, pool: str) -> int | None:
     """The pool's slot count right now; None = not gated."""
     if pool == "gpt":
+        if cfg.lane_capacity_db is None:
+            return slots.capacity(conn, cfg).ceiling
         try:
             return slots.capacity(_capacity_conn(conn, cfg), cfg).ceiling
         except sqlite3.Error:  # the production database is busy or gone: one account's budget
@@ -184,11 +189,6 @@ def _alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
-
-
-def _is_replay(name: str) -> bool:
-    f = _fields(name)
-    return f is not None and f[0] == RANK_REPLAY
 
 
 def _fields(name: str) -> tuple[int, int] | None:
@@ -223,12 +223,61 @@ def line_dir(slot_dir: Path, pool: str) -> Path:
     return slot_dir / f"{pool}{LINE_SUFFIX}"
 
 
-def waiting_line(slot_dir: Path, pool: str) -> list[str]:
-    """The pool's waiting production tickets in order, without `_line`'s cleanup: for readers
-    that are not waiters themselves (the status export). Replay lanes (policy evals) are left
-    out: they wait behind every production ticket, so no production position changes."""
+def replay_dir(slot_dir: Path, pool: str) -> Path:
+    return slot_dir / f"{pool}{REPLAY_SUFFIX}"
+
+
+def replay_slots(n: int, share: float, cap: int | None = None) -> range:
+    """The slot indexes a replay lane may take in a pool of `n`, in order: k slots just below
+    the top one, counting down, k = `cap` when given, else floor((n - 1) * `share`); never
+    the top slot, and empty when k is 0."""
+    k = cap if cap is not None else int((n - 1) * share)
+    k = max(0, min(k, n - 1))
+    return range(n - 2, n - 2 - k, -1)
+
+
+def _acquire_replay(
+    slot_dir: Path,
+    pool: str,
+    indexes: Callable[[], range],
+    should_stop: Callable[[], bool],
+    run_id: int,
+    on_wait: Callable[[], None] | None,
+) -> int | None:
+    """A replay lane's `acquire`: its ticket in `{pool}.replay/`, never the production line;
+    it takes a slot (from `indexes()`) only at the head of the replay line and while
+    `{pool}.line` holds no live production ticket (read without pruning: a replay never
+    changes the production line)."""
+    wait_dir = replay_dir(slot_dir, pool)
+    wait_dir.mkdir(parents=True, exist_ok=True)
+    prod_dir = line_dir(slot_dir, pool)
+    ticket = wait_dir / ticket_name(RANK_REPLAY, run_id)
+    ticket.touch()
     try:
-        return [t for t in _line(line_dir(slot_dir, pool), prune=False) if not _is_replay(t)]
+        while True:
+            line = _line(wait_dir)
+            if ticket.name not in line:
+                ticket.touch()
+                line = _line(wait_dir)
+            busy = prod_dir.is_dir() and bool(_line(prod_dir, prune=False))
+            if not busy and line and line[0] == ticket.name:
+                fd = _try_slots(slot_dir, pool, indexes())
+                if fd is not None:
+                    return fd
+            if should_stop():
+                return None
+            if on_wait is not None:
+                on_wait()
+            time.sleep(POLL_SECONDS)
+    finally:
+        ticket.unlink(missing_ok=True)
+
+
+def waiting_line(slot_dir: Path, pool: str) -> list[str]:
+    """The pool's waiting tickets in order, without `_line`'s cleanup: for readers that are
+    not waiters themselves (the status export)."""
+    try:
+        return _line(line_dir(slot_dir, pool), prune=False)
     except OSError:
         return []
 
@@ -242,23 +291,9 @@ def ticket_name(rank: int, run_id: int) -> str:
     return f"{rank}-{run_id:012d}-{time.time_ns():020d}-{waiter_key()}"
 
 
-def replay_slots(n: int, share: float) -> range:
-    """The slot indexes a replay lane may take in a pool of `n`: the `share` of the slots
-    just below the top one, counting down (all of a one-slot pool)."""
-    if n <= 1:
-        return range(0, 1)
-    k = min(n - 1, max(1, int(n * share)))
-    return range(n - 2, n - 2 - k, -1)
-
-
-def _may_take(
-    line: list[str], ticket: str, n: int, side: bool, replay_share: float = 0.5
-) -> range | None:
+def _may_take(line: list[str], ticket: str, n: int, side: bool) -> range | None:
     """The slot indexes `ticket` may try now (in order), or None while it must wait."""
     pos = line.index(ticket)
-    if _is_replay(ticket):
-        # every production ticket sorts ahead of it: at the head, none is waiting
-        return replay_slots(n, replay_share) if pos == 0 else None
     if pos == 0:
         if side:
             return range(n - 1, -1, -1)  # the reserved top slot first, then any
@@ -279,7 +314,6 @@ def acquire(
     run_id: int = 0,
     admit: Callable[[], bool] | None = None,
     on_wait: Callable[[], None] | None = None,
-    replay_share: float = 0.5,
 ) -> int | None:
     """Line up in the pool's line at `rank` (for run `run_id`), block until the take rules
     let this lane have a slot and return its locked fd, or None once `should_stop()` says it
@@ -298,7 +332,7 @@ def acquire(
             if ticket.name not in line:
                 ticket.touch()  # removed under us (an operator clearing the dir): line up again
                 line = _line(wait_dir)
-            indexes = _may_take(line, ticket.name, max(1, count()), side, replay_share)
+            indexes = _may_take(line, ticket.name, max(1, count()), side)
             if indexes is not None and (admit is None or admit()):
                 fd = _try_slots(slot_dir, pool, indexes)
                 if fd is not None:
@@ -419,9 +453,10 @@ def gated(
 ) -> LaneRunner:
     """`runner`, taking a pool slot around every lane. A lane stopped while it waits for a
     slot returns a result that never `started`. `conn` returns the calling thread's
-    connection (lanes run on parallel threads); `queue` (`priority`, `live`, `audit` or
-    `replay`) and `run_id` are the run's place in every pool's line. The run's deadline is
-    pushed past the time its lanes only waited for slots (`StallClock`)."""
+    connection (lanes run on parallel threads); `queue` (`priority`, `live`, `audit`, or
+    `replay` for a policy eval's own wait) and `run_id` are the run's place in every pool's
+    line. The run's deadline is pushed past the time its lanes only waited for slots
+    (`StallClock`)."""
     slot_dir = cfg.work_dir / "lane-slots"
     stall = StallClock(clock)
     # stalled seconds not yet written (a write that failed is retried), and the room left
@@ -481,7 +516,7 @@ def gated(
             """No production lane is waiting for gpt and one of its reviewer slots is free
             right now (probed, not kept): a waiter may be about to take the free slot."""
             gpt_line = line_dir(slot_dir, "gpt")
-            if gpt_line.is_dir() and any(not _is_replay(t) for t in _line(gpt_line)):
+            if gpt_line.is_dir() and _line(gpt_line):
                 return False
             n = limit(conn(), cfg, "gpt") or 1
             fd = _try_slots(slot_dir, "gpt", range(max(1, n - 1)))
@@ -490,22 +525,41 @@ def gated(
             release(fd)
             return True
 
+        def replay_indexes() -> range:
+            n = max(1, limit(conn(), cfg, pool) or 1)
+            return replay_slots(n, cfg.replay_pool_share, cfg.replay_pool_slots.get(pool))
+
+        if queue == "replay" and not replay_indexes():
+            raise ReviewError(
+                FailKind.INFRA,
+                f"pool {pool} has no share for replay lanes "
+                f"(set [scheduling] replay_pool_slots.{pool} to open it)",
+            )
         _mark(artifact_dir, spec, pool, "waiting")
         stop = spec.should_stop or run_stopped
         credit(stall.wait_started())
         fd: int | None = None
         try:
-            fd = acquire(
-                slot_dir,
-                pool,
-                lambda: limit(conn(), cfg, pool) or 1,
-                stop,
-                rank=rank_of(queue, side=not spec.parallel),
-                run_id=run_id,
-                admit=gpt_idle if pool == COMPARE_POOL else None,
-                on_wait=lambda: credit(stall.flush()),
-                replay_share=cfg.replay_pool_share,
-            )
+            if queue == "replay":
+                fd = _acquire_replay(
+                    slot_dir,
+                    pool,
+                    replay_indexes,
+                    stop,
+                    run_id,
+                    on_wait=lambda: credit(stall.flush()),
+                )
+            else:
+                fd = acquire(
+                    slot_dir,
+                    pool,
+                    lambda: limit(conn(), cfg, pool) or 1,
+                    stop,
+                    rank=rank_of(queue, side=not spec.parallel),
+                    run_id=run_id,
+                    admit=gpt_idle if pool == COMPARE_POOL else None,
+                    on_wait=lambda: credit(stall.flush()),
+                )
             if fd is not None and stop():
                 release(fd)  # stopped while it waited: a lane no longer wanted must not start
                 fd = None

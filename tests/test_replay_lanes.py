@@ -1,81 +1,130 @@
-"""Replay (policy eval) lanes in the machine's pools: behind every production lane, never the
-side-lane slot, at most a share of each pool; production unchanged without them."""
+"""Replay (policy eval) lanes in the machine's pools: they wait in their own directory, which
+production (v0.24.0 included) never reads, take a slot only while no production lane waits,
+never the side-lane slot, and at most floor((n - 1) * share) of a pool."""
 
 from __future__ import annotations
 
 import dataclasses
+import importlib.util
 import json
 import os
+import sys
 import threading
+import time
+from pathlib import Path
+from types import ModuleType
+
+import pytest
 
 from reviewsys import lanepool, slots
-from reviewsys.db import connect, kv_set, now, tx
-from reviewsys.lanepool import (
-    RANK_AUDIT_REVIEWER,
-    RANK_LIVE_REVIEWER,
-    RANK_LIVE_SIDE,
-    RANK_REPLAY,
-    _may_take,
-    replay_slots,
-)
+from reviewsys.db import connect, connect_existing, kv_set, now, tx
+from reviewsys.lane import LaneResult, LaneSpec
+from reviewsys.lanepool import RANK_LIVE_REVIEWER, RANK_REPLAY, replay_slots
+from reviewsys.models import ReviewError
+
+V024 = Path(__file__).parent / "golden" / "lanepool_v0_24_0.py.txt"
 
 
 def _t(rank: int, run: int = 1, n: int = 0) -> str:
     return f"{rank}-{run:012d}-{n:020d}-{os.getpid()}-1"
 
 
-def test_the_replay_rank_is_last():
-    assert lanepool.rank_of("replay", side=True) == lanepool.rank_of("replay", side=False)
-    assert RANK_REPLAY > RANK_AUDIT_REVIEWER
-    assert sorted([_t(RANK_REPLAY, 1), _t(RANK_AUDIT_REVIEWER, 99)])[0].startswith("6-")
+@pytest.fixture
+def v024() -> ModuleType:
+    """The production daemon's lanepool (v0.24.0, `git show 72ff47d:reviewsys/lanepool.py`),
+    loaded beside this one as a module of the same package."""
+    from importlib.machinery import SourceFileLoader
+
+    name = "reviewsys._lanepool_v0_24_0"
+    loader = SourceFileLoader(name, str(V024))
+    spec = importlib.util.spec_from_loader(name, loader)
+    assert spec is not None
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    loader.exec_module(mod)
+    mod.POLL_SECONDS = 0.005  # type: ignore[attr-defined]
+    yield mod
+    sys.modules.pop(name, None)
 
 
-def test_replay_slots_are_a_share_just_below_the_top():
-    assert list(replay_slots(6, 0.5)) == [4, 3, 2]
-    assert list(replay_slots(4, 0.5)) == [2, 1]
-    assert list(replay_slots(2, 0.5)) == [0]
-    assert list(replay_slots(1, 0.5)) == [0]
-    assert list(replay_slots(12, 0.0)) == [10]  # at least one
-    assert list(replay_slots(3, 1.0)) == [1, 0]  # never the top slot
+def _waiting_replay(slot_dir: Path, pool: str, stop: threading.Event) -> threading.Thread:
+    """A replay lane waiting for `pool` (held back by a busy share) until `stop`."""
+    t = threading.Thread(
+        target=lanepool._acquire_replay,
+        args=(slot_dir, pool, lambda: range(0), stop.is_set, 9, None),
+        daemon=True,
+    )
+    t.start()
+    deadline = time.monotonic() + 5
+    while not list(lanepool.replay_dir(slot_dir, pool).glob("7-*")):
+        assert time.monotonic() < deadline
+        time.sleep(0.01)
+    return t
 
 
-def test_a_replay_lane_takes_a_slot_only_with_no_production_lane_waiting():
-    replay = _t(RANK_REPLAY, 3)
-    assert _may_take([replay], replay, 6, side=False) == replay_slots(6, 0.5)
-    for prod in (_t(RANK_LIVE_SIDE), _t(RANK_LIVE_REVIEWER), _t(RANK_AUDIT_REVIEWER)):
-        line = sorted([prod, replay])
-        assert line[-1] == replay
-        assert _may_take(line, replay, 6, side=True) is None  # not even the express lane
-        assert _may_take(line, replay, 6, side=False) is None
-    # a second replay waits behind the first
-    other = _t(RANK_REPLAY, 4)
-    assert _may_take(sorted([replay, other]), other, 6, side=False) is None
+def _spec(tmp_path: Path, model: str, pool: str | None = None) -> LaneSpec:
+    return LaneSpec(
+        role="r",
+        agent="a",
+        model=model,
+        effort="high",
+        prompt="p",
+        cwd=tmp_path,
+        add_dir=tmp_path,
+        timeout_seconds=5,
+        claude_bin="x",
+        pool=pool,
+    )
 
 
-def test_production_takes_are_unchanged_by_replays_in_the_line():
-    replay, reviewer, side = _t(RANK_REPLAY, 1), _t(RANK_LIVE_REVIEWER, 2), _t(RANK_LIVE_SIDE, 3)
-    for line in ([reviewer, side], [reviewer, side, replay]):
-        line = sorted(line)
-        assert _may_take(line, side, 6, side=True) == range(5, -1, -1)  # head: top first
-        assert _may_take(line, reviewer, 6, side=False) is None
-    line = sorted([reviewer, replay])
-    assert _may_take(line, reviewer, 6, side=False) == range(5)
+def _ok(spec, art, wt) -> LaneResult:
+    return LaneResult(exit_code=0, stdout="", stderr="", duration_s=0)
 
 
-def test_the_status_export_does_not_count_replay_waiters(tmp_path):
-    d = lanepool.line_dir(tmp_path, "gpt")
-    d.mkdir()
-    for name in (_t(RANK_LIVE_REVIEWER), _t(RANK_REPLAY, 2)):
-        (d / name).touch()
-    assert lanepool.waiting_line(tmp_path, "gpt") == [_t(RANK_LIVE_REVIEWER)]
+def test_the_v024_daemon_sees_nothing_of_waiting_replays(cfg, conn, tmp_path, v024):
+    """H1: v0.24.0 starts a comparison lane only while `gpt.line` is empty, and its status
+    export counts that line: a replay waiting for gpt must not show up in either."""
+    slot_dir = cfg.work_dir / "lane-slots"
+    stop = threading.Event()
+    t = _waiting_replay(slot_dir, "gpt", stop)
+    try:
+        assert v024.waiting_line(slot_dir, "gpt") == []
+        assert lanepool.waiting_line(slot_dir, "gpt") == []
+        done = threading.Event()
+        gated = v024.gated(
+            _ok, lambda: connect_existing(cfg.db_path), cfg, lambda: False, "live", 1
+        )
+        spec = _spec(tmp_path, "gpt-6-astra", pool=v024.COMPARE_POOL)
+        runner = threading.Thread(
+            target=lambda: (gated(spec, tmp_path / "art", tmp_path), done.set()), daemon=True
+        )
+        runner.start()
+        runner.join(timeout=10)
+        assert done.is_set()  # the comparison lane started at once
+    finally:
+        stop.set()
+        t.join(timeout=5)
+    assert not list(lanepool.replay_dir(slot_dir, "gpt").iterdir())  # ticket removed
 
 
-def test_a_replay_waiter_never_overtakes_a_production_waiter(tmp_path):
-    """Real flocks: with a production ticket in the line a replay lane does not get a slot
-    even though slots are free; once the line is clear it takes one below the top."""
-    d = lanepool.line_dir(tmp_path, "glm")
-    d.mkdir(parents=True)
-    prod = d / _t(RANK_LIVE_REVIEWER, 1)
+def test_the_replay_rank_and_shares():
+    assert lanepool.rank_of("replay", side=True) == RANK_REPLAY
+    assert lanepool.rank_of("replay", side=False) == RANK_REPLAY
+    # the box's pools at the default share 0.5: gpt 12, compare 2, gemini 6, glm 6, muse 20
+    assert list(replay_slots(12, 0.5)) == [10, 9, 8, 7, 6]
+    assert list(replay_slots(6, 0.5)) == [4, 3]
+    assert list(replay_slots(20, 0.5)) == list(range(18, 9, -1))
+    assert list(replay_slots(2, 0.5)) == [] and list(replay_slots(1, 0.5)) == []
+    assert list(replay_slots(6, 0.0)) == []
+    assert list(replay_slots(2, 0.5, cap=1)) == [0]  # an explicit per-pool override
+    assert list(replay_slots(4, 1.0)) == [2, 1, 0]  # never the top slot
+    assert list(replay_slots(4, 0.5, cap=9)) == [2, 1, 0]
+
+
+def test_a_replay_waits_while_a_production_ticket_is_in_line(tmp_path):
+    line = lanepool.line_dir(tmp_path, "glm")
+    line.mkdir(parents=True)
+    prod = line / _t(RANK_LIVE_REVIEWER)
     prod.touch()
     polls = {"n": 0}
 
@@ -83,23 +132,30 @@ def test_a_replay_waiter_never_overtakes_a_production_waiter(tmp_path):
         polls["n"] += 1
         return polls["n"] > 3
 
-    assert lanepool.acquire(tmp_path, "glm", lambda: 6, stop, rank=RANK_REPLAY, run_id=9) is None
+    got = lanepool._acquire_replay(tmp_path, "glm", lambda: replay_slots(6, 0.5), stop, 9, None)
+    assert got is None
+    assert prod.exists()  # never pruned or touched by a replay
     prod.unlink()
-    fd = lanepool.acquire(tmp_path, "glm", lambda: 6, lambda: False, rank=RANK_REPLAY, run_id=9)
+    fd = lanepool._acquire_replay(
+        tmp_path, "glm", lambda: replay_slots(6, 0.5), lambda: False, 9, None
+    )
     assert fd is not None
-    try:  # it holds slot 4 (just below the top), so the top stays free for production
-        top = lanepool._try_slots(tmp_path, "glm", range(5, 6))
-        assert top is not None
-        lanepool.release(top)
+    try:  # slot 4, just below the top: slots 0-3 and the top stay free for production
         assert lanepool._try_slots(tmp_path, "glm", range(4, 5)) is None
+        free = lanepool._try_slots(tmp_path, "glm", range(5, 6))
+        assert free is not None
+        lanepool.release(free)
     finally:
         lanepool.release(fd)
+    assert list(line.iterdir()) == []  # a replay never wrote to the production line
 
 
-def test_replays_hold_at_most_their_share_of_a_pool(tmp_path):
-    held: list[int] = []
-    for _ in range(3):
-        fd = lanepool.acquire(tmp_path, "glm", lambda: 6, lambda: False, rank=RANK_REPLAY)
+def test_replays_hold_at_most_their_share(tmp_path):
+    held = []
+    for _ in range(2):
+        fd = lanepool._acquire_replay(
+            tmp_path, "glm", lambda: replay_slots(6, 0.5), lambda: False, 1, None
+        )
         assert fd is not None
         held.append(fd)
     polls = {"n": 0}
@@ -109,14 +165,40 @@ def test_replays_hold_at_most_their_share_of_a_pool(tmp_path):
         return polls["n"] > 3
 
     try:
-        assert lanepool.acquire(tmp_path, "glm", lambda: 6, stop, rank=RANK_REPLAY) is None
-        # production still has slots 0, 1 and the top one
-        prod = lanepool.acquire(tmp_path, "glm", lambda: 6, lambda: False, rank=RANK_LIVE_SIDE)
+        third = lanepool._acquire_replay(
+            tmp_path, "glm", lambda: replay_slots(6, 0.5), stop, 1, None
+        )
+        assert third is None
+        # production still gets every other slot
+        prod = lanepool.acquire(tmp_path, "glm", lambda: 6, lambda: False, rank=RANK_LIVE_REVIEWER)
         assert prod is not None
         lanepool.release(prod)
     finally:
         for fd in held:
             lanepool.release(fd)
+
+
+def test_a_pool_without_a_replay_share_fails_the_lane_at_once(cfg, conn, tmp_path):
+    small = dataclasses.replace(cfg, lane_pools={**cfg.lane_pools, "glm": 2})
+    gated = lanepool.gated(_ok, lambda: conn, small, lambda: False, "replay", 1)
+    with pytest.raises(ReviewError, match="no share for replay lanes"):
+        gated(_spec(tmp_path, "glm-5.3-flash"), tmp_path / "art", tmp_path)
+    opened = dataclasses.replace(small, replay_pool_slots={"glm": 1})
+    gated = lanepool.gated(_ok, lambda: conn, opened, lambda: False, "replay", 1)
+    assert gated(_spec(tmp_path, "glm-5.3-flash"), tmp_path / "art2", tmp_path).ok
+
+
+def test_a_replay_lane_runs_through_gated_in_its_own_directory(cfg, conn, tmp_path):
+    seen: list[list[str]] = []
+    slot_dir = cfg.work_dir / "lane-slots"
+
+    def runner(spec, art, wt) -> LaneResult:
+        seen.append(sorted(p.name for p in slot_dir.iterdir()))
+        return _ok(spec, art, wt)
+
+    gated = lanepool.gated(runner, lambda: conn, cfg, lambda: False, "replay", 1)
+    assert gated(_spec(tmp_path, "glm-5.3-flash"), tmp_path / "art", tmp_path).ok
+    assert "glm.replay" in seen[0] and "glm.line" not in seen[0]
 
 
 def test_the_gpt_pool_is_sized_from_the_capacity_database(cfg, tmp_path):
@@ -135,40 +217,10 @@ def test_the_gpt_pool_is_sized_from_the_capacity_database(cfg, tmp_path):
     assert lanepool.limit(scratch, gone, "gpt") == base
 
 
-def test_a_comparison_lane_is_not_held_back_by_waiting_replays(cfg, conn, tmp_path):
-    """`gpt_idle` (comparison lanes start only while no gpt lane waits) ignores replay
-    tickets: a replay waiting for gpt changes nothing for production."""
-    from reviewsys.lane import LaneResult
+def test_production_lanepool_is_v024_apart_from_the_replay_path():
+    """The production take rules, line and status export are v0.24.0's, unchanged."""
+    import inspect
 
-    slot_dir = cfg.work_dir / "lane-slots"
-    gpt_line = lanepool.line_dir(slot_dir, "gpt")
-    gpt_line.mkdir(parents=True)
-    (gpt_line / _t(RANK_REPLAY, 5)).touch()
-    ran: list[str] = []
-
-    def runner(spec, art, wt):
-        ran.append(spec.role)
-        return LaneResult(exit_code=0, stdout="", stderr="", duration_s=0)
-
-    gated = lanepool.gated(runner, lambda: conn, cfg, lambda: False, "live", 1)
-    from reviewsys.lane import LaneSpec
-
-    spec = LaneSpec(
-        role="cmp",
-        agent="a",
-        model="gpt-6-astra",
-        effort="high",
-        prompt="p",
-        cwd=tmp_path,
-        add_dir=tmp_path,
-        timeout_seconds=5,
-        claude_bin="x",
-        pool=lanepool.COMPARE_POOL,
-    )
-    done = threading.Event()
-    t = threading.Thread(
-        target=lambda: (gated(spec, tmp_path / "art", tmp_path), done.set()), daemon=True
-    )
-    t.start()
-    t.join(timeout=10)
-    assert done.is_set() and ran == ["cmp"]
+    src = V024.read_text()
+    for fn in (lanepool._may_take, lanepool.acquire, lanepool.waiting_line, lanepool._line):
+        assert inspect.getsource(fn) in src, fn.__name__

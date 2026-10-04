@@ -431,9 +431,11 @@ class Config:
     policy: ModelPolicy
     extra: dict[str, Any] = field(default_factory=dict)
     audit: AuditConfig = field(default_factory=AuditConfig)
-    # `reviewsys replay` (eval) lanes: the share of each pool's slots they may hold at once,
-    # and only while no production lane waits (lanepool.RANK_REPLAY)
+    # `reviewsys replay` (eval) lanes: the share of each pool's non-top slots they may hold
+    # at once, and only while no production lane waits (lanepool.RANK_REPLAY); a pool listed
+    # in replay_pool_slots gets that many instead
     replay_pool_share: float = 0.5
+    replay_pool_slots: dict[str, int] = field(default_factory=dict)
     # where the gpt pool's account reading is read from when it is not `db_path`: a replay's
     # database is a scratch one, the box's reading is in the production database (read-only)
     lane_capacity_db: Path | None = None
@@ -591,8 +593,10 @@ phase_parallelism = 0
 lane_pools = { muse = 8, glm = 6, gemini = 6 }
 # `reviewsys replay` (policy evals) lanes share these pools at the lowest rank: one only takes
 # a slot while no production lane is waiting for that pool, never the slot kept for side lanes,
-# and replays hold at most this share of a pool's slots at once
+# and replays hold at most floor((slots - 1) * replay_pool_share) of a pool at once (0 for a
+# pool of 1 or 2 slots); replay_pool_slots sets that number per pool instead
 replay_pool_share = 0.5
+replay_pool_slots = {}
 
 [lanes]
 # lanes may not execute anything under these paths (compilers, build systems, test
@@ -1070,6 +1074,9 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         extra={**settings, "additional_repos": s.get("additional_repos", [])},
         audit=_audit(t.get("audit") or {}),
         replay_pool_share=min(1.0, max(0.0, float(s.get("replay_pool_share", 0.5)))),
+        replay_pool_slots={
+            str(k): max(0, int(v)) for k, v in (s.get("replay_pool_slots") or {}).items()
+        },
     )
 
 
