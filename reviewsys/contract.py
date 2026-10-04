@@ -84,6 +84,9 @@ class Finding:
     prior_hash: str | None = None  # finding_hash carried from a prior round (STILL_VALID)
     root_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # policy v12: the harness-assigned id of the finder candidate (`p2-general-3`), or of the
+    # first member of the verifier group it was composed from; never a model's
+    candidate_id: str | None = None
 
     @property
     def hash(self) -> str:
@@ -110,6 +113,8 @@ class Finding:
             d["finding_hash"] = self.prior_hash
         if self.root_id:
             d["root_id"] = self.root_id
+        if self.candidate_id:
+            d["candidate_id"] = self.candidate_id
         d.update(self.extra)
         return d
 

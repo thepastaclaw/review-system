@@ -103,6 +103,17 @@ budget {comment_budget}
 """
 
 
+# policy v12 templates (prompts/v12/): minimal, every slot the harness fills
+V12_TEMPLATES = {
+    "finder": "# Finder: {lane_title}\n{repo} #{pr_number} {pr_title}\n{pr_description}\n"
+    "base={base_branch} head={head_sha} range={coverage_from}\n{project_skill}\n{review_skill}\n"
+    "## Method\n{method}\n## Context\n{context}\n",
+    "general": "General method for {repo}: scan, removed code, callers.",
+    "security-auditor": "Security method.",
+    "always-on": "Always-on method.",
+}
+
+
 @pytest.fixture
 def skills_dir(tmp_path: Path) -> Path:
     d = tmp_path / "skills"
@@ -119,6 +130,9 @@ def skills_dir(tmp_path: Path) -> Path:
     )
     (d / "skills" / "platform" / "project.md").write_text("PROJECT SKILL")
     (d / "skills" / "platform" / "review.md").write_text("REVIEW SKILL")
+    (d / "prompts" / "v12").mkdir()
+    for name, text in V12_TEMPLATES.items():
+        (d / "prompts" / "v12" / f"{name}.md").write_text(text)
     return d
 
 
@@ -390,6 +404,11 @@ class FakeLanes:
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
         self.dead_stderr = "API Error: 429 rate limited"  # what a dead lane says
+        # policy v12 finder lanes, recognised by their prompts' output section: role ->
+        # {"summary", "candidates"}, a list of candidates, or a callable returning either
+        self.candidates: dict[str, Any] = {}
+        self.v12_calls: list[tuple[str, str, list[str]]] = []  # (kind, label, ids)
+        self._v12_sessions: dict[str, str] = {}  # session -> the v12 prompt it answered
 
     def prep_output(self) -> Any:
         """The prep lane answers both: `triage` and `selector` set each half; a non-dict one
@@ -408,6 +427,22 @@ class FakeLanes:
             out["selected"] = s
         return out
 
+    def v12_output(self, spec: LaneSpec) -> Any:
+        """A policy v12 lane's answer, or None for any other lane. A correction turn in a v12
+        lane's session is answered as its first turn was (the fake does not learn)."""
+        p = spec.prompt
+        if spec.resume and spec.session_id in self._v12_sessions:
+            p = self._v12_sessions[spec.session_id]
+        elif spec.session_id:
+            self._v12_sessions[spec.session_id] = p
+        if "## Output: candidates" in p:
+            out = self.candidates.get(spec.role, self.candidates.get("default", []))
+            out = out() if callable(out) else out
+            out = {"summary": "ok", "candidates": out} if isinstance(out, list) else out
+            self.v12_calls.append(("finder", spec.role, []))
+            return out
+        return None
+
     def __call__(self, spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
         self.calls.append(spec)
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -415,7 +450,10 @@ class FakeLanes:
             return LaneResult(exit_code=None, stdout="", stderr="", duration_s=1, timed_out=True)
         if spec.model in self.dead_models:
             return LaneResult(exit_code=1, stdout="", stderr=self.dead_stderr, duration_s=1)
-        if spec.role == "selector":
+        v12 = self.v12_output(spec)
+        if v12 is not None:
+            out = v12
+        elif spec.role == "selector":
             out = self.selector
         elif spec.role == "triage":
             out = self.triage

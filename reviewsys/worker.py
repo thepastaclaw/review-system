@@ -26,7 +26,19 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from . import audit, converse, degraded, github, labels, lanepool, ledger, publish, quota
+from . import (
+    audit,
+    converse,
+    degraded,
+    github,
+    labels,
+    lanepool,
+    ledger,
+    publish,
+    quota,
+    rules,
+    schemas,
+)
 from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
@@ -57,7 +69,9 @@ from .lane import (
 )
 from .models import FailKind, HeadStatus, ReviewError, RunStatus, StepName, Trigger
 from .prompts import (
+    V12_KINDS,
     correction_prompt,
+    finder_prompt,
     prior_for_prompt,
     repair_prompt,
     repo_guidance,
@@ -152,6 +166,9 @@ class OutputCheck[T]:
     expected_phase: str = ""
     prior: list[dict[str, Any]] = field(default_factory=list)  # prior findings, as prompted
     coderabbit_ids: list[int] = field(default_factory=list)
+    # policy v12 kinds (`finder`, ...): the ids the answer must cover, re-told in a
+    # correction turn
+    ids: list[str] = field(default_factory=list)
 
 
 def _as_is(raw: dict[str, Any]) -> dict[str, Any]:
@@ -274,6 +291,13 @@ class RunContext:
     # a conversation run (answers replies on a reviewed commit); None until run() knows. The
     # progress estimate measures it against conversations from the start (see progress.py)
     conversation: bool | None = None
+    # ---- policy v12 (`review_model_policy.pipeline`); untouched under v11 ----
+    issues: dict[str, ledger.Issue] = field(default_factory=dict)  # the PR's ledger at context
+    # finding_hash -> thread facts for every bot finding thread, resolved ones included
+    thread_index: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_reviewed_sha: str | None = None  # the newest other head the bot published a review on
+    finder_evidence: dict[str, Any] = field(default_factory=dict)  # evidence minus our threads
+    settled: list[dict[str, Any]] = field(default_factory=list)  # the finders' settled list
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -580,12 +604,14 @@ def _lane_row(
 
 
 _FINDINGS_INSERT = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+_FINDINGS_INSERT_IDS = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body, candidate_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
 
 
 def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Finding]) -> None:
-    """Write finding rows. The caller must already hold the write transaction."""
+    """Write finding rows (with the policy v12 candidate id). The caller must already hold the
+    write transaction."""
     ctx.conn.executemany(
-        _FINDINGS_INSERT,
+        _FINDINGS_INSERT_IDS,
         [
             (
                 ctx.run_id,
@@ -600,6 +626,7 @@ def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Fin
                 f.category,
                 f.title,
                 f.body[:8000],
+                f.candidate_id,
             )
             for f in findings
         ],
@@ -985,6 +1012,43 @@ def step_context(ctx: RunContext) -> None:
             {"evidence": ctx.evidence, "coderabbit": ctx.coderabbit, "prior": ctx.prior}, indent=1
         )
     )
+    if ctx.cfg.policy.unanchored and not ctx.is_audit:
+        _context12(ctx, threads)
+
+
+# ---- policy v12: what a round knows from the ledger ----
+
+
+def _last_human(t: dict[str, Any]) -> str:
+    replies = [c for c in t.get("transcript") or [] if not c.get("is_bot")]
+    return converse._strip_marker(str(replies[-1].get("body") or ""))[:600] if replies else ""
+
+
+def _context12(ctx: RunContext, threads: list[dict[str, Any]]) -> None:
+    """Policy v12 additions to the context step: every bot finding thread (resolved ones too),
+    the previous reviewed head, the ledger, and the finders' evidence without our own threads
+    and their settled list."""
+    bot = ctx.cfg.bot_login
+    ctx.thread_index = github.finding_threads([{**t, "is_resolved": False} for t in threads], bot)
+    row = ctx.conn.execute(
+        "SELECT sha FROM reviews WHERE repo=? AND number=? AND sha!=? "
+        "ORDER BY posted_at DESC, rowid DESC LIMIT 1",
+        (ctx.repo, ctx.number, ctx.sha),
+    ).fetchone()
+    ctx.last_reviewed_sha = str(row["sha"]) if row else None
+    ctx.issues = ledger.load(ctx.conn, ctx.repo, ctx.number)
+    # open issues belong to the thread lane: finders see neither our findings nor the
+    # discussion under them, only the settled list
+    ctx.finder_evidence = {
+        **ctx.evidence,
+        "review_threads": [
+            t
+            for t in ctx.evidence.get("review_threads") or []
+            if not github._is_bot((t.get("comments") or [{}])[0], bot)
+        ],
+    }
+    reasons = {h: _last_human(t) for h, t in ctx.thread_index.items()}
+    ctx.settled = rules.settled_list(ctx.issues, reasons)
 
 
 def _run_lane(
@@ -1097,6 +1161,8 @@ def _run_checked_lane[T](
                 turn=len(asked),
                 turns=corrections,
                 stamp_echo=ctx.cfg.policy.stamps_echo_fields,
+                ids=check.ids,
+                structured=json_schema is not None,
             )
 
         session = new_session_id() if corrections else ""
@@ -1312,7 +1378,9 @@ def _repair[T](
             kind=check.kind,
             expected_phase=check.expected_phase,
             head_sha=ctx.sha,
-            prior_hashes=[str(p["finding_hash"]) for p in check.prior],
+            prior_hashes=check.ids
+            if check.kind in V12_KINDS
+            else [str(p["finding_hash"]) for p in check.prior],
             stamp_echo=ctx.cfg.policy.stamps_echo_fields,
         ),
         cwd=ctx.worktree,
@@ -1343,6 +1411,7 @@ def _reviewer_lane(
     should_stop: Callable[[], bool] | None = None,
     comparison: bool = False,
     stop_reason: Callable[[], str] | None = None,
+    schema: dict[str, Any] | None = None,
 ) -> ReviewerOutput:
     """One reviewer lane, retried down the Phase-1 ladder when its rung dies. A Phase-1 lane
     starts (and restarts) on the run's current rung, so a lane that starts after a sibling
@@ -1365,6 +1434,7 @@ def _reviewer_lane(
                 should_stop=should_stop,
                 comparison=comparison,
                 stop_reason=stop_reason,
+                schema=schema,
             )
         except ReviewError as exc:
             if should_stop is not None and should_stop():
@@ -1376,6 +1446,23 @@ def _reviewer_lane(
             if nxt is None:
                 raise
             lm = nxt
+
+
+def _blinded_key(ctx: RunContext, key: str) -> str:
+    """A Phase-2 lane's output key as `_blind` shows it to the verifier on a comparison run
+    (`<role>/a` or `<role>/b`), for its candidate ids; unchanged otherwise."""
+    if not ctx.compare_model:
+        return key
+    second_is_a = random.Random(ctx.run_id).random() < 0.5
+    base = key.removesuffix(COMPARE_SUFFIX)
+    return f"{base}/{'a' if key.endswith(COMPARE_SUFFIX) == second_is_a else 'b'}"
+
+
+def _lane_title(ctx: RunContext, role: str) -> str:
+    if role == "general":
+        return "general review"
+    spec = next((s for s in ctx.cfg.specialists if s.id == role), None)
+    return f"{role} ({spec.description})" if spec and spec.description else role
 
 
 def _phase_roles(ctx: RunContext, phase: str) -> list[str]:
@@ -1425,7 +1512,32 @@ def _reviewer_lanes(
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
     stamp = ctx.cfg.policy.stamps_echo_fields
     guidance = repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else ""
-    prompts = {
+    # policy v12: finder lanes on the candidate contract (`rules.parse_finder_output`)
+    unanchored = ctx.cfg.policy.unanchored
+    structured = ctx.cfg.policy.structured_output
+    prompts = (
+        {
+            role: finder_prompt(
+                ctx.cfg,
+                repo=ctx.repo,
+                number=ctx.number,
+                head_sha=ctx.sha,
+                role=role,
+                lane_title=_lane_title(ctx, role),
+                meta=meta,
+                coverage_from=ctx.coverage_from,
+                evidence=ctx.finder_evidence or ctx.evidence,
+                guidance=guidance,
+                last_reviewed_sha=ctx.last_reviewed_sha,
+                settled=ctx.settled,
+                structured=structured,
+            )
+            for role in roles
+        }
+        if unanchored
+        else {}
+    )
+    prompts = prompts or {
         role: reviewer_prompt(
             ctx.cfg,
             repo=ctx.repo,
@@ -1494,8 +1606,25 @@ def _reviewer_lanes(
                 stamp_echo=stamp,
             )
 
-        check = OutputCheck(
-            validate=validate, kind="reviewer", expected_phase=expected_phase, prior=review_prior
+        def validate_candidates(raw: dict[str, Any]) -> ReviewerOutput:
+            label = _blinded_key(ctx, key) if phase == "phase2" and not fresh else key
+            return rules.parse_finder_output(
+                raw,
+                id_prefix=rules.candidate_prefix(phase, label, fresh=fresh),
+                source=f"{phase}:{'fresh:' if fresh else ''}{key}",
+                expected_phase=expected_phase,
+                head_sha=ctx.sha,
+            )
+
+        check = (
+            OutputCheck(validate=validate_candidates, kind="finder", expected_phase=expected_phase)
+            if unanchored
+            else OutputCheck(
+                validate=validate,
+                kind="reviewer",
+                expected_phase=expected_phase,
+                prior=review_prior,
+            )
         )
         try:
             return _reviewer_lane(
@@ -1509,6 +1638,7 @@ def _reviewer_lanes(
                 should_stop=twin_stopped if comparison else stopped,
                 comparison=comparison,
                 stop_reason=stop_reason,
+                schema=schemas.FINDER_SCHEMA if unanchored else None,
             )
         except Exception as exc:  # a comparison lane never fails the phase, whatever broke
             if not comparison or abandon.is_set() or isinstance(exc, Cancelled):

@@ -165,7 +165,7 @@ LATE_NONBLOCKING_MODES = ("post", "note")
 class FinderPolicy:
     """`pipeline.finders`. `anchoring`: "anchored" = reviewer lanes get the prior-findings
     checklist and reconcile it (v11); "unanchored" = finder lanes on the candidate contract,
-    no checklist, only the settled list (v12 design §2.1). Not read yet (piece B1)."""
+    no checklist, only the settled list (v12 design §2.1; `prompts.finder_prompt`)."""
 
     anchoring: str = "anchored"
 
@@ -285,6 +285,11 @@ class ModelPolicy:
     @property
     def structured_output(self) -> bool:
         return self.pipeline is not None and self.pipeline.structured_output
+
+    @property
+    def unanchored(self) -> bool:
+        """Policy v12 finder lanes: candidate contract, no prior checklist (B1)."""
+        return self.pipeline is not None and self.pipeline.finders.anchoring == "unanchored"
 
     @property
     def has_phase1_ladder(self) -> bool:
