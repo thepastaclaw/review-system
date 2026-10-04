@@ -653,6 +653,53 @@ def raise_severity(
     )
 
 
+def attach_folded(
+    conn: sqlite3.Connection,
+    repo: str,
+    number: int,
+    *,
+    run_id: int,
+    sha: str,
+    finding: Finding,
+    comment_hash: str,
+    comment_id: int | str | None,
+    source: str = "verifier",
+) -> None:
+    """A new issue publishing folded onto an existing finding comment (dedupe): it is that
+    comment's issue now, so it can be judged and withdrawn on that thread. A standing issue is
+    affirmed (`seen`), a closed one re-opened, and one the ledger does not know yet is recorded
+    under the comment's hash and id. Caller holds the transaction."""
+    cid = int(comment_id) if comment_id not in (None, "") else None
+    h = comment_hash
+    if not h and cid is not None:
+        row = conn.execute(
+            "SELECT hash FROM issues WHERE repo=? AND number=? AND comment_id=?",
+            (repo, number, cid),
+        ).fetchone()
+        h = str(row["hash"]) if row else ""
+    if not h:
+        return
+    cur = get(conn, repo, number, h)
+    if cur is None:
+        ev = _posted(finding, run_id=run_id, sha=sha, source=source, h=h)
+        ev.detail["comment_id"] = cid
+        append(conn, repo, number, [ev])
+    elif cur.status in STANDING | {"resolved"}:
+        append(conn, repo, number, [_seen(h, run_id=run_id, sha=sha, source=source)])
+    else:
+        transition(
+            conn,
+            repo,
+            number,
+            h,
+            OPEN,
+            run_id=run_id,
+            sha=sha,
+            source=source,
+            reason="raised again; published onto its earlier thread",
+        )
+
+
 RECONCILED_KEY = "ledger.reconciled:{repo}#{number}"
 
 

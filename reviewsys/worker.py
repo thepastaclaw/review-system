@@ -2978,7 +2978,23 @@ def _build_review(
         dry_run=ctx.dry_run,
         superseded_note=note,
         rereview=rereview,
+        fresh=_fresh_threads(ctx),
     )
+
+
+def _fresh_threads(ctx: RunContext) -> Callable[[Finding, Any], bool] | None:
+    """Policy v12: a regression or a revival never folds onto the thread of a closed issue (it
+    would block from inside a resolved thread nobody reads); it gets a new thread, whose body
+    links the old one. Only a standing issue's thread can take it (a retry of this round)."""
+    if not ctx.cfg.policy.verifier_v12:
+        return None
+    standing = {h for h, i in ctx.issues.items() if i.status in rules.VERDICT_STANDING}
+
+    def fresh(f: Finding, comment: Any) -> bool:
+        reopens = bool(f.extra.get("revives") or f.extra.get("regression_of"))
+        return reopens and comment.finding_hash not in standing
+
+    return fresh
 
 
 def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
@@ -4523,6 +4539,7 @@ def _publish12(
             ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run, force_comment=True
         )
         _record_publication(ctx, phase, model, result, verified)
+        _record_folds(ctx, model)
         _record_revivals(ctx, verified)
         return result
     model = _build_review(
@@ -4536,12 +4553,37 @@ def _publish12(
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
     result = publish.publish(ctx.gh, model, bot_login=ctx.cfg.bot_login, dry_run=ctx.dry_run)
     _record_publication(ctx, phase, model, result, verified)
+    _record_folds(ctx, model)
     _record_revivals(ctx, verified)
     if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
         publish.post_coderabbit_reactions(
             ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
         )
     return result
+
+
+def _record_folds(ctx: RunContext, model: publish.ReviewModel) -> None:
+    """Every new issue publishing folded onto an existing finding comment becomes that
+    comment's ledger issue (`ledger.attach_folded`): affirmed, re-opened, or recorded, so it
+    is listed, judged and withdrawable instead of blocking from nowhere."""
+    folds = [s for s in model.suppressed if s.comment_id]
+    if not folds:
+        return
+
+    def record(c: sqlite3.Connection) -> None:
+        for s in folds:
+            ledger.attach_folded(
+                c,
+                ctx.repo,
+                ctx.number,
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+                finding=s.finding,
+                comment_hash=s.comment_hash,
+                comment_id=s.comment_id,
+            )
+
+    _ledger_write(ctx, "folds", record)
 
 
 def _record_revivals(ctx: RunContext, verified: VerifierOutput) -> None:

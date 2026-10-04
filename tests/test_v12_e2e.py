@@ -309,3 +309,74 @@ def test_a_maintainer_concession_wins_over_a_blind_refind(v12, conn, gh, lanes, 
     ]
     assert detail == {"finding_hash": sugg, "outcome": "WITHDRAWN", "verdict": "CONFIRMED"}
     assert gh.posted_reviews[before]["event"] == "COMMENT"
+
+
+def _fixed_blocker(v12, conn, gh, lanes, git, *, status="FIXED"):
+    """Round 1 raises a blocker on line 11; round 2 (its code changed) the thread lane closes
+    it, and its thread is resolved. Returns (hash, root comment id)."""
+    lanes.verify12 = _confirm_phase2
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    fee = _hash_of(conn, "Fee estimate omits drainage")
+    reply(gh, ids[fee], "Changed it.", rid=907)
+    git.changed.add(("f.rs", 11))
+    lanes.thread_out[fee] = {"status": status, "reply": "Agreed."}
+    lanes.candidates["general"] = []
+    run_round(v12, conn, gh, lanes, B)
+    resolve(gh, ids[fee])
+    lanes.thread_out = {}
+    return fee, ids[fee]
+
+
+def test_a_regression_gets_a_thread_of_its_own(v12, conn, gh, lanes, git):
+    fee, _ = _fixed_blocker(v12, conn, gh, lanes, git)
+    assert by_title(conn)["Fee estimate omits drainage"].status == "fixed"
+    git.changed.clear()
+    lanes.candidates["general"] = [cand(f"Fee estimate omits drainage [fixed:{fee}]")]
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, "d" * 40)
+    review = gh.posted_reviews[before]
+    assert review["event"] == "REQUEST_CHANGES"
+    (comment,) = review["comments"]  # posted, not folded into the old resolved thread
+    assert "Fee estimate omits drainage (regression)" in comment["body"]
+    assert "regression of an earlier finding that was fixed" in comment["body"]
+    led = by_title(conn)
+    assert led["Fee estimate omits drainage (regression)"].status == "open"
+    assert led["Fee estimate omits drainage"].status == "fixed"
+
+
+def test_a_revival_under_a_new_title_gets_a_thread_of_its_own(v12, conn, gh, lanes, git):
+    fee, _ = _fixed_blocker(v12, conn, gh, lanes, git, status="WITHDRAWN")
+    assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
+    lanes.candidates["general"] = [
+        cand(f"Fee estimate still omits the drainage cost [settled:{fee}]")
+    ]
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, "d" * 40)
+    review = gh.posted_reviews[before]
+    (comment,) = review["comments"]
+    assert "Fee estimate still omits the drainage cost" in comment["body"]
+    assert "raised before and withdrawn" in comment["body"]
+    led = by_title(conn)
+    assert led["Fee estimate still omits the drainage cost"].status == "open"
+
+
+def test_a_new_issue_folded_onto_a_closed_thread_reopens_that_issue(v12, conn, gh, lanes, git):
+    """Dedupe folds a new blocker onto the thread of a fixed issue (same lines, similar
+    title): the review requests changes without an inline comment, so the folded issue must
+    be the ledger's, open on that thread, where it can be judged and withdrawn."""
+    _, root = _fixed_blocker(v12, conn, gh, lanes, git)
+    git.changed.clear()
+    lanes.candidates["general"] = [cand("Fee estimate still omits the drainage cost")]
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, "d" * 40)
+    review = gh.posted_reviews[before]
+    assert review["event"] == "REQUEST_CHANGES" and review["comments"] == []
+    issue = by_title(conn)["Fee estimate omits drainage"]
+    assert issue.status == "open" and issue.comment_id == root
+    before = len(gh.posted_reviews)
+    lanes.candidates["general"] = []
+    run_round(v12, conn, gh, lanes, "e" * 40)
+    assert "Still open from earlier rounds (1)" in gh.posted_reviews[before]["body"]

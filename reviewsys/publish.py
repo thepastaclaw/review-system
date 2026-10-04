@@ -7,6 +7,7 @@ Network happens only in `publish()`.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from textwrap import indent
 from typing import Any
@@ -643,7 +644,10 @@ def dedupe_against_github(
     bot_login: str,
     *,
     dry_run: bool,
+    fresh: Callable[[Finding, ExistingComment], bool] | None = None,
 ) -> tuple[list[Finding], list[Suppressed]]:
+    """`fresh(f, comment)`: `f` is never folded onto that comment (policy v12: a regression or a
+    revival gets a new thread instead of disappearing into a closed one)."""
     records = [
         ExistingComment.from_github(c)
         for c in github.inline_comments(gh, repo, number)
@@ -658,12 +662,20 @@ def dedupe_against_github(
     # duplicate GitHub comments even though each finding was considered once.
     seen_matches: set[tuple[str, str]] = set()
     for f in findings:
-        match, reason = find_duplicate(f, records)
+        candidates = records if fresh is None else [r for r in records if not fresh(f, r)]
+        match, reason = find_duplicate(f, candidates)
         if not match:
             kept.append(f)
             continue
         thread = github.thread_for_comment(gh, match.node_id) or {}
-        base = Suppressed(f, "", detail=reason or "", comment_id=match.id, html_url=match.html_url)
+        base = Suppressed(
+            f,
+            "",
+            detail=reason or "",
+            comment_id=match.id,
+            html_url=match.html_url,
+            comment_hash=match.finding_hash,
+        )
         match_key = (match.node_id or match.id, head_sha)
         if match_key in seen_matches:
             base.action = "deduped_same_batch_existing_thread"
@@ -715,10 +727,11 @@ def build(
     dry_run: bool,
     superseded_note: str | None = None,
     rereview: bool = False,
+    fresh: Callable[[Finding, ExistingComment], bool] | None = None,
 ) -> ReviewModel:
     findings, collapsed = collapse_same_root(list(verified.findings))
     kept, sup = dedupe_against_github(
-        gh, repo, number, head_sha, findings, bot_login, dry_run=dry_run
+        gh, repo, number, head_sha, findings, bot_login, dry_run=dry_run, fresh=fresh
     )
     suppressed = list(collapsed) + list(sup)
     if has_same_root_duplicates(kept):
