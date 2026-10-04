@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from conftest import FakeGh, FakeLanes
 
-from reviewsys import degraded, replay
+from reviewsys import degraded, replay, replaygit
 from reviewsys import worker as worker_mod
 from reviewsys.config import DegradedPolicy, Substitute
 from reviewsys.contract import finding_hash
@@ -404,7 +404,14 @@ def test_reconcile_as_of_outdates_moved_issues_and_leaves_open_threads_pending(
         scratch, conn, pin=_pin(history, str(mirror)), gh=FakeGh(), bot_login="thepastaclaw",
         git_dir=mirror,
     )  # fmt: skip
-    assert got == {"pr_open": True, "open_threads": 1, "standing": 2, "outdated": 1, "pending": 1}
+    assert got == {
+        "pr_open": True,
+        "resolution_as_of_now": 0,
+        "open_threads": 1,
+        "standing": 2,
+        "outdated": 1,
+        "pending": 1,
+    }
     issues = ledger.load(scratch, REPO, NUMBER)
     assert issues["h-early"].status == "outdated" and issues["0e0e0e"].status == "open"
     assert issues["0e0e0e"].thread_id == "PRRT_0e0e0e"  # the thread sync ran
@@ -501,17 +508,97 @@ def test_a_pinned_clone_of_a_partial_mirror_fetches_into_itself(tmp_path):
         check=True,
     )
     packs_before = sorted(p.name for p in (mirror / "objects" / "pack").iterdir())
-    clone = replay.pinned_clone(
-        mirror,
-        tmp_path / "pinned.git",
-        replay.pinned_refs(number=1, sha=head, base_ref="main", base_sha=head),
-        head_branch="main",
-    )
-    assert _git(clone, "config", "extensions.partialClone") == replay.PROMISOR
+    prod = tmp_path / "prod-mirrors"
+    prod.mkdir()
+    mirror = mirror.rename(prod / replaygit.mirror_name("o/r"))
+    clone, base, mb = replaygit.pinned_clone(
+        prod, None, tmp_path / "pinned.git", repo="o/r", number=1, sha=head,
+        base_ref="main", base_sha=head, cutoff=CUTOFF,
+    )  # fmt: skip
+    assert (base, mb) == (head, head)
+    assert _git(clone, "config", "extensions.partialClone") == replaygit.SOURCE
     tree = wt.create_worktree(clone, tmp_path / "wts", "w", head)
     assert (tree / "a.txt").read_text() == "hello\n"  # the blob came in lazily
     assert sorted(p.name for p in (mirror / "objects" / "pack").iterdir()) == packs_before
     assert any(p.suffix == ".promisor" for p in (clone / "objects" / "pack").iterdir())
+
+
+def _tree_state(d: Path) -> list[tuple[str, int, float]]:
+    return sorted(
+        (str(p.relative_to(d)), p.stat().st_size, p.stat().st_mtime) for p in d.rglob("*")
+    )
+
+
+@pytest.fixture
+def read_only_mirror(cfg):
+    """The production mirror, write-protected for the test: a replay may only read it."""
+    import os
+    import stat
+
+    m = cfg.mirrors_dir / "dashpay__platform.git"
+    paths = [m, *m.rglob("*")]
+    modes = {p: p.stat().st_mode for p in paths}
+    for p in paths:
+        os.chmod(p, modes[p] & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+    yield m
+    for p in reversed(paths):
+        os.chmod(p, modes[p])
+
+
+def test_a_replay_never_writes_the_production_mirror(
+    cfg, conn, history, tmp_path, read_only_mirror
+):
+    """M2: the PR head is not in the mirror (pushed after the daemon last fetched): it is
+    fetched into the replay's own clone; the read-only mirror is left exactly as it was."""
+    src = tmp_path / "src"
+    ident = ("-c", "user.name=T", "-c", "user.email=t@example.com")
+    _git(src, "checkout", "-q", "pr")
+    (src / "g.rs").write_text("fn g() {}\n")
+    _git(src, "add", ".")
+    _git(src, *ident, "commit", "-qm", "pushed later")
+    new_head = _git(src, "rev-parse", "HEAD")
+    with tx(conn):
+        conn.execute(
+            "UPDATE heads SET sha=? WHERE id=(SELECT head_id FROM runs WHERE id=?)",
+            (new_head, history["src"]),
+        )
+    before = _tree_state(read_only_mirror)
+    _evidence(cfg, history["src"], history["base"])
+    lanes = FakeLanes(new_head)
+    _lanes_ok(lanes, [])
+    report = _replay(cfg, history, tmp_path, lanes)
+    assert report["status"] == "done", report["reason"]
+    assert report["sha"] == new_head
+    assert _tree_state(read_only_mirror) == before
+    assert not (tmp_path / "out" / ".mirrors").exists()  # the production mirror sufficed
+
+
+def test_a_repository_without_a_production_mirror_is_mirrored_in_the_eval_dir(
+    tmp_path, monkeypatch
+):
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    (src / "a").write_text("a\n")
+    _git(src, "add", ".")
+    _git(src, "-c", "user.name=T", "-c", "user.email=t@e", "commit", "-qm", "a")
+    head = _git(src, "rev-parse", "HEAD")
+    prod, mine = tmp_path / "prod", tmp_path / "eval-mirrors"
+    prod.mkdir()
+
+    def ensure(mirrors_dir: Path, repo: str) -> Path:  # what wt.ensure_mirror clones, offline
+        m = mirrors_dir / replaygit.mirror_name(repo)
+        if not (m / "HEAD").exists():
+            subprocess.run(["git", "clone", "-q", "--bare", str(src), str(m)], check=True)
+        return m
+
+    monkeypatch.setattr(replaygit.wt, "ensure_mirror", ensure)
+    clone, _, _ = replaygit.pinned_clone(
+        prod, mine, tmp_path / "c.git", repo="o/r", number=1, sha=head
+    )
+    assert list(prod.iterdir()) == []  # no new production mirror
+    assert (mine / replaygit.mirror_name("o/r") / "HEAD").exists()
+    assert replaygit.has_commit(clone, head)
 
 
 def test_a_snapshot_source_still_sees_degraded_mode_on_the_live_database(
@@ -925,13 +1012,41 @@ def test_lane_output_reading_github_directly_marks_the_replay_invalid(cfg, conn,
     assert report["live_github"]["lane_output_hits"]
 
 
-def test_a_read_only_token_reaches_the_lanes(cfg, conn, history, tmp_path):
+def test_the_token_stays_with_the_broker_and_never_reaches_a_lane(
+    cfg, conn, history, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("REVIEWSYS_REPLAY_GH_TOKEN", "ro-token")
     _evidence(cfg, history["src"], history["base"])
     lanes = FakeLanes(history["head"])
     _lanes_ok(lanes, [])
     report = _replay(cfg, history, tmp_path, lanes, gh_token="ro-token")
-    assert {dict(s.env)["GH_TOKEN"] for s in lanes.calls} == {"ro-token"}
+    for s in lanes.calls:
+        env = dict(s.env)
+        assert env["GH_TOKEN"] == env["GITHUB_TOKEN"] == env["REVIEWSYS_REPLAY_GH_TOKEN"] == ""
+        gh_config = Path(env["GH_CONFIG_DIR"])
+        assert gh_config.is_dir() and not any(gh_config.iterdir())
     assert report["options"]["gh_token"] == "read-only token"
+
+
+def test_the_replay_cli_drops_the_token_from_its_own_environment(monkeypatch, tmp_path):
+    import os
+
+    from reviewsys import cli
+
+    seen: dict[str, Any] = {}
+
+    def fake_replay(cfg, **kw):
+        seen["token"] = kw["gh_token"]
+        seen["env"] = {k: os.environ.get(k) for k in replay.TOKEN_VARS}
+        raise replay.ReplayAborted("stop here")
+
+    monkeypatch.setattr(replay, "replay", fake_replay)
+    monkeypatch.setattr(cli, "_cfg", lambda args: None)
+    for var in replay.TOKEN_VARS:
+        monkeypatch.setenv(var, "secret")
+    rc = cli.main(["replay", "1", "--out", str(tmp_path)])
+    assert rc == replay.EXIT_ABORTED and seen["token"] == "secret"
+    assert set(seen["env"].values()) == {None}
 
 
 def test_an_audit_queue_source_run_is_replayed_as_a_live_review(cfg, conn, history, tmp_path):
@@ -945,3 +1060,26 @@ def test_an_audit_queue_source_run_is_replayed_as_a_live_review(cfg, conn, histo
     _lanes_ok(lanes, [])
     report = _replay(cfg, history, tmp_path, lanes)
     assert report["status"] == "done" and report["source"]["queue"] == "audit"
+
+
+def test_the_report_has_the_slot_wait_and_the_thread_state_flag(
+    cfg, conn, history, tmp_path, monkeypatch
+):
+    """L8 and L4: the stall credit lanepool adds to the run's deadline is its slot wait."""
+    from reviewsys import lanepool
+
+    real = lanepool.gated
+
+    def stalled(runner, conn_, cfg_, run_stopped, queue, run_id, **kw):
+        lanepool.extend_deadline(conn_(), run_id, 600)  # as if its first lane waited 10 min
+        return real(runner, conn_, cfg_, run_stopped, queue, run_id, **kw)
+
+    monkeypatch.setattr(lanepool, "gated", stalled)
+    _evidence(cfg, history["src"], history["base"])
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [])
+    report = _replay(cfg, history, tmp_path, lanes)
+    assert report["status"] == "done", report["reason"]
+    assert report["slot_wait_s"] == 600.0
+    assert report["active_s"] == 0.0  # the run took seconds; the credit exceeds them
+    assert report["thread_resolution_as_of_now"] == 0

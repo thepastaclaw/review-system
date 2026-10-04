@@ -19,15 +19,17 @@ The replay sees the PR as it was when the source run started (the cutoff):
   `gh` shim first on their PATH that asks the replay's broker; the lane sandbox denies
   executing the installed gh, a curl shim refuses GitHub hosts, and Claude Code's web tools
   are taken away. With a read-only token (`--gh-token-env`, default
-  `REVIEWSYS_REPLAY_GH_TOKEN`) every live read the view makes uses it, and the lanes' own
-  GH_TOKEN/GITHUB_TOKEN are set to it (blank without one).
+  `REVIEWSYS_REPLAY_GH_TOKEN`) every live read the view makes uses it. The token stays with
+  the broker: lanes get GH_TOKEN, GITHUB_TOKEN and REVIEWSYS_REPLAY_GH_TOKEN blank and an
+  empty GH_CONFIG_DIR.
 - Range: the review covers `merge-base(base the source run saw, head)..head`, not the merge
   base with today's base branch (for a PR merged since, that would be the head itself).
-- Git: the worktree comes from a per-replay bare repository (`pinned_clone`) that borrows the
-  mirror's objects (alternates: nothing is copied) and has no refs but the base branch at the
-  base the source run saw and the PR head at the replayed sha, so `git log origin/<base>`,
-  `refs/pull/N/head` and `--all` show nothing pushed after the cutoff. Its `origin` is
-  itself; missing blobs of a partial mirror are fetched into it, never into the mirror.
+- Git (replaygit.py): the worktree comes from a per-replay bare repository that borrows the
+  production mirror's objects read-only (alternates: nothing is copied) and has no refs but
+  the base branch at the base the source run saw and the PR head at the replayed sha, so
+  `git log origin/<base>`, `refs/pull/N/head` and `--all` show nothing pushed after the
+  cutoff. Whatever the mirror lacks is fetched into that repository; nothing is ever written
+  to a production mirror (a repository without one is mirrored under `eval_mirrors`).
 - Machine: lanes take slots in the configured work dir's `lane-slots` (the same pools as the
   box config, the gpt pool sized from the configured database's account reading), at the
   `replay` rank: behind every production lane, never the side-lane slot, at most
@@ -45,7 +47,7 @@ so after the run their answers and stderr are searched for the replayed reposito
 raw-content URLs, and refused gh and curl attempts are listed. A hit marks the report invalid.
 
 Safety: a scratch SQLite database under `--out`, the worker's dry-run mode, and a read-only gh.
-The production work directory's bare mirrors are shared (read + fetch only); the pinned clone,
+The production work directory's bare mirrors are only read; the pinned clone,
 worktrees and run directories live under `--out`, and the clone and worktrees are removed when
 the replay ends (the run artifacts and report stay).
 """
@@ -66,8 +68,8 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg_mod
-from . import degraded, github, ledger, worker
-from .db import connect, now, tx
+from . import degraded, github, ledger, replaygit, worker
+from .db import connect, now, parse_ts, tx
 from .degraded import Prober
 from .gh import Gh, GhRunner, _default_runner, env_runner, read_only_runner
 from .ghshim import Broker, Pin, install_shim, pinned_runner, real_gh
@@ -81,10 +83,11 @@ from .lane import (
 )
 from .lanepool import pool_of
 from .models import RunStatus, StepName, Trigger
-from .steps import worktree as wt
 
 EXIT_ABORTED = 75  # EX_TEMPFAIL: the replay refused to start or its models ran dry mid-run
 TOKEN_ENV = "REVIEWSYS_REPLAY_GH_TOKEN"
+# never in a lane's environment (blanked there; the CLI drops them from its own once read)
+TOKEN_VARS = (TOKEN_ENV, "GH_TOKEN", "GITHUB_TOKEN")
 LANE_DISALLOWED_TOOLS = ("WebFetch", "WebSearch")
 # findings stages a later run reads from earlier ones (prior findings, standing verdicts)
 SEED_STAGES = ("posted", "conceded", "verified", "verified-fresh")
@@ -176,6 +179,9 @@ def reconcile_as_of(
         return {"pr_open": False, "closed": closed, "standing": len(before), "pending": 0}
     threads = github.review_threads(gh, repo, number)
     open_ = set(github.finding_threads(threads, bot_login))
+    # a thread's resolved state is as of now (the view cannot rewind it): what the sync below
+    # makes of resolved threads is not exact, and the head is flagged for scoring
+    as_of_now = sum(1 for t in threads if t.get("is_resolved"))
 
     def changed(a: str, b: str, file: str, ls: int | None, le: int | None) -> bool | None:
         return ledger.lines_changed(git_dir, a, b, file, ls, le) if file else None
@@ -207,6 +213,7 @@ def reconcile_as_of(
         )
     return {
         "pr_open": True,
+        "resolution_as_of_now": as_of_now,
         "open_threads": len(open_),
         "standing": len(before),
         "outdated": sum(1 for h, m in moved.items() if m is True and h not in pending),
@@ -638,41 +645,6 @@ def degraded_problem(
 # ---- the pinned view ----
 
 
-def _git_out(git_dir: Path, *args: str) -> str:
-    proc = subprocess.run(
-        ["git", "-C", str(git_dir), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-    )
-    return proc.stdout.strip() if proc.returncode == 0 else ""
-
-
-def resolve_base(
-    mirror: Path, *, sha: str, base_ref: str, base_sha: str, cutoff: str
-) -> tuple[str, str]:
-    """(base sha, merge base) the replay reviews from: the base the source run saw (its
-    evidence's `baseRefOid`) or, without it, the base branch's tip as of the cutoff."""
-    if base_sha and not wt.ensure_commit(mirror, base_sha):
-        base_sha = ""
-    if not base_sha and base_ref:
-        wt.fetch_branch(mirror, base_ref)
-        for ref in (f"refs/remotes/origin/{base_ref}", f"refs/heads/{base_ref}"):
-            base_sha = _git_out(
-                mirror, "rev-list", "-1", "--first-parent", f"--before={cutoff}", ref
-            )
-            if base_sha:
-                break
-    merge_base = _git_out(mirror, "merge-base", base_sha, sha) if base_sha else ""
-    if not merge_base:
-        raise SystemExit(
-            f"cannot determine where {sha[:12]} branched from {base_ref or '?'} "
-            f"(base {base_sha[:12] or 'unknown'}); is the mirror at {mirror} complete?"
-        )
-    return base_sha, merge_base
-
-
 def check_shim(shim: Path, profile: str) -> str:
     """Why the shim cannot serve a lane ("" = it can): `gh --version` through it, under the
     lane sandbox when there is one, as far as the broker's real gh."""
@@ -684,70 +656,6 @@ def check_shim(shim: Path, profile: str) -> str:
     except (OSError, subprocess.TimeoutExpired) as exc:
         return str(exc)
     return "" if r.returncode == 0 else (r.stderr.strip() or f"exit {r.returncode}")[:300]
-
-
-PROMISOR = "replay-promisor"
-
-
-def _git_ok(git_dir: Path, *args: str) -> None:
-    proc = subprocess.run(
-        ["git", "-C", str(git_dir), *args],
-        capture_output=True,
-        text=True,
-        check=False,
-        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
-    )
-    if proc.returncode != 0:
-        raise SystemExit(f"git {' '.join(args[:2])} in {git_dir}: {proc.stderr.strip()[:300]}")
-
-
-def pinned_refs(*, number: int, sha: str, base_ref: str, base_sha: str) -> dict[str, str]:
-    """The only refs a replay's repository has: the PR head at the replayed sha, and the base
-    branch (also as `origin/<base>`) at the base the source run saw."""
-    refs = {f"refs/pull/{number}/head": sha, "refs/heads/replay-head": sha}
-    if base_ref and base_sha:
-        refs |= {f"refs/heads/{base_ref}": base_sha, f"refs/remotes/origin/{base_ref}": base_sha}
-    return refs
-
-
-def pinned_clone(mirror: Path, dest: Path, refs: dict[str, str], *, head_branch: str) -> Path:
-    """A bare repository at `dest` that sees `mirror`'s objects (alternates: nothing is
-    copied) and has only `refs` (full ref name -> sha), HEAD on `refs/heads/<head_branch>`.
-    The replay's worktree is checked out from it, so the lanes' git shows no ref, tag or
-    reflog of the live repository. Its `origin` is itself: a lane's fetch from origin changes
-    nothing. When the mirror is a partial clone, missing objects come from the mirror's own
-    remote into `dest` (through a remote with no ref anyone can fetch), never into the mirror,
-    and deleting `dest` frees them."""
-    if dest.exists():
-        shutil.rmtree(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    _git_ok(dest.parent, "init", "-q", "--bare", str(dest))
-    (dest / "objects" / "info" / "alternates").write_text(f"{(mirror / 'objects').resolve()}\n")
-    settings = {
-        "remote.origin.url": str(dest.resolve()),
-        "remote.origin.fetch": "+refs/heads/*:refs/heads/*",
-        "gc.auto": "0",
-    }
-    promisor = _git_out(mirror, "config", "--get", "extensions.partialclone")
-    if not promisor and _git_out(mirror, "config", "--get", "remote.origin.promisor") == "true":
-        promisor = "origin"
-    url = _git_out(mirror, "config", "--get", f"remote.{promisor}.url") if promisor else ""
-    if url:
-        flt = _git_out(mirror, "config", "--get", f"remote.{promisor}.partialclonefilter")
-        settings |= {
-            "core.repositoryformatversion": "1",
-            "extensions.partialClone": PROMISOR,
-            f"remote.{PROMISOR}.url": url,
-            f"remote.{PROMISOR}.promisor": "true",
-            f"remote.{PROMISOR}.partialclonefilter": flt or "blob:none",
-            f"remote.{PROMISOR}.fetch": "+refs/replay-pinned/none:refs/replay-pinned/none",
-        }
-    for key, value in settings.items():
-        _git_ok(dest, "config", key, value)
-    for name, sha in refs.items():
-        _git_ok(dest, "update-ref", name, sha)
-    _git_ok(dest, "symbolic-ref", "HEAD", f"refs/heads/{head_branch}")
-    return dest
 
 
 def _link(path: Path, target: Path) -> None:
@@ -778,9 +686,12 @@ def replay(
     prober: Prober | None = None,
     lane_runner: LaneRunner | None = None,
     gh_runner: GhRunner | None = None,
+    eval_mirrors: Path | None = None,
 ) -> dict[str, Any]:
     """Replay source run `run_id` into `out/run-<id>[-r<sample>]/` and return its report
-    (also written there as report.json). Raises ReplayAborted in degraded mode."""
+    (also written there as report.json). Raises ReplayAborted in degraded mode. A repository
+    the configured work dir has no mirror of is mirrored under `eval_mirrors` (default
+    `out/.mirrors`), never in the production work dir."""
     skills_dir = skills or cfg.skills_dir
     repos, specialists, policy, _ = cfg_mod.load_skills_config(skills_dir)
     arm = dataclasses.replace(
@@ -818,6 +729,7 @@ def replay(
             gh_token=gh_token,
             lane_runner=lane_runner,
             gh_runner=gh_runner,
+            eval_mirrors=eval_mirrors,
         )
     finally:
         prod.close()
@@ -839,6 +751,7 @@ def _replay(
     gh_token: str | None,
     lane_runner: LaneRunner | None,
     gh_runner: GhRunner | None,
+    eval_mirrors: Path | None = None,
 ) -> dict[str, Any]:
     run_id, repo, number, sha = (
         int(src["id"]),
@@ -878,27 +791,24 @@ def _replay(
         evidence = source_evidence(source_runs, run_id)
         ev_pr = (evidence.get("evidence") or {}).get("pr") or {}
         ci = (evidence.get("evidence") or {}).get("ci")
-        # the production mirror (shared: read and fetch only), then the replay's own view of it
-        mirror = wt.ensure_mirror(arm.mirrors_dir, repo)
-        wt.fetch_head(mirror, number, sha)
         base_ref = str(ev_pr.get("baseRefName") or "")
         if not base_ref:  # no evidence on disk: the live base ref (refs are rarely renamed)
             live = Gh(installed_gh, runner=read_only_runner(inner)).api(
                 f"repos/{repo}/pulls/{number}"
             )
             base_ref = str(((live or {}).get("base") or {}).get("ref") or "")
-        base_sha, merge_base = resolve_base(
-            mirror,
+        # the replay's own repository: the production mirror's objects borrowed read-only,
+        # anything missing fetched into it, only the pinned refs (replaygit.py)
+        pinned, base_sha, merge_base = replaygit.pinned_clone(
+            arm.mirrors_dir,
+            eval_mirrors or out / ".mirrors",
+            rc.mirrors_dir / replaygit.mirror_name(repo),
+            repo=repo,
+            number=number,
             sha=sha,
             base_ref=base_ref,
             base_sha=str(ev_pr.get("baseRefOid") or ""),
             cutoff=cutoff,
-        )
-        pinned = pinned_clone(
-            mirror,
-            rc.mirrors_dir / mirror.name,
-            pinned_refs(number=number, sha=sha, base_ref=base_ref, base_sha=base_sha),
-            head_branch=base_ref if base_ref and base_sha else "replay-head",
         )
         pin = Pin(
             repo=repo,
@@ -919,6 +829,9 @@ def _replay(
         )
         pin.save(work / "pin.json")
         trigger = _source_trigger(prod, run_id)
+        # lanepool pushes the deadline out by every stretch the run only waited for slots:
+        # the difference at the end is the run's slot wait
+        deadline0 = now()
         with tx(scratch):
             hid = _ensure_head(scratch, repo, number, sha, trigger.value)
             scratch.execute(
@@ -934,7 +847,7 @@ def _replay(
                     "status": "spawned",
                     "token": "replay",
                     "started_at": now(),
-                    "deadline_at": now(),
+                    "deadline_at": deadline0,
                 },
             )
         gh = Gh(installed_gh, runner=read_only_runner(pinned_runner(pin, inner)))
@@ -949,6 +862,8 @@ def _replay(
             problem = check_shim(shim, exec_deny_profile(rc.lane_deny_exec))
             if problem:
                 raise SystemExit(f"the replay's gh shim cannot serve a lane: {problem}")
+            gh_config = work / "gh-config"
+            gh_config.mkdir(exist_ok=True)
             env_file = bin_dir / "env.sh"
             env_file.write_text(f'export PATH="{bin_dir}:$PATH"\n')
             env = {
@@ -956,7 +871,9 @@ def _replay(
                 # sourced by Claude Code before each Bash command: keeps the shims first even
                 # if the lane's shell setup rewrites PATH
                 "CLAUDE_ENV_FILE": str(env_file),
-                **token_env,
+                # the token stays with the broker; no gh in a lane can find credentials
+                "GH_CONFIG_DIR": str(gh_config),
+                **dict.fromkeys(TOKEN_VARS, ""),
             }
             t0 = time.monotonic()
             status = worker.main(
@@ -984,6 +901,7 @@ def _replay(
             src,
             status=status,
             wall_clock_s=wall,
+            deadline0=deadline0,
             options={
                 "policy_name": policy_name,
                 "skills": str(rc.skills_dir),
@@ -1059,6 +977,7 @@ def build_report(
     status: RunStatus,
     wall_clock_s: float,
     options: dict[str, Any],
+    deadline0: str | None = None,
     pin: Pin,
     seeded: dict[str, Any],
     trigger: Trigger,
@@ -1140,6 +1059,9 @@ def build_report(
     curl_log = work / "curl-refused.log"
     curl_refused = curl_log.read_text().splitlines() if curl_log.exists() else []
     hits = live_github_hits(lanes, pin.repo)
+    slot_wait = 0.0
+    if deadline0 and run["deadline_at"]:
+        slot_wait = max(0.0, (parse_ts(run["deadline_at"]) - parse_ts(deadline0)).total_seconds())
     invalid = None
     if hits:
         invalid = "lane reached live GitHub"
@@ -1167,6 +1089,10 @@ def build_report(
         "invalid": invalid,
         "tier": run["tier"],
         "wall_clock_s": round(wall_clock_s, 1),
+        # the time the run only waited for lane slots (some lane waiting, none running), and
+        # the rest: wall-clock gates read `active_s`
+        "slot_wait_s": slot_wait,
+        "active_s": round(max(0.0, wall_clock_s - slot_wait), 1),
         "gate": {
             "decision": (gate or {}).get("detail"),
             "forced_phase2": bool(((gate or {}).get("detail") or {}).get("forced_phase2")),
@@ -1204,6 +1130,9 @@ def build_report(
             "lifted_before_cutoff": len(pin.lifted),
         },
         "gh_shim": {"calls": dict(calls), "rewind": dict(rewind), "lane_refused": refused[:50]},
+        # threads whose resolved state is as of now, not the cutoff (the view cannot rewind
+        # it): the head's thread facts are not exact (replay-score sets such heads apart)
+        "thread_resolution_as_of_now": int(rewind.get("thread_resolved_as_of_now", 0)),
         "live_github": {"lane_output_hits": hits, "curl_refused": curl_refused[:50]},
         "run_dir": str(run_dir),
         "caveats": list(CAVEATS),
