@@ -24,6 +24,8 @@
 #   --disk-wait-minutes N  with nothing running and the disk short, wait, then stop (30)
 #   --min-usable-accounts N  stop launching below this many usable OpenAI accounts (2)
 #   --busy-wait-minutes N  with production's queue long and nothing running, wait, then stop (60)
+#   --replay-pool-slots P=N  replay lanes hold at most N slots of pool P (repeatable; default
+#                        gpt=2 for the eval; "none" for the config's replay_pool_share only)
 #   --retry-failed       also re-run failed and invalid replays
 #   --refresh-snapshot   take a new snapshot of the production database
 #   --only STAGES        comma list of: preflight,snapshot,arms,replay,score,judge
@@ -77,6 +79,7 @@ SKILLS_REPO="" V11="169fcb8" V12="" SET="" LABELS=""
 CONCURRENCY=3 LIMIT="" PIN_P1="muse-spark-1.3-contributor"
 JUDGE_MODEL="gpt-6.1-sol" JUDGE_EFFORT="xhigh"
 MIN_FREE_GB=35 JOB_GB=6 DISK_WAIT=30 MIN_ACCOUNTS=2 BUSY_WAIT=60 STOP_GRACE=60
+POOL_SLOTS=() POOL_SLOTS_SET=""
 RETRY="" REFRESH="" ONLY="" ALLOW_BOT="" DRY="" STOP="" EVAL_ROOT_SET=""
 EXIT_ABORTED=75 EXIT_DISK=74
 
@@ -101,6 +104,7 @@ while [ $# -gt 0 ]; do
     --min-usable-accounts) need "$@"; MIN_ACCOUNTS="$2"; shift 2;;
     --busy-wait-minutes) need "$@"; BUSY_WAIT="$2"; shift 2;;
     --stop-grace) need "$@"; STOP_GRACE="$2"; shift 2;;
+    --replay-pool-slots) need "$@"; POOL_SLOTS_SET=1; [ "$2" = none ] || POOL_SLOTS+=("$2"); shift 2;;
     --retry-failed) RETRY=1; shift;;
     --refresh-snapshot) REFRESH=1; shift;;
     --only) need "$@"; ONLY=",$2,"; shift 2;;
@@ -235,9 +239,14 @@ OUT="$EVAL_ROOT/out${LIMIT:+-limit$LIMIT}"
 LIM=(); if [ -n "$LIMIT" ]; then LIM=(--limit "$LIMIT"); fi
 PIN=(); if [ "$PIN_P1" != "none" ]; then PIN=(--pin-phase1-model "$PIN_P1"); fi
 RETRY_ARG=(); if [ -n "$RETRY" ]; then RETRY_ARG=(--retry-failed); fi
+# the eval's replays hold at most 2 gpt slots unless told otherwise: the gpt pool shrinks
+# whenever the box parks an OpenAI account, and production must keep the rest
+if [ -z "$POOL_SLOTS_SET" ]; then POOL_SLOTS=(gpt=2); fi
+SLOTS=()
+for ps in ${POOL_SLOTS[@]+"${POOL_SLOTS[@]}"}; do SLOTS+=(--replay-pool-slots "$ps"); done
 GATE=(--min-free-gb "$MIN_FREE_GB" --disk-per-job-gb "$JOB_GB" --disk-wait-minutes "$DISK_WAIT"
       --min-usable-accounts "$MIN_ACCOUNTS" --busy-wait-minutes "$BUSY_WAIT"
-      --eval-mirrors "$EVAL_ROOT/mirrors")
+      --eval-mirrors "$EVAL_ROOT/mirrors" ${SLOTS[@]+"${SLOTS[@]}"})
 
 # ---- the GitHub token: read-only, not the bot's ----
 TOKEN="${REVIEWSYS_REPLAY_GH_TOKEN:-}"

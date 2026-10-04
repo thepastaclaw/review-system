@@ -81,11 +81,26 @@ def _path(value: str | None) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
+def _replay_cfg(args: argparse.Namespace) -> cfg_mod.Config:
+    """The configured setup with `--replay-pool-slots POOL=N` on top (the eval's own cap on
+    a pool, without editing the box's config.toml)."""
+    cfg = _cfg(args)
+    extra: dict[str, int] = {}
+    for spec in args.replay_pool_slots or []:
+        pool, sep, n = spec.partition("=")
+        if not sep or not pool or not n.isdigit():
+            raise SystemExit(f"--replay-pool-slots {spec!r}: expected POOL=N")
+        extra[pool] = int(n)
+    if not extra:
+        return cfg
+    return dataclasses.replace(cfg, replay_pool_slots={**cfg.replay_pool_slots, **extra})
+
+
 def cmd_replay(args: argparse.Namespace) -> int:
     """Re-review past runs' exact heads under a skills checkout (replay.py); posts nothing."""
     from .replay import EXIT_ABORTED, TOKEN_VARS, ReplayAborted, replay
 
-    cfg = _cfg(args)
+    cfg = _replay_cfg(args)
     token = os.environ.get(args.gh_token_env) or None
     # the token is the broker's alone: nothing this process starts inherits it
     for var in (*TOKEN_VARS, args.gh_token_env):
@@ -163,7 +178,7 @@ def cmd_replay_judge(args: argparse.Namespace) -> int:
         from .replayfake import FakeLanes
 
         lanes = FakeLanes()
-    return main_judge(args, _cfg(args), lane_runner=lanes)
+    return main_judge(args, _replay_cfg(args), lane_runner=lanes)
 
 
 def cmd_replay_fixture(args: argparse.Namespace) -> int:
@@ -533,6 +548,15 @@ def cmd_init_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pool_slots_arg(s: argparse.ArgumentParser) -> None:
+    s.add_argument(
+        "--replay-pool-slots",
+        action="append",
+        metavar="POOL=N",
+        help="replay lanes hold at most N slots of POOL (over [scheduling] replay_pool_slots)",
+    )
+
+
 def _gate_args(s: argparse.ArgumentParser) -> None:
     """What replay-set and replay-judge check before each launch (replayset.Gate)."""
     s.add_argument(
@@ -629,6 +653,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--eval-mirrors",
         help="where to mirror a repository the work dir has no mirror of (default OUT/.mirrors)",
     )
+    _pool_slots_arg(s)
     s.set_defaults(fn=cmd_replay)
     s = sub.add_parser(
         "replay-set", help="replay a set of past runs under several policies (eval arms)"
@@ -659,6 +684,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _gate_args(s)
     s.add_argument("--eval-mirrors", help="as replay --eval-mirrors (default OUT/.mirrors)")
+    _pool_slots_arg(s)
     s.add_argument("--fake-lanes", action="store_true", help="smoke tests only (replay --help)")
     s.set_defaults(fn=cmd_replay_set)
     s = sub.add_parser("replay-score", help="score a replay set against labels, arm against arm")
@@ -685,6 +711,7 @@ def build_parser() -> argparse.ArgumentParser:
     _gate_args(s)
     s.add_argument("--work-dir", help="worktrees and lane artifacts (default OUT.judge-work)")
     s.add_argument("--eval-mirrors", help="as replay-set (default OUT/.mirrors)")
+    _pool_slots_arg(s)
     s.add_argument("--fake-lanes", action="store_true", help="smoke tests only (replay --help)")
     s.set_defaults(fn=cmd_replay_judge)
     s = sub.add_parser(

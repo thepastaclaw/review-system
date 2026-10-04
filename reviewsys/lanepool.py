@@ -243,11 +243,13 @@ def _acquire_replay(
     should_stop: Callable[[], bool],
     run_id: int,
     on_wait: Callable[[], None] | None,
-) -> int | None:
+) -> tuple[int, int] | None:
     """A replay lane's `acquire`: its ticket in `{pool}.replay/`, never the production line;
     it takes a slot (from `indexes()`) only at the head of the replay line and while
     `{pool}.line` holds no live production ticket (read without pruning: a replay never
-    changes the production line)."""
+    changes the production line). (fd, slot index), or None once stopped. The share is read
+    again once the slot is locked (the pool may have shrunk meanwhile: the box parks OpenAI
+    accounts daily): a slot outside it is let go and the lane waits on."""
     wait_dir = replay_dir(slot_dir, pool)
     wait_dir.mkdir(parents=True, exist_ok=True)
     prod_dir = line_dir(slot_dir, pool)
@@ -261,9 +263,14 @@ def _acquire_replay(
                 line = _line(wait_dir)
             busy = prod_dir.is_dir() and bool(_line(prod_dir, prune=False))
             if not busy and line and line[0] == ticket.name:
-                fd = _try_slots(slot_dir, pool, indexes())
-                if fd is not None:
-                    return fd
+                for i in indexes():
+                    fd = _try_slots(slot_dir, pool, range(i, i + 1))
+                    if fd is None:
+                        continue
+                    if i in indexes():
+                        return fd, i
+                    release(fd)  # the share shrank under us: not this slot
+                    break
             if should_stop():
                 return None
             if on_wait is not None:
@@ -491,14 +498,21 @@ def gated(
             _mark(artifact_dir, spec, pool, None)
             raise
 
-    def _running(spec: LaneSpec, artifact_dir: Path, worktree: Path, pool: str) -> LaneResult:
+    def _running(
+        spec: LaneSpec,
+        artifact_dir: Path,
+        worktree: Path,
+        pool: str,
+        turn: LaneRunner | None = None,
+    ) -> LaneResult:
         """The lane and its correction turns, all in the one slot: a correction neither
         releases the slot nor lines up again (its turns are marked running in their own
-        `correction-<n>/` dirs, so the status page follows them)."""
+        `correction-<n>/` dirs, so the status page follows them). `turn`: the runner each
+        turn goes through (a replay lane's re-checks its slot first)."""
         try:
             _mark(artifact_dir, spec, pool, "running")
             return run_with_corrections(
-                runner,
+                turn or runner,
                 spec,
                 artifact_dir,
                 worktree,
@@ -539,16 +553,20 @@ def gated(
         stop = spec.should_stop or run_stopped
         credit(stall.wait_started())
         fd: int | None = None
+        held = {"fd": -1, "index": -1}  # a replay lane's slot, as it may move between turns
+
+        def take_replay() -> int | None:
+            got = _acquire_replay(
+                slot_dir, pool, replay_indexes, stop, run_id, on_wait=lambda: credit(stall.flush())
+            )
+            if got is None:
+                return None
+            held["fd"], held["index"] = got
+            return got[0]
+
         try:
             if queue == "replay":
-                fd = _acquire_replay(
-                    slot_dir,
-                    pool,
-                    replay_indexes,
-                    stop,
-                    run_id,
-                    on_wait=lambda: credit(stall.flush()),
-                )
+                fd = take_replay()
             else:
                 fd = acquire(
                     slot_dir,
@@ -570,9 +588,30 @@ def gated(
             return LaneResult(
                 exit_code=None, stdout="", stderr="", duration_s=0, cancelled=True, started=False
             )
+        if queue != "replay":
+            try:
+                return _running(spec, artifact_dir, worktree, pool)
+            finally:
+                release(fd)
+        turns = [0]
+
+        def replay_turn(s: LaneSpec, a: Path, w: Path) -> LaneResult:
+            """Before a correction turn keeps the slot, the share is read again: a slot the
+            pool no longer gives replays is let go and the turn waits for one that is."""
+            if turns[0] and held["index"] not in replay_indexes():
+                release(held["fd"])
+                held["fd"] = -1
+                if take_replay() is None:
+                    return LaneResult(
+                        exit_code=None, stdout="", stderr="", duration_s=0, cancelled=True
+                    )
+            turns[0] += 1
+            return runner(s, a, w)
+
         try:
-            return _running(spec, artifact_dir, worktree, pool)
+            return _running(spec, artifact_dir, worktree, pool, turn=replay_turn)
         finally:
-            release(fd)
+            if held["fd"] >= 0:
+                release(held["fd"])
 
     return run

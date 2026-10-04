@@ -9,11 +9,14 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(
     os.environ.get("REVIEWSYS_CONFIG", "~/.reviewsys/config.toml")
@@ -1078,11 +1081,38 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         policy=policy,
         extra={**settings, "additional_repos": s.get("additional_repos", [])},
         audit=_audit(t.get("audit") or {}),
-        replay_pool_share=min(1.0, max(0.0, float(s.get("replay_pool_share", 0.5)))),
-        replay_pool_slots={
-            str(k): max(0, int(v)) for k, v in (s.get("replay_pool_slots") or {}).items()
-        },
+        replay_pool_share=_replay_share(s.get("replay_pool_share", 0.5)),
+        replay_pool_slots=_replay_slots(s.get("replay_pool_slots")),
     )
+
+
+def _replay_share(value: Any) -> float:
+    """`[scheduling] replay_pool_share`, clamped to 0..1; a bad value is logged and the
+    default used: an eval-only setting never keeps the daemon from starting."""
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        log.warning("[scheduling] replay_pool_share %r is not a number; using 0.5", value)
+        return 0.5
+
+
+def _replay_slots(value: Any) -> dict[str, int]:
+    """`[scheduling] replay_pool_slots` (pool -> slots): a bad table or entry is logged and
+    left out (that pool keeps the default share), never fatal."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        log.warning("[scheduling] replay_pool_slots %r is not a table; ignored", value)
+        return {}
+    out: dict[str, int] = {}
+    for k, v in value.items():
+        try:
+            if isinstance(v, bool):
+                raise TypeError("a boolean")
+            out[str(k)] = max(0, int(v))
+        except (TypeError, ValueError):
+            log.warning("[scheduling] replay_pool_slots.%s = %r is not a count; ignored", k, v)
+    return out
 
 
 def _deny_exec(value: Any) -> tuple[str, ...]:

@@ -340,6 +340,7 @@ def subprocess_runner(
     gh_token_env: str = TOKEN_ENV,
     fake_lanes: bool = False,
     eval_mirrors: str | None = None,
+    pool_slots: list[str] | None = None,
 ) -> JobRunner:
     """Run each replay as `python -m reviewsys.cli replay ...`, output to the job's log."""
 
@@ -373,6 +374,8 @@ def subprocess_runner(
             argv.append("--fake-lanes")
         # one place for the mirrors the box has none of, shared by the arms
         argv += ["--eval-mirrors", eval_mirrors or str(out / ".mirrors")]
+        for spec in pool_slots or []:
+            argv += ["--replay-pool-slots", spec]
         log = job.log(out)
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("a", encoding="utf-8") as fh:
@@ -551,6 +554,7 @@ def main_set(args: Any) -> int:
         gh_token_env=args.gh_token_env,
         fake_lanes=args.fake_lanes,
         eval_mirrors=args.eval_mirrors,
+        pool_slots=args.replay_pool_slots,
     )
     res = run_set(
         items,

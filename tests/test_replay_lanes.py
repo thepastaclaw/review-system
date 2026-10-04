@@ -136,10 +136,11 @@ def test_a_replay_waits_while_a_production_ticket_is_in_line(tmp_path):
     assert got is None
     assert prod.exists()  # never pruned or touched by a replay
     prod.unlink()
-    fd = lanepool._acquire_replay(
+    got = lanepool._acquire_replay(
         tmp_path, "glm", lambda: replay_slots(6, 0.5), lambda: False, 9, None
     )
-    assert fd is not None
+    assert got is not None and got[1] == 4
+    fd = got[0]
     try:  # slot 4, just below the top: slots 0-3 and the top stay free for production
         assert lanepool._try_slots(tmp_path, "glm", range(4, 5)) is None
         free = lanepool._try_slots(tmp_path, "glm", range(5, 6))
@@ -153,11 +154,11 @@ def test_a_replay_waits_while_a_production_ticket_is_in_line(tmp_path):
 def test_replays_hold_at_most_their_share(tmp_path):
     held = []
     for _ in range(2):
-        fd = lanepool._acquire_replay(
+        got = lanepool._acquire_replay(
             tmp_path, "glm", lambda: replay_slots(6, 0.5), lambda: False, 1, None
         )
-        assert fd is not None
-        held.append(fd)
+        assert got is not None
+        held.append(got[0])
     polls = {"n": 0}
 
     def stop() -> bool:
@@ -224,3 +225,62 @@ def test_production_lanepool_is_v024_apart_from_the_replay_path():
     src = V024.read_text()
     for fn in (lanepool._may_take, lanepool.acquire, lanepool.waiting_line, lanepool._line):
         assert inspect.getsource(fn) in src, fn.__name__
+
+
+def test_a_slot_outside_a_share_that_shrank_is_let_go(tmp_path):
+    """M7: the share is read again once the slot is locked; the pool shrank between the two
+    reads (an OpenAI account parked), so the slot taken is no longer a replay's: let go,
+    and the lane takes one inside the new share."""
+    reads = iter([range(4, 2, -1), range(1, 0, -1)])  # n=6 share 2, then n=3 share 1
+
+    def indexes() -> range:
+        return next(reads, range(1, 0, -1))
+
+    got = lanepool._acquire_replay(tmp_path, "glm", indexes, lambda: False, 1, None)
+    assert got is not None and got[1] == 1
+    try:
+        free = lanepool._try_slots(tmp_path, "glm", range(4, 5))
+        assert free is not None  # slot 4 was released, not kept
+        lanepool.release(free)
+    finally:
+        lanepool.release(got[0])
+
+
+def test_a_correction_turn_moves_off_a_slot_the_share_no_longer_covers(
+    cfg, conn, tmp_path, monkeypatch
+):
+    """M7: a replay lane keeps its slot between turns only while the share still covers it;
+    after the pool shrank, the correction turn waits for a slot inside the new share."""
+    import dataclasses as dc
+
+    slot_dir = cfg.work_dir / "lane-slots"
+    size = {"glm": 6}
+    held: list[list[int]] = []
+
+    def runner(spec, art, wt) -> LaneResult:
+        taken = []
+        for i in range(6):
+            fd = lanepool._try_slots(slot_dir, "glm", range(i, i + 1))
+            if fd is None:
+                taken.append(i)
+            else:
+                lanepool.release(fd)
+        held.append(taken)
+        size["glm"] = 3  # an account parked while the first turn ran
+        return LaneResult(exit_code=0, stdout="", stderr="", duration_s=0, result_text="x")
+
+    real = lanepool.limit
+    monkeypatch.setattr(
+        lanepool, "limit", lambda c, cf, pool: size[pool] if pool == "glm" else real(c, cf, pool)
+    )
+    gated = lanepool.gated(runner, lambda: conn, cfg, lambda: False, "replay", 1)
+    spec = dc.replace(
+        _spec(tmp_path, "glm-5.3-flash"),
+        session_id="11111111-1111-1111-1111-111111111111",
+        corrections=1,
+        check=lambda res: "again" if len(held) == 1 else None,
+    )
+    assert gated(spec, tmp_path / "art", tmp_path).ok
+    # first turn on slot 4 (n=6: slots 4 and 3 are the replays'); once the pool is 3 the
+    # replays have slot 1 only, and the correction turn ran there, not on slot 4
+    assert held == [[4], [1]]
