@@ -17,7 +17,7 @@ from reviewsys.config import DegradedPolicy, Substitute
 from reviewsys.contract import finding_hash
 from reviewsys.db import kv_set, tx
 from reviewsys.lane import LaneResult, LaneSpec
-from reviewsys.models import RunStatus
+from reviewsys.models import ReviewError, RunStatus
 from reviewsys.steps import worktree as wt
 
 REPO, NUMBER = "dashpay/platform", 1
@@ -276,7 +276,6 @@ def _no_real_gh(monkeypatch):
     is this test host's business (test_ghshim runs the shim itself)."""
     monkeypatch.setattr(replay, "stage_gh", lambda real, root: ("gh", ()))
     monkeypatch.setattr(replay, "check_shim", lambda shim, profile: "")
-    monkeypatch.setattr(wt, "fetch_head", lambda mirror, number, sha: None)
 
 
 def test_replay_reviews_the_source_head_with_pinned_lanes_and_posts_nothing(
@@ -459,3 +458,12 @@ def test_status_is_reported_for_failed_replays(cfg, conn, history, tmp_path):
     lanes.timeout_roles = {"general"}
     report = _replay(cfg, history, tmp_path, lanes)
     assert report["status"] == RunStatus.FAILED.value and report["invalid"] is None
+
+
+def test_fetch_head_keeps_going_when_the_commit_is_already_there(cfg, mirror):
+    """Two arms of one head fetch the PR ref into the shared mirror at once (one loses the
+    ref lock), or the PR has moved on: the replayed commit is what counts."""
+    m = cfg.mirrors_dir / "dashpay__platform.git"
+    wt.fetch_head(m, 1, mirror["head"])  # there is no refs/pull/1/head to fetch
+    with pytest.raises(ReviewError, match="fetch"):
+        wt.fetch_head(m, 1, "d" * 40)

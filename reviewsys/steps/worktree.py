@@ -65,15 +65,25 @@ def ensure_mirror(mirrors_dir: Path, repo: str) -> Path:
 
 
 def fetch_head(mirror: Path, number: int, sha: str) -> None:
-    """Fetch the PR head ref and make sure `sha` is present."""
-    _git(
-        "fetch",
-        "--no-tags",
-        "origin",
-        f"+refs/pull/{number}/head:refs/pull/{number}/head",
-        cwd=mirror,
-        timeout=1800,
-    )
+    """Fetch the PR head ref and make sure `sha` is present. A failed ref fetch is fine when
+    the commit is already in the mirror (two runs of one PR updating its ref at once: one
+    loses the ref lock; a replay of a head the PR has since moved past)."""
+    try:
+        _git(
+            "fetch",
+            "--no-tags",
+            "origin",
+            f"+refs/pull/{number}/head:refs/pull/{number}/head",
+            cwd=mirror,
+            timeout=1800,
+        )
+    except ReviewError:
+        try:
+            _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
+            return
+        except ReviewError:
+            pass
+        raise
     try:
         _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
     except ReviewError:
