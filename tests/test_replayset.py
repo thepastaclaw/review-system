@@ -219,6 +219,7 @@ def test_replay_set_cli_runs_replays_as_subprocesses(tmp_path, monkeypatch):
         return R()
 
     monkeypatch.setattr(replayset.subprocess, "run", fake_run)
+    monkeypatch.setattr(replayset, "free_bytes", lambda p: 10**15)
     for name in ("s11", "s12"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "config.json").write_text("{}")
@@ -251,6 +252,112 @@ def test_replay_set_cli_runs_replays_as_subprocesses(tmp_path, monkeypatch):
     )
     assert {Path(a[a.index("--out") + 1]).name for a in calls} == {"v11", "v12"}
     assert (tmp_path / "out" / "v12" / "run-9-r1" / "report.json").exists()
+    assert "--fake-lanes" not in argv
+
+
+def test_replay_set_cli_limit_fake_lanes_and_disk_stop(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(replayset.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    monkeypatch.setattr(replayset, "free_bytes", lambda p: 3 * replayset.GB)
+    (tmp_path / "s").mkdir()
+    (tmp_path / "s" / "config.json").write_text("{}")
+    setfile = tmp_path / "set.json"
+    setfile.write_text(json.dumps([{"run_id": i, "set": "S1"} for i in range(1, 4)]))
+    from reviewsys.cli import main
+
+    args = ["replay-set", str(setfile), "--policy", f"v11={tmp_path / 's'}"]
+    args += ["--out", str(tmp_path / "out"), "--limit", "1", "--fake-lanes"]
+    assert main([*args, "--min-free-gb", "5"]) == replayset.EXIT_DISK and calls == []
+    monkeypatch.setattr(
+        replayset.subprocess,
+        "run",
+        lambda argv, **kw: calls.append(argv) or type("R", (), {"returncode": 0})(),
+    )
+    assert main([*args, "--min-free-gb", "2"]) == 1  # ran, but wrote no report
+    assert len(calls) == 1 and "--fake-lanes" in calls[0]
+    manifest = json.loads((tmp_path / "out" / replayset.MANIFEST).read_text())
+    assert manifest["options"]["limit"] == 1 and manifest["options"]["fake_lanes"] is True
+
+
+def test_limit_takes_heads_round_robin_over_the_sets():
+    items = [
+        SetItem(1, "S1"),
+        SetItem(2, "S1"),
+        SetItem(3, "S2"),
+        SetItem(4, "S3"),
+        SetItem(5, "S1"),
+    ]
+    assert [i.run_id for i in replayset.limit_items(items, 3)] == [1, 3, 4]
+    assert [i.run_id for i in replayset.limit_items(items, 4)] == [1, 2, 3, 4]
+    assert replayset.limit_items(items, None) == items and replayset.limit_items(items, 9) == items
+
+
+def test_a_short_disk_pauses_launches_until_running_replays_free_it(tmp_path):
+    out, pols = tmp_path / "out", _policies(tmp_path)[:1]
+    events: list[str] = []
+    # what the disk check reads, call by call: room for the first replay, then short while it
+    # runs (its worktree), then room again once it ended
+    readings = iter([30, 10, 30, 30])
+
+    def runner(job: Job, out_: Path) -> int:
+        events.append(f"start {job.name}")
+        _write(job, out_, _report(job))
+        events.append(f"end {job.name}")
+        return 0
+
+    echoes: list[str] = []
+    res = run_set(
+        [SetItem(1), SetItem(2)],
+        pols,
+        out,
+        concurrency=2,
+        runner=runner,
+        echo=echoes.append,
+        min_free_gb=25,
+        disk_free=lambda p: next(readings, 30) * replayset.GB,
+    )
+    assert res["ok"] == 2 and not res["aborted"]
+    assert events == ["start run-1", "end run-1", "start run-2", "end run-2"]
+    assert any("pausing" in e for e in echoes) and any("recovered" in e for e in echoes)
+    free = {"gb": 10}  # short from the start, and nothing running to free it
+    slept: list[float] = []
+    res = run_set(
+        [SetItem(1), SetItem(2), SetItem(3)],
+        pols,
+        tmp_path / "out2",
+        concurrency=1,
+        runner=runner,
+        echo=echoes.append,
+        min_free_gb=25,
+        disk_wait_minutes=2,
+        disk_free=lambda p: free["gb"] * replayset.GB,
+        sleep=slept.append,
+    )
+    assert res["aborted"].startswith("disk:") and res["not_started"] == 3
+    assert slept == [replayset.DISK_POLL_SECONDS, replayset.DISK_POLL_SECONDS]
+    assert any("pausing" in e for e in echoes)
+
+
+def test_a_disk_that_recovers_while_waiting_resumes_launching(tmp_path):
+    out, pols = tmp_path / "out", _policies(tmp_path)[:1]
+    free = {"gb": 10}
+
+    def sleep(s: float) -> None:
+        free["gb"] = 40  # production's gc freed space meanwhile
+
+    res = run_set(
+        [SetItem(1)],
+        pols,
+        out,
+        concurrency=1,
+        runner=lambda j, o: (_write(j, o, _report(j)), 0)[1],
+        echo=lambda s: None,
+        min_free_gb=25,
+        disk_wait_minutes=5,
+        disk_free=lambda p: free["gb"] * replayset.GB,
+        sleep=sleep,
+    )
+    assert res["ok"] == 1 and not res["aborted"]
 
 
 # ---- matcher ----

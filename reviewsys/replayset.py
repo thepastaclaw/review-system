@@ -20,11 +20,20 @@ concurrency only bounds how many runs are open at once, not the model streams.
 The set stops launching replays when one exits with `replay.EXIT_ABORTED` (degraded mode came
 on, or its models ran dry mid-run: stand-ins would not measure either policy); the replays
 already running finish.
+
+Disk: a replay's worktree is a full checkout (a few GB on the big repositories) until it ends.
+Before each launch the set checks the free space where `--out` lives against `--min-free-gb`
+(default 25): below it, it launches nothing more until running replays end (each frees its
+worktree and pinned clone), and when none is left running and the space is still short it
+waits up to `--disk-wait-minutes` for it to come back, then stops (exit EXIT_DISK); a re-run
+resumes. `--limit N` runs only the first N heads, taken round-robin over the eval sets, for a
+smoke test.
 """
 
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import time
@@ -37,6 +46,18 @@ from typing import Any
 from .replay import EXIT_ABORTED, TOKEN_ENV, read_json, run_dir_name
 
 MANIFEST = "replay-set.json"
+EXIT_DISK = 74  # EX_IOERR: the disk stayed below the floor; nothing more was launched
+DEFAULT_MIN_FREE_GB = 25.0
+DISK_POLL_SECONDS = 60.0
+GB = 1024**3
+
+
+def free_bytes(path: Path) -> int:
+    """Free space on the filesystem holding `path` (its nearest existing parent)."""
+    p = path
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    return shutil.disk_usage(p).free
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +136,24 @@ def load_set(path: Path) -> list[SetItem]:
     return items
 
 
+def limit_items(items: list[SetItem], n: int | None) -> list[SetItem]:
+    """The first `n` heads taken round-robin over the eval sets in order of appearance (one
+    of each set first), in set-file order within a set; all of them without `n`."""
+    if not n or n >= len(items):
+        return items
+    by_set: dict[str, list[SetItem]] = {}
+    for i in items:
+        by_set.setdefault(i.set, []).append(i)
+    picked: list[SetItem] = []
+    queues = list(by_set.values())
+    while len(picked) < n:
+        for q in queues:
+            if q and len(picked) < n:
+                picked.append(q.pop(0))
+    keep = {i.run_id for i in picked}
+    return [i for i in items if i.run_id in keep]
+
+
 def parse_policy(spec: str) -> Policy:
     name, sep, skills = spec.partition("=")
     if not sep or not name or not skills:
@@ -165,6 +204,7 @@ def subprocess_runner(
     source_db: str | None,
     source_runs: str | None = None,
     gh_token_env: str = TOKEN_ENV,
+    fake_lanes: bool = False,
 ) -> JobRunner:
     """Run each replay as `python -m reviewsys.cli replay ...`, output to the job's log."""
 
@@ -194,6 +234,8 @@ def subprocess_runner(
             argv += ["--source-db", source_db]
         if source_runs:
             argv += ["--source-runs", source_runs]
+        if fake_lanes:
+            argv.append("--fake-lanes")
         log = job.log(out)
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("a", encoding="utf-8") as fh:
@@ -237,8 +279,14 @@ def run_set(
     retry_failed: bool = False,
     options: dict[str, Any] | None = None,
     echo: Callable[[str], None] = print,
+    min_free_gb: float = 0.0,
+    disk_wait_minutes: float = 0.0,
+    disk_free: Callable[[Path], int] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
-    """Run every job not already done; returns counts. Writes the set's manifest first."""
+    """Run every job not already done; returns counts. Writes the set's manifest first. A
+    job is launched only while `disk_free(out)` is at least `min_free_gb` (see the module
+    docstring for the pause and the stop)."""
     if not policies:
         raise SystemExit("replay-set needs at least one --policy NAME=SKILLS_DIR")
     if len({p.name for p in policies}) != len(policies):
@@ -266,16 +314,43 @@ def run_set(
         f"{len(policies)} policies, concurrency {slots}"
     )
     aborted = ""
+    disk_short = ""
+    floor = int(min_free_gb * GB)
+
+    def disk_ok() -> bool:
+        nonlocal disk_short
+        free = (disk_free or free_bytes)(out)
+        disk_short = "" if free >= floor else f"{free / GB:.1f} GB free < {min_free_gb:g} GB floor"
+        return not disk_short
+
     pending = list(reversed(todo))
     running: dict[Future[int], Job] = {}
+    paused = False
     with ThreadPoolExecutor(max_workers=slots) as pool:
         while pending or running:
             while pending and not aborted and len(running) < slots:
+                if not disk_ok():
+                    if not paused:
+                        echo(f"replay-set: pausing launches: {disk_short}")
+                    paused = True
+                    break
+                if paused:
+                    echo("replay-set: disk recovered, launching again")
+                    paused = False
                 job = pending.pop()
                 # a stale report would read as this attempt's (and hide an abort)
                 (job.dir(out) / "report.json").unlink(missing_ok=True)
                 running[pool.submit(runner, job, out)] = job
             if not running:
+                if pending and not aborted and disk_short:
+                    waited = 0.0
+                    while waited < disk_wait_minutes * 60 and not disk_ok():
+                        sleep(DISK_POLL_SECONDS)
+                        waited += DISK_POLL_SECONDS
+                    if not disk_short:
+                        continue
+                    aborted = f"disk: {disk_short}"
+                    echo(f"replay-set: stopping: {aborted}")
                 break
             done, _ = wait(running, return_when=FIRST_COMPLETED)
             for fut in done:
@@ -297,7 +372,7 @@ def run_set(
 
 
 def main_set(args: Any) -> int:
-    items = load_set(Path(args.setfile).expanduser())
+    items = limit_items(load_set(Path(args.setfile).expanduser()), args.limit)
     policies = [parse_policy(p) for p in args.policy]
     out = Path(args.out).expanduser()
     runner = subprocess_runner(
@@ -307,6 +382,7 @@ def main_set(args: Any) -> int:
         source_db=args.source_db,
         source_runs=args.source_runs,
         gh_token_env=args.gh_token_env,
+        fake_lanes=args.fake_lanes,
     )
     res = run_set(
         items,
@@ -319,7 +395,13 @@ def main_set(args: Any) -> int:
             "force_phase2": args.force_phase2,
             "pin_phase1_model": args.pin_phase1_model,
             "source_db": args.source_db,
+            **({"limit": args.limit} if args.limit else {}),
+            **({"fake_lanes": True} if args.fake_lanes else {}),
         },
+        min_free_gb=args.min_free_gb,
+        disk_wait_minutes=args.disk_wait_minutes,
     )
     print(json.dumps(res))
+    if str(res["aborted"]).startswith("disk:"):
+        return EXIT_DISK
     return EXIT_ABORTED if res["aborted"] else 0 if not res["failed"] else 1
