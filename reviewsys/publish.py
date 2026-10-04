@@ -242,9 +242,12 @@ def _location(f: Finding) -> str:
     return f"{f.file}:{f.line_start}-{f.line_end}"
 
 
-def _ai_prompt(findings: list[Finding], suppressed: list[Suppressed]) -> str | None:
+def _ai_prompt(
+    findings: list[Finding], suppressed: list[Suppressed], carried: list[Finding] | None = None
+) -> str | None:
     entries: list[tuple[Finding, Suppressed | None]] = [(f, None) for f in findings]
     entries += [(s.finding, s) for s in suppressed if s.action != "deduped_same_batch_root"]
+    entries += [(f, None) for f in carried or []]
     if not entries:
         return None
     lines = [
@@ -260,6 +263,8 @@ def _ai_prompt(findings: list[Finding], suppressed: list[Suppressed]) -> str | N
             lines.append(f"- [{f.severity.upper()}] {_location(f)}: {f.title}")
             if s and s.html_url:
                 lines.append(f"  (existing thread: {s.html_url})")
+            elif f.extra.get("thread_url"):
+                lines.append(f"  (existing thread: {f.extra['thread_url']})")
             if f.body:
                 lines.append(indent(f.body, "  "))
         lines.append("")
@@ -410,6 +415,22 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     return lines
 
 
+_CARRIED_STATUS = {
+    "deferral_pending": " (a deferral was proposed; it needs a maintainer's call)",
+    "resolved": " (thread resolved by hand; it still counts until withdrawn or fixed)",
+}
+
+
+def _carried_line(f: Finding) -> str:
+    """One standing issue from an earlier round in the body (policy v12): not re-posted, linked
+    to its thread."""
+    icon = SEVERITY_ICONS.get(f.severity, SEVERITY_ICONS["nitpick"])
+    url = f.extra.get("thread_url")
+    link = f" ([thread]({url}))" if url else ""
+    status = _CARRIED_STATUS.get(str(f.extra.get("status") or ""), "")
+    return f"- {icon} **{f.severity.capitalize()}**: {f.title} — `{_location(f)}`{link}{status}"
+
+
 def _finding_block(f: Finding) -> str:
     icon = SEVERITY_ICONS.get(f.severity, SEVERITY_ICONS["nitpick"])
     lines = [
@@ -480,7 +501,7 @@ def render(m: ReviewModel) -> str:
     if m.superseded_note:
         parts += [m.superseded_note, ""]
     counts_line = _counts_line(
-        m.verified.findings,
+        [*m.verified.findings, *m.verified.carried],
         blocker_count=m.verified.blocker_count if m.phase == "preliminary" else None,
     )
     if counts_line or m.rereview:
@@ -504,6 +525,9 @@ def render(m: ReviewModel) -> str:
         parts.append(
             f"\n_{len(m.suppressed)} carried-forward finding(s) already raised on this PR; not re-posting as new inline comments._"
         )
+    if m.verified.carried:
+        parts += ["", f"### Still open from earlier rounds ({len(m.verified.carried)})", ""]
+        parts += [_carried_line(f) for f in m.verified.carried]
     parts += [
         "",
         "<details>",
@@ -515,7 +539,7 @@ def render(m: ReviewModel) -> str:
         "",
         "</details>",
     ]
-    prompt = _ai_prompt(m.kept, m.suppressed)
+    prompt = _ai_prompt(m.kept, m.suppressed, m.verified.carried)
     if m.rereview and not prompt:
         prompt = (
             "These findings are from an automated code review. Verify the current code and "
@@ -994,6 +1018,112 @@ def answer_conversation(
     return done
 
 
+def render_thread_lane_answer(
+    *, marker: str, status: str, head_sha: str, reply: str, same_sha: bool
+) -> str:
+    """A policy v12 thread-lane answer: conversational on a same-sha reply; on a new push a
+    settled status leads (as v11's re-review answers did), the pending ones end in a note."""
+    if not same_sha and status in _ANSWER_LEAD:
+        return render_thread_answer(marker=marker, status=status, head_sha=head_sha, reply=reply)
+    return render_conversation_answer(marker=marker, status=status, reply=reply)
+
+
+def answer_thread_lane(
+    gh: Gh,
+    repo: str,
+    number: int,
+    head_sha: str,
+    *,
+    outcomes: dict[str, Any],
+    threads: dict[str, dict[str, Any]],
+    same_sha: bool,
+    keep: set[str] | frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Post the policy v12 thread lane's outcomes (`outcomes`: finding_hash -> ThreadOutcome):
+    exactly once per (human reply, head) on each open thread, resolving the thread when the
+    outcome retires the issue and marking its root comment where it stays open. An issue with
+    no open thread (`threads`: the PR's unresolved bot finding threads) gets no reply: its
+    outcome stands as is (`no_thread`). `keep`: issues this round restated, whose root must
+    not go on showing an earlier head's "✅ Withdrawn". Returns what was done, one item per
+    outcome (the `thread.answered` events and ledger outcomes are recorded from these)."""
+    posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
+    done: list[dict[str, Any]] = []
+    seen_roots: set[tuple[str, str]] = set()
+    mode = "conversation" if same_sha else "thread"
+    for h, o in outcomes.items():
+        item: dict[str, Any] = {"finding_hash": h, "status": o.status, "mode": mode}
+        t = threads.get(h)
+        if t is None or not t.get("comment_id"):
+            item["action"] = "no_thread"
+            done.append(item)
+            continue
+        cid = t["comment_id"]
+        item["comment_id"] = cid
+        root_key = (str(t.get("thread_id") or ""), str(cid))
+        if root_key in seen_roots:
+            item.update(status="DUPLICATE_THREAD", action="duplicate_thread_skipped")
+            done.append(item)
+            continue
+        seen_roots.add(root_key)
+        marker = THREAD_ANSWER_MARKER.format(
+            sha=head_sha, reply=t.get("latest_reply_id"), finding=h
+        )
+        if any(marker in b for b in posted) or (
+            not t.get("awaiting_answer") and _has_answer_for_status(t, o.status)
+        ):
+            item["action"] = "already_answered"
+            done.append(item)
+            continue
+        if not o.reply:
+            item["action"] = "no_reply"
+            done.append(item)
+            continue
+        reply = scrub_reply(o.reply, 2500)
+        if not reply:
+            item["action"] = "suppressed_reply"
+            done.append(item)
+            continue
+        _deliver_answer(
+            gh,
+            repo,
+            number,
+            comment_id=cid,
+            body=render_thread_lane_answer(
+                marker=marker, status=o.status, head_sha=head_sha, reply=reply, same_sha=same_sha
+            ),
+            thread_id=t.get("thread_id"),
+            resolve=o.status in _RESOLVING,
+            item=item,
+            root_body=str(t.get("body") or ""),
+            lifted_status=o.status if o.status in _THREAD_STATUS_LINE else None,
+            head_sha=head_sha,
+        )
+        done.append(item)
+    for h in sorted(keep):
+        t = threads.get(h)
+        body = str((t or {}).get("body") or "")
+        if t is None or h in outcomes or THREAD_STATUS_MARKER not in body:
+            continue
+        done.append(
+            {
+                "finding_hash": h,
+                "status": "STILL_VALID",
+                "comment_id": t.get("comment_id"),
+                "mode": mode,
+                "action": "status_cleared",
+                "marked": _set_thread_status(
+                    gh,
+                    repo,
+                    comment_id=t.get("comment_id"),
+                    root_body=body,
+                    status=None,
+                    head_sha=head_sha,
+                ),
+            }
+        )
+    return done
+
+
 def _answer_outcome(
     finding_hash: str, row: dict[str, Any], kept_hashes: set[str]
 ) -> tuple[str, str, bool]:
@@ -1182,7 +1312,7 @@ def render_verdict_update(
     if note:
         parts += [note, ""]
     if not provenance.conversation:  # it re-reviewed nothing, so it has nothing to count
-        parts += [_counts_line(list(verified.findings), include_zero=True), ""]
+        parts += [_counts_line([*verified.findings, *verified.carried], include_zero=True), ""]
     if lifted_blockers:
         parts += ["No longer blocking:", *(f"- {t}" for t in lifted_blockers), ""]
     if summary:

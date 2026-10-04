@@ -1,24 +1,43 @@
-"""Policy v12, pure: the finder candidate contract and the settled list the finders are told
-about (v12 design §2.1). No I/O.
+"""Policy v12, pure: the finder candidate contract, the verify+match answer, the code rules that
+turn it into issues (v12 design §2.3), the ledger verdict (§3), and what the lanes are told from
+the ledger. No I/O: every git question comes in as a callable, so the worker decides how to ask
+it and the tests can answer it.
 
 Identity is the harness's, never a model's: finder candidates get ids at parse time
-(`p2-general-3`)."""
+(`p2-general-3`), the verifier groups them by those ids and names ledger issues by their stored
+`finding_hash`, and a new issue's hash is computed once from its composed title."""
 
 from __future__ import annotations
 
+import json
+import math
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass, field
 from typing import Any
 
+from . import ledger
 from .contract import (
     CATEGORIES,
     SEVERITIES,
     SEVERITY_ALIASES,
     Finding,
     ReviewerOutput,
+    _expand,
 )
 from .ledger import Issue
 from .models import FailKind, ReviewError
+from .schemas import VERDICTS
 
+# the verifier's batch: above this many candidates a phase's verify+match is split into shards
+SHARD_SIZE = 12
+MAX_SHARDS = 3
 SETTLED_LIST_MAX = 10  # withdrawn / deferred issues the finders are told about
+# statuses as v12 reads them. A thread a human resolved by hand still counts toward the verdict
+# (only an explicit outcome lifts a finding), so a candidate restating it corroborates it
+VERDICT_STANDING = ledger.STANDING | {"resolved"}
+MATCH_SETTLED = frozenset({"withdrawn", "deferred", "outdated"})
+MATCH_FIXED = frozenset({"fixed"})
+_SEV_RANK = {"blocking": 3, "suggestion": 2, "nitpick": 1}
 FAILURE_SCENARIO = "failure_scenario"
 
 
@@ -117,6 +136,390 @@ def parse_finder_output(
     )
 
 
+def brief(f: Finding) -> dict[str, Any]:
+    """A candidate as the verifier sees it: its claim, without its lane (ids name the role)."""
+    out: dict[str, Any] = {
+        "id": f.candidate_id,
+        "file": f.file,
+        "line_start": f.line_start,
+        "line_end": f.line_end,
+        "severity": f.severity,
+        "category": f.category,
+        "title": f.title,
+        FAILURE_SCENARIO: f.extra.get(FAILURE_SCENARIO) or "",
+        "body": f.body,
+    }
+    if f.suggestion:
+        out["suggestion"] = f.suggestion
+    gate = f.extra.get("gate_verdict")
+    if gate:
+        out["gate_verdict"] = gate
+    return out
+
+
+def shards(
+    cands: list[Finding], size: int = SHARD_SIZE, most: int = MAX_SHARDS
+) -> list[list[Finding]]:
+    """The candidates in at most `most` verifier batches, split only above `size`, a file's
+    candidates always together (duplicates across lanes sit in the same file, and the batch
+    that groups them must see them all). Largest files first onto the lightest batch; each
+    batch keeps the candidates' original order."""
+    if len(cands) <= size:
+        return [list(cands)]
+    n = min(most, math.ceil(len(cands) / size))
+    by_file: dict[str, list[int]] = {}
+    for i, c in enumerate(cands):
+        by_file.setdefault(c.file, []).append(i)
+    bins: list[list[int]] = [[] for _ in range(n)]
+    for idx in sorted(by_file.values(), key=len, reverse=True):
+        min(bins, key=len).extend(idx)
+    return [[cands[i] for i in sorted(b)] for b in bins if b]
+
+
+# ---- the verifier's answer (§2.2) ----
+
+
+@dataclass(slots=True)
+class Group:
+    members: list[str]
+    kind: str  # new | open | settled | fixed | coderabbit
+    target: str  # the issue hash / CodeRabbit comment id; "" for new
+    verdict: str
+    evidence: str
+    confirm_by: str
+    severity: str
+    title: str
+    body: str
+    suggestion: str | None
+
+    @property
+    def match(self) -> str:
+        return f"{self.kind}:{self.target}" if self.target else self.kind
+
+
+@dataclass(slots=True)
+class VerifyAnswer:
+    summary: str
+    groups: list[Group]
+    raw: dict[str, Any]
+    normalized: list[str] = field(default_factory=list)
+
+
+def issue_kind(issue: Issue) -> str:
+    """How a ledger issue is matched: `open` while it counts toward the verdict, `settled` once
+    a call closed it that the code must respect, `fixed` once fixed."""
+    if issue.status in VERDICT_STANDING:
+        return "open"
+    if issue.status in MATCH_FIXED:
+        return "fixed"
+    return "settled"
+
+
+def _match(
+    value: Any,
+    *,
+    issues: dict[str, Issue],
+    extra_open: set[str],
+    coderabbit_ids: set[int],
+    notes: list[str],
+    problems: list[str],
+    label: str,
+) -> tuple[str, str] | None:
+    text = _str(value)
+    kind, _, target = text.partition(":")
+    kind, target = kind.strip().lower(), target.strip().lower()
+    if kind == "new" and not target:
+        return "new", ""
+    if kind == "coderabbit":
+        try:
+            cid = int(target)
+        except ValueError:
+            cid = -1
+        if cid in coderabbit_ids:
+            return "coderabbit", str(cid)
+        problems.append(f"{label}: match {text!r} names no CodeRabbit comment listed")
+        return None
+    if kind in {"open", "settled", "fixed", "closed"}:
+        known = set(issues) | extra_open
+        full = _expand(target, known) if target else None
+        if full is None:
+            problems.append(f"{label}: match {text!r} names no issue listed")
+            return None
+        if full != target:
+            notes.append(f"{label}: hash {target!r} -> {full!r}")
+        actual = "open" if full in extra_open else issue_kind(issues[full])
+        if actual != kind:
+            notes.append(f"{label}: match {kind}:{full} -> {actual}:{full} (its ledger status)")
+        return actual, full
+    problems.append(
+        f"{label}: match {text!r} is not new | open:<hash> | settled:<hash> | fixed:<hash> | coderabbit:<id>"
+    )
+    return None
+
+
+def parse_verify(
+    raw: dict[str, Any],
+    *,
+    candidate_ids: list[str],
+    issues: dict[str, Issue],
+    coderabbit_ids: Iterable[int] = (),
+    extra_open: Iterable[str] = (),
+) -> VerifyAnswer:
+    """The verify+match answer, checked whole: every candidate id in exactly one group, every
+    match naming something listed (a hash prefix is expanded; a match kind that contradicts the
+    issue's ledger status is corrected to it, noted), a verdict with evidence, a severity and
+    a title. `extra_open`: hashes the lane was shown as open besides the ledger's (this round's
+    own new issues, for the confirmation pass). Raises CONTRACT naming every problem."""
+    if "@coderabbitai review" in json.dumps(raw).lower():
+        raise ReviewError(
+            FailKind.CONTRACT, "verifier output contains a forbidden CodeRabbit retrigger"
+        )
+    rows = raw.get("groups")
+    if not isinstance(rows, list):
+        raise ReviewError(FailKind.CONTRACT, "verifier: groups must be a list")
+    known = set(candidate_ids)
+    cr = set(coderabbit_ids)
+    xo = set(extra_open)
+    placed: dict[str, int] = {}
+    problems: list[str] = []
+    notes: list[str] = []
+    groups: list[Group] = []
+    for gi, r in enumerate(rows, 1):
+        label = f"group {gi}"
+        if not isinstance(r, dict):
+            problems.append(f"{label} is not an object")
+            continue
+        members = r.get("members")
+        if not isinstance(members, list) or not members:
+            problems.append(f"{label}: members must be a non-empty list of candidate ids")
+            continue
+        ids: list[str] = []
+        for m in members:
+            mid = _str(m)
+            if mid not in known:
+                problems.append(f"{label}: {mid!r} is not a candidate id")
+            elif mid in placed:
+                problems.append(f"{label}: {mid} is already in group {placed[mid]}")
+            else:
+                placed[mid] = gi
+                ids.append(mid)
+        match = _match(
+            r.get("match"),
+            issues=issues,
+            extra_open=xo,
+            coderabbit_ids=cr,
+            notes=notes,
+            problems=problems,
+            label=label,
+        )
+        verdict = _str(r.get("verdict")).upper()
+        if verdict not in VERDICTS:
+            problems.append(f"{label}: verdict {r.get('verdict')!r} not in {' | '.join(VERDICTS)}")
+        evidence = _str(r.get("evidence"))
+        if not evidence:
+            problems.append(f"{label}: a verdict needs `evidence` (quoted lines)")
+        sev = _severity(r.get("severity"))
+        if sev is None:
+            problems.append(
+                f"{label}: severity {r.get('severity')!r} not in {' | '.join(SEVERITIES)}"
+            )
+        title = _str(r.get("title"))
+        if not title:
+            problems.append(f"{label}: no title")
+        if (
+            not ids
+            or match is None
+            or verdict not in VERDICTS
+            or not evidence
+            or sev is None
+            or not title
+        ):
+            continue
+        groups.append(
+            Group(
+                members=ids,
+                kind=match[0],
+                target=match[1],
+                verdict=verdict,
+                evidence=evidence,
+                confirm_by=_str(r.get("confirm_by")),
+                severity=sev,
+                title=title,
+                body=_str(r.get("body")),
+                suggestion=_str(r.get("suggestion")) or None,
+            )
+        )
+    missing = [c for c in candidate_ids if c not in placed]
+    if missing:
+        problems.append(f"candidates in no group: {missing}")
+    if problems:
+        raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
+    return VerifyAnswer(summary=_str(raw.get("summary")), groups=groups, raw=raw, normalized=notes)
+
+
+# ---- the code rules (§2.3) ----
+
+
+@dataclass(slots=True)
+class Outcome:
+    """What a verify+match answer means once the code rules ran over it."""
+
+    new: list[Finding] = field(default_factory=list)  # to post: new issues, revivals, regressions
+    # ledger issue hash -> the candidate ids that restated it (it stays open; no new thread)
+    corroborated: dict[str, list[str]] = field(default_factory=dict)
+    # an open non-blocking issue the verifier now CONFIRMED as blocking: raised in place
+    upgrades: dict[str, Finding] = field(default_factory=dict)
+    dropped: list[dict[str, Any]] = field(default_factory=list)
+    reactions: list[dict[str, Any]] = field(default_factory=list)  # on CodeRabbit comments
+    groups: list[Group] = field(default_factory=list)  # every group, as answered
+    # groups that were not REFUTED, each with the finding the code composed from it
+    kept: list[tuple[Group, Finding]] = field(default_factory=list)
+
+
+def _representative(members: list[Finding]) -> Finding:
+    return max(members, key=lambda c: (_SEV_RANK.get(c.severity, 0), -members.index(c)))
+
+
+def _plausible_note(confirm_by: str) -> str:
+    what = confirm_by or "the verifier did not say; treat it as unconfirmed"
+    return f"\n\n**Not confirmed as blocking.** What would confirm it: {what}"
+
+
+def apply_rules(
+    answer: VerifyAnswer,
+    candidates: dict[str, Finding],
+    issues: dict[str, Issue],
+    *,
+    changed_since_closed: Callable[[Issue], bool | None],
+    source_of: Callable[[list[Finding]], str],
+    thread_url: Callable[[Issue], str] = lambda i: "",
+    extra_open: Iterable[str] = (),
+) -> Outcome:
+    """The harness's rules over one answer:
+
+    - REFUTED is dropped (a CodeRabbit comment it restated gets `disagree` with the evidence).
+    - Blocking requires CONFIRMED: a PLAUSIBLE blocker is a suggestion saying what would
+      confirm it.
+    - `open:H` corroborates H, which stays open; no new thread. A non-blocking H now CONFIRMED
+      as blocking is raised in place (`upgrades`).
+    - `settled:H` is dropped unless the code at H's anchor changed since H was closed
+      (`changed_since_closed`; unknown counts as unchanged): then it is new, its body saying
+      what H was.
+    - `fixed:H` refound is a regression: a new issue whose body links H (retitled if its title
+      would carry H's identity).
+    - `coderabbit:<id>`: posted as ours, as v11 kept an agent finding over the CodeRabbit one,
+      and the comment gets `agree`.
+    - A "new" issue whose composed title gives a ledger hash (or the hash of an issue this
+      round already raised, `extra_open`) is that issue, matched as above.
+    Each new issue's identity is the hash of its composed title, computed here once."""
+    out = Outcome(groups=list(answer.groups))
+    xo = set(extra_open)
+    posted: set[str] = set()
+    for g in answer.groups:
+        members = [candidates[m] for m in g.members if m in candidates]
+        rep = _representative(members) if members else None
+        if g.verdict == "REFUTED":
+            out.dropped.append(
+                {
+                    "original_title": g.title,
+                    "members": g.members,
+                    "reason": f"REFUTED: {g.evidence}",
+                }
+            )
+            if g.kind == "coderabbit":
+                out.reactions.append(
+                    {"comment_id": int(g.target), "action": "disagree", "reply": g.evidence}
+                )
+            continue
+        sev, body = g.severity, g.body
+        if sev == "blocking" and g.verdict != "CONFIRMED":
+            sev, body = "suggestion", body + _plausible_note(g.confirm_by)
+        f = Finding(
+            file=rep.file if rep else "",
+            title=g.title,
+            body=body,
+            severity=sev,
+            category=rep.category if rep else "general",
+            line_start=rep.line_start if rep else None,
+            line_end=rep.line_end if rep else None,
+            suggestion=g.suggestion,
+            source=source_of(members),
+            extra={"verdict": g.verdict, "evidence": g.evidence, "members": g.members},
+            candidate_id=g.members[0],
+        )
+        out.kept.append((g, f))
+        kind, target = g.kind, g.target
+        if kind == "new" and f.hash in xo:
+            kind, target = "open", f.hash
+        elif kind == "new" and f.hash in issues:
+            kind, target = issue_kind(issues[f.hash]), f.hash
+        if kind == "coderabbit":
+            out.reactions.append({"comment_id": int(target), "action": "agree"})
+            kind = "new"
+        if kind == "open" and target in xo:
+            out.dropped.append(
+                {
+                    "original_title": g.title,
+                    "members": g.members,
+                    "reason": f"DUPLICATE: raised this round as {target}",
+                }
+            )
+            continue
+        if kind == "open":
+            out.corroborated.setdefault(target, []).extend(g.members)
+            h = issues[target]
+            if h.severity != "blocking" and sev == "blocking":
+                out.upgrades[target] = f
+            continue
+        if kind == "settled":
+            h = issues[target]
+            if changed_since_closed(h) is not True:
+                out.dropped.append(
+                    {
+                        "original_title": g.title,
+                        "members": g.members,
+                        "reason": f"SETTLED: matches {h.status} issue {target}; the code at it has not changed since",
+                    }
+                )
+                continue
+            f.body += (
+                f"\n\n_This was raised before and {h.status} at `{(h.closed_sha or '?')[:8]}`"
+                + (f" ({thread_url(h)})" if thread_url(h) else "")
+                + "; the code at that location has changed since._"
+            )
+            f.extra["revives"] = target
+        if kind == "fixed":
+            h = issues[target]
+            if f.hash == target:
+                f.title += " (regression)"
+            link = thread_url(h) or f"`{target}`"
+            f.body += (
+                f"\n\n_This looks like a regression of an earlier finding that was fixed: {link}._"
+            )
+            f.extra["regression_of"] = target
+        if f.hash in posted:
+            out.dropped.append(
+                {
+                    "original_title": g.title,
+                    "members": g.members,
+                    "reason": f"DUPLICATE: same title as another group ({f.hash})",
+                }
+            )
+            continue
+        posted.add(f.hash)
+        out.new.append(f)
+    return out
+
+
+# ---- what the lanes are told from the ledger ----
+
+
+def thread_url(repo: str, number: int, issue: Issue) -> str:
+    if not issue.comment_id:
+        return ""
+    return f"https://github.com/{repo}/pull/{number}#discussion_r{issue.comment_id}"
+
+
 def _lines(i: Issue) -> list[int | None]:
     return [i.line_start, i.line_end]
 
@@ -139,3 +542,120 @@ def settled_list(issues: dict[str, Issue], reasons: dict[str, str]) -> list[dict
         }
         for i in rows[:SETTLED_LIST_MAX]
     ]
+
+
+def ledger_summary(
+    issues: dict[str, Issue],
+    *,
+    thread_status: dict[str, str],
+    last_message: dict[str, str],
+    raised_now: Iterable[Finding] = (),
+) -> dict[str, list[dict[str, Any]]]:
+    """The verifier's compact view of the ledger: open issues (with what the thread lane
+    decided this round and the latest message on the thread), settled ones (a candidate that
+    restates one is dropped unless the code changed) and fixed ones (refound = regression).
+    `raised_now`: this round's verified new issues, listed as open for the confirmation pass."""
+    out: dict[str, list[dict[str, Any]]] = {"open": [], "settled": [], "fixed": []}
+    for h, i in issues.items():
+        row: dict[str, Any] = {
+            "hash": h,
+            "severity": i.severity,
+            "file": i.file,
+            "lines": _lines(i),
+            "title": i.title,
+            "status": i.status,
+        }
+        kind = issue_kind(i)
+        if kind == "open":
+            if h in thread_status:
+                row["thread_lane"] = thread_status[h]
+            if last_message.get(h):
+                row["last_message"] = last_message[h][:600]
+        else:
+            row["closed_at"] = (i.closed_sha or "")[:12]
+            row["closing_note"] = (i.closed_reason or "")[:200]
+        out[kind].append(row)
+    for f in raised_now:
+        out["open"].append(
+            {
+                "hash": f.hash,
+                "severity": f.severity,
+                "file": f.file,
+                "lines": [f.line_start, f.line_end],
+                "title": f.title,
+                "status": "raised this round",
+            }
+        )
+    return out
+
+
+# ---- the ledger verdict (§3) ----
+
+
+def standing(
+    issues: dict[str, Issue],
+    *,
+    reconciled: bool = True,
+    last_reviewed_sha: str | None = None,
+    open_threads: Iterable[str] = (),
+) -> list[Issue]:
+    """The issues that count toward the verdict. Until a PR's ledger was reconciled (its
+    backfilled history holds blockers that vanished without an outcome), only those last seen
+    at the previous reviewed head or with an open thread on the PR count."""
+    threads = set(open_threads)
+    rows = [i for i in issues.values() if i.status in VERDICT_STANDING]
+    if reconciled:
+        return rows
+    return [
+        i
+        for i in rows
+        if i.hash in threads or (last_reviewed_sha and i.last_seen_sha == last_reviewed_sha)
+    ]
+
+
+def carried(issues: Iterable[Issue], url: Callable[[Issue], str]) -> list[Finding]:
+    """Standing issues as the findings a round carries (never re-posted)."""
+    return [
+        Finding(
+            file=i.file,
+            title=i.title,
+            body=i.body,
+            severity=i.severity,
+            category=i.category,
+            line_start=i.line_start,
+            line_end=i.line_end,
+            source="carried",
+            prior_hash=i.hash,
+            extra={"thread_url": url(i), "status": i.status},
+        )
+        for i in issues
+    ]
+
+
+def verdict(*, blockers: int, suggestions: int, full_strength: bool, confirmed: bool) -> str:
+    """REQUEST_CHANGES iff a blocker stands; APPROVE only with nothing above a nitpick standing,
+    on a full-strength run whose confirmation pass ran when the policy asks for one; else
+    COMMENT. (The head being live is checked when publishing.)"""
+    if blockers:
+        return "REQUEST_CHANGES"
+    if not suggestions and full_strength and confirmed:
+        return "APPROVE"
+    return "COMMENT"
+
+
+def project(
+    issues: dict[str, Issue], statuses: dict[str, str], upgrades: Iterable[str] = ()
+) -> dict[str, Issue]:
+    """`issues` with this round's pending status changes (`statuses`: hash -> ledger status)
+    and severity upgrades applied, for decisions taken before they are recorded (the gate, a
+    dry run). Copies; the ledger rows are untouched."""
+    import dataclasses
+
+    out = dict(issues)
+    for h, st in statuses.items():
+        if h in out:
+            out[h] = dataclasses.replace(out[h], status=st)
+    for h in upgrades:
+        if h in out:
+            out[h] = dataclasses.replace(out[h], severity="blocking")
+    return out

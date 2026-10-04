@@ -16,9 +16,10 @@ Rules every schema here follows:
 - No `additionalProperties: false`: a model that adds an unasked field would burn its
   structured-output retries on it, and the parser ignores extra fields.
 
-Nothing passes these schemas yet: the v12 finder, verifier and thread lanes do (pieces
-B1-B3). When they do, their prompts must drop the text-output rules that contradict
-answering through the StructuredOutput tool (see `prompts.RAW_JSON_CONTRACT`).
+The v12 finder, verify+match and thread lanes pass them (`worker._reviewer_lanes`,
+`_verify_shard`, `_run_thread_lane`); with a schema their prompts end in
+`prompts.STRUCTURED_CONTRACT` instead of the raw-JSON rule, and their correction turns ask for
+the StructuredOutput tool too.
 """
 
 from __future__ import annotations

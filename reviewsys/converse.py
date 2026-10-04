@@ -27,6 +27,14 @@ short status word; the model writes the rest.
 There is no FIXED here: a conversation only runs on the commit that was reviewed, so the code
 under the finding cannot have changed. Calling a promised change "fixed" lifted blockers that
 were still in the code (dashpay/dash#7778); a model that still answers FIXED gets FIX_PENDING.
+
+Policy v12 grows this lane into the thread lane (`parse_threads`, `guard_deferrals`; the prompt
+is the skills repo's `prompts/v12/thread.md`): one lane that owns every open issue's status, on
+a reply to a reviewed commit as before and beside the finders on every new push, for the issues
+someone replied to or whose code changed. It answers STILL_VALID | FIXED | OUTDATED | WITHDRAWN |
+INTENTIONALLY_DEFERRED plus a reply or NO_REPLY; the same rules hold on both paths (FIXED is
+FIX_PENDING where the code did not change, a deferral needs a maintainer, severity never
+changes in a reply).
 """
 
 from __future__ import annotations
@@ -37,8 +45,10 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .contract import _status_spelling
 from .models import FailKind, ReviewError
 from .prompts import RAW_JSON_CONTRACT, STATIC_REVIEW
+from .schemas import NO_REPLY, THREAD_STATUSES, check_thread_coverage
 
 CONVERSATION_STATUSES = (
     "STILL_VALID",
@@ -318,3 +328,60 @@ def parse(raw: dict[str, Any], *, expected: set[str]) -> ConversationOutput:
             FailKind.CONTRACT, f"conversation output missing threads: {sorted(missing)}"
         )
     return ConversationOutput(outcomes=out)
+
+
+# ---- policy v12: the thread lane ----
+
+# outcomes that retire an issue; the thread must say why, so each needs a reply
+CLOSING_STATUSES = frozenset({"FIXED", "OUTDATED", "WITHDRAWN", "INTENTIONALLY_DEFERRED"})
+
+
+def parse_threads(
+    raw: dict[str, Any], *, hashes: list[str], fix_pending: set[str]
+) -> ConversationOutput:
+    """The thread lane's answer: every hash of the work set exactly once
+    (`schemas.check_thread_coverage`), a status from THREAD_STATUSES (spelling normalized; a
+    v11-style NO_REPLY status is STILL_VALID with no reply), and a reply, or NO_REPLY (stored
+    as ""). FIXED on an issue in `fix_pending` (the code under it cannot have changed: a
+    same-sha reply, or the issue was last seen at this very head) is FIX_PENDING. A closing
+    status without a reply breaks the contract. Every problem is reported at once."""
+    problems = check_thread_coverage(raw, hashes)
+    out: dict[str, ThreadOutcome] = {}
+    for row in raw.get("threads") or [] if not problems else []:
+        h = str(row.get("finding_hash") or "")
+        st = _status_spelling(str(row.get("status") or "")).upper()
+        reply = str(row.get("reply") or "").strip()
+        if st == NO_REPLY:
+            st, reply = "STILL_VALID", ""
+        if st not in THREAD_STATUSES:
+            problems.append(
+                f"threads: {h}: status {row.get('status')!r} not in {' | '.join(THREAD_STATUSES)}"
+            )
+            continue
+        if reply.upper().strip(".") == NO_REPLY:
+            reply = ""
+        if st in CLOSING_STATUSES and not reply:
+            problems.append(f"threads: {h}: {st} needs a reply saying why (not {NO_REPLY})")
+            continue
+        if st == "FIXED" and h in fix_pending:
+            st = "FIX_PENDING"
+        out[h] = ThreadOutcome(
+            finding_hash=h,
+            status=st,
+            reply=reply[:REPLY_MAX],
+            reasoning=str(row.get("reasoning") or "")[:1000],
+        )
+    if problems:
+        raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
+    return ConversationOutput(outcomes=out)
+
+
+def guard_deferrals(
+    out: ConversationOutput, transcripts: dict[str, list[dict[str, Any]]]
+) -> ConversationOutput:
+    """`accept_deferrals` for the thread lane, on both paths: an INTENTIONALLY_DEFERRED stands
+    only when a maintainer replied since our last answer on the issue's thread; an issue with
+    no thread to read never qualifies. Otherwise DEFERRAL_PENDING (the issue still counts)."""
+    return accept_deferrals(
+        out, {h: {"transcript": transcripts.get(h) or []} for h in out.outcomes}
+    )

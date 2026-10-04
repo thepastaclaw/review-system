@@ -198,10 +198,16 @@ class VerifierOutput:
     # truth, so its status and reason for a prior finding outrank any reviewer lane's
     prior_reconciliation: list[dict[str, Any]] = field(default_factory=list)
     normalized: list[str] = field(default_factory=list)  # as ReviewerOutput.normalized
+    # policy v12 (verifier contract "v12"), all empty under v11:
+    # the ledger's standing issues from earlier rounds, carried (never re-posted): they count
+    # toward the verdict, the gate and the body's "Still open from earlier rounds"
+    carried: list[Finding] = field(default_factory=list)
+    # the code rules' account of this answer (`rules.Outcome`): matches, corroborations
+    rules: Any = None
 
     @property
     def blocker_count(self) -> int:
-        return sum(1 for f in self.findings if f.severity == "blocking")
+        return sum(1 for f in (*self.findings, *self.carried) if f.severity == "blocking")
 
 
 def parse_json_object(text: str) -> dict[str, Any]:

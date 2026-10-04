@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import urllib.parse
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -111,6 +112,10 @@ V12_TEMPLATES = {
     "general": "General method for {repo}: scan, removed code, callers.",
     "security-auditor": "Security method.",
     "always-on": "Always-on method.",
+    "verifier": "# Verify+match {repo} #{pr_number} head {head_sha}\n{phase_note}\n"
+    "## Candidates\n{candidates}\n## CodeRabbit\n{coderabbit}\n## Ledger\n{ledger}\n{context}\n",
+    "thread": "# Threads {repo} #{pr_number} at {head_sha}\n{mode_note}\nverdict {standing_verdict}\n"
+    "{issues}\n{linked_commits}\n{discussion}\n",
 }
 
 
@@ -404,9 +409,15 @@ class FakeLanes:
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
         self.dead_stderr = "API Error: 429 rate limited"  # what a dead lane says
-        # policy v12 finder lanes, recognised by their prompts' output section: role ->
-        # {"summary", "candidates"}, a list of candidates, or a callable returning either
+        # policy v12 lanes, recognised by their prompts' output sections:
+        # finder lanes: role -> {"summary", "candidates"}, a list of candidates, or a callable
+        # returning either
         self.candidates: dict[str, Any] = {}
+        # verify+match: (phase label, candidate briefs, prompt) -> answer; default confirms
+        # every candidate as its own new group. Labels: verify1, verify2, confirm
+        self.verify12: Callable[[str, list[dict[str, Any]], str], dict[str, Any]] | None = None
+        # thread lane: finding_hash -> {"status", "reply"}; default STILL_VALID / NO_REPLY
+        self.thread_out: dict[str, dict[str, Any]] = {}
         self.v12_calls: list[tuple[str, str, list[str]]] = []  # (kind, label, ids)
         self._v12_sessions: dict[str, str] = {}  # session -> the v12 prompt it answered
 
@@ -441,6 +452,34 @@ class FakeLanes:
             out = {"summary": "ok", "candidates": out} if isinstance(out, list) else out
             self.v12_calls.append(("finder", spec.role, []))
             return out
+        if "## Output: verified groups" in p:
+            m = re.search(r"```json candidates\n(.*?)\n```", p, re.S)
+            cands = json.loads(m.group(1)) if m else []
+            label = (
+                "verify1"
+                if "gate verification" in p
+                else "confirm"
+                if "second, independent pass" in p
+                else "verify2"
+            )
+            self.v12_calls.append(("verify", label, [c["id"] for c in cands]))
+            if self.verify12 is not None:
+                return self.verify12(label, cands, p)
+            return confirm_all(cands)
+        if "## Output: thread outcomes" in p:
+            m = re.search(r"```json issues\n(.*?)\n```", p, re.S)
+            hashes = [i["finding_hash"] for i in json.loads(m.group(1))] if m else []
+            self.v12_calls.append(("thread", spec.role, hashes))
+            return {
+                "threads": [
+                    {
+                        "finding_hash": h,
+                        **{"status": "STILL_VALID", "reply": "NO_REPLY"},
+                        **self.thread_out.get(h, {}),
+                    }
+                    for h in hashes
+                ]
+            }
         return None
 
     def __call__(self, spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
@@ -490,6 +529,24 @@ class FakeLanes:
             tokens_out=10,
             result_text=text,
         )
+
+
+def group(c: dict[str, Any], **kw: Any) -> dict[str, Any]:
+    """A verify+match group confirming candidate brief `c` as new, overridable."""
+    return {
+        "members": [c["id"]],
+        "match": "new",
+        "verdict": "CONFIRMED",
+        "evidence": f"{c['file']}:{c.get('line_start')} shows it",
+        "severity": c["severity"],
+        "title": c["title"],
+        "body": c.get("body") or "body",
+        **kw,
+    }
+
+
+def confirm_all(cands: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"summary": "Verified.", "groups": [group(c) for c in cands]}
 
 
 @pytest.fixture

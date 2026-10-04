@@ -316,8 +316,9 @@ def _conn(args: argparse.Namespace) -> sqlite3.Connection | None:
 
 
 def cmd_ledger(args: argparse.Namespace) -> int:
-    """The issue ledger: replay history into it, or show a PR's issues."""
-    if args.action == "backfill" and args.number is not None and not args.repo:
+    """The issue ledger: replay history into it, reconcile it for policy v12, or show a PR's
+    issues."""
+    if args.action in {"backfill", "reconcile"} and args.number is not None and not args.repo:
         print("--number needs --repo", file=sys.stderr)
         return 1
     conn = _conn(args)
@@ -331,6 +332,23 @@ def cmd_ledger(args: argparse.Namespace) -> int:
                 conn, Gh(cfg.gh_bin), cfg.bot_login, repo=args.repo, number=args.number
             )
         print(json.dumps(res, indent=1))
+        return 0
+    if args.action == "reconcile":
+        cfg = _cfg(args)
+
+        def mirror_for(repo: str) -> Path | None:
+            p = cfg.mirrors_dir / f"{repo.replace('/', '__')}.git"
+            return p if (p / "HEAD").exists() else None
+
+        out = ledger_mod.reconcile_all(
+            conn,
+            Gh(cfg.gh_bin),
+            cfg.bot_login,
+            mirror_for=mirror_for,
+            repo=args.repo,
+            number=args.number,
+        )
+        print(json.dumps(out, indent=1))
         return 0
     issues = ledger_mod.load(conn, args.repo, args.number)
     events = ledger_mod.history(conn, args.repo, args.number) if args.history else None
@@ -459,6 +477,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     b.add_argument("--db", help="database file (default: the configured one)")
     b.set_defaults(fn=cmd_ledger)
+    rc = lsub.add_parser(
+        "reconcile",
+        help="policy v12: outdate standing issues that can no longer stand (needs GitHub)",
+    )
+    rc.add_argument("--repo", help="only this repo (owner/name)")
+    rc.add_argument("--number", type=int, help="only this PR (with --repo)")
+    rc.add_argument("--db", help="database file (default: the configured one)")
+    rc.set_defaults(fn=cmd_ledger)
     v = lsub.add_parser("show", help="a PR's issues")
     v.add_argument("repo")
     v.add_argument("number", type=int)

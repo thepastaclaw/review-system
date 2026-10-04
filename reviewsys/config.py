@@ -174,7 +174,8 @@ class FinderPolicy:
 class ThreadsPolicy:
     """`pipeline.threads`. `lane`: one thread lane beside the finders owns every open issue's
     status and reply, replacing the reviewers' and verifier's reconciliation and
-    `step_converse` (v12 design §2.4); false = v11. Not read yet (piece B2)."""
+    `step_converse` (v12 design §2.4; `worker._start_thread_lane`, `step_threads`); false =
+    v11. Needs `verifier.contract` "v12" (the verifier no longer reconciles)."""
 
     lane: bool = False
 
@@ -182,8 +183,9 @@ class ThreadsPolicy:
 @dataclass(frozen=True, slots=True)
 class VerifierPolicy:
     """`pipeline.verifier`. `contract`: "v11" = today's verifier output; "v12" = per-candidate
-    verdicts matched to the ledger, with the code rules deciding (v12 design §2.2-2.3). Not
-    read yet (piece B3)."""
+    verdicts matched to the ledger, with the code rules deciding (v12 design §2.2-2.3;
+    `worker._verify12`, `rules.py`). Needs unanchored finders (candidate ids) and the thread
+    lane (open issues are no longer reconciled anywhere else)."""
 
     contract: str = "v11"
 
@@ -212,9 +214,8 @@ class PipelinePolicy:
     AGENTS.md at the worktree root) reaches the reviewer and verifier prompts as evidence
     instead (`prompts.repo_guidance`).
     `structured_output`: a lane given a schema (`schemas.py`) answers through `--json-schema`
-    (`worker._run_checked_lane(schema=...)`). Parsed and honoured, but no lane passes a schema
-    yet: the v12 finder, verifier and thread lanes wire it (pieces B1-B3), so on its own it
-    changes nothing.
+    (`worker._run_checked_lane(schema=...)`): the v12 finder, verifier and thread lanes pass
+    one, and their prompts then ask for the StructuredOutput tool instead of raw JSON text.
     `late_nonblocking` (owner decision D2): "post" = later-round suggestions on lines unchanged
     since the last final review post as today; "note" = a collapsed note that does not hold
     APPROVE. Not read yet (piece B5).
@@ -290,6 +291,16 @@ class ModelPolicy:
     def unanchored(self) -> bool:
         """Policy v12 finder lanes: candidate contract, no prior checklist (B1)."""
         return self.pipeline is not None and self.pipeline.finders.anchoring == "unanchored"
+
+    @property
+    def thread_lane(self) -> bool:
+        """Policy v12 thread lane owns every open issue's status and reply (B2)."""
+        return self.pipeline is not None and self.pipeline.threads.lane
+
+    @property
+    def verifier_v12(self) -> bool:
+        """Policy v12 verify+match lanes, code rules and the ledger verdict (B3)."""
+        return self.pipeline is not None and self.pipeline.verifier.contract == "v12"
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -804,7 +815,7 @@ def _pipeline(node: Any, specialists: tuple[Specialist, ...]) -> PipelinePolicy 
             raise ValueError(
                 f"pipeline.confirmation.roles {unknown!r} are neither `general` nor specialists"
             )
-    return PipelinePolicy(
+    policy = PipelinePolicy(
         version=str(node["version"]),
         lane_env_isolation=_flag(node, "lane_env_isolation", "pipeline"),
         structured_output=_flag(node, "structured_output", "pipeline"),
@@ -821,6 +832,20 @@ def _pipeline(node: Any, specialists: tuple[Specialist, ...]) -> PipelinePolicy 
         ),
         late_nonblocking=_choice(node, "late_nonblocking", "pipeline", LATE_NONBLOCKING_MODES),
     )
+    _check_pipeline(policy)
+    return policy
+
+
+def _check_pipeline(p: PipelinePolicy) -> None:
+    """Switches that only work together: the v12 verifier matches candidate ids (unanchored
+    finders) and leaves open issues to the thread lane, which in turn needs the v12 verifier to
+    stop reconciling them. A half-switched arm would run a pipeline nobody designed, so it fails
+    the load."""
+    v12 = p.verifier.contract == "v12"
+    if v12 and p.finders.anchoring != "unanchored":
+        raise ValueError('pipeline.verifier.contract "v12" needs finders.anchoring "unanchored"')
+    if v12 != p.threads.lane:
+        raise ValueError('pipeline.threads.lane and verifier.contract "v12" go together')
 
 
 def load_skills_config(
