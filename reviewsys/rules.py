@@ -462,6 +462,16 @@ def apply_rules(
         sev, body = g.severity, g.body
         if sev == "blocking" and g.verdict != "CONFIRMED":
             sev, body = "suggestion", body + _plausible_note(g.confirm_by)
+        suggestion = g.suggestion
+        if suggestion and len({(m.file, m.line_start, m.line_end) for m in members}) > 1:
+            # the group's members point at different lines: replacement code committed onto
+            # the representative's lines could land on the wrong ones, so it is shown, not
+            # offered as a one-click change
+            body += (
+                "\n\n**Suggested change** (the reports point at different lines, so it is not "
+                f"offered as a one-click suggestion):\n```\n{suggestion}\n```"
+            )
+            suggestion = None
         f = Finding(
             file=rep.file if rep else "",
             title=g.title,
@@ -470,7 +480,7 @@ def apply_rules(
             category=rep.category if rep else "general",
             line_start=rep.line_start if rep else None,
             line_end=rep.line_end if rep else None,
-            suggestion=g.suggestion,
+            suggestion=suggestion,
             source=source_of(members),
             extra={"verdict": g.verdict, "evidence": g.evidence, "members": g.members},
             candidate_id=g.members[0],

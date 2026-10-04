@@ -96,7 +96,7 @@ def answer(*groups: dict) -> rules.VerifyAnswer:
             severity=g.get("severity", "blocking"),
             title=g.get("title", "T"),
             body=g.get("body", "B"),
-            suggestion=None,
+            suggestion=g.get("suggestion"),
         )
         for g in groups
     ]
@@ -731,3 +731,25 @@ def test_thread_shards_split_by_count_and_size_into_at_most_three():
     big = {"a": 50_000, "b": 50_000, "c": 10}  # few issues, but too much to read at once
     assert len(rules.thread_shards(big)) == 2
     assert len(rules.thread_shards({f"h{i}": 100 for i in range(100)})) == 3
+
+
+def test_a_one_click_suggestion_only_where_every_report_points():
+    cs = cands("blocking", "blocking", "blocking")  # lines 11, 12, 13
+    same = dict(cs)
+    same["p2-general-2"].line_start = same["p2-general-2"].line_end = 11
+    out = apply(
+        answer(
+            {"members": ["p2-general-1", "p2-general-2"], "title": "one", "suggestion": "fix()"},
+            {"members": ["p2-general-3"], "title": "two", "suggestion": "other()"},
+        ),
+        same,
+    )
+    assert [f.suggestion for f in out.new] == ["fix()", "other()"]
+    out = apply(
+        answer(
+            {"members": ["p2-general-1", "p2-general-3"], "title": "one", "suggestion": "fix()"}
+        ),
+        cands("blocking", "blocking", "blocking"),
+    )
+    (f,) = out.new
+    assert f.suggestion is None and "**Suggested change**" in f.body and "fix()" in f.body
