@@ -23,7 +23,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -2545,13 +2545,22 @@ def _verify12(
     return out
 
 
-def _carried12(ctx: RunContext, issues: dict[str, ledger.Issue]) -> list[Finding]:
-    stand = rules.standing(
+def _stand12(
+    ctx: RunContext, issues: dict[str, ledger.Issue], judged: Iterable[str] = ()
+) -> list[ledger.Issue]:
+    """The issues that count toward this round's verdict (`rules.standing`): the reconcile's
+    leftovers only once the thread lane has judged them (`judged`)."""
+    return rules.standing(
         issues,
         reconciled=ctx.reconciled,
+        pending=ctx.reconcile_pending - set(judged),
         last_reviewed_sha=ctx.last_reviewed_sha,
         open_threads=ctx.open_threads,
     )
+
+
+def _carried12(ctx: RunContext, issues: dict[str, ledger.Issue]) -> list[Finding]:
+    stand = _stand12(ctx, issues, _thread_outcomes(ctx))
     return rules.carried(stand, lambda i: _issue_url(ctx, i))
 
 
@@ -4621,13 +4630,7 @@ def _record_revivals(ctx: RunContext, verified: VerifierOutput) -> None:
 
 
 def _ledger_blockers(ctx: RunContext) -> int:
-    issues = ledger.load(ctx.conn, ctx.repo, ctx.number)
-    stand = rules.standing(
-        issues,
-        reconciled=ctx.reconciled,
-        last_reviewed_sha=ctx.last_reviewed_sha,
-        open_threads=ctx.open_threads,
-    )
+    stand = _stand12(ctx, ledger.load(ctx.conn, ctx.repo, ctx.number))
     return sum(1 for i in stand if i.severity == "blocking")
 
 
@@ -4668,12 +4671,7 @@ def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         if not ctx.dry_run
         else rules.project(before, _pending_statuses(out.outcomes, set()))
     )
-    stand = rules.standing(
-        issues,
-        reconciled=ctx.reconciled,
-        last_reviewed_sha=ctx.last_reviewed_sha,
-        open_threads=ctx.open_threads,
-    )
+    stand = _stand12(ctx, issues, out.outcomes)
     blockers = sum(1 for i in stand if i.severity == "blocking")
     update = None
     if not ctx.dry_run:

@@ -620,20 +620,22 @@ def standing(
     issues: dict[str, Issue],
     *,
     reconciled: bool = True,
+    pending: Iterable[str] = (),
     last_reviewed_sha: str | None = None,
     open_threads: Iterable[str] = (),
 ) -> list[Issue]:
-    """The issues that count toward the verdict. Until a PR's ledger was reconciled (its
-    backfilled history holds blockers that vanished without an outcome), only those last seen
-    at the previous reviewed head or with an open thread on the PR count."""
-    threads = set(open_threads)
+    """The issues that count toward the verdict. A PR's backfilled history holds blockers that
+    vanished without an outcome: until its ledger was reconciled, and for the issues the
+    reconcile left to the thread lane (`pending`) until the lane has judged them, only those
+    last seen at the previous reviewed head or with an open thread on the PR count."""
+    threads, doubtful = set(open_threads), set(pending)
     rows = [i for i in issues.values() if i.status in VERDICT_STANDING]
-    if reconciled:
-        return rows
     return [
         i
         for i in rows
-        if i.hash in threads or (last_reviewed_sha and i.last_seen_sha == last_reviewed_sha)
+        if (reconciled and i.hash not in doubtful)
+        or i.hash in threads
+        or (last_reviewed_sha and i.last_seen_sha == last_reviewed_sha)
     ]
 
 

@@ -436,3 +436,20 @@ def test_a_settled_issue_is_revived_by_its_own_lines_after_a_shift(cfg, conn, tm
 
     assert ledger_mod.lines_changed(repo, b, c1, "f.rs", 11, 12) is True
     assert ledger_mod.lines_changed(repo, b, c2, "f.rs", 11, 12) is False
+
+
+def test_a_reconcile_leftover_does_not_count_until_judged(cfg, skills_dir, conn, gh, lanes, git):
+    """The reconcile leaves an unchanged backfilled blocker with no thread to the thread lane;
+    when that lane fails, the leftover must not request changes on its own (it may be one of
+    the blockers that vanished without an outcome), though nothing can approve either."""
+    v12 = v12_cfg(cfg, skills_dir)
+    h = _backfilled(conn, "Old blocker", line=40)
+    lanes.candidates["default"] = []
+    lanes.thread_out[h] = {"status": "WITHDRAWN", "reply": "NO_REPLY"}  # never valid
+    rid = run_round(v12, conn, gh, lanes, A)
+    assert conn.execute(
+        "SELECT 1 FROM events WHERE kind='threads.failed' AND run_id=?", (rid,)
+    ).fetchone()
+    assert issues(conn)[h].status == "open"
+    assert ledger.reconciled(conn, REPO, 1)["pending"] == [h]  # still to judge
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"
