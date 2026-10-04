@@ -73,6 +73,53 @@ def cmd_worker(args: argparse.Namespace) -> int:
     return 0 if status.value == "done" else 1
 
 
+def _path(value: str | None) -> Path | None:
+    return Path(value).expanduser() if value else None
+
+
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Re-review past runs' exact heads under a skills checkout (replay.py); posts nothing."""
+    from .replay import EXIT_ABORTED, ReplayAborted, replay
+
+    cfg = _cfg(args)
+    out = Path(args.out).expanduser()
+    for rid in args.run_id:
+        try:
+            report = replay(
+                cfg,
+                run_id=rid,
+                out=out,
+                skills=_path(args.skills),
+                source_db=_path(args.source_db),
+                source_runs=_path(args.source_runs),
+                force_phase2=args.force_phase2,
+                pin_phase1_model=args.pin_phase1_model,
+                sample=args.sample,
+                policy_name=args.policy_name,
+            )
+        except ReplayAborted as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_ABORTED
+        published = report["published"]
+        print(
+            json.dumps(
+                {k: report[k] for k in ("source_run", "repo", "number", "status", "reason")}
+                | {
+                    "published": len(published),
+                    "blockers": sum(f["severity"] == "blocking" for f in published),
+                    "historical": len(report["historical_posted"]),
+                    "forced_phase2": report["gate"]["forced_phase2"],
+                    "gpt_lanes": report["gpt"]["lanes"],
+                    "wall_clock_s": report["wall_clock_s"],
+                }
+            )
+        )
+        if report["invalid"]:
+            print(f"run {rid}: replay invalid ({report['invalid']})", file=sys.stderr)
+            return EXIT_ABORTED
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     conn = db_mod.connect(cfg.db_path)
@@ -333,6 +380,27 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--run-id", type=int, required=True)
     s.add_argument("--dry-run", action="store_true", help="do everything except post to GitHub")
     s.set_defaults(fn=cmd_worker)
+    s = sub.add_parser(
+        "replay",
+        help="re-review past runs' exact heads under a skills checkout; read-only, posts nothing",
+    )
+    s.add_argument("run_id", type=int, nargs="+")
+    s.add_argument("--out", required=True, help="directory for scratch DBs, worktrees, reports")
+    s.add_argument("--skills", help="skills checkout holding the policy to replay under")
+    s.add_argument("--source-db", help="database the runs come from (default: the configured one)")
+    s.add_argument(
+        "--source-runs",
+        help="run artifact dir holding the runs' evidence.json (default: work/runs)",
+    )
+    s.add_argument(
+        "--force-phase2",
+        action="store_true",
+        help="record the gate's decision, then run Phase 2 anyway",
+    )
+    s.add_argument("--pin-phase1-model", help="run every Phase-1 lane on this model")
+    s.add_argument("--sample", type=int, default=0, help="repeat sample number (dir run-<id>-r<k>)")
+    s.add_argument("--policy-name", help="eval arm name (replay.policy_overrides)")
+    s.set_defaults(fn=cmd_replay)
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     s.set_defaults(fn=cmd_status)
