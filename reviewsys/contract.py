@@ -239,6 +239,10 @@ def parse_json_object(text: str) -> dict[str, Any]:
 # to 8-14 hex). So both are set to what the worker knows, with a note, never silently. The one
 # thing still rejected is a head_sha naming another commit: that lane may have reviewed the
 # wrong code. Prior-finding hashes get the same treatment where exactly one prior hash fits.
+#
+# Policy v12 goes one step further (`stamp`): lanes are not asked for the echo fields at all,
+# so the harness stamps them. A missing one is expected and goes unnoted; `review_phase` is
+# set whatever came back; a `head_sha` a lane volunteers anyway is still checked as above.
 
 
 def _expand(value: str, full: set[str]) -> str | None:
@@ -325,15 +329,35 @@ def _normalize_prior_hashes(out: dict[str, Any], prior: set[str], notes: list[st
         out["findings"] = [_full_hash(f, prior, notes, "carried finding") for f in findings]
 
 
+def _stamp_echo(out: dict[str, Any], expected_phase: str, head_sha: str, notes: list[str]) -> None:
+    """Policy v12: the harness's echo fields, unnoted; `head_sha` "" for a verifier."""
+    out["review_phase"] = expected_phase
+    if not head_sha:
+        return
+    if str(out.get("head_sha") or "").strip():
+        _normalize_head(out, head_sha, notes)
+    else:
+        out["head_sha"] = head_sha
+
+
 def normalize_reviewer_output(
-    raw: dict[str, Any], *, expected_phase: str, head_sha: str, prior_hashes: set[str]
+    raw: dict[str, Any],
+    *,
+    expected_phase: str,
+    head_sha: str,
+    prior_hashes: set[str],
+    stamp: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """A copy of `raw` with the echo fields and unambiguous prior-hash slips fixed, and one
-    note per fix. Raises (CONTRACT) only for a head_sha that names another commit."""
+    note per fix (`stamp`: the echo fields stamped instead, see above). Raises (CONTRACT)
+    only for a head_sha that names another commit."""
     out = dict(raw)
     notes: list[str] = []
-    _normalize_phase(out, expected_phase, notes)
-    _normalize_head(out, head_sha, notes)
+    if stamp:
+        _stamp_echo(out, expected_phase, head_sha, notes)
+    else:
+        _normalize_phase(out, expected_phase, notes)
+        _normalize_head(out, head_sha, notes)
     if prior_hashes:
         _normalize_prior_hashes(out, prior_hashes, notes)
     return out, notes
@@ -372,10 +396,20 @@ def _reconciliation_problems(
 
 
 def parse_reviewer_output(
-    raw: dict[str, Any], *, expected_phase: str, head_sha: str, source: str, prior_hashes: set[str]
+    raw: dict[str, Any],
+    *,
+    expected_phase: str,
+    head_sha: str,
+    source: str,
+    prior_hashes: set[str],
+    stamp_echo: bool = False,
 ) -> ReviewerOutput:
     raw, notes = normalize_reviewer_output(
-        raw, expected_phase=expected_phase, head_sha=head_sha, prior_hashes=prior_hashes
+        raw,
+        expected_phase=expected_phase,
+        head_sha=head_sha,
+        prior_hashes=prior_hashes,
+        stamp=stamp_echo,
     )
     findings_raw = raw.get("findings")
     if not isinstance(findings_raw, list):
@@ -407,13 +441,18 @@ def parse_verifier_output(
     expected_phase: str,
     expected_coderabbit_ids: list[int],
     prior_hashes: set[str] | None = None,
+    stamp_echo: bool = False,
 ) -> VerifierOutput:
     """`review_phase` is an echo field here too (the prompt states it, nothing reads it back),
-    so it is normalized like a reviewer's; prior hashes in the verifier's own reconciliation
-    rows are expanded the same way (they decide the thread answers), never validated."""
+    so it is normalized like a reviewer's (stamped under policy v12); prior hashes in the
+    verifier's own reconciliation rows are expanded the same way (they decide the thread
+    answers), never validated."""
     raw = dict(raw)
     notes: list[str] = []
-    _normalize_phase(raw, expected_phase, notes)
+    if stamp_echo:
+        _stamp_echo(raw, expected_phase, "", notes)
+    else:
+        _normalize_phase(raw, expected_phase, notes)
     if prior_hashes:
         _normalize_prior_hashes(raw, prior_hashes, notes)
     if raw.get("adjudication_complete") is not True:

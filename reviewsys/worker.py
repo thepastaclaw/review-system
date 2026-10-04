@@ -149,6 +149,9 @@ class OutputCheck[T]:
     expected_phase: str = ""
     prior: list[dict[str, Any]] = field(default_factory=list)  # prior findings, as prompted
     coderabbit_ids: list[int] = field(default_factory=list)
+    # policy v12: the lane was not asked for the echo fields, so the correction turns and the
+    # repair lane do not ask for them either (`validate` stamps them)
+    stamp_echo: bool = False
 
 
 def _as_is(raw: dict[str, Any]) -> dict[str, Any]:
@@ -1070,6 +1073,7 @@ def _run_checked_lane[T](
                 coderabbit_ids=check.coderabbit_ids,
                 turn=len(asked),
                 turns=corrections,
+                echo=not check.stamp_echo,
             )
 
         session = new_session_id() if corrections else ""
@@ -1283,6 +1287,7 @@ def _repair[T](
             expected_phase=check.expected_phase,
             head_sha=ctx.sha,
             prior_hashes=[str(p["finding_hash"]) for p in check.prior],
+            echo=not check.stamp_echo,
         ),
         cwd=ctx.worktree,
         add_dir=ctx.run_dir,
@@ -1392,6 +1397,7 @@ def _reviewer_lanes(
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
+    stamp = ctx.cfg.policy.stamps_echo_fields
     prompts = {
         role: reviewer_prompt(
             ctx.cfg,
@@ -1406,6 +1412,7 @@ def _reviewer_lanes(
             prior=review_prior,
             prior_sha=review_prior_sha,
             fresh=fresh,
+            echo=not stamp,
         )
         for role in roles
     }
@@ -1456,10 +1463,15 @@ def _reviewer_lanes(
                 head_sha=ctx.sha,
                 source=f"{phase}:{key}",
                 prior_hashes=prior_hashes,
+                stamp_echo=stamp,
             )
 
         check = OutputCheck(
-            validate=validate, kind="reviewer", expected_phase=expected_phase, prior=review_prior
+            validate=validate,
+            kind="reviewer",
+            expected_phase=expected_phase,
+            prior=review_prior,
+            stamp_echo=stamp,
         )
         try:
             return _reviewer_lane(
@@ -1607,6 +1619,7 @@ def _verifier_lane(
     fresh_final: bool = False,
 ) -> VerifierOutput:
     all_phase2 = phase2_outputs if phase2_outputs is not None else ctx.phase2_outputs
+    stamp = ctx.cfg.policy.stamps_echo_fields
     prompt = verifier_prompt(
         ctx.cfg,
         repo=ctx.repo,
@@ -1623,6 +1636,7 @@ def _verifier_lane(
         phase1_skipped=ctx.phase1_skipped,
         fresh_final=fresh_final,
         single_stage=ctx.single_stage,
+        echo=not stamp,
     )
     prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
 
@@ -1632,6 +1646,7 @@ def _verifier_lane(
             expected_phase=expected_phase,
             expected_coderabbit_ids=ctx.coderabbit_ids,
             prior_hashes=prior_hashes,
+            stamp_echo=stamp,
         )
 
     out = _run_checked_lane(
@@ -1647,6 +1662,7 @@ def _verifier_lane(
             expected_phase=expected_phase,
             prior=ctx.prior,
             coderabbit_ids=ctx.coderabbit_ids,
+            stamp_echo=stamp,
         ),
     )
     lane_findings = {

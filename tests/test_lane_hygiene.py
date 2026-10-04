@@ -18,11 +18,17 @@ import pytest
 from reviewsys import lane as lane_mod
 from reviewsys import schemas, worker
 from reviewsys.config import LaneModel
-from reviewsys.contract import CATEGORIES, SEVERITIES
+from reviewsys.contract import (
+    CATEGORIES,
+    SEVERITIES,
+    parse_reviewer_output,
+    parse_verifier_output,
+)
 from reviewsys.db import tx
 from reviewsys.ingest import enqueue_head
 from reviewsys.lane import LaneResult, LaneSpec
 from reviewsys.models import FailKind, ReviewError, RunStatus, Trigger
+from reviewsys.prompts import repair_prompt
 from reviewsys.scheduler import schedule
 from reviewsys.steps import worktree as wt
 from tests.test_pipeline_policy import load_with
@@ -507,3 +513,143 @@ def test_narrowed_schemas_pin_the_ids_and_leave_the_base_alone():
         schemas.THREAD_SCHEMA["properties"]["threads"]["items"]["properties"]["finding_hash"]
     )
     assert "minItems" not in schemas.THREAD_SCHEMA["properties"]["threads"]
+
+
+# ---- harness-stamped echo fields ----
+
+ECHO_ASK = ("Include `review_phase`", "`review_phase` must be", "`review_phase` is exactly")
+
+
+def _events(conn, rid, kind):
+    return [
+        r[0]
+        for r in conn.execute(
+            "SELECT detail FROM events WHERE run_id=? AND kind=? ORDER BY id", (rid, kind)
+        )
+    ]
+
+
+class WithoutEcho:
+    """`lanes`, with every reviewer and verifier answer stripped of the echo fields: what a
+    v12 lane, never asked for them, returns."""
+
+    def __init__(self, lanes) -> None:
+        self.lanes = lanes
+
+    def __call__(self, spec, art, worktree):
+        res = self.lanes(spec, art, worktree)
+        try:
+            out = json.loads(res.result_text)
+        except json.JSONDecodeError:
+            return res
+        if spec.role in ("prep", "repair") or not isinstance(out, dict):
+            return res
+        out.pop("review_phase", None)
+        out.pop("head_sha", None)
+        return dataclasses.replace(res, result_text=json.dumps(out))
+
+
+def test_stamping_fills_missing_echo_fields_without_a_note():
+    raw = {"summary": "s", "findings": []}
+    out = parse_reviewer_output(
+        raw, expected_phase="final", head_sha=HEAD, source="x", prior_hashes=set(), stamp_echo=True
+    )
+    assert (out.review_phase, out.head_sha, out.normalized) == ("final", HEAD, [])
+    assert out.raw["review_phase"] == "final" and out.raw["head_sha"] == HEAD
+    # a phase the lane volunteered anyway is overwritten, unnoted: nobody asked for it
+    out = parse_reviewer_output(
+        {**raw, "review_phase": "complete"},
+        expected_phase="preliminary",
+        head_sha=HEAD,
+        source="x",
+        prior_hashes=set(),
+        stamp_echo=True,
+    )
+    assert out.raw["review_phase"] == "preliminary" and out.normalized == []
+    v = parse_verifier_output(
+        {
+            "findings": [],
+            "coderabbit_reactions": [],
+            "prerequisite_adjudications": [],
+            "adjudication_complete": True,
+        },
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+        stamp_echo=True,
+    )
+    assert v.raw["review_phase"] == "final" and v.normalized == [] and "head_sha" not in v.raw
+
+
+def test_a_volunteered_head_sha_is_still_checked():
+    """It may say the lane reviewed other code: still a contract error when it names another
+    commit, still expanded (noted) when it abbreviates the head."""
+    raw = {"summary": "s", "findings": [], "head_sha": HEAD[:10]}
+    out = parse_reviewer_output(
+        raw, expected_phase="final", head_sha=HEAD, source="x", prior_hashes=set(), stamp_echo=True
+    )
+    assert out.raw["head_sha"] == HEAD and out.normalized == [f"head_sha {HEAD[:10]!r} -> {HEAD}"]
+    with pytest.raises(ReviewError) as exc:
+        parse_reviewer_output(
+            {**raw, "head_sha": "f" * 40},
+            expected_phase="final",
+            head_sha=HEAD,
+            source="x",
+            prior_hashes=set(),
+            stamp_echo=True,
+        )
+    assert exc.value.kind is FailKind.CONTRACT
+
+
+def test_v11_still_notes_missing_echo_fields():
+    out = parse_reviewer_output(
+        {"summary": "s", "findings": []},
+        expected_phase="final",
+        head_sha=HEAD,
+        source="x",
+        prior_hashes=set(),
+    )
+    assert out.normalized == [
+        "review_phase missing -> 'final'",
+        "head_sha missing -> assigned head",
+    ]
+
+
+def test_v12_lanes_are_never_asked_for_echo_fields_and_need_not_return_them(
+    cfg, conn, gh, lanes, skills_dir
+):
+    cfg = load_with(cfg, skills_dir, {"version": "v12"})
+    _review(lanes)  # the general lane's first answer is broken: one correction turn
+    rid, status = _run(cfg, conn, gh, WithoutEcho(lanes))
+    assert status == RunStatus.DONE
+    asked = [s for s in lanes.calls if s.role not in ("prep",)]
+    assert {"general", "verifier"} <= {s.role for s in asked}
+    assert any(s.resume for s in asked), "a correction turn ran"
+    for spec in asked:
+        assert not any(a in spec.prompt for a in ECHO_ASK), spec.role
+        assert "`head_sha` is exactly" not in spec.prompt
+        assert "review_phase, head_sha" not in spec.prompt
+    assert _events(conn, rid, "lane.output_normalized") == []
+    assert _events(conn, rid, "lane.corrected"), "the broken answer was still corrected"
+
+
+def test_v11_lanes_are_asked_for_echo_fields_and_noted_without_them(cfg, conn, gh, lanes):
+    _review(lanes)
+    rid, status = _run(cfg, conn, gh, WithoutEcho(lanes))
+    assert status == RunStatus.DONE
+    general = [s for s in lanes.calls if s.role == "general"]
+    assert "Include `review_phase`" in general[0].prompt
+    assert '`head_sha` is exactly "' + HEAD + '"' in general[1].prompt
+    verifier = next(s for s in lanes.calls if s.role == "verifier")
+    assert "`review_phase` must be" in verifier.prompt
+    assert any("review_phase missing" in e for e in _events(conn, rid, "lane.output_normalized"))
+
+
+def test_v12_repair_prompt_asks_for_no_echo_fields():
+    v11 = repair_prompt(
+        "{x", kind="reviewer", expected_phase="final", head_sha=HEAD, prior_hashes=[]
+    )
+    v12 = repair_prompt(
+        "{x", kind="reviewer", expected_phase="final", head_sha=HEAD, prior_hashes=[], echo=False
+    )
+    assert "review_phase" in v11 and HEAD in v11
+    assert "review_phase" not in v12 and "head_sha" not in v12 and v12.endswith("\n\n{x")

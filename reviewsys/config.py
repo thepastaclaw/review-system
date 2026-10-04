@@ -268,6 +268,12 @@ class ModelPolicy:
     pipeline: PipelinePolicy | None = None
 
     @property
+    def stamps_echo_fields(self) -> bool:
+        """Policy v12: lanes are not asked for `review_phase` / `head_sha`; the harness
+        stamps them on every reviewer and verifier answer."""
+        return self.pipeline is not None
+
+    @property
     def has_phase1_ladder(self) -> bool:
         """More than one rung, so which one ran is worth recording and disclosing."""
         return len(self.phase1_candidates) > 1
