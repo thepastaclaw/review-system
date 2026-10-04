@@ -468,8 +468,8 @@ runs):
 
 ## Replay evaluation: past heads under a new policy
 
-For policy evals (v12 DESIGN.md §5), run on a laptop through the proxy, never on the
-box's database.
+For policy evals (v12 DESIGN.md §5). On the box, `deploy/eval-run.sh` runs the whole eval
+beside the production daemon (below); never against the box's database itself.
 
 - `reviewsys replay RUN_ID... --out DIR --skills DIR [--force-phase2]
   [--pin-phase1-model M] [--source-db PATH] [--source-runs DIR] [--gh-token-env NAME]`
@@ -481,15 +481,46 @@ box's database.
   evidence, and nothing created after the cutoff. Writes and unknown commands are
   refused. Give it a read-only token in `REVIEWSYS_REPLAY_GH_TOKEN`.
   `--force-phase2` records the gate's decision, then runs Phase 2 anyway. A replay
-  exits 75 without running in degraded mode. `report.json` per run.
+  exits 75 without running in degraded mode (forced on in the source or the configured
+  database). `report.json` per run.
+  - Git is pinned too: the worktree comes from a per-replay bare clone that borrows the
+    mirror's objects (alternates) and has only the base branch at the base the source
+    run saw and the PR head, so no ref, tag or `--all` shows a later commit. The clone
+    and the worktree are removed when the replay ends.
+  - A v12 arm gets the issue ledger as of the cutoff (the source's events, then
+    `ledger backfill` over the seeded history) and the pre-flip reconcile at the cutoff
+    (closed from the source database, threads from the pinned view). A v11 arm gets
+    none.
+  - Lanes take slots in the configured work dir's pools at the `replay` rank: only while
+    no production lane waits, never the side-lane slot, at most
+    `[scheduling] replay_pool_share` (0.5) of a pool. The gpt pool is sized from the
+    configured database's account reading. No comparison lanes.
 - `reviewsys replay-set SETFILE --policy NAME=SKILLS_DIR ... --out DIR --concurrency N`
   runs every (head, policy, sample) as its own replay into `OUT/<policy>/run-<id>[-r<k>]/`.
   It is resumable, alternates which arm goes first, and stops on an exit 75. Replays
   share the machine's lane pools. SETFILE is eval/set.json (`heads`, `repeats`).
+  It launches a replay only with `--min-free-gb` (25) free, pauses while running ones
+  free their worktrees, and stops with exit 74 when the disk stays short.
+  `--limit N` takes N heads round-robin over the sets.
 - `reviewsys replay-score SETFILE LABELS --out DIR` writes `score.json`: paired per-set
   recall, known-FP blockers, re-raises, new blockers, gpt use, wall clock, contract
-  failures, and a noise floor from repeat samples. It also writes `to_judge.jsonl`, the
-  new blockers blinded for the judge lane. LABELS is eval/labels.jsonl.
+  failures, and a noise floor from repeat samples. It also writes `to_judge.jsonl`: new
+  blockers and findings near a label they did not match, blinded, with content ids.
+  LABELS is eval/labels.jsonl.
+- `reviewsys replay-judge OUT --set SETFILE --labels LABELS` asks one blinded lane per
+  `to_judge.jsonl` item (gpt-6.1-sol at xhigh, read-only worktree at the replayed head,
+  no GitHub): is it real, and does it match the label. Verdicts go to `judged.jsonl`
+  (resumable); the closing score counts confirmed label matches toward recall and gives
+  new-blocker and blocker precision per arm and set, plus `spot_check.jsonl` (20 judged
+  items for the owner).
+- `deploy/eval-run.sh --v12 SKILLS_COMMIT` on the box: an eval root at
+  `~/.reviewsys-eval` with its own venv of this checkout, a `.backup` snapshot of the
+  production database, the two skills arms (v11 = `169fcb8`), then replay-set
+  (concurrency 3), replay-score, replay-judge. It refuses degraded mode, and refuses to
+  start without a read-only token in `REVIEWSYS_REPLAY_GH_TOKEN` unless
+  `--allow-bot-token`. It logs under the root and resumes when re-run. `--limit N` is a
+  small real run; `--dry` runs every step on a fixture with fake lanes and a fake gh.
+  See `deploy/eval-run.sh --help`.
 
 ## Final approval after an iterative review
 
