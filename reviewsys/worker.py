@@ -22,6 +22,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -37,7 +38,7 @@ from .contract import (
     parse_reviewer_output,
     parse_verifier_output,
 )
-from .db import connect_existing, event, kv_get, kv_set, now, now_dt, tx
+from .db import connect_existing, event, fmt_ts, kv_get, kv_set, now, now_dt, tx
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
@@ -536,10 +537,18 @@ def _lane_row(
 ) -> None:
     """One row per lane attempt. Its correction turns (`res.followups`) ran in the same
     session and slot, so their tokens are added to the row rather than given rows of their
-    own: a role still has one row per attempt, which is what progress and compare count."""
+    own: a role still has one row per attempt, which is what progress and compare count.
+
+    Written when the attempt ends: `finished_at` is now, `started_at` when its process started
+    (now less the whole seconds its turns ran, never earlier than that), so the span is the
+    time it held its slot, not the time it waited for one. Progress counts a lane done by its
+    `finished_at` (progress.step_lanes)."""
     turns = [res, *res.followups] if res else []
     tokens_in = [t.tokens_in for t in turns if t.tokens_in is not None]
     tokens_out = [t.tokens_out for t in turns if t.tokens_out is not None]
+    finished = now_dt()
+    ran = sum(max(0.0, t.duration_s or 0.0) for t in turns)
+    started = fmt_ts(finished - timedelta(seconds=int(ran)))
     with tx(ctx.conn):
         ctx.conn.execute(
             "INSERT INTO lanes (run_id, phase, role, agent, model, effort, attempt, attempt_id, status, exit_code, tokens_in, tokens_out, started_at, finished_at, artifact_dir, prompt_sha, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -556,8 +565,8 @@ def _lane_row(
                 res.exit_code if res else None,
                 sum(tokens_in) if tokens_in else None,
                 sum(tokens_out) if tokens_out else None,
-                now(),
-                now(),
+                started,
+                fmt_ts(finished),
                 str(artifact_dir),
                 psha,
                 reason[:500],

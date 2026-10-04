@@ -382,8 +382,8 @@ def test_step_lanes_count_a_phases_planned_lanes_without_comparison_twins(conn):
         ):
             conn.execute(
                 "INSERT INTO lanes (run_id, phase, role, agent, model, attempt, attempt_id, "
-                "status, started_at) VALUES (?,?,?,?,?,1,'x','completed',?)",
-                (run, phase, role, "a", model, t(minutes)),
+                "status, started_at, finished_at) VALUES (?,?,?,?,?,1,'x','completed',?,?)",
+                (run, phase, role, "a", model, t(minutes + 5), t(minutes)),
             )
     steps = [
         {
@@ -399,6 +399,30 @@ def test_step_lanes_count_a_phases_planned_lanes_without_comparison_twins(conn):
     assert p1 == {"lanes_done": 2, "lanes_total": 3, "lanes_left": ["ffi"]}
     assert fresh == {"lanes_done": 0, "lanes_total": 2, "lanes_left": ["general", "ffi"]}
     assert old == {"lanes_done": 1} and verify == {}
+
+
+def test_a_lane_counts_by_when_it_finished_not_when_it_started(conn):
+    """A lane's `started_at` is its finish less the seconds its turns ran, and timestamps are
+    whole seconds: a lane that started 0.4 s after its step can read a second before it. It
+    still counts as one of the step's finished lanes; one that finished before the step
+    started (an earlier pass of the phase) does not."""
+    at = now_dt()
+    step_at = at - timedelta(minutes=10)
+    with tx(conn):
+        run = _run(conn, _head(conn, 11, "running"), status="running", tier="normal", started=at)
+        for role, started, finished in (
+            ("general", step_at - timedelta(seconds=1), at),  # the sub-second boundary
+            ("ffi", step_at - timedelta(minutes=20), step_at - timedelta(seconds=1)),
+        ):
+            conn.execute(
+                "INSERT INTO lanes (run_id, phase, role, agent, model, attempt, attempt_id, "
+                "status, started_at, finished_at) VALUES (?,'phase2',?,'a','m',1,'x',"
+                "'completed',?,?)",
+                (run, role, fmt_ts(started), fmt_ts(finished)),
+            )
+    step = {"name": "phase2", "started_at": fmt_ts(step_at), "info": {"roles": ["general", "ffi"]}}
+    (counts,) = progress.step_lanes(conn, run, [step])
+    assert counts == {"lanes_done": 1, "lanes_total": 2, "lanes_left": ["ffi"]}
 
 
 def test_gate_comment_says_how_many_of_a_phases_lanes_are_done():
@@ -445,8 +469,8 @@ def test_comparison_twins_still_going_after_the_primary_lanes(conn):
         ):
             conn.execute(
                 "INSERT INTO lanes (run_id, phase, role, agent, model, attempt, attempt_id, "
-                "status, started_at) VALUES (?,'phase2',?,'a',?,1,'x','completed',?)",
-                (run, role, model, fmt_ts(at)),
+                "status, started_at, finished_at) VALUES (?,'phase2',?,'a',?,1,'x','completed',?,?)",
+                (run, role, model, fmt_ts(at - timedelta(minutes=10)), fmt_ts(at)),
             )
     step = {
         "name": "phase2",
