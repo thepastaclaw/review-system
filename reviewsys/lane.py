@@ -22,12 +22,33 @@ from .contract import parse_json_object
 from .models import FailKind, ReviewError
 
 LaneRunner = Callable[["LaneSpec", Path, Path], "LaneResult"]
+STRUCTURED_RETRIES_EXHAUSTED = "error_max_structured_output_retries"
+
+
+class SchemaRetriesExhausted(ReviewError):
+    """Claude Code gave up on a `--json-schema` answer: the model kept answering off-schema.
+    Always a CONTRACT failure; its own type because the message quotes Claude Code's
+    validation error, which may contain any word (`worker.LaneFailed` reads "exit" and "timed
+    out" in a message as infrastructure)."""
+
+
 STOP_POLL_SECONDS = 5  # how often a running lane checks `LaneSpec.should_stop`
 PIPE_GRACE_SECONDS = 10  # after claude exits, how long a child may hold its pipes open
 LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is never starved
 # Plan mode otherwise enables Claude Code's separate LLM permission classifier.
 # Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
 CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
+# Every lane's environment: the proxied lanes resolve DNS in Go, and send no telemetry
+BASE_LANE_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+# Policy v12 lanes (`pipeline.lane_env_isolation`) add these. `--add-dir` re-enables CLAUDE.md
+# discovery under `--bare`, which put the launcher's own global CLAUDE.md (commit/push rules
+# for an implementation agent) plus git-status and commit-attribution reminders in front of
+# every review prompt (~12k chars in the proxy request log, 2026-09-22). Lanes get exactly the
+# context their prompt carries; the reviewed repo's CLAUDE.md reaches a prompt as evidence.
+# Both names verified in the Claude Code 2.1.286 binary: DISABLE_CLAUDE_MDS (any non-empty
+# value) skips managed, user, project, rules and nested CLAUDE.md loading; a true
+# DISABLE_GIT_INSTRUCTIONS overrides the `includeGitInstructions` setting.
+LANE_ENV = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1"}
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 # A correction turn only re-emits an answer the lane already worked out: bounded well below
 # the lane timeout, so two of them cannot triple a lane's wall clock
@@ -66,6 +87,14 @@ class LaneSpec:
     resume: bool = False
     check: Callable[[LaneResult], str | None] | None = None
     corrections: int = 0
+    # LANE_ENV in the lane's environment (see `isolated`); correction turns, being copies of
+    # the spec, keep it
+    isolate_env: bool = False
+    # JSON Schema the answer must match (`--json-schema`; schemas.py). Claude Code enforces it
+    # client-side: the model answers through a `StructuredOutput` tool validated locally and
+    # retried in-conversation, so it works for every model behind the proxy, and the answer
+    # lands in the envelope's `structured_output`. Correction turns answer through it too.
+    json_schema: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -84,12 +113,25 @@ class LaneResult:
     cancelled: bool = False  # stopped by `LaneSpec.should_stop`, not by the model or a timeout
     started: bool = True  # False: stopped while waiting for a lane slot, never ran
     session_id: str | None = None  # the envelope's, when the CLI reported one
+    structured: dict[str, Any] | None = None  # the envelope's schema-validated answer, if any
+    errors: list[str] = field(default_factory=list)  # an error envelope's `errors`, if any
     # the correction turns run in this lane's session and slot after it, in order
     followups: list[LaneResult] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return self.exit_code == 0 and not self.timed_out and not self.cancelled
+
+    @property
+    def answered(self) -> bool:
+        """The turn finished with an answer to judge: `ok`, or Claude Code gave up on the
+        answer's schema. The latter is the model's broken answer, not a broken lane, so it
+        gets correction turns in its session and the repair lane like any other."""
+        return self.ok or (
+            self.subtype == STRUCTURED_RETRIES_EXHAUSTED
+            and not self.timed_out
+            and not self.cancelled
+        )
 
     @property
     def api_error(self) -> str:
@@ -176,6 +218,26 @@ def sandboxed(runner: LaneRunner, profile: str) -> LaneRunner:
     return run
 
 
+def isolated(runner: LaneRunner, on: bool) -> LaneRunner:
+    """`runner`, with every lane's environment isolated (LANE_ENV) when `on`; unchanged when
+    not. One switch for every lane of a run: reviewers, verifiers, prep, conversation, repair
+    and their correction turns."""
+    if not on:
+        return runner
+
+    def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
+        return runner(dataclasses.replace(spec, isolate_env=True), artifact_dir, worktree)
+
+    return run
+
+
+def lane_env(spec: LaneSpec) -> dict[str, str]:
+    """The environment a lane runs in: the worker's own (CLAUDE_CONFIG_DIR included, so a
+    correction turn resumes its session where the first turn saved it) plus BASE_LANE_ENV,
+    plus LANE_ENV for an isolated lane."""
+    return {**os.environ, **BASE_LANE_ENV, **(LANE_ENV if spec.isolate_env else {})}
+
+
 def session_args(spec: LaneSpec) -> list[str]:
     """Verified with Claude Code 2.1.286 (2026-10-01): `--bare --print --output-format json
     --session-id <uuid>` saves the session under that id (the envelope's `session_id` echoes
@@ -247,8 +309,8 @@ def run_with_corrections(
     (same model, effort, launcher, sandbox, stop polling), with its own artifacts in
     `correction-<n>/` and a timeout of at most CORRECTION_TIMEOUT_SECONDS. Called by the slot
     holder (lanepool.gated), so the corrections run in the lane's slot: never released, never
-    lined up again. A turn that did not finish (failed, timed out, stopped) ends the
-    corrections; the caller reads every turn in `followups` and decides. The saved session is
+    lined up again. A turn that did not finish (failed, timed out, stopped; see
+    `LaneResult.answered`) ends the corrections; the caller reads every turn in `followups` and decides. The saved session is
     deleted at the end however it went."""
     try:
         res = runner(spec, artifact_dir, worktree)
@@ -256,7 +318,7 @@ def run_with_corrections(
         while (
             spec.check is not None
             and spec.session_id
-            and turn.ok
+            and turn.answered
             and len(res.followups) < spec.corrections
         ):
             prompt = spec.check(turn)
@@ -316,6 +378,8 @@ def argv_for(spec: LaneSpec) -> list[str]:
     ]
     if spec.max_budget_usd:
         argv += ["--max-budget-usd", f"{spec.max_budget_usd:.2f}"]
+    if spec.json_schema is not None:
+        argv += ["--json-schema", json.dumps(spec.json_schema, separators=(",", ":"))]
     return argv
 
 
@@ -324,7 +388,6 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
     so a group kill takes the lane down with us."""
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "prompt.md").write_text(spec.prompt, encoding="utf-8")
-    env = {**os.environ, "GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
     t0 = time.monotonic()
     proc = subprocess.Popen(
         argv_for(spec),
@@ -333,7 +396,7 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=env,
+        env=lane_env(spec),
     )
     timed_out = cancelled = False
     deadline = t0 + spec.timeout_seconds
@@ -443,6 +506,12 @@ def _extract_result(res: LaneResult) -> None:
         res.result_text = text
         return
     res.result_text = str(env.get("result") or "")
+    structured = env.get("structured_output")
+    if isinstance(structured, dict):
+        res.structured = structured
+    errors = env.get("errors")
+    if isinstance(errors, list):
+        res.errors = [str(e) for e in errors if e]
     usage = env.get("usage") or {}
     if isinstance(usage, dict):
         res.tokens_in = int(usage.get("input_tokens") or 0) + int(
@@ -466,11 +535,19 @@ def _extract_result(res: LaneResult) -> None:
 
 
 def lane_output(res: LaneResult) -> dict[str, Any]:
+    """A finished lane's answer: the envelope's schema-validated `structured_output` when it
+    has one, else the JSON object in its text (a lane without a schema, or one that answered
+    in prose anyway: the correction turns and the repair lane take it from there)."""
     if res.cancelled:
         raise ReviewError(FailKind.INFRA, "lane stopped before it finished")
     if res.timed_out:
         raise ReviewError(FailKind.INFRA, "lane timed out")
     if res.exit_code != 0:
+        if res.subtype == STRUCTURED_RETRIES_EXHAUSTED:
+            # Claude Code's own account ("Failed to provide valid structured output after 5
+            # attempts - last StructuredOutput error: ..."): what a correction turn must fix
+            said = res.errors[0][:400] if res.errors else f"after {res.turns or '?'} turns"
+            raise SchemaRetriesExhausted(FailKind.CONTRACT, f"no schema-valid answer: {said}")
         if res.subtype and res.subtype.startswith("error_"):
             raise ReviewError(
                 FailKind.INFRA,
@@ -480,6 +557,8 @@ def lane_output(res: LaneResult) -> dict[str, Any]:
             FailKind.INFRA,
             f"lane exit {res.exit_code}: {(res.first_stderr_line or res.result_text)[:200]}",
         )
+    if res.structured is not None:
+        return dict(res.structured)
     return parse_json_object(res.result_text)
 
 

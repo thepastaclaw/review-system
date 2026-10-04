@@ -248,6 +248,8 @@ _TURNS_RE = re.compile(r"after (\d+) correction turns")
 _SUBTYPE_RE = re.compile(r"\blane (max_turns|max_budget_usd|during_execution)\b")
 # (needle in the worker's message, what the public page says), first match wins
 _FAILURE_KINDS = (
+    # first: it quotes Claude Code's schema error, which can contain any later needle
+    ("no schema-valid answer", "answer never matched its schema"),
     ("lane timed out", "timed out"),
     ("lane stopped before it finished", "stopped"),
     ("lane sandbox cannot start", "lane sandbox could not start"),

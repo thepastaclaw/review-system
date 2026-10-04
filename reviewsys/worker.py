@@ -46,7 +46,9 @@ from .lane import (
     LaneResult,
     LaneRunner,
     LaneSpec,
+    SchemaRetriesExhausted,
     exec_deny_profile,
+    isolated,
     lane_output,
     new_session_id,
     prompt_sha,
@@ -58,6 +60,7 @@ from .prompts import (
     correction_prompt,
     prior_for_prompt,
     repair_prompt,
+    repo_guidance,
     reviewer_prompt,
     skill_texts,
     verifier_prompt,
@@ -188,7 +191,9 @@ def _evaluate[T](turn: LaneResult, check: OutputCheck[T]) -> _Verdict:
     try:
         raw = lane_output(turn)
     except ReviewError as exc:
-        unparsed = exc.kind is FailKind.CONTRACT and turn.ok and bool(turn.result_text.strip())
+        unparsed = (
+            exc.kind is FailKind.CONTRACT and turn.answered and bool(turn.result_text.strip())
+        )
         return _Verdict(error=exc, unparsed=unparsed)
     return _validated(raw, check)
 
@@ -990,6 +995,7 @@ def _run_lane(
     lm: LaneModel,
     prompt: str,
     is_verifier: bool,
+    schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A lane whose JSON answer its caller checks itself (persistence, conversation): retries
     and the repair lane as below, no correction turns."""
@@ -1001,6 +1007,7 @@ def _run_lane(
         prompt=prompt,
         is_verifier=is_verifier,
         check=PLAIN_OUTPUT,
+        schema=schema,
     )
 
 
@@ -1017,8 +1024,16 @@ def _run_checked_lane[T](
     should_stop: Callable[[], bool] | None = None,
     comparison: bool = False,
     stop_reason: Callable[[], str] | None = None,
+    schema: dict[str, Any] | None = None,
 ) -> T:
     """Run a lane with bounded retries until its answer passes `check`. Returns the output.
+
+    `schema` (schemas.py) is the lane kind's answer schema. Under policy v12 with
+    `pipeline.structured_output` the lane answers through it (`--json-schema`), its
+    correction turns too, and its envelope's `structured_output` is read before its text; a
+    lane whose structured-output retries ran out failed its contract. Otherwise it is
+    ignored. The schema enforces shape only: the answer still goes through `check`, and
+    the correction turns below remain the fallback for everything else.
 
     An answer that breaks the contract (no JSON object in it, or `check.validate` rejects it
     after the deterministic normalization in contract.py) is first corrected in the lane's
@@ -1047,7 +1062,9 @@ def _run_checked_lane[T](
     key = f"{role}{COMPARE_SUFFIX}" if comparison else role
     pool = lanepool.COMPARE_POOL if comparison else None
     corrections = ctx.cfg.lane_correction_turns if check.kind else 0
+    json_schema = schema if ctx.cfg.policy.structured_output else None
     last = cause = ""
+    off_schema = False  # the last failure was Claude Code giving up on the schema
     attempt, budget = 0, 1 if comparison else 2
     while attempt < budget:
         attempt += 1
@@ -1079,6 +1096,7 @@ def _run_checked_lane[T](
                 coderabbit_ids=check.coderabbit_ids,
                 turn=len(asked),
                 turns=corrections,
+                stamp_echo=ctx.cfg.policy.stamps_echo_fields,
             )
 
         session = new_session_id() if corrections else ""
@@ -1099,6 +1117,7 @@ def _run_checked_lane[T](
             session_id=session,
             check=ask if session else None,
             corrections=corrections,
+            json_schema=json_schema,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)
@@ -1135,8 +1154,8 @@ def _run_checked_lane[T](
             raise stopped(res.started)
         # the newest turn that finished: a correction that could not resume the session (or
         # died on its own) leaves the answer before it standing
-        basis = next((t for t in reversed(turns) if t.ok), res)
-        failed_turn = turns[-1] if res.followups and not turns[-1].ok else None
+        basis = next((t for t in reversed(turns) if t.answered), res)
+        failed_turn = turns[-1] if res.followups and not turns[-1].answered else None
         verdict = _evaluate(basis, check)
         if verdict.error is not None and stop():
             # told to stop between turns (the phase was abandoned, the run cancelled): not a
@@ -1184,6 +1203,7 @@ def _run_checked_lane[T](
         after = f" (after {len(res.followups)} correction turns)" if res.followups else ""
         row(status="failed", reason=f"{exc}{after}")
         last, cause = f"{exc}{after}", exc.message
+        off_schema = isinstance(exc, SchemaRetriesExhausted)
         # a correction turn that died on a dry pool says so as surely as a first turn would
         quota_turn, quota_exc = failed_turn or res, exc
         if failed_turn is not None:  # did not finish: lane_output names its infra error
@@ -1195,7 +1215,9 @@ def _run_checked_lane[T](
         if switched is not None:
             lm, budget = switched, attempt + 2
     raise LaneFailed(
-        FailKind.INFRA if "timed out" in last or "exit" in last else FailKind.CONTRACT,
+        FailKind.INFRA
+        if not off_schema and ("timed out" in last or "exit" in last)
+        else FailKind.CONTRACT,
         f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}",
         cause,
     )
@@ -1291,6 +1313,7 @@ def _repair[T](
             expected_phase=check.expected_phase,
             head_sha=ctx.sha,
             prior_hashes=[str(p["finding_hash"]) for p in check.prior],
+            stamp_echo=ctx.cfg.policy.stamps_echo_fields,
         ),
         cwd=ctx.worktree,
         add_dir=ctx.run_dir,
@@ -1400,6 +1423,8 @@ def _reviewer_lanes(
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
+    stamp = ctx.cfg.policy.stamps_echo_fields
+    guidance = repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else ""
     prompts = {
         role: reviewer_prompt(
             ctx.cfg,
@@ -1414,6 +1439,8 @@ def _reviewer_lanes(
             prior=review_prior,
             prior_sha=review_prior_sha,
             fresh=fresh,
+            stamp_echo=stamp,
+            guidance=guidance,
         )
         for role in roles
     }
@@ -1464,6 +1491,7 @@ def _reviewer_lanes(
                 head_sha=ctx.sha,
                 source=f"{phase}:{key}",
                 prior_hashes=prior_hashes,
+                stamp_echo=stamp,
             )
 
         check = OutputCheck(
@@ -1615,6 +1643,7 @@ def _verifier_lane(
     fresh_final: bool = False,
 ) -> VerifierOutput:
     all_phase2 = phase2_outputs if phase2_outputs is not None else ctx.phase2_outputs
+    stamp = ctx.cfg.policy.stamps_echo_fields
     prompt = verifier_prompt(
         ctx.cfg,
         repo=ctx.repo,
@@ -1631,6 +1660,8 @@ def _verifier_lane(
         phase1_skipped=ctx.phase1_skipped,
         fresh_final=fresh_final,
         single_stage=ctx.single_stage,
+        stamp_echo=stamp,
+        guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
     )
     prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
 
@@ -1640,6 +1671,7 @@ def _verifier_lane(
             expected_phase=expected_phase,
             expected_coderabbit_ids=ctx.coderabbit_ids,
             prior_hashes=prior_hashes,
+            stamp_echo=stamp,
         )
 
     out = _run_checked_lane(
@@ -3517,9 +3549,12 @@ def main(
         if ctx.audit is None:
             raise SystemExit(f"run {run_id}: audit head without an audits row")
     # every lane of this run, parallel reviewers and side lanes alike, lines up for a slot in
-    # its model's machine-wide pool (lanepool.py)
+    # its model's machine-wide pool (lanepool.py); under policy v12 it may run isolated
     ctx.lane_runner = lanepool.gated(
-        sandboxed(lane_runner or run_claude_lane, exec_deny_profile(cfg.lane_deny_exec)),
+        sandboxed(
+            isolated(lane_runner or run_claude_lane, cfg.policy.isolates_lane_env),
+            exec_deny_profile(cfg.lane_deny_exec),
+        ),
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,
