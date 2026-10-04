@@ -463,6 +463,31 @@ runs):
   so the numbers lean towards the general reviewer. The report says how many roles
   were left out.
 
+## Replay evaluation: past heads under a new policy
+
+For policy evals (v12 DESIGN.md §5), run on a laptop through the proxy, never on the
+box's database.
+
+- `reviewsys replay RUN_ID... --out DIR --skills DIR [--force-phase2]
+  [--pin-phase1-model M] [--source-db PATH] [--source-runs DIR] [--gh-token-env NAME]`
+  re-reviews a past run's exact head as of that run's start (the cutoff). It uses a
+  scratch database seeded from the runs that finished before the cutoff, the worker's
+  dry run, and a pinned read-only gh (`ghshim.py`). Lanes get a `gh` shim that asks the
+  replay's broker. They may not run the installed gh, a curl shim refuses GitHub, and
+  WebFetch/WebSearch are off. The view serves the diff from git, CI from the source run's
+  evidence, and nothing created after the cutoff. Writes and unknown commands are
+  refused. Give it a read-only token in `REVIEWSYS_REPLAY_GH_TOKEN`.
+  `--force-phase2` records the gate's decision, then runs Phase 2 anyway. A replay
+  exits 75 without running in degraded mode. `report.json` per run.
+- `reviewsys replay-set SETFILE --policy NAME=SKILLS_DIR ... --out DIR --concurrency N`
+  runs every (head, policy, sample) as its own replay into `OUT/<policy>/run-<id>[-r<k>]/`.
+  It is resumable, alternates which arm goes first, and stops on an exit 75. Replays
+  share the machine's lane pools. SETFILE is eval/set.json (`heads`, `repeats`).
+- `reviewsys replay-score SETFILE LABELS --out DIR` writes `score.json`: paired per-set
+  recall, known-FP blockers, re-raises, new blockers, gpt use, wall clock, contract
+  failures, and a noise floor from repeat samples. It also writes `to_judge.jsonl`, the
+  new blockers blinded for the judge lane. LABELS is eval/labels.jsonl.
+
 ## Final approval after an iterative review
 
 An incremental review is a reconciliation pass, not by itself a new approval gate. It
