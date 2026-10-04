@@ -28,27 +28,59 @@ outcomes reached. `S1+S2` pools the two recall sets, as the gate does. Per arm: 
 per run (same file within 3 lines, different hash), gpt lanes and tokens per run, wall clock
 p50, contract failures, ratios to the baseline.
 
+Wall clock: replays share the box's lane pools behind production, so `active_p50_s` (wall
+clock less the run's slot wait, `report.slot_wait_s`) is what a wall-clock gate should read;
+both are reported. Thread state: a head where the pinned view could not rewind whether a
+thread was resolved (`report.thread_resolution_as_of_now`) is listed in
+`heads.thread_resolution_as_of_now`, and S5 and S8 are scored twice: every head (`S5`) and
+only the exact ones (`S5:exact_threads`).
+
 Noise: on heads with repeat samples, how far an arm's recall moves between its own two samples
 (`recall_delta_pp`, the floor being the largest over arms), and a bootstrap over heads of the
-paired recall difference to the baseline (95% interval, in pp). New blockers go to
-`to_judge.jsonl` for the judge lane, clustered across arms per head and blinded (the arm key
-is in `to_judge.key.json`).
+paired recall difference to the baseline (95% interval, in pp).
+
+The judge (judge.py, `reviewsys replay-judge`): what the matcher cannot settle goes to
+`to_judge.jsonl`, blinded (no arm; the arm key is in `to_judge.key.json`) and shuffled, with
+ids derived from the content (stable from one scoring to the next):
+- `new_blocker`: a published blocker matching no label, clustered across arms and samples per
+  head (one item per cluster of matching findings): is it a real defect at this head?
+- `label_match`: a published finding near an unmatched label (same file within 10 lines) whose
+  title does not match it: does it describe the label's defect?
+The judge's answers (`judged.jsonl`, the items with a `verdict`) are read back by content, not
+id: a judged `label_match` with `matches_label: yes` makes that finding answer that label, and
+a judged `new_blocker` verdict applies to every new blocker on the head it matches. Per arm and
+set, `new_blocker_precision` is real / (real + not real) over the judged new blockers (unsure
+and not yet judged ones are counted apart), and `blocker_precision` adds the blockers that
+matched a `tp` label (real) or an `fp` / `deferred` one (not). Only items no verdict covers yet
+are written to `to_judge.jsonl`; with verdicts, `spot_check.jsonl` holds 20 judged new
+blockers (blinded) for the owner's check.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import random
 import re
 import statistics
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .compare import _Finding
-from .replayset import MANIFEST, Job, Policy, SetItem, load_records, load_report, load_set
+from .replayset import (
+    MANIFEST,
+    Job,
+    Policy,
+    SetItem,
+    limit_items,
+    load_records,
+    load_report,
+    load_set,
+)
 
 LINE_SLACK = 10
 JACCARD_MIN = 0.2
@@ -58,6 +90,12 @@ COUNTED = ("blocking", "suggestion")  # recall counts a label found at either se
 POOLED = {"S1": "S1+S2", "S2": "S1+S2"}
 DEFERRALS = frozenset({"INTENTIONALLY_DEFERRED", "DEFERRAL_PENDING"})
 BOOTSTRAP = 2000
+SPOT_CHECK = 20
+TO_JUDGE, JUDGED = "to_judge.jsonl", "judged.jsonl"
+NEW_BLOCKER, LABEL_MATCH = "new_blocker", "label_match"
+ANSWERS = ("yes", "no", "unsure")
+THREAD_SETS = frozenset({"S5", "S8"})  # scored again on heads with exact thread state
+EXACT = "exact_threads"
 _STOP = frozenset(
     "a an and are as at be but by can for from has in is it its not of on or so the this to "  # noqa: SIM905
     "was when where which with without".split()
@@ -191,14 +229,17 @@ def matches(finding: dict[str, Any], label: dict[str, Any]) -> bool:
 
 
 def assign(
-    findings: list[dict[str, Any]], labels: list[dict[str, Any]]
+    findings: list[dict[str, Any]],
+    labels: list[dict[str, Any]],
+    also: Callable[[dict[str, Any], dict[str, Any]], bool] | None = None,
 ) -> tuple[dict[int, dict[str, Any]], list[dict[str, Any]]]:
     """One-to-one: (label index -> the finding answering it, findings answering none). The
-    pairs with the best title overlap (an equal hash first) are taken first."""
+    pairs with the best title overlap (an equal hash first) are taken first. `also` adds pairs
+    the matcher misses (the judge said they are the same defect)."""
     pairs = []
     for fi, f in enumerate(findings):
         for li, lab in enumerate(labels):
-            if matches(f, lab):
+            if matches(f, lab) or (also is not None and also(f, lab)):
                 same = bool(f.get("hash")) and f.get("hash") == lab.get("hash")
                 pairs.append((-(same + jaccard(str(f.get("title")), str(lab["title"]))), fi, li))
     taken: set[int] = set()
@@ -252,6 +293,115 @@ def load_samples(items: list[SetItem], policies: list[str], out: Path) -> list[S
     return found
 
 
+# ---- judge verdicts ----
+
+HeadKey = tuple[str, int, str, str]  # (repo, number, sha, head key)
+
+
+def _label_key(lab: dict[str, Any]) -> list[Any]:
+    return [
+        lab.get("hash") or "",
+        lab.get("title") or "",
+        lab.get("file") or "",
+        lab.get("line_start"),
+    ]
+
+
+def _brief(f: dict[str, Any]) -> dict[str, Any]:
+    """A finding's identity for the judge's bookkeeping (absent text fields read as "")."""
+    return {
+        "file": f.get("file") or "",
+        "line_start": _int(f.get("line_start")),
+        "line_end": _int(f.get("line_end")),
+        "title": f.get("title") or "",
+        "category": f.get("category") or "",
+    }
+
+
+def judge_id(
+    kind: str, head: HeadKey, finding: dict[str, Any], label: dict[str, Any] | None
+) -> str:
+    """A judge item's id, from what it asks about (stable across scorings)."""
+    blob = json.dumps(
+        [kind, list(head), _brief(finding), _label_key(label) if label else None],
+        sort_keys=True,
+        default=str,
+    )
+    return f"{'m' if kind == LABEL_MATCH else 'j'}-{hashlib.sha256(blob.encode()).hexdigest()[:12]}"
+
+
+def _answer(v: Any) -> str:
+    s = str(v or "").strip().lower()
+    return s if s in ANSWERS else ""
+
+
+@dataclass(slots=True)
+class Verdicts:
+    """The judge's answers (judged.jsonl), looked up by content."""
+
+    real: dict[HeadKey, list[tuple[dict[str, Any], str]]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    same: dict[HeadKey, list[tuple[list[Any], dict[str, Any], str]]] = field(
+        default_factory=lambda: defaultdict(list)
+    )
+    count: int = 0
+
+    @classmethod
+    def load(cls, items: list[dict[str, Any]]) -> Verdicts:
+        v = cls()
+        for it in items:
+            verdict = it.get("verdict")
+            if not isinstance(verdict, dict):
+                continue
+            head = (
+                str(it["repo"]).lower(),
+                int(it["number"]),
+                str(it["sha"]).lower(),
+                str(it.get("head_id") or ""),
+            )
+            v.count += 1
+            if it.get("kind") == LABEL_MATCH and isinstance(it.get("label"), dict):
+                v.same[head].append(
+                    (_label_key(it["label"]), it, _answer(verdict.get("matches_label")))
+                )
+            if it.get("kind", NEW_BLOCKER) == NEW_BLOCKER:
+                v.real[head].append((it, _answer(verdict.get("real"))))
+        return v
+
+    def real_of(self, head: HeadKey, f: dict[str, Any]) -> str | None:
+        """The judge's `real` answer for a new blocker (None: not judged): the judged item's
+        cluster has this very finding, or the finding matches the one judged."""
+        brief = _brief(f)
+        for item, ans in self.real.get(head, []):
+            if brief in (item.get("members") or [_brief(item)]) or matches(f, item):
+                return ans
+        return None
+
+    def same_of(self, head: HeadKey, f: dict[str, Any], lab: dict[str, Any]) -> str | None:
+        """The judge's `matches_label` answer for this finding and label (None: not asked)."""
+        key = _label_key(lab)
+        for k, item, ans in self.same.get(head, []):
+            if k == key and _brief(item) == _brief(f):
+                return ans
+        return None
+
+
+def load_judged(out: Path) -> list[dict[str, Any]]:
+    path = out / JUDGED
+    if not path.exists():
+        return []
+    items = []
+    for line in path.read_text().splitlines():
+        try:
+            it = json.loads(line)
+        except ValueError:
+            continue  # a line cut by a crash mid-write; the judge re-asks it
+        if isinstance(it, dict):
+            items.append(it)
+    return items
+
+
 # ---- scoring ----
 
 
@@ -267,8 +417,14 @@ class _Acc:
     reraised: float = 0.0
     new_blockers: float = 0.0
     outcomes: list[float] = field(default_factory=list)  # per S8 label: share reaching it
+    # blockers by what the judge (new ones) or a label (matched ones) says of them
+    judged: dict[str, float] = field(
+        default_factory=lambda: dict.fromkeys((*ANSWERS, "pending"), 0.0)
+    )
+    labelled_blockers: dict[str, float] = field(default_factory=lambda: {"tp": 0.0, "not": 0.0})
 
     def render(self) -> dict[str, Any]:
+        j, lb = self.judged, self.labelled_blockers
         return {
             "heads": len(self.heads),
             "tp_labels": len(self.tp),
@@ -278,9 +434,18 @@ class _Acc:
             "reraised_unchanged": round(self.reraised, 3),
             "heads_with_blocker_rate": _mean(self.blocker_heads),
             "new_blockers": round(self.new_blockers, 3),
+            "new_blockers_judged": {k: round(v, 3) for k, v in j.items()},
+            "new_blocker_precision": _ratio(j["yes"], j["yes"] + j["no"]),
+            "blocker_precision": _ratio(
+                j["yes"] + lb["tp"], j["yes"] + j["no"] + lb["tp"] + lb["not"]
+            ),
             "thread_outcomes_reached": _mean(self.outcomes),
             "thread_outcome_labels": len(self.outcomes),
         }
+
+
+def _ratio(a: float, b: float) -> float | None:
+    return round(a / b, 4) if b else None
 
 
 @dataclass(slots=True)
@@ -339,8 +504,11 @@ def score(
     *,
     baseline: str | None = None,
     seed: int = 0,
+    judged: list[dict[str, Any]] | None = None,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]:
-    """(score, to-judge items, blinding key)."""
+    """(score, to-judge items not yet judged, blinding key). `judged` are the judge's
+    answers (judged.jsonl)."""
+    verdicts = Verdicts.load(judged or [])
     baseline = baseline or (policies[0] if policies else None)
     by_id: dict[str, list[Label]] = defaultdict(list)
     by_sha: dict[tuple[str, int, str], list[Label]] = defaultdict(list)
@@ -361,36 +529,72 @@ def score(
         lambda: defaultdict(dict)
     )
     noise = {p: _Noise() for p in policies}
-    judge_pool: dict[tuple[str, int, str, str], list[tuple[str, int, dict[str, Any]]]] = (
-        defaultdict(list)
-    )
+    prec = {p: _Acc() for p in policies}  # every paired head: the arm's blocker precision
+    judge_pool: dict[HeadKey, list[tuple[str, int, dict[str, Any]]]] = defaultdict(list)
+    match_pool: dict[tuple[HeadKey, str], tuple[dict[str, Any], dict[str, Any], set[Any]]] = {}
+    bases: dict[HeadKey, dict[str, Any]] = {}
     labelled = 0
+    as_of_now: set[int] = set()  # heads whose thread resolution the view could not rewind
     for item in paired:
         key = _head_key(item)
+        if any(
+            int(s.report.get("thread_resolution_as_of_now") or 0) > 0
+            for p in policies
+            for s in usable[(item.run_id, p)]
+        ):
+            as_of_now.add(item.run_id)
+        exact = item.run_id not in as_of_now
+
+        def also(st: str, exact: bool = exact) -> list[str]:
+            """S5 / S8 are reported twice: every head, and only the heads whose threads read
+            as they stood at the cutoff (`<set>:exact_threads`)."""
+            return [f"{st}:{EXACT}"] if exact and st in THREAD_SETS else []
+
         for p in policies:
             runs = sorted(usable[(item.run_id, p)], key=lambda s: s.sample)
+            head: HeadKey = (*runs[0].head, key)
+            pin = runs[0].report.get("pin") or {}
+            bases.setdefault(
+                head, {k: pin.get(k) for k in ("merge_base", "base_ref", "base_sha") if pin.get(k)}
+            )
             head_labels = by_id.get(item.head_id, []) if item.head_id else []
             head_labels = head_labels + by_sha.get(runs[0].head, [])
             if p == policies[0]:
                 labelled += len(head_labels)
             scored = [lab for lab in head_labels if lab.label != "none" and lab.file]
             dicts = [dataclasses.asdict(lab) for lab in scored]
-            assigned = [assign(r.published, dicts) for r in runs]
-            acc = per_set[item.set][p]
-            acc.heads.add(key)
-            acc.blocker_heads.append(
-                _frac([any(f.get("severity") == "blocking" for f in r.published) for r in runs])
-            )
-            acc.new_blockers += statistics.fmean(
-                sum(f.get("severity") == "blocking" for f in rest) for _, rest in assigned
-            )
-            for r, (_, rest) in zip(runs, assigned, strict=True):
+
+            def same(f: dict[str, Any], lab: dict[str, Any], head: HeadKey = head) -> bool:
+                return verdicts.same_of(head, f, lab) == "yes"
+
+            assigned = [assign(r.published, dicts, same) for r in runs]
+            for st in (item.set, *also(item.set)):
+                acc = per_set[st][p]
+                acc.heads.add(key)
+                acc.blocker_heads.append(
+                    _frac([any(f.get("severity") == "blocking" for f in r.published) for r in runs])
+                )
+                acc.new_blockers += statistics.fmean(
+                    sum(f.get("severity") == "blocking" for f in rest) for _, rest in assigned
+                )
+                _count_precision(acc, verdicts, head, scored, assigned)
+            _count_precision(prec[p], verdicts, head, scored, assigned)
+            for r, (got, rest) in zip(runs, assigned, strict=True):
                 for f in rest:
-                    if f.get("severity") == "blocking":
-                        judge_pool[(*runs[0].head, key)].append((p, r.sample, f))
+                    if f.get("severity") == "blocking" and verdicts.real_of(head, f) is None:
+                        judge_pool[head].append((p, r.sample, f))
+                # a finding near a label it did not match: is it the same defect?
+                for li, ld in enumerate(dicts):
+                    if li in got:
+                        continue
+                    for f in rest:
+                        if near(f, ld, LINE_SLACK) and verdicts.same_of(head, f, ld) is None:
+                            jid = judge_id(LABEL_MATCH, head, f, ld)
+                            entry = match_pool.setdefault((head, jid), (f, ld, set()))
+                            entry[2].add((p, r.sample))
             for li, lab in enumerate(scored):
                 hits = [got.get(li) for got, _ in assigned]
-                for b in lab.buckets:
+                for b in (*lab.buckets, *also(lab.set)):
                     a = per_set[b][p]
                     a.heads.add(key)
                     if lab.label == "tp":
@@ -411,7 +615,7 @@ def score(
                             a.reraised += _frac([h is not None for h in hits])
             for lab in head_labels:
                 if lab.thread_outcome and lab.hash:
-                    for b in lab.buckets:
+                    for b in (*lab.buckets, *also(lab.set)):
                         per_set[b][p].outcomes.append(
                             _frac([_outcome_reached(r, lab) for r in runs])
                         )
@@ -446,8 +650,14 @@ def score(
         sets_out[st or "(unset)"] = row
     noise_out = {p: nz.render() for p, nz in noise.items()}
     deltas = [v["recall_delta_pp"] for v in noise_out.values() if v["recall_delta_pp"] is not None]
-    to_judge, key_out = _blind(judge_pool, seed=seed)
+    to_judge, key_out = _blind(judge_pool, match_pool, bases, seed=seed)
     arms = {p: _arm([s for s in samples if s.policy == p], paired) for p in policies}
+    for p in policies:
+        rendered = prec[p].render()
+        arms[p]["precision"] = {
+            k: rendered[k]
+            for k in ("new_blockers_judged", "new_blocker_precision", "blocker_precision")
+        }
     result = {
         "policies": policies,
         "baseline": baseline,
@@ -455,6 +665,7 @@ def score(
             "in_set": len(items),
             "paired": len(paired),
             "unpaired": sorted(i.run_id for i in items if i not in paired),
+            "thread_resolution_as_of_now": sorted(as_of_now),
         },
         "labels": {"total": len(labels), "on_paired_heads": labelled},
         "arms": arms,
@@ -462,6 +673,7 @@ def score(
         "sets": sets_out,
         "noise": {"per_arm": noise_out, "floor_pp": max(deltas) if deltas else None},
         "to_judge": len(to_judge),
+        "judged": verdicts.count,
         "matcher": {
             "line_slack": LINE_SLACK,
             "title_jaccard_min": JACCARD_MIN,
@@ -513,6 +725,9 @@ def _arm(samples: list[Sample], paired: list[SetItem]) -> dict[str, Any]:
         return sum(float((s.report.get("gpt") or {}).get(k) or 0) for k in keys)
 
     walls = [float(s.report.get("wall_clock_s") or 0) for s in runs]
+    # wall clock less the time the run only waited for lane slots (shared with production)
+    actives = [float(s.report.get("active_s", s.report.get("wall_clock_s")) or 0) for s in runs]
+    waits = [float(s.report.get("slot_wait_s") or 0) for s in runs]
     contract = [s.report.get("contract") or {} for s in every]
     return {
         "samples": len(every),
@@ -529,6 +744,8 @@ def _arm(samples: list[Sample], paired: list[SetItem]) -> dict[str, Any]:
             1,
         ),
         "wall_clock_p50_s": round(statistics.median(walls), 1) if walls else None,
+        "active_p50_s": round(statistics.median(actives), 1) if actives else None,
+        "slot_wait_p50_s": round(statistics.median(waits), 1) if waits else None,
         "contract_failures": {
             "runs_failed": sum(bool(c.get("run_failed")) for c in contract),
             "lane_attempts_failed": sum(int(c.get("failed_attempts") or 0) for c in contract),
@@ -550,19 +767,61 @@ def _ratios(arms: dict[str, dict[str, Any]], baseline: str | None) -> dict[str, 
     return {
         p: {
             k: round(a[k] / base[k], 3) if a.get(k) is not None and base.get(k) else None
-            for k in ("gpt_lanes_per_run", "gpt_tokens_per_run", "wall_clock_p50_s")
+            for k in ("gpt_lanes_per_run", "gpt_tokens_per_run", "wall_clock_p50_s", "active_p50_s")
         }
         for p, a in arms.items()
         if p != baseline
     }
 
 
+def _count_precision(
+    acc: _Acc,
+    verdicts: Verdicts,
+    head: HeadKey,
+    scored: list[Label],
+    assigned: list[tuple[dict[int, dict[str, Any]], list[dict[str, Any]]]],
+) -> None:
+    """Blockers by what is known of them, a mean over the head's samples: matched to a `tp`
+    label (real) or another label (not real), else the judge's answer (or pending)."""
+    n = len(assigned)
+    for got, rest in assigned:
+        for li, f in got.items():
+            if f.get("severity") == "blocking":
+                acc.labelled_blockers["tp" if scored[li].label == "tp" else "not"] += 1 / n
+        for f in rest:
+            if f.get("severity") == "blocking":
+                ans = verdicts.real_of(head, f)
+                acc.judged["pending" if ans is None else ans or "unsure"] += 1 / n
+
+
+def _head_fields(head: HeadKey, base: dict[str, Any]) -> dict[str, Any]:
+    return {"repo": head[0], "number": head[1], "sha": head[2], "head_id": head[3], **base}
+
+
+def _finding_fields(f: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "file": f.get("file"),
+        "line_start": f.get("line_start"),
+        "line_end": f.get("line_end"),
+        "title": f.get("title"),
+        "body": f.get("body") or "",
+        "category": f.get("category") or "",
+        "severity": f.get("severity") or "",
+    }
+
+
 def _blind(
-    pool: dict[tuple[str, int, str, str], list[tuple[str, int, dict[str, Any]]]], *, seed: int
+    pool: dict[HeadKey, list[tuple[str, int, dict[str, Any]]]],
+    match_pool: dict[tuple[HeadKey, str], tuple[dict[str, Any], dict[str, Any], set[Any]]],
+    bases: dict[HeadKey, dict[str, Any]],
+    *,
+    seed: int,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """One judge item per cluster of matching new blockers on a head (across arms and
-    samples), shuffled, with opaque ids; the key maps ids back to arms."""
-    clusters: list[tuple[tuple[str, int, str, str], list[tuple[str, int, dict[str, Any]]]]] = []
+    """The judge's work, shuffled, with content-derived ids and no arm (the key maps ids back
+    to arms): one `new_blocker` item per cluster of matching new blockers on a head (across
+    arms and samples), and one `label_match` item per (finding, label) pair to settle."""
+    items: list[dict[str, Any]] = []
+    key: dict[str, Any] = {}
     for head, entries in pool.items():
         groups: list[list[tuple[str, int, dict[str, Any]]]] = []
         for e in entries:
@@ -571,32 +830,37 @@ def _blind(
                 groups.append([e])
             else:
                 g.append(e)
-        clusters += [(head, g) for g in groups]
-    random.Random(seed).shuffle(clusters)
-    items: list[dict[str, Any]] = []
-    key: dict[str, Any] = {}
-    for n, (head, group) in enumerate(clusters, 1):
-        jid = f"j{n:04d}"
-        f = group[0][2]
+        for group in groups:
+            f = group[0][2]
+            jid = judge_id(NEW_BLOCKER, head, f, None)
+            members = {json.dumps(_brief(x), sort_keys=True) for _, _, x in group}
+            items.append(
+                {
+                    "id": jid,
+                    "kind": NEW_BLOCKER,
+                    **_head_fields(head, bases.get(head, {})),
+                    **_finding_fields(f),
+                    "members": [json.loads(m) for m in sorted(members)],
+                }
+            )
+            key[jid] = {
+                "raised_by": sorted({(p, s) for p, s, _ in group}),
+                "titles": sorted({str(x.get("title")) for _, _, x in group}),
+            }
+    for (head, jid), (f, lab, raised) in match_pool.items():
         items.append(
             {
                 "id": jid,
-                "repo": head[0],
-                "number": head[1],
-                "sha": head[2],
-                "head_id": head[3],
-                "file": f.get("file"),
-                "line_start": f.get("line_start"),
-                "line_end": f.get("line_end"),
-                "title": f.get("title"),
-                "body": f.get("body") or "",
-                "category": f.get("category") or "",
+                "kind": LABEL_MATCH,
+                **_head_fields(head, bases.get(head, {})),
+                **_finding_fields(f),
+                "label": {
+                    k: lab.get(k) for k in ("hash", "title", "file", "line_start", "line_end")
+                },
             }
         )
-        key[jid] = {
-            "raised_by": sorted({(p, s) for p, s, _ in group}),
-            "titles": sorted({str(x.get("title")) for _, _, x in group}),
-        }
+        key[jid] = {"raised_by": sorted(raised), "titles": [str(f.get("title"))]}
+    random.Random(seed).shuffle(items)
     return items, key
 
 
@@ -605,16 +869,19 @@ def render(result: dict[str, Any]) -> str:
     lines = [
         f"{result['heads']['paired']}/{result['heads']['in_set']} heads paired across "
         f"{', '.join(pol)}; baseline {result['baseline']}; noise floor "
-        f"{result['noise']['floor_pp']} pp; {result['to_judge']} new-blocker clusters to judge",
+        f"{result['noise']['floor_pp']} pp; {result['to_judge']} items to judge, "
+        f"{result.get('judged', 0)} judged",
         "",
         f"{'arm':<16} {'usable':>6} {'gpt lanes':>9} {'gpt tok':>12} {'wall p50':>9} "
-        f"{'contract':>8} {'dups':>6}",
+        f"{'active':>7} {'contract':>8} {'dups':>6} {'new prec':>8} {'blk prec':>8}",
     ]
     for p, a in result["arms"].items():
+        pr = a.get("precision") or {}
         lines.append(
             f"{p:<16} {a['usable']:>6} {a['gpt_lanes_per_run'] or 0:>9} "
             f"{a['gpt_tokens_per_run'] or 0:>12} {a['wall_clock_p50_s'] or 0:>9} "
-            f"{a['contract_failures']['runs_failed']:>8} {a['duplicates_per_run'] or 0:>6}"
+            f"{a.get('active_p50_s') or 0:>7} {a['contract_failures']['runs_failed']:>8} {a['duplicates_per_run'] or 0:>6} "
+            f"{_pct(pr.get('new_blocker_precision')):>8} {_pct(pr.get('blocker_precision')):>8}"
         )
     lines += [
         "",
@@ -638,19 +905,55 @@ def _pct(x: float | None) -> str:
     return "-" if x is None else f"{x * 100:.0f}%"
 
 
-def main_score(args: Any) -> int:
-    items = load_set(Path(args.setfile).expanduser())
-    labels = load_labels(Path(args.labels).expanduser())
-    out = Path(args.out).expanduser()
+def score_dir(
+    setfile: Path,
+    labels_file: Path,
+    out: Path,
+    *,
+    baseline: str | None = None,
+    seed: int = 0,
+    limit: int | None = None,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Score a replay set's directory and write score.json, to_judge.jsonl (what no verdict
+    covers yet), to_judge.key.json (merged with the earlier key) and, once there are verdicts,
+    spot_check.jsonl. Returns (score, to-judge items)."""
+    items = limit_items(load_set(setfile), limit)
+    labels = load_labels(labels_file)
     policies = load_policies(out)
-    if args.baseline and args.baseline not in policies:
-        raise SystemExit(f"--baseline {args.baseline}: not one of {policies}")
+    if baseline and baseline not in policies:
+        raise SystemExit(f"--baseline {baseline}: not one of {policies}")
     samples = load_samples(items, policies, out)
+    judged = load_judged(out)
     result, to_judge, key = score(
-        items, labels, samples, policies, baseline=args.baseline, seed=args.seed
+        items, labels, samples, policies, baseline=baseline, seed=seed, judged=judged
     )
     (out / "score.json").write_text(json.dumps(result, indent=1))
-    (out / "to_judge.jsonl").write_text("".join(json.dumps(x) + "\n" for x in to_judge))
-    (out / "to_judge.key.json").write_text(json.dumps(key, indent=1))
+    (out / TO_JUDGE).write_text("".join(json.dumps(x) + "\n" for x in to_judge))
+    old_key = read_json_file(out / "to_judge.key.json")
+    (out / "to_judge.key.json").write_text(json.dumps({**old_key, **key}, indent=1))
+    real = [j for j in judged if j.get("kind", NEW_BLOCKER) == NEW_BLOCKER and j.get("verdict")]
+    if real:
+        pick = random.Random(seed).sample(real, min(SPOT_CHECK, len(real)))
+        (out / "spot_check.jsonl").write_text("".join(json.dumps(x) + "\n" for x in pick))
+    return result, to_judge
+
+
+def read_json_file(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def main_score(args: Any) -> int:
+    result, _ = score_dir(
+        Path(args.setfile).expanduser(),
+        Path(args.labels).expanduser(),
+        Path(args.out).expanduser(),
+        baseline=args.baseline,
+        seed=args.seed,
+        limit=args.limit,
+    )
     print(render(result), end="")
     return 0

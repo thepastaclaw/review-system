@@ -13,7 +13,7 @@ import pytest
 from reviewsys import replayscore, replayset
 from reviewsys.replay import EXIT_ABORTED
 from reviewsys.replayscore import Label, Sample, jaccard, matches, score
-from reviewsys.replayset import Job, Policy, SetItem, load_set, plan, run_set
+from reviewsys.replayset import GB, Gate, Job, Policy, SetItem, load_set, plan, run_set
 
 
 def _policies(tmp_path: Path) -> list[Policy]:
@@ -219,6 +219,7 @@ def test_replay_set_cli_runs_replays_as_subprocesses(tmp_path, monkeypatch):
         return R()
 
     monkeypatch.setattr(replayset.subprocess, "run", fake_run)
+    monkeypatch.setattr(replayset, "free_bytes", lambda p: 10**15)
     for name in ("s11", "s12"):
         (tmp_path / name).mkdir()
         (tmp_path / name / "config.json").write_text("{}")
@@ -241,6 +242,7 @@ def test_replay_set_cli_runs_replays_as_subprocesses(tmp_path, monkeypatch):
             "--force-phase2",
             "--pin-phase1-model",
             "gemini-3.5-pro",
+            "--no-production-guard",
         ]
     )
     assert rc == 0 and len(calls) == 4
@@ -251,6 +253,211 @@ def test_replay_set_cli_runs_replays_as_subprocesses(tmp_path, monkeypatch):
     )
     assert {Path(a[a.index("--out") + 1]).name for a in calls} == {"v11", "v12"}
     assert (tmp_path / "out" / "v12" / "run-9-r1" / "report.json").exists()
+    assert "--fake-lanes" not in argv
+    # a repository the box has no mirror of goes to one place for both arms, never production
+    assert {a[a.index("--eval-mirrors") + 1] for a in calls} == {str(tmp_path / "out" / ".mirrors")}
+
+
+def test_replay_set_cli_limit_fake_lanes_and_disk_stop(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(replayset.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    monkeypatch.setattr(replayset, "free_bytes", lambda p: 3 * replayset.GB)
+    (tmp_path / "s").mkdir()
+    (tmp_path / "s" / "config.json").write_text("{}")
+    setfile = tmp_path / "set.json"
+    setfile.write_text(json.dumps([{"run_id": i, "set": "S1"} for i in range(1, 4)]))
+    from reviewsys.cli import main
+
+    args = ["replay-set", str(setfile), "--policy", f"v11={tmp_path / 's'}"]
+    args += ["--out", str(tmp_path / "out"), "--limit", "1", "--fake-lanes"]
+    args += ["--no-production-guard", "--disk-wait-minutes", "0", "--disk-per-job-gb", "6"]
+    assert main([*args, "--min-free-gb", "5"]) == replayset.EXIT_DISK and calls == []
+    monkeypatch.setattr(
+        replayset.subprocess,
+        "run",
+        lambda argv, **kw: calls.append(argv) or type("R", (), {"returncode": 0})(),
+    )
+    assert main([*args, "--min-free-gb", "2"]) == 1  # ran, but wrote no report
+    assert len(calls) == 1 and "--fake-lanes" in calls[0]
+    manifest = json.loads((tmp_path / "out" / replayset.MANIFEST).read_text())
+    assert manifest["options"]["limit"] == 1 and manifest["options"]["fake_lanes"] is True
+
+
+def test_limit_takes_heads_round_robin_over_the_sets():
+    items = [
+        SetItem(1, "S1"),
+        SetItem(2, "S1"),
+        SetItem(3, "S2"),
+        SetItem(4, "S3"),
+        SetItem(5, "S1"),
+    ]
+    assert [i.run_id for i in replayset.limit_items(items, 3)] == [1, 3, 4]
+    assert [i.run_id for i in replayset.limit_items(items, 4)] == [1, 2, 3, 4]
+    assert replayset.limit_items(items, None) == items and replayset.limit_items(items, 9) == items
+
+
+def test_a_short_disk_holds_launches_until_running_replays_free_it(tmp_path):
+    out, pols = tmp_path / "out", _policies(tmp_path)[:1]
+    events: list[str] = []
+    # what the disk check reads, call by call: room for the first replay, then short while it
+    # runs (its worktree), then room again once it ended
+    readings = iter([30, 10, 30, 30])
+
+    def runner(job: Job, out_: Path) -> int:
+        events.append(f"start {job.name}")
+        _write(job, out_, _report(job))
+        events.append(f"end {job.name}")
+        return 0
+
+    echoes: list[str] = []
+    gate = Gate(out, min_free_gb=25, job_gb=0, disk_free=lambda p: next(readings, 30) * GB)
+    res = run_set(
+        [SetItem(1), SetItem(2)], pols, out, concurrency=2, runner=runner,
+        echo=echoes.append, gate=gate,
+    )  # fmt: skip
+    assert res["ok"] == 2 and not res["aborted"]
+    assert events == ["start run-1", "end run-1", "start run-2", "end run-2"]
+    assert any("holding" in e for e in echoes) and any("again" in e for e in echoes)
+    free = {"gb": 10}  # short from the start, and nothing running to free it
+    slept: list[float] = []
+    gate = Gate(
+        out, min_free_gb=25, disk_wait_minutes=2, disk_free=lambda p: free["gb"] * GB,
+        sleep=slept.append,
+    )  # fmt: skip
+    res = run_set(
+        [SetItem(1), SetItem(2), SetItem(3)], pols, tmp_path / "out2", concurrency=1,
+        runner=runner, echo=echoes.append, gate=gate,
+    )  # fmt: skip
+    assert res["aborted"].startswith("disk:") and res["not_started"] == 3
+    assert replayset.stopped_exit(res["aborted"]) == replayset.EXIT_DISK
+    assert slept == [replayset.WAIT_POLL_SECONDS, replayset.WAIT_POLL_SECONDS]
+
+
+def test_each_running_replay_counts_against_the_floor(tmp_path):
+    """M4: 50 GB free, floor 35, 6 GB per running replay: two may run, not three, though the
+    free space has not moved yet (their worktrees are still being checked out)."""
+    gate = Gate(tmp_path, min_free_gb=35, job_gb=6, disk_free=lambda p: 50 * GB)
+    assert gate.check(0) == ("", "") and gate.check(2) == ("", "")
+    why, kind = gate.check(3)
+    assert kind == "disk" and "3 running" in why
+
+
+def test_a_disk_that_recovers_while_waiting_resumes_launching(tmp_path):
+    out, pols = tmp_path / "out", _policies(tmp_path)[:1]
+    free = {"gb": 10}
+
+    def sleep(s: float) -> None:
+        free["gb"] = 40  # production's gc freed space meanwhile
+
+    gate = Gate(
+        out, min_free_gb=25, disk_wait_minutes=5, disk_free=lambda p: free["gb"] * GB, sleep=sleep
+    )
+    res = run_set(
+        [SetItem(1)], pols, out, concurrency=1,
+        runner=lambda j, o: (_write(j, o, _report(j)), 0)[1], echo=lambda s: None, gate=gate,
+    )  # fmt: skip
+    assert res["ok"] == 1 and not res["aborted"]
+
+
+# ---- the production guard ----
+
+
+def _prod_db(tmp_path: Path, *, usable: int = 3, at: str | None = None, queued: int = 0) -> Path:
+    import dataclasses as dc
+
+    from reviewsys import slots
+    from reviewsys.db import connect, kv_set, now, tx
+
+    db = tmp_path / "prod.db"
+    conn = connect(db)
+    accounts = [
+        dc.asdict(slots.Account(name=f"a{i}", usable=i < usable, reason="")) for i in range(3)
+    ]
+    with tx(conn):
+        kv_set(conn, slots.KV_ACCOUNTS, json.dumps({"at": at or now(), "accounts": accounts}))
+        for i in range(queued):
+            conn.execute(
+                "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at) "
+                "VALUES ('o/r', ?, ?, 'new_push', 'queued', ?, ?)",
+                (i, f"{i:040d}", now(), now()),
+            )
+    conn.close()
+    return db
+
+
+def test_production_guard(tmp_path):
+    from reviewsys import degraded
+    from reviewsys.db import connect, kv_set, tx
+
+    guard = replayset.production_guard
+    db = _prod_db(tmp_path)
+    assert guard(db, min_accounts=2, backlog_limit=10) == ("", False)
+    db = _prod_db(tmp_path / "a", usable=1)
+    assert guard(db, min_accounts=2, backlog_limit=10) == (
+        "1 usable OpenAI account(s), fewer than 2",
+        True,
+    )
+    assert guard(db, min_accounts=0, backlog_limit=10) == ("", False)
+    db = _prod_db(tmp_path / "b", at="2026-01-01T00:00:00Z")
+    why, stop = guard(db, min_accounts=2, backlog_limit=10)
+    assert stop and "stale" in why
+    db = _prod_db(tmp_path / "c", queued=5)
+    why, stop = guard(db, min_accounts=2, backlog_limit=10)
+    assert not stop and "5 live heads queued" in why
+    db = _prod_db(tmp_path / "d")
+    conn = connect(db)
+    with tx(conn):
+        kv_set(conn, degraded.KV_STATE, json.dumps({"active": True}))
+    conn.close()
+    assert guard(db, min_accounts=2, backlog_limit=10) == ("degraded mode is active", True)
+    with tx(connect(db)) as c:
+        kv_set(c, degraded.KV_FORCE, "on")
+    assert guard(db, min_accounts=2, backlog_limit=10)[1] is True
+    assert guard(tmp_path / "none.db", min_accounts=2, backlog_limit=10)[1] is True
+
+
+def test_production_degrading_stops_the_set_cleanly(tmp_path):
+    out, pols = tmp_path / "out", _policies(tmp_path)[:1]
+    states = iter([("", False), ("degraded mode is active", True)])
+    gate = Gate(out, guard=lambda: next(states, ("degraded mode is active", True)))
+    res = run_set(
+        [SetItem(1), SetItem(2), SetItem(3)], pols, out, concurrency=1,
+        runner=lambda j, o: (_write(j, o, _report(j)), 0)[1], echo=lambda s: None, gate=gate,
+    )  # fmt: skip
+    assert res["ok"] == 1 and res["not_started"] == 2
+    assert res["aborted"] == "stopped: degraded mode is active"
+    assert replayset.stopped_exit(res["aborted"]) == EXIT_ABORTED
+    # a busy production queue holds launches, then the wait runs out: also a clean stop
+    slept: list[float] = []
+    gate = Gate(
+        out, guard=lambda: ("9 live heads queued", False), busy_wait_minutes=1, sleep=slept.append
+    )
+    res = run_set(
+        [SetItem(4)], pols, out, concurrency=1, runner=lambda j, o: 0, echo=lambda s: None,
+        gate=gate,
+    )  # fmt: skip
+    assert res["aborted"] == "stopped: 9 live heads queued" and slept == [60.0]
+
+
+def test_the_replay_set_cli_reads_the_configured_database_before_launching(tmp_path, monkeypatch):
+    calls: list[list[str]] = []
+    monkeypatch.setattr(replayset.subprocess, "run", lambda argv, **kw: calls.append(argv))
+    (tmp_path / "s").mkdir()
+    (tmp_path / "s" / "config.json").write_text("{}")
+    db = _prod_db(tmp_path, usable=1)
+    from reviewsys.config import DEFAULT_TOML
+
+    config = tmp_path / "config.toml"
+    config.write_text(DEFAULT_TOML.replace('db = "~/.reviewsys/review.db"', f'db = "{db}"'))
+    setfile = tmp_path / "set.json"
+    setfile.write_text(json.dumps([{"run_id": 1}]))
+    from reviewsys.cli import main
+
+    rc = main(
+        ["--config", str(config), "replay-set", str(setfile), "--policy",
+         f"v11={tmp_path / 's'}", "--out", str(tmp_path / "out"), "--min-free-gb", "0"]
+    )  # fmt: skip
+    assert rc == EXIT_ABORTED and calls == []
 
 
 # ---- matcher ----
@@ -408,7 +615,12 @@ def test_scorer_paired_metrics_per_set():
     ]
     v11.append(_sample("v11", 5, [], status="failed"))
     result, to_judge, key = score(items, labels, v11 + v12, ["v11", "v12"])
-    assert result["heads"] == {"in_set": 5, "paired": 4, "unpaired": [5]}
+    assert result["heads"] == {
+        "in_set": 5,
+        "paired": 4,
+        "unpaired": [5],
+        "thread_resolution_as_of_now": [],
+    }
     s1 = result["sets"]["S1"]
     assert s1["v11"]["recall"] == 0.5 and s1["v12"]["recall"] == 1.0
     assert s1["v11"]["blocker_recall"] == 0.0 and s1["v12"]["blocker_recall"] == 1.0
@@ -766,3 +978,38 @@ def test_malformed_labels_are_rejected(tmp_path):
     p.write_text(json.dumps([{"repo": "o/r", "label": "tp"}]))
     with pytest.raises(SystemExit, match="malformed"):
         replayscore.load_labels(p)
+
+
+def test_s5_is_scored_with_and_without_heads_whose_thread_state_is_as_of_now():
+    """L4: on head 2 the view could not rewind a thread's resolution; S5 counts both heads,
+    S5:exact_threads only head 1."""
+    items = [SetItem(1, "S5"), SetItem(2, "S5")]
+    labels = [_label(1, "Settled thing", "fp", "S5"), _label(2, "Settled thing", "fp", "S5")]
+    raised = [_f("Settled thing")]
+    samples = [
+        _sample(p, n, raised, set_="S5", thread_resolution_as_of_now=int(n == 2))
+        for p in ("v11", "v12")
+        for n in (1, 2)
+    ]
+    result, _, _ = score(items, labels, samples, ["v11", "v12"])
+    assert result["heads"]["thread_resolution_as_of_now"] == [2]
+    assert result["sets"]["S5"]["v12"]["heads"] == 2
+    assert result["sets"]["S5"]["v12"]["reraised_unchanged"] == 2.0
+    exact = result["sets"]["S5:exact_threads"]["v12"]
+    assert exact["heads"] == 1 and exact["reraised_unchanged"] == 1.0
+
+
+def test_wall_clock_is_reported_with_and_without_slot_waits():
+    """L8: replays wait behind production for lane slots; the active time is what is left."""
+    items = [SetItem(1, "S1"), SetItem(2, "S1")]
+    samples = [
+        _sample("v11", 1, [], wall_clock_s=100.0, slot_wait_s=0.0, active_s=100.0),
+        _sample("v11", 2, [], wall_clock_s=300.0, slot_wait_s=200.0, active_s=100.0),
+        _sample("v12", 1, [], wall_clock_s=200.0, slot_wait_s=80.0, active_s=120.0),
+        _sample("v12", 2, [], wall_clock_s=120.0, slot_wait_s=0.0, active_s=120.0),
+    ]
+    result, _, _ = score(items, [], samples, ["v11", "v12"])
+    assert result["arms"]["v11"]["wall_clock_p50_s"] == 200.0
+    assert result["arms"]["v11"]["active_p50_s"] == 100.0
+    assert result["arms"]["v12"]["slot_wait_p50_s"] == 40.0
+    assert result["ratios_vs_baseline"]["v12"]["active_p50_s"] == 1.2

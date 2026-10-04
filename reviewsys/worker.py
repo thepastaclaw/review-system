@@ -5426,7 +5426,11 @@ def main(
         if ctx.audit is None:
             raise SystemExit(f"run {run_id}: audit head without an audits row")
     # every lane of this run, parallel reviewers and side lanes alike, lines up for a slot in
-    # its model's machine-wide pool (lanepool.py); under policy v12 it may run isolated
+    # its model's machine-wide pool (lanepool.py); under policy v12 it may run isolated. A
+    # replay (policy eval) lines up behind every production lane, whatever it replays
+    queue = "audit" if ctx.is_audit else "priority" if row["priority"] else "live"
+    if replay:
+        queue = "replay"
     ctx.lane_runner = lanepool.gated(
         sandboxed(
             isolated(lane_runner or run_claude_lane, cfg.policy.isolates_lane_env),
@@ -5435,7 +5439,7 @@ def main(
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,
-        queue="audit" if ctx.is_audit else "priority" if row["priority"] else "live",
+        queue=queue,
         run_id=run_id,
     )
     ctx.quota_reader = quota_reader
