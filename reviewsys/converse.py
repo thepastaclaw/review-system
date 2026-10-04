@@ -45,7 +45,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .contract import _status_spelling
+from .contract import _expand, _status_spelling
 from .models import FailKind, ReviewError
 from .prompts import RAW_JSON_CONTRACT, STATIC_REVIEW
 from .schemas import NO_REPLY, THREAD_STATUSES, check_thread_coverage
@@ -338,6 +338,23 @@ CLOSING_STATUSES = frozenset({"FIXED", "OUTDATED", "WITHDRAWN", "INTENTIONALLY_D
 CODE_STATUSES = frozenset({"FIXED", "OUTDATED"})
 
 
+def _full_hashes(raw: dict[str, Any], hashes: list[str]) -> dict[str, Any]:
+    """`raw` with each row's `finding_hash` expanded to the one listed hash it names (a unique
+    prefix of at least seven characters, as the verifier's matches are read)."""
+    rows = raw.get("threads")
+    if not isinstance(rows, list):
+        return raw
+    full = set(hashes)
+
+    def one(row: Any) -> Any:
+        if not isinstance(row, dict):
+            return row
+        h = str(row.get("finding_hash") or "")
+        return {**row, "finding_hash": _expand(h, full) or h} if h else row
+
+    return {**raw, "threads": [one(r) for r in rows]}
+
+
 def parse_threads(
     raw: dict[str, Any], *, hashes: list[str], fix_pending: set[str]
 ) -> ConversationOutput:
@@ -348,6 +365,7 @@ def parse_threads(
     changed: a same-sha reply, or the issue was last seen at this very head) is FIX_PENDING:
     it lifts nothing (dashpay/dash#7778). A closing
     status without a reply breaks the contract. Every problem is reported at once."""
+    raw = _full_hashes(raw, hashes)
     problems = check_thread_coverage(raw, hashes)
     out: dict[str, ThreadOutcome] = {}
     for row in raw.get("threads") or [] if not problems else []:

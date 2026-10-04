@@ -140,6 +140,12 @@ class LaneFailed(ReviewError):
         self.cause = cause
 
 
+class UncheckedBlockers(ReviewError):
+    """A verify+match shard failed for good holding blocking candidates (v12 design §2.2): the
+    run fails (INFRA) rather than publish without checking them, the confirmation pass's own
+    verification included."""
+
+
 class StopSignal:
     """A threading.Event that remembers why it was set (the first reason wins), so a lane
     stopped because its phase is being abandoned can say which lane failed and how."""
@@ -1433,11 +1439,20 @@ def _start_thread_lane(ctx: RunContext) -> None:
     tl.thread.start()
 
 
+THREAD_LANE_STOP_SECONDS = 120  # a stopped lane's process is killed well within this
+
+
 def _stop_thread_lane(ctx: RunContext) -> None:
+    """Tell the thread lane to stop (its lanes and fetches poll for it) and wait for it,
+    bounded: a lane that does not end in time is left to its daemon thread and logged."""
     tl = ctx.thread_lane
     if tl is not None and tl.thread is not None:
         tl.stop.set("the run ended")
-        tl.thread.join()
+        tl.thread.join(timeout=THREAD_LANE_STOP_SECONDS)
+        if tl.thread.is_alive():
+            log.warning(
+                "thread lane still running %ss after the run ended", THREAD_LANE_STOP_SECONDS
+            )
 
 
 def _thread_outcomes(ctx: RunContext) -> dict[str, converse.ThreadOutcome]:
@@ -2512,7 +2527,7 @@ def _verify12(
                 ctx.check_cancel()
                 blocking = [f.candidate_id for f in batch if f.severity == "blocking"]
                 if blocking:
-                    raise ReviewError(
+                    raise UncheckedBlockers(
                         FailKind.INFRA,
                         f"{phase}/{roles[n]} failed with blocking candidates unchecked "
                         f"({', '.join(map(str, blocking))}): {exc.message}",
@@ -4309,6 +4324,8 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
             stage="verified-fresh",
         )
         _step_end(ctx, step, "ok", {"blockers": delta.blocker_count, "new": len(delta.findings)})
+    except UncheckedBlockers:
+        raise  # a blocker nobody checked fails the run, here as in the main pass
     except ReviewError as exc:
         ctx.check_cancel()
         _step_end(ctx, step, "failed", {"error": exc.message[:1000]})

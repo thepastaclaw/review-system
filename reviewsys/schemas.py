@@ -52,6 +52,12 @@ def _one_of(values: tuple[str, ...], description: str) -> dict[str, Any]:
     }
 
 
+SUGGESTION = (
+    "Replacement code for the selected lines, committable as is; omit it when there is no "
+    "exact fix. Never prose."
+)
+
+
 def _line(description: str) -> dict[str, Any]:
     return {"type": "integer", "minimum": 1, "description": description}
 
@@ -77,7 +83,7 @@ FINDER_SCHEMA: dict[str, Any] = {
                         "and what then happens."
                     ),
                     "body": _text("The explanation a maintainer reads, with evidence."),
-                    "suggestion": _text("The fix, as prose or a code block; omit if none."),
+                    "suggestion": _text(SUGGESTION),
                 },
                 "required": ["file", "severity", "category", "title", "failure_scenario", "body"],
             },
@@ -130,20 +136,15 @@ VERIFIER_SCHEMA: dict[str, Any] = {
                     "confirm_by": _text(
                         "For PLAUSIBLE: what would confirm it (a test, a trace, a fact to check)."
                     ),
-                    "severity": _one_of(SEVERITIES, "The final severity."),
-                    "title": _text("The final one-line title."),
-                    "body": _text("The final explanation a maintainer reads, with evidence."),
-                    "suggestion": _text("The final fix, as prose or a code block; omit if none."),
+                    "severity": _one_of(SEVERITIES, "The final severity; omit for REFUTED."),
+                    "title": _text("The final one-line title; omit for REFUTED."),
+                    "body": _text(
+                        "The final explanation a maintainer reads, with evidence; omit for REFUTED."
+                    ),
+                    "suggestion": _text(SUGGESTION),
                 },
-                "required": [
-                    "members",
-                    "match",
-                    "verdict",
-                    "evidence",
-                    "severity",
-                    "title",
-                    "body",
-                ],
+                # severity, title and body too, except for a REFUTED group (the parser checks)
+                "required": ["members", "match", "verdict", "evidence"],
             },
         },
     },

@@ -344,12 +344,13 @@ def parse_verify(
         evidence = _str(r.get("evidence"))
         if not evidence:
             problems.append(f"{label}: a verdict needs `evidence` (quoted lines)")
-        sev = _severity(r.get("severity"))
+        refuted = verdict == "REFUTED"  # dropped: it needs no final wording
+        sev = _severity(r.get("severity")) or ("nitpick" if refuted else None)
         if sev is None:
             problems.append(
                 f"{label}: severity {r.get('severity')!r} not in {' | '.join(SEVERITIES)}"
             )
-        title = _str(r.get("title"))
+        title = _str(r.get("title")) or (f"refuted {', '.join(ids)}" if refuted else "")
         if not title:
             problems.append(f"{label}: no title")
         if (

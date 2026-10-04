@@ -801,3 +801,45 @@ def test_a_retried_answer_records_what_the_thread_shows(gh):
             marker=marker, status=status, head_sha="h" * 40, reply="x"
         )
         assert publish.shown_status(body) == status
+
+
+def test_thread_answers_may_name_a_hash_by_a_unique_prefix():
+    out = converse.parse_threads(
+        {"threads": [{"finding_hash": "abcdef12", "status": "STILL_VALID", "reply": "NO_REPLY"}]},
+        hashes=["abcdef123456", "0123456789ab"][:1],
+        fix_pending=set(),
+    )
+    assert list(out.outcomes) == ["abcdef123456"]
+    with pytest.raises(ReviewError, match="not one of the listed"):
+        converse.parse_threads(
+            {"threads": [{"finding_hash": "abc", "status": "STILL_VALID", "reply": "x"}]},
+            hashes=["abcdef123456"],
+            fix_pending=set(),
+        )
+
+
+def test_a_refuted_group_needs_no_final_wording():
+    out = rules.parse_verify(
+        {
+            "summary": "s",
+            "groups": [
+                {"members": ["a"], "match": "new", "verdict": "REFUTED", "evidence": "guard at L3"}
+            ],
+        },
+        candidate_ids=["a"],
+        issues={},
+    )
+    (g,) = out.groups
+    assert g.verdict == "REFUTED" and g.severity == "nitpick"
+
+
+def test_cut_json_says_so_inside_its_fence():
+    from reviewsys.prompts import _json_block
+
+    text = _json_block(["x" * 100], limit=20)
+    assert (
+        text.startswith("```json\n")
+        and text.endswith("\n```")
+        and "more characters not shown" in text
+    )
+    assert _json_block([1]) == "```json\n[\n 1\n]\n```"

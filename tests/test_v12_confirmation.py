@@ -216,3 +216,30 @@ def test_no_same_sha_approval_over_a_review_that_dropped_candidates(
         "did not run at full strength (some of its candidates were never verified)" in upd["body"]
     )
     assert not conn.execute("SELECT 1 FROM kv WHERE key LIKE 'rereview.after_run:%'").fetchone()
+
+
+def test_an_unchecked_blocker_in_the_confirmation_pass_fails_the_run(
+    cfg, skills_dir, conn, gh, lanes, git
+):
+    """§2.2 holds in the confirmation pass too: its verify+match failing with a blocking
+    candidate fails the run (INFRA) instead of publishing an approval nobody checked."""
+    from reviewsys.models import RunStatus
+    from tests.test_v12_worker import _try_round
+
+    v12 = v12_cfg(cfg, skills_dir)
+    lanes.candidates["default"] = []
+    calls = iter(range(10))
+    # security-auditor: Phase 1, Phase 2, then the confirmation pass raises a blocker
+    lanes.candidates["security-auditor"] = lambda: [cand("Unchecked")] if next(calls) == 2 else []
+
+    def verify(label, cands, prompt):
+        if label == "confirm":
+            return {"summary": "x", "groups": "never valid"}
+        return {"summary": "ok", "groups": [group(c) for c in cands]}
+
+    lanes.verify12 = verify
+    rid, status = _try_round(v12, conn, gh, lanes, A)
+    assert status == RunStatus.FAILED
+    row = conn.execute("SELECT reason, fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
+    assert row["fail_kind"] == "infra" and "blocking candidates unchecked" in row["reason"]
+    assert not gh.posted_reviews

@@ -521,7 +521,8 @@ VERIFY_OUTPUT = (
     "REFUTED, the line or guard that contradicts the claim;\n"
     "- `confirm_by`: for PLAUSIBLE, what would confirm it (a test, a trace, a fact to check);\n"
     f"- `severity` (exactly one of {' | '.join(SEVERITIES)}), `title`, `body` and, when there is "
-    "an exact code fix, `suggestion`: the final finding in one voice, as a maintainer reads it.\n"
+    "an exact code fix, `suggestion` (replacement code for the selected lines, never prose): the "
+    "final finding in one voice, as a maintainer reads it; a REFUTED group needs none of them.\n"
     "`summary` is the review summary a maintainer reads first. No `review_action`, "
     "`finding_hash`, reconciliation or `review_phase`: the orchestrator decides the verdict from "
     "the ledger and your verdicts.\n"
@@ -567,8 +568,13 @@ def _pr_values(
     }
 
 
-def _json_block(value: Any, fence: str = "```json") -> str:
-    return f"{fence}\n{json.dumps(value, indent=1)}\n```"
+def _json_block(value: Any, fence: str = "```json", limit: int | None = None) -> str:
+    """`value` as an indented JSON block; cut at `limit` characters inside the fence, saying
+    how much was left out."""
+    text = json.dumps(value, indent=1)
+    if limit is not None and len(text) > limit:
+        text = text[:limit] + f"\n[... {len(text) - limit} more characters not shown]"
+    return f"{fence}\n{text}\n```"
 
 
 def finder_prompt(
@@ -716,10 +722,8 @@ def thread_prompt(
             "mode_note": mode,
             "issues": _json_block(issues, ISSUES_FENCE),
             "linked_commits": linked_commits or "- none",
-            "discussion": "```json\n"
-            + json.dumps(evidence.get("issue_comments") or [], indent=1)[:12000]
-            + "\n```",
-            "ci": "```json\n" + json.dumps(evidence.get("ci") or {}, indent=1)[:6000] + "\n```",
+            "discussion": _json_block(evidence.get("issue_comments") or [], limit=12000),
+            "ci": _json_block(evidence.get("ci") or {}, limit=6000),
             "static_review": STATIC_REVIEW.format(number=number, repo=repo).replace(
                 "evidence below", "CI section"
             ),
