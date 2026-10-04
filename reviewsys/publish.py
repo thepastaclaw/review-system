@@ -536,6 +536,16 @@ def render(m: ReviewModel) -> str:
     if m.verified.carried:
         parts += ["", f"### Still open from earlier rounds ({len(m.verified.carried)})", ""]
         parts += [_carried_line(f) for f in m.verified.carried]
+    if m.verified.noted:
+        parts += [
+            "",
+            "<details>",
+            f"<summary>Also noticed ({len(m.verified.noted)}): non-blocking, on code unchanged "
+            "since the last full review</summary>",
+            "",
+            *(_finding_block(f) for f in m.verified.noted),
+            "</details>",
+        ]
     parts += [
         "",
         "<details>",

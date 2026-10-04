@@ -219,7 +219,7 @@ class PipelinePolicy:
     one, and their prompts then ask for the StructuredOutput tool instead of raw JSON text.
     `late_nonblocking` (owner decision D2): "post" = later-round suggestions on lines unchanged
     since the last final review post as today; "note" = a collapsed note that does not hold
-    APPROVE. Not read yet (piece B5).
+    APPROVE (needs verifier contract "v12").
 
     JSON shape (every key but `version` optional):
         {"version": "v12", "lane_env_isolation": true, "structured_output": true,
@@ -840,9 +840,9 @@ def _pipeline(node: Any, specialists: tuple[Specialist, ...]) -> PipelinePolicy 
 def _check_pipeline(p: PipelinePolicy) -> None:
     """Switches that only work together: the v12 verifier matches candidate ids (unanchored
     finders) and leaves open issues to the thread lane, which in turn needs the v12 verifier to
-    stop reconciling them; the confirmation trigger "no_blockers" reads the ledger verdict,
-    which only the v12 verifier computes. A half-switched arm would run a pipeline nobody
-    designed, so it fails the load."""
+    stop reconciling them; the confirmation trigger "no_blockers" and the D2 note read the
+    ledger verdict, which only the v12 verifier computes. A half-switched arm would run a
+    pipeline nobody designed, so it fails the load."""
     v12 = p.verifier.contract == "v12"
     if v12 and p.finders.anchoring != "unanchored":
         raise ValueError('pipeline.verifier.contract "v12" needs finders.anchoring "unanchored"')
@@ -852,6 +852,8 @@ def _check_pipeline(p: PipelinePolicy) -> None:
         raise ValueError(
             'pipeline.confirmation.trigger "no_blockers" needs verifier.contract "v12"'
         )
+    if not v12 and p.late_nonblocking != "post":
+        raise ValueError('pipeline.late_nonblocking "note" needs verifier.contract "v12"')
 
 
 def load_skills_config(

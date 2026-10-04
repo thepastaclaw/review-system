@@ -319,6 +319,7 @@ class RunContext:
     # finding_hash -> thread facts for every bot finding thread, resolved ones included
     thread_index: dict[str, dict[str, Any]] = field(default_factory=dict)
     last_reviewed_sha: str | None = None  # the newest other head the bot published a review on
+    last_final_sha: str | None = None  # ... a final review on (late_nonblocking)
     finder_evidence: dict[str, Any] = field(default_factory=dict)  # evidence minus our threads
     settled: list[dict[str, Any]] = field(default_factory=list)  # the finders' settled list
     thread_work: dict[str, list[str]] = field(default_factory=dict)  # hash -> why it is judged
@@ -1092,11 +1093,12 @@ def _context12(ctx: RunContext, threads: list[dict[str, Any]]) -> None:
     pol, bot = ctx.cfg.policy, ctx.cfg.bot_login
     ctx.thread_index = github.finding_threads([{**t, "is_resolved": False} for t in threads], bot)
     rows = ctx.conn.execute(
-        "SELECT sha FROM reviews WHERE repo=? AND number=? AND sha!=? "
+        "SELECT sha, phase FROM reviews WHERE repo=? AND number=? AND sha!=? "
         "ORDER BY posted_at DESC, rowid DESC",
         (ctx.repo, ctx.number, ctx.sha),
     ).fetchall()
     ctx.last_reviewed_sha = str(rows[0]["sha"]) if rows else None
+    ctx.last_final_sha = next((str(r["sha"]) for r in rows if r["phase"] == "final"), None)
     if pol.verifier_v12:
         _reconcile12(ctx)
     ctx.issues = ledger.load(ctx.conn, ctx.repo, ctx.number)
@@ -2477,7 +2479,7 @@ def _verify12(
         thread_url=lambda i: _issue_url(ctx, i),
         extra_open=raised_hashes,
     )
-    post = outcome.new
+    post, noted = _late_split(ctx, outcome.new)
     projected = rules.project(
         ctx.issues, _pending_statuses(outs, set(outcome.corroborated)), outcome.upgrades
     )
@@ -2507,6 +2509,7 @@ def _verify12(
         raw=answer.raw,
         normalized=answer.normalized,
         carried=carried,
+        noted=noted,
         rules=outcome,
     )
     _record_findings(ctx, phase, stage, out.findings)
@@ -2516,6 +2519,7 @@ def _verify12(
                 "candidates": [rules.brief(f) for f in candidates],
                 "groups": [dataclasses.asdict(g) for g in groups],
                 "new": [f.to_dict() for f in post],
+                "noted": [f.to_dict() for f in noted],
                 "corroborated": outcome.corroborated,
                 "upgrades": sorted(outcome.upgrades),
                 "dropped": outcome.dropped,
@@ -2535,6 +2539,34 @@ def _carried12(ctx: RunContext, issues: dict[str, ledger.Issue]) -> list[Finding
         open_threads=ctx.open_threads,
     )
     return rules.carried(stand, lambda i: _issue_url(ctx, i))
+
+
+def _late_split(ctx: RunContext, new: list[Finding]) -> tuple[list[Finding], list[Finding]]:
+    """`late_nonblocking` (owner decision D2): this round's non-blocking new issues on lines
+    unchanged since the last final review are tagged `late`; under "note" they are collapsed
+    into "Also noticed" (not posted, not in the ledger, never holding APPROVE). Their count is
+    recorded either way, for the eval. Revivals and regressions are never late."""
+    pol = ctx.cfg.policy.pipeline
+    since = ctx.last_final_sha
+    if pol is None or not since or since == ctx.sha:
+        return new, []
+    late: list[Finding] = []
+    for f in new:
+        if f.severity == "blocking" or "revives" in f.extra or "regression_of" in f.extra:
+            continue
+        # the anchor is in this head's numbering: diff from it (lines_changed is symmetric)
+        if _lines_changed(ctx, ctx.sha, since, f.file, f.line_start, f.line_end) is False:
+            f.extra["late"] = True
+            late.append(f)
+    if late:
+        _lane_event(
+            ctx,
+            "v12.late_nonblocking",
+            f"{len(late)} late non-blocking finding(s) since {since[:8]} ({pol.late_nonblocking})",
+        )
+    if pol.late_nonblocking != "note":
+        return new, []
+    return [f for f in new if not f.extra.get("late")], late
 
 
 def _backfill_posted(
@@ -4124,7 +4156,7 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
                 "the issues this round already raised (status `raised this round`): a candidate "
                 "restating one of them matches it as `open:<hash>`."
             ),
-            raised_now=verified.findings,
+            raised_now=[*verified.findings, *verified.noted],
             stage="verified-fresh",
         )
         _step_end(ctx, step, "ok", {"blockers": delta.blocker_count, "new": len(delta.findings)})
@@ -4137,6 +4169,7 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
     conf.update(ran=True, new=len(delta.findings))
     r, d = verified.rules, delta.rules
     verified.findings += delta.findings
+    verified.noted += delta.noted
     verified.dropped += delta.dropped
     have = {x["comment_id"] for x in verified.coderabbit_reactions}
     verified.coderabbit_reactions += [

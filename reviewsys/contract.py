@@ -202,6 +202,8 @@ class VerifierOutput:
     # the ledger's standing issues from earlier rounds, carried (never re-posted): they count
     # toward the verdict, the gate and the body's "Still open from earlier rounds"
     carried: list[Finding] = field(default_factory=list)
+    # later-round non-blocking findings collapsed into "Also noticed" (`late_nonblocking` note)
+    noted: list[Finding] = field(default_factory=list)
     # the code rules' account of this answer (`rules.Outcome`): matches, corroborations
     rules: Any = None
 
