@@ -700,3 +700,21 @@ def test_the_thread_prompt_carries_ci_and_bounded_discussion(cfg, skills_dir):
     assert discussion.startswith("```json\n") and discussion.rstrip().endswith("```")
     assert '"state": "failure"' in text and "the `ci` snapshot in the CI section" in text
     assert "`abc`" in text.split("## Output: thread outcomes", 1)[1]
+
+
+def test_outdated_where_nothing_changed_is_a_pending_fix_too():
+    out = converse.parse_threads(
+        {
+            "threads": [
+                {
+                    "finding_hash": "a",
+                    "status": "OUTDATED",
+                    "reply": "that path is gone in the patch",
+                },
+                {"finding_hash": "b", "status": "OUTDATED", "reply": "the code moved away"},
+            ]
+        },
+        hashes=["a", "b"],
+        fix_pending={"a"},
+    )
+    assert {h: o.status for h, o in out.outcomes.items()} == {"a": "FIX_PENDING", "b": "OUTDATED"}

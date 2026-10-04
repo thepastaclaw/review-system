@@ -329,3 +329,23 @@ def test_findings_over_the_comment_budget_are_not_posted(cfg, skills_dir, conn, 
     assert len(review["comments"]) == v12.comment_budget
     assert "2 more non-blocking finding(s) over the comment budget" in review["body"]
     assert len(issues(conn)) == v12.comment_budget
+
+
+def test_outdated_on_the_reviewed_commit_lifts_nothing(cfg, skills_dir, conn, gh, lanes, git):
+    """dashpay/dash#7778 by another word: a same-sha thread pass calling the only blocker
+    OUTDATED must not close it, let alone approve."""
+    v12 = v12_cfg(cfg, skills_dir)
+    lanes.verify12 = refute_gate
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    (fee,) = issues(conn)
+    reply(gh, ids[fee], "That code goes away in my next commit.", rid=901)
+    lanes.thread_out[fee] = {"status": "OUTDATED", "reply": "Then this goes with it."}
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, A, Trigger.REVIEW_REPLY)
+    assert issues(conn)[fee].status == "open"
+    assert len(gh.posted_reviews) == before  # nothing lifted: no follow-up review
+    (answer,) = [r for r in gh.replies if f"finding={fee}" in r["body"]]
+    assert "the push gets a full review" in answer["body"]

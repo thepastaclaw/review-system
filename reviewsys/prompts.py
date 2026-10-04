@@ -689,15 +689,17 @@ def thread_prompt(
 ) -> str:
     """The policy v12 thread lane (v12 design §2.4), from `prompts/v12/thread.md`: per issue the
     finding, the whole thread, the code at head and the diff of its file since it was last
-    judged. `same_sha`: a reply to the reviewed commit itself, where nothing can be FIXED."""
+    judged. `same_sha`: a reply to the reviewed commit itself, where nothing can be FIXED or
+    OUTDATED."""
     values = _pr_values(cfg, repo=repo, number=number, head_sha=head_sha, meta=meta)
     if same_sha:
         mode = (
             "A human replied on the commit you already reviewed: the checkout is that commit, so "
-            "nothing in it changed since your findings and nothing can be FIXED. If a proposed "
-            "change (a linked commit, a sketch, a fix they say they will push) would resolve an "
-            "issue, say so and answer FIXED: it is recorded as a pending fix, the issue keeps "
-            "standing until the push that carries it is reviewed."
+            "nothing in it changed since your findings and nothing can be FIXED or OUTDATED. If "
+            "a proposed change (a linked commit, a sketch, a fix they say they will push) would "
+            "resolve an issue or make it moot, say so and answer FIXED: it is recorded as a "
+            "pending fix, the issue keeps standing until the push that carries it is reviewed. "
+            "If the issue was wrong about this commit, that is WITHDRAWN."
         )
     else:
         mode = (

@@ -334,6 +334,8 @@ def parse(raw: dict[str, Any], *, expected: set[str]) -> ConversationOutput:
 
 # outcomes that retire an issue; the thread must say why, so each needs a reply
 CLOSING_STATUSES = frozenset({"FIXED", "OUTDATED", "WITHDRAWN", "INTENTIONALLY_DEFERRED"})
+# outcomes that claim the code changed: impossible where it did not (pending instead)
+CODE_STATUSES = frozenset({"FIXED", "OUTDATED"})
 
 
 def parse_threads(
@@ -342,8 +344,9 @@ def parse_threads(
     """The thread lane's answer: every hash of the work set exactly once
     (`schemas.check_thread_coverage`), a status from THREAD_STATUSES (spelling normalized; a
     v11-style NO_REPLY status is STILL_VALID with no reply), and a reply, or NO_REPLY (stored
-    as ""). FIXED on an issue in `fix_pending` (the code under it cannot have changed: a
-    same-sha reply, or the issue was last seen at this very head) is FIX_PENDING. A closing
+    as ""). FIXED or OUTDATED on an issue in `fix_pending` (the code under it cannot have
+    changed: a same-sha reply, or the issue was last seen at this very head) is FIX_PENDING:
+    it lifts nothing (dashpay/dash#7778). A closing
     status without a reply breaks the contract. Every problem is reported at once."""
     problems = check_thread_coverage(raw, hashes)
     out: dict[str, ThreadOutcome] = {}
@@ -363,7 +366,7 @@ def parse_threads(
         if st in CLOSING_STATUSES and not reply:
             problems.append(f"threads: {h}: {st} needs a reply saying why (not {NO_REPLY})")
             continue
-        if st == "FIXED" and h in fix_pending:
+        if st in CODE_STATUSES and h in fix_pending:
             st = "FIX_PENDING"
         out[h] = ThreadOutcome(
             finding_hash=h,
