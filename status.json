@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-04T00:05:01Z",
-  "generated_at": "2026-10-04T00:05:01Z",
+  "data_as_of": "2026-10-04T00:06:01Z",
+  "generated_at": "2026-10-04T00:06:01Z",
   "history": {
     "daily": [
       {
@@ -180,8 +180,8 @@
           },
           "wait": {
             "median_seconds": 14,
-            "n": 348,
-            "p90_seconds": 1448
+            "n": 349,
+            "p90_seconds": 1436
           }
         }
       },
@@ -189,6 +189,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=7dd5b568",
+        "kind": "run.spawned",
+        "number": 180,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": 3221,
+        "ts": "2026-10-04T00:05:26Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 180,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": null,
+        "ts": "2026-10-04T00:05:26Z"
+      },
+      {
+        "detail": "7dd5b568 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 180,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": null,
+        "ts": "2026-10-04T00:05:26Z"
+      },
       {
         "detail": null,
         "kind": "label.synced",
@@ -476,30 +500,6 @@
         "repo": "dashpay/dashwallet-ios",
         "run_id": 3217,
         "ts": "2026-10-03T22:40:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1159,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 3217,
-        "ts": "2026-10-03T22:40:08Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1159,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 3217,
-        "ts": "2026-10-03T22:40:08Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1159,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 3217,
-        "ts": "2026-10-03T22:40:08Z"
       },
       {
         "detail": null,
@@ -1101,14 +1101,94 @@
       "findings_posted": 2538,
       "reviews": 4101,
       "reviews_imported": 2245,
-      "runs": 3220,
+      "runs": 3221,
       "tokens_in": 22979379017,
       "tokens_out": 333074039,
       "tokens_total": 23312453056
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "bfoss765",
+        "deadline_at": "2026-10-04T06:05:26Z",
+        "deadline_in_seconds": 21565,
+        "degraded": false,
+        "elapsed_seconds": 35,
+        "findings": null,
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-04T00:05:57Z",
+        "id": 3221,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 180,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dash-platform-website/pull/180",
+        "priority": true,
+        "progress": 0.02,
+        "queue": "live",
+        "queued_at": "2026-10-04T00:05:25Z",
+        "remaining_seconds": 1675,
+        "repo": "dashpay/dash-platform-website",
+        "sha": "7dd5b5681658a40c40e84fd48e6c3ea8ccc6ff75",
+        "started_at": "2026-10-04T00:05:26Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 21,
+            "started_at": "2026-10-04T00:05:28Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 8,
+            "started_at": "2026-10-04T00:05:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a large, intricate UI and conversion-tooling change, but the diff does not change consensus, funds movement, cryptography, key handling, peer-facing deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-04T00:05:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-04T00:05:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(dwt): search the Pages tab, and convert selected pages to the dash.org WordPress build",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1124,7 +1204,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1158,6 +1238,7 @@
       "closed": 282,
       "done": 4057,
       "failed": 39,
+      "running": 1,
       "superseded": 1777
     },
     "ingest_error_streak": 0,
@@ -1195,9 +1276,9 @@
       }
     ],
     "last_run_done_at": "2026-10-03T23:53:49Z",
-    "last_run_started_at": "2026-10-03T23:26:00Z",
+    "last_run_started_at": "2026-10-04T00:05:26Z",
     "median_run_minutes": 28.3,
-    "notify_last_at": "2026-10-04T00:03:08Z",
+    "notify_last_at": "2026-10-04T00:05:21Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1208,7 +1289,7 @@
       "reviews": 0,
       "tokens": 0
     },
-    "ts": "2026-10-04T00:05:01Z",
+    "ts": "2026-10-04T00:06:01Z",
     "typical_minutes_by_tier": {
       "critical": 72.2,
       "low": 28.8,
@@ -1217,9 +1298,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 39.016666666666666,
+      "idle_minutes": 0.5833333333333334,
       "ingest_stale": false,
       "stuck": false
     }
