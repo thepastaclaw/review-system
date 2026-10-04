@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-04T21:25:00Z",
-  "generated_at": "2026-10-04T21:25:01Z",
+  "data_as_of": "2026-10-04T21:26:01Z",
+  "generated_at": "2026-10-04T21:26:01Z",
   "history": {
     "daily": [
       {
@@ -194,6 +194,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 684,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 3354,
+        "ts": "2026-10-04T21:25:18Z"
+      },
       {
         "detail": "attempt 1 sha=2bb02963",
         "kind": "run.spawned",
@@ -501,14 +509,6 @@
       {
         "detail": null,
         "kind": "head.review_reply",
-        "number": 682,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-04T20:25:16Z"
-      },
-      {
-        "detail": "fda8c38b trigger=review_reply priority=1",
-        "kind": "head.queued",
         "number": 682,
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
@@ -1118,16 +1118,16 @@
         "attempt": 1,
         "author": "bfoss765",
         "deadline_at": "2026-10-05T03:10:03Z",
-        "deadline_in_seconds": 20703,
+        "deadline_in_seconds": 20642,
         "degraded": false,
-        "elapsed_seconds": 897,
+        "elapsed_seconds": 958,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-10-04T21:24:46Z",
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-10-04T21:25:46Z",
         "id": 3353,
         "lanes": [
           {
@@ -1159,7 +1159,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 219,
+            "since_seconds": 280,
             "state": "running"
           },
           {
@@ -1169,7 +1169,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "security-auditor",
-            "since_seconds": 217,
+            "since_seconds": 278,
             "state": "running"
           }
         ],
@@ -1178,10 +1178,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/180",
         "priority": true,
-        "progress": 0.537,
+        "progress": 0.574,
         "queue": "live",
         "queued_at": "2026-10-04T21:09:53Z",
-        "remaining_seconds": 772,
+        "remaining_seconds": 711,
         "repo": "dashpay/dash-platform-website",
         "sha": "28f488a0c90bb4da87076f6eca0cbc452ad9ebcd",
         "started_at": "2026-10-04T21:10:03Z",
@@ -1273,7 +1273,7 @@
             ],
             "lanes_total": 2,
             "name": "phase2",
-            "seconds": 219,
+            "seconds": 280,
             "started_at": "2026-10-04T21:21:21Z",
             "status": "running"
           }
@@ -1293,43 +1293,107 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-05T03:25:00Z",
-        "deadline_in_seconds": 21600,
+        "deadline_in_seconds": 21539,
         "degraded": false,
-        "elapsed_seconds": 0,
+        "elapsed_seconds": 61,
         "findings": null,
         "heartbeat_age_seconds": 0,
-        "heartbeat_at": "2026-10-04T21:25:00Z",
+        "heartbeat_at": "2026-10-04T21:26:01Z",
         "id": 3354,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 42,
+            "state": "running"
+          }
+        ],
         "number": 684,
         "overdue": false,
-        "phase": null,
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/684",
         "priority": false,
-        "progress": 0.0,
+        "progress": 0.075,
         "queue": "live",
         "queued_at": "2026-10-04T20:54:33Z",
-        "remaining_seconds": 1331,
+        "remaining_seconds": 753,
         "repo": "PastaPastaPasta/yappr",
         "sha": "2bb0296321ad0a115b2b1bae9ab86ad0be870ec8",
         "started_at": "2026-10-04T21:25:00Z",
         "status": "running",
-        "steps": [],
-        "tier": null,
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-04T21:25:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-04T21:25:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff changes shared optimistic-write reconciliation and platform-specific keyboard behavior across several modules with regression tests, but does not modify any qualifying critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-04T21:25:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-04T21:25:16Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-04T21:25:18Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 42,
+            "started_at": "2026-10-04T21:25:19Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
         "title": "fix(mobile): RC6 polish: no 'Unknown User', unfollow sticks, picker with a hardware keyboard, profile image copy",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "worktree",
-          "select",
-          "triage",
-          "context",
-          "phase1",
-          "verify1",
-          "gate",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1365,7 +1429,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-04T21:22:57Z",
+        "at": "2026-10-04T21:25:22Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1411,7 +1475,7 @@
       },
       {
         "pool": "gpt",
-        "running": 2,
+        "running": 3,
         "slots": 12,
         "waiting": 0
       },
@@ -1436,7 +1500,7 @@
       "reviews": 117,
       "tokens": 964448969
     },
-    "ts": "2026-10-04T21:25:00Z",
+    "ts": "2026-10-04T21:26:01Z",
     "typical_minutes_by_tier": {
       "critical": 49.3,
       "low": 26.6,
@@ -1447,7 +1511,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.016666666666666666,
+      "idle_minutes": 1.0166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
