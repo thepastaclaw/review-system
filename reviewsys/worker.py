@@ -46,6 +46,7 @@ from .lane import (
     LaneRunner,
     LaneSpec,
     exec_deny_profile,
+    isolated,
     lane_output,
     new_session_id,
     prompt_sha,
@@ -3426,9 +3427,16 @@ def main(
         if ctx.audit is None:
             raise SystemExit(f"run {run_id}: audit head without an audits row")
     # every lane of this run, parallel reviewers and side lanes alike, lines up for a slot in
-    # its model's machine-wide pool (lanepool.py)
+    # its model's machine-wide pool (lanepool.py); under policy v12 it may run isolated
+    pipeline = cfg.policy.pipeline
     ctx.lane_runner = lanepool.gated(
-        sandboxed(lane_runner or run_claude_lane, exec_deny_profile(cfg.lane_deny_exec)),
+        sandboxed(
+            isolated(
+                lane_runner or run_claude_lane,
+                pipeline is not None and pipeline.lane_env_isolation,
+            ),
+            exec_deny_profile(cfg.lane_deny_exec),
+        ),
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,

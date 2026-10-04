@@ -28,6 +28,17 @@ LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is 
 # Plan mode otherwise enables Claude Code's separate LLM permission classifier.
 # Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
 CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
+# Every lane's environment: the proxied lanes resolve DNS in Go, and send no telemetry
+BASE_LANE_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+# Policy v12 lanes (`pipeline.lane_env_isolation`) add these. `--add-dir` re-enables CLAUDE.md
+# discovery under `--bare`, which put the launcher's own global CLAUDE.md (commit/push rules
+# for an implementation agent) plus git-status and commit-attribution reminders in front of
+# every review prompt (~12k chars in the proxy request log, 2026-09-22). Lanes get exactly the
+# context their prompt carries; the reviewed repo's CLAUDE.md reaches a prompt as evidence.
+# Both names verified in the Claude Code 2.1.286 binary: DISABLE_CLAUDE_MDS (any non-empty
+# value) skips managed, user, project, rules and nested CLAUDE.md loading; a true
+# DISABLE_GIT_INSTRUCTIONS overrides the `includeGitInstructions` setting.
+LANE_ENV = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1"}
 SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 # A correction turn only re-emits an answer the lane already worked out: bounded well below
 # the lane timeout, so two of them cannot triple a lane's wall clock
@@ -66,6 +77,9 @@ class LaneSpec:
     resume: bool = False
     check: Callable[[LaneResult], str | None] | None = None
     corrections: int = 0
+    # LANE_ENV in the lane's environment (see `isolated`); correction turns, being copies of
+    # the spec, keep it
+    isolate_env: bool = False
 
 
 @dataclass(slots=True)
@@ -174,6 +188,26 @@ def sandboxed(runner: LaneRunner, profile: str) -> LaneRunner:
         return runner(dataclasses.replace(spec, sandbox_profile=profile), artifact_dir, worktree)
 
     return run
+
+
+def isolated(runner: LaneRunner, on: bool) -> LaneRunner:
+    """`runner`, with every lane's environment isolated (LANE_ENV) when `on`; unchanged when
+    not. One switch for every lane of a run: reviewers, verifiers, prep, conversation, repair
+    and their correction turns."""
+    if not on:
+        return runner
+
+    def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
+        return runner(dataclasses.replace(spec, isolate_env=True), artifact_dir, worktree)
+
+    return run
+
+
+def lane_env(spec: LaneSpec) -> dict[str, str]:
+    """The environment a lane runs in: the worker's own (CLAUDE_CONFIG_DIR included, so a
+    correction turn resumes its session where the first turn saved it) plus BASE_LANE_ENV,
+    plus LANE_ENV for an isolated lane."""
+    return {**os.environ, **BASE_LANE_ENV, **(LANE_ENV if spec.isolate_env else {})}
 
 
 def session_args(spec: LaneSpec) -> list[str]:
@@ -324,7 +358,6 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
     so a group kill takes the lane down with us."""
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "prompt.md").write_text(spec.prompt, encoding="utf-8")
-    env = {**os.environ, "GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
     t0 = time.monotonic()
     proc = subprocess.Popen(
         argv_for(spec),
@@ -333,7 +366,7 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=env,
+        env=lane_env(spec),
     )
     timed_out = cancelled = False
     deadline = t0 + spec.timeout_seconds
