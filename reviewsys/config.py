@@ -149,6 +149,89 @@ class ComparisonPolicy:
         return int.from_bytes(digest[:8], "big") / 2**64 < self.fraction
 
 
+# ---- policy v12 (`review_model_policy.pipeline`) ----
+#
+# Every field below defaults to today's (v11) behavior, so a pipeline block switches on only
+# what it names. Allowed values are listed in full, the default (v11) first: a typo in an eval
+# flag must fail the load, never run the arm it was not meant to.
+PIPELINE_VERSIONS = ("v12",)
+ANCHORING_MODES = ("anchored", "unanchored")
+VERIFIER_CONTRACTS = ("v11", "v12")
+CONFIRMATION_TRIGGERS = ("rereview", "no_blockers", "off")
+LATE_NONBLOCKING_MODES = ("post", "note")
+
+
+@dataclass(frozen=True, slots=True)
+class FinderPolicy:
+    """`pipeline.finders`. `anchoring`: "anchored" = reviewer lanes get the prior-findings
+    checklist and reconcile it (v11); "unanchored" = finder lanes on the candidate contract,
+    no checklist, only the settled list (v12 design §2.1). Not read yet (piece B1)."""
+
+    anchoring: str = "anchored"
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadsPolicy:
+    """`pipeline.threads`. `lane`: one thread lane beside the finders owns every open issue's
+    status and reply, replacing the reviewers' and verifier's reconciliation and
+    `step_converse` (v12 design §2.4); false = v11. Not read yet (piece B2)."""
+
+    lane: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class VerifierPolicy:
+    """`pipeline.verifier`. `contract`: "v11" = today's verifier output; "v12" = per-candidate
+    verdicts matched to the ledger, with the code rules deciding (v12 design §2.2-2.3). Not
+    read yet (piece B3)."""
+
+    contract: str = "v11"
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmationPolicy:
+    """`pipeline.confirmation`: the second, unanchored pass before an approval (v12 design
+    §2.5). `trigger`: "rereview" = today's fresh-final (re-reviews whose verified set has no
+    blocker), "no_blockers" = every round with no standing blocker on a full-strength run,
+    "off" = never. `roles`: the reviewer roles it reruns; None = every selected role (today).
+    Not read yet (piece B4)."""
+
+    roles: tuple[str, ...] | None = None
+    trigger: str = "rereview"
+
+
+@dataclass(frozen=True, slots=True)
+class PipelinePolicy:
+    """`review_model_policy.pipeline`: policy v12, switched on piece by piece. Absent (every
+    v11 config): None, and nothing below applies. Present, it always means the harness stamps
+    the echo fields (`review_phase`, `head_sha`) instead of asking lanes for them; every other
+    behavior is opted into by its own field, each defaulting to v11.
+
+    `lane_env_isolation`: lanes run without CLAUDE.md discovery or Claude Code's git
+    instructions (`lane.LANE_ENV`); the reviewed repo's CLAUDE.md reaches a prompt as evidence.
+    `structured_output`: lanes given a schema (`schemas.py`) answer through `--json-schema`.
+    `late_nonblocking` (owner decision D2): "post" = later-round suggestions on lines unchanged
+    since the last final review post as today; "note" = a collapsed note that does not hold
+    APPROVE. Not read yet (piece B5).
+
+    JSON shape (every key but `version` optional):
+        {"version": "v12", "lane_env_isolation": true, "structured_output": true,
+         "finders": {"anchoring": "unanchored"}, "threads": {"lane": true},
+         "verifier": {"contract": "v12"},
+         "confirmation": {"roles": ["general", "security-auditor"], "trigger": "no_blockers"},
+         "late_nonblocking": "post"}
+    The block sits inside `review_model_policy`, so the policy fingerprint covers it."""
+
+    version: str
+    lane_env_isolation: bool = False
+    structured_output: bool = False
+    finders: FinderPolicy = field(default_factory=FinderPolicy)
+    threads: ThreadsPolicy = field(default_factory=ThreadsPolicy)
+    verifier: VerifierPolicy = field(default_factory=VerifierPolicy)
+    confirmation: ConfirmationPolicy = field(default_factory=ConfirmationPolicy)
+    late_nonblocking: str = "post"
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPolicy:
     name: str
@@ -181,6 +264,8 @@ class ModelPolicy:
     phase1_specialists: tuple[str, ...] | None = None
     # how many verified Phase-1 findings defer Phase 2; None = any blocker does
     phase1_gate: GatePolicy | None = None
+    # policy v12, piece by piece; None = v11 (see PipelinePolicy)
+    pipeline: PipelinePolicy | None = None
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -625,6 +710,104 @@ def _comparison(
     return ComparisonPolicy(model=model, tiers=names, fraction=fraction)
 
 
+def policy_fingerprint(pol: dict[str, Any]) -> str:
+    """The skills repo's fingerprint of a `review_model_policy` object: sha256 of the object
+    without its own `fingerprint`, as compact sorted-key JSON (the rewrite scripts that cut
+    v6-v11 compute it this way). Everything in the object counts, `pipeline` included."""
+    body = {k: v for k, v in pol.items() if k != "fingerprint"}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _keys(node: dict[str, Any], where: str, allowed: tuple[str, ...]) -> None:
+    unknown = sorted(set(node) - set(allowed))
+    if unknown:
+        raise ValueError(f"{where}: unknown keys {unknown}; allowed {list(allowed)}")
+
+
+def _section(node: dict[str, Any], key: str, allowed: tuple[str, ...]) -> dict[str, Any]:
+    sub = node.get(key)
+    if sub is None:
+        return {}
+    if not isinstance(sub, dict):
+        raise ValueError(f"pipeline.{key} must be an object")
+    _keys(sub, f"pipeline.{key}", allowed)
+    return sub
+
+
+def _flag(node: dict[str, Any], key: str, where: str) -> bool:
+    value = node.get(key, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"{where}.{key} must be true or false")
+    return value
+
+
+def _choice(node: dict[str, Any], key: str, where: str, allowed: tuple[str, ...]) -> str:
+    value = node.get(key, allowed[0])
+    if value not in allowed:
+        raise ValueError(f"{where}.{key} {value!r} not in {allowed}")
+    return str(value)
+
+
+def _pipeline(node: Any, specialists: tuple[Specialist, ...]) -> PipelinePolicy | None:
+    """`review_model_policy.pipeline`, strictly: an unknown key or value fails the load rather
+    than silently running v11 behavior where v12 was meant (or the reverse). A bare "v12" is
+    the same as {"version": "v12"}."""
+    if node is None:
+        return None
+    if isinstance(node, str):
+        node = {"version": node}
+    if not isinstance(node, dict):
+        raise ValueError('pipeline must be an object like {"version": "v12"}')
+    _keys(
+        node,
+        "pipeline",
+        (
+            "version",
+            "lane_env_isolation",
+            "structured_output",
+            "finders",
+            "threads",
+            "verifier",
+            "confirmation",
+            "late_nonblocking",
+        ),
+    )
+    if node.get("version") not in PIPELINE_VERSIONS:
+        raise ValueError(f"pipeline.version {node.get('version')!r} not in {PIPELINE_VERSIONS}")
+    finders = _section(node, "finders", ("anchoring",))
+    threads = _section(node, "threads", ("lane",))
+    verifier = _section(node, "verifier", ("contract",))
+    confirm = _section(node, "confirmation", ("roles", "trigger"))
+    roles = confirm.get("roles")
+    if roles is not None:
+        if not isinstance(roles, list) or not all(isinstance(r, str) for r in roles):
+            raise ValueError("pipeline.confirmation.roles must be a list of reviewer roles")
+        unknown = sorted(set(roles) - {"general", *(s.id for s in specialists)})
+        if unknown:
+            raise ValueError(
+                f"pipeline.confirmation.roles {unknown!r} are neither `general` nor specialists"
+            )
+    return PipelinePolicy(
+        version=str(node["version"]),
+        lane_env_isolation=_flag(node, "lane_env_isolation", "pipeline"),
+        structured_output=_flag(node, "structured_output", "pipeline"),
+        finders=FinderPolicy(
+            anchoring=_choice(finders, "anchoring", "pipeline.finders", ANCHORING_MODES)
+        ),
+        threads=ThreadsPolicy(lane=_flag(threads, "lane", "pipeline.threads")),
+        verifier=VerifierPolicy(
+            contract=_choice(verifier, "contract", "pipeline.verifier", VERIFIER_CONTRACTS)
+        ),
+        confirmation=ConfirmationPolicy(
+            roles=tuple(roles) if roles is not None else None,
+            trigger=_choice(confirm, "trigger", "pipeline.confirmation", CONFIRMATION_TRIGGERS),
+        ),
+        late_nonblocking=_choice(node, "late_nonblocking", "pipeline", LATE_NONBLOCKING_MODES),
+    )
+
+
 def load_skills_config(
     skills_dir: Path,
 ) -> tuple[tuple[RepoConfig, ...], tuple[Specialist, ...], ModelPolicy, dict[str, Any]]:
@@ -680,9 +863,17 @@ def load_skills_config(
         comparison=_comparison(pol.get("comparison"), tiers, p2.model),
         phase1_specialists=_phase1_specialists(p1_node, specialists),
         phase1_gate=_gate(p1_node.get("gate")),
+        pipeline=_pipeline(pol.get("pipeline"), specialists),
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
+    if policy.pipeline is not None and policy.fingerprint != policy_fingerprint(pol):
+        # v12 runs must never carry a v11 fingerprint: it names the policy in every phase
+        # marker and provenance record, and the replay eval tells its two arms apart by it
+        raise ValueError(
+            "review_model_policy.fingerprint does not cover the pipeline block: recompute it "
+            f"(expected {policy_fingerprint(pol)})"
+        )
     return repos, specialists, policy, settings
 
 
