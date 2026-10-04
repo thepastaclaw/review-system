@@ -1059,6 +1059,19 @@ def render_thread_lane_answer(
     return render_conversation_answer(marker=marker, status=status, reply=reply)
 
 
+def shown_status(body: str) -> str:
+    """The outcome a posted thread answer shows: its bold lead (`render_thread_answer`), else
+    its trailing note (`render_conversation_answer`), else STILL_VALID (the one outcome a
+    conversational answer states only in prose)."""
+    for status, lead in _ANSWER_LEAD.items():
+        if re.search(rf"\*\*{re.escape(lead)}\*\* \(re-reviewed at", body):
+            return status
+    for status, note in _CONVERSATION_NOTE.items():
+        if body.rstrip().endswith(note.strip()):
+            return status
+    return "STILL_VALID"
+
+
 def answer_thread_lane(
     gh: Gh,
     repo: str,
@@ -1099,9 +1112,17 @@ def answer_thread_lane(
         marker = THREAD_ANSWER_MARKER.format(
             sha=head_sha, reply=t.get("latest_reply_id"), finding=h
         )
-        if any(marker in b for b in posted) or (
-            not t.get("awaiting_answer") and _has_answer_for_status(t, o.status)
-        ):
+        earlier = next((b for b in posted if marker in b), None)
+        if earlier is not None:
+            # answered on this head before (a retried run): what counts is what the thread
+            # shows, which may not be what this attempt decided
+            shown = shown_status(earlier)
+            if shown != o.status:
+                item.update(status=shown, decided=o.status)
+            item["action"] = "already_answered"
+            done.append(item)
+            continue
+        if not t.get("awaiting_answer") and _has_answer_for_status(t, o.status):
             item["action"] = "already_answered"
             done.append(item)
             continue

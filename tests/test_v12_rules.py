@@ -753,3 +753,51 @@ def test_a_one_click_suggestion_only_where_every_report_points():
     )
     (f,) = out.new
     assert f.suggestion is None and "**Suggested change**" in f.body and "fix()" in f.body
+
+
+def test_a_retried_answer_records_what_the_thread_shows(gh):
+    """A retry of a round already answered a thread (same head, same reply) with another
+    outcome than this attempt decided: nothing new is posted, and the outcome recorded is
+    the one on the thread, so the ledger never contradicts it."""
+    from reviewsys import publish
+
+    marker = publish.THREAD_ANSWER_MARKER.format(sha="h" * 40, reply=901, finding="abc")
+    gh.inline = [
+        {
+            "id": 1,
+            "body": publish.render_thread_answer(
+                marker=marker, status="WITHDRAWN", head_sha="h" * 40, reply="no"
+            ),
+        },
+    ]
+    thread = {
+        "comment_id": 800,
+        "thread_id": "T",
+        "latest_reply_id": 901,
+        "awaiting_answer": True,
+        "body": "root",
+    }
+    out = {"abc": converse.ThreadOutcome("abc", "STILL_VALID", "it still holds")}
+    (item,) = publish.answer_thread_lane(
+        gh, "r/x", 1, "h" * 40, outcomes=out, threads={"abc": thread}, same_sha=False
+    )
+    assert (item["action"], item["status"], item["decided"]) == (
+        "already_answered",
+        "WITHDRAWN",
+        "STILL_VALID",
+    )
+    assert gh.replies == []
+    for status in (
+        "WITHDRAWN",
+        "FIX_PENDING",
+        "INTENTIONALLY_DEFERRED",
+        "DEFERRAL_PENDING",
+        "STILL_VALID",
+    ):
+        body = publish.render_conversation_answer(marker=marker, status=status, reply="prose")
+        assert publish.shown_status(body) == status
+    for status in ("FIXED", "OUTDATED", "STILL_VALID", "WITHDRAWN"):
+        body = publish.render_thread_answer(
+            marker=marker, status=status, head_sha="h" * 40, reply="x"
+        )
+        assert publish.shown_status(body) == status
