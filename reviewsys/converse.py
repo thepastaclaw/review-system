@@ -28,7 +28,7 @@ There is no FIXED here: a conversation only runs on the commit that was reviewed
 under the finding cannot have changed. Calling a promised change "fixed" lifted blockers that
 were still in the code (dashpay/dash#7778); a model that still answers FIXED gets FIX_PENDING.
 
-Policy v12 grows this lane into the thread lane (`parse_threads`, `guard_deferrals`; the prompt
+Policy v12 grows this lane into the thread lane (`parse_threads`, `accept_deferrals`; the prompt
 is the skills repo's `prompts/v12/thread.md`): one lane that owns every open issue's status, on
 a reply to a reviewed commit as before and beside the finders on every new push, for the issues
 someone replied to or whose code changed. It answers STILL_VALID | FIXED | OUTDATED | WITHDRAWN |
@@ -136,31 +136,34 @@ def accept_deferrals(
     return ConversationOutput(outcomes=outcomes)
 
 
+def exchange(transcript: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A finding thread's replies as a lane reads them: our own answers as `you (PastaClaw)`,
+    markers stripped."""
+    return [
+        {
+            "author": "you (PastaClaw)" if c.get("is_bot") else str(c.get("author") or ""),
+            "association": None if c.get("is_bot") else c.get("association"),
+            "created_at": c.get("created_at"),
+            "body": strip_marker(str(c.get("body") or "")),
+        }
+        for c in transcript
+    ]
+
+
 def _thread_for_prompt(h: str, t: dict[str, Any]) -> dict[str, Any]:
-    exchange = []
-    for c in t.get("transcript") or []:
-        who = "you (PastaClaw)" if c.get("is_bot") else str(c.get("author") or "")
-        exchange.append(
-            {
-                "author": who,
-                "association": None if c.get("is_bot") else c.get("association"),
-                "created_at": c.get("created_at"),
-                "body": _strip_marker(str(c.get("body") or "")),
-            }
-        )
     return {
         "finding_hash": h,
         "severity": t.get("severity"),
         "title": t.get("title"),
         "path": t.get("path"),
         "line": t.get("line"),
-        "finding_body": _strip_marker(str(t.get("body") or "")),
-        "exchange": exchange,
+        "finding_body": strip_marker(str(t.get("body") or "")),
+        "exchange": exchange(t.get("transcript") or []),
         "awaiting_your_answer": bool(t.get("awaiting_answer")),
     }
 
 
-def _strip_marker(body: str) -> str:
+def strip_marker(body: str) -> str:
     lines = [ln for ln in body.splitlines() if not ln.strip().startswith("<!--")]
     return "\n".join(lines).strip()[:6000]
 
@@ -368,7 +371,8 @@ def parse_threads(
     raw = _full_hashes(raw, hashes)
     problems = check_thread_coverage(raw, hashes)
     out: dict[str, ThreadOutcome] = {}
-    for row in raw.get("threads") or [] if not problems else []:
+    rows = [] if problems else (raw.get("threads") or [])
+    for row in rows:
         h = str(row.get("finding_hash") or "")
         st = _status_spelling(str(row.get("status") or "")).upper()
         reply = str(row.get("reply") or "").strip()
@@ -395,14 +399,3 @@ def parse_threads(
     if problems:
         raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     return ConversationOutput(outcomes=out)
-
-
-def guard_deferrals(
-    out: ConversationOutput, transcripts: dict[str, list[dict[str, Any]]]
-) -> ConversationOutput:
-    """`accept_deferrals` for the thread lane, on both paths: an INTENTIONALLY_DEFERRED stands
-    only when a maintainer replied since our last answer on the issue's thread; an issue with
-    no thread to read never qualifies. Otherwise DEFERRAL_PENDING (the issue still counts)."""
-    return accept_deferrals(
-        out, {h: {"transcript": transcripts.get(h) or []} for h in out.outcomes}
-    )

@@ -7,7 +7,7 @@ Network happens only in `publish()`.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from textwrap import indent
 from typing import Any
@@ -129,16 +129,21 @@ def attribute_sources(
         parts: list[str] = []
         for phase in sorted(phases & phases_run):
             in_phase = [r for r in lanes if r["phase"] == phase]
-            named = [r for r in in_phase if raised_by(r, f)] or in_phase
-            groups: dict[tuple[str, str], list[str]] = {}
-            for r in named:
-                roles = groups.setdefault((str(r["model"]), str(r["agent"])), [])
-                if str(r["role"]) not in roles:
-                    roles.append(str(r["role"]))
-            parts += [f"`{m}` ({a}: {', '.join(rs)})" for (m, a), rs in groups.items()]
+            parts += name_lanes([r for r in in_phase if raised_by(r, f)] or in_phase)
         parts += sorted(x for x in labels if x not in LEGACY_SOURCE_PHASE)
         if parts:
             f.source = "; ".join(parts)
+
+
+def name_lanes(lanes: Iterable[dict[str, Any]]) -> list[str]:
+    """Reviewer lanes as a finding's source names them: one "`model` (agent: roles)" per
+    model and agent, in the order they first appear."""
+    groups: dict[tuple[str, str], list[str]] = {}
+    for r in lanes:
+        roles = groups.setdefault((str(r["model"]), str(r["agent"])), [])
+        if str(r["role"]) not in roles:
+            roles.append(str(r["role"]))
+    return [f"`{m}` ({a}: {', '.join(rs)})" for (m, a), rs in groups.items()]
 
 
 def _source_labels(raw: str) -> list[str]:

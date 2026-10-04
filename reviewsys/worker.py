@@ -228,6 +228,17 @@ def _evaluate[T](turn: LaneResult, check: OutputCheck[T]) -> _Verdict:
 
 
 @dataclass(slots=True)
+class _Confirmation:
+    """The policy v12 confirmation pass a round owed (`_confirm12`): the roles it runs, whether
+    it ran and what it added, or why not."""
+
+    roles: list[str]
+    ran: bool = False
+    new: int = 0
+    skipped: str | None = None
+
+
+@dataclass(slots=True)
 class _ThreadLane:
     """The policy v12 thread lane of a new-sha round, running beside the finders on its own
     thread (`_start_thread_lane`); its outcomes are read where they are first needed
@@ -341,9 +352,8 @@ class RunContext:
     # a maintainer-driven concession met a blind re-find of the same issue this round
     thread_conflict: bool = False
     verify_incomplete: bool = False  # a verifier shard without blockers was dropped
-    # the confirmation pass on this round: {required, ran, roles, new, skipped}; None when the
-    # policy does not ask for one here
-    confirmation: dict[str, Any] | None = None
+    # the confirmation pass on this round; None when the policy does not ask for one here
+    confirmation: _Confirmation | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -1060,7 +1070,7 @@ def step_context(ctx: RunContext) -> None:
         )
     )
     pol = ctx.cfg.policy
-    if (pol.unanchored or pol.verifier_v12) and not ctx.is_audit:
+    if pol.unanchored and not ctx.is_audit:  # (the v12 verifier needs unanchored finders)
         _context12(ctx, threads)
 
 
@@ -1102,7 +1112,7 @@ def _issue_url(ctx: RunContext, i: ledger.Issue) -> str:
 
 def _last_human(t: dict[str, Any]) -> str:
     replies = [c for c in t.get("transcript") or [] if not c.get("is_bot")]
-    return converse._strip_marker(str(replies[-1].get("body") or ""))[:600] if replies else ""
+    return converse.strip_marker(str(replies[-1].get("body") or ""))[:600] if replies else ""
 
 
 def _context12(ctx: RunContext, threads: list[dict[str, Any]]) -> None:
@@ -1233,15 +1243,6 @@ def _thread_item(ctx: RunContext, h: str, why: list[str], same_sha: bool) -> dic
     around its anchor and the diff of its file since it was last judged."""
     i = ctx.issues.get(h)
     t = ctx.open_threads.get(h) or ctx.thread_index.get(h) or {}
-    exchange = [
-        {
-            "author": "you (PastaClaw)" if c.get("is_bot") else str(c.get("author") or ""),
-            "association": None if c.get("is_bot") else c.get("association"),
-            "created_at": c.get("created_at"),
-            "body": converse._strip_marker(str(c.get("body") or "")),
-        }
-        for c in t.get("transcript") or []
-    ]
     file = i.file if i else str(t.get("path") or "")
     ls = i.line_start if i else t.get("line")
     le = i.line_end if i else t.get("line")
@@ -1254,13 +1255,11 @@ def _thread_item(ctx: RunContext, h: str, why: list[str], same_sha: bool) -> dic
         "file": file,
         "lines": [ls, le],
         "anchored_at": ((i.anchor_sha or "") if i else "")[:12],
-        "finding_body": converse._strip_marker(
-            i.body if i and i.body else str(t.get("body") or "")
-        ),
+        "finding_body": converse.strip_marker(i.body if i and i.body else str(t.get("body") or "")),
         "thread": "open"
         if h in ctx.open_threads
         else ("resolved by a human" if t else "none (no inline comment to reply on)"),
-        "exchange": exchange,
+        "exchange": converse.exchange(t.get("transcript") or []),
         "awaiting_your_answer": bool(t.get("awaiting_answer")) and h in ctx.open_threads,
         "code_at_head": _code_at(ctx.worktree, file, ls, le),
     }
@@ -1888,14 +1887,18 @@ def _reviewer_lane(
             lm = nxt
 
 
-def _blinded_key(ctx: RunContext, key: str) -> str:
-    """A Phase-2 lane's output key as `_blind` shows it to the verifier on a comparison run
-    (`<role>/a` or `<role>/b`), for its candidate ids; unchanged otherwise."""
-    if not ctx.compare_model:
-        return key
-    second_is_a = random.Random(ctx.run_id).random() < 0.5
+def _blind_label(key: str, *, seed: int) -> str:
+    """A Phase-2 lane's output key under its neutral comparison label: `<role>/a` or
+    `<role>/b`, which one is the comparison model decided per run (`seed`)."""
+    second_is_a = random.Random(seed).random() < 0.5
     base = key.removesuffix(COMPARE_SUFFIX)
     return f"{base}/{'a' if key.endswith(COMPARE_SUFFIX) == second_is_a else 'b'}"
+
+
+def _blinded_key(ctx: RunContext, key: str) -> str:
+    """A Phase-2 lane's output key as `_blind` shows it to the verifier on a comparison run,
+    for its candidate ids; unchanged otherwise."""
+    return _blind_label(key, seed=ctx.run_id) if ctx.compare_model else key
 
 
 def _lane_title(ctx: RunContext, role: str) -> str:
@@ -1913,6 +1916,59 @@ def _phase_roles(ctx: RunContext, phase: str) -> list[str]:
     if phase == "phase1" and allowed is not None and ctx.phase2_follows:
         picked = [s for s in picked if s in allowed]
     return ["general", *picked]
+
+
+def _lane_prompts(
+    ctx: RunContext,
+    roles: list[str],
+    *,
+    meta: dict[str, Any],
+    expected_phase: str,
+    guidance: str,
+    prior: list[dict[str, Any]],
+    prior_sha: str | None,
+    fresh: bool,
+) -> dict[str, str]:
+    """Each role's prompt: a policy v12 finder (`finder_prompt`), else the v11 reviewer."""
+    pol = ctx.cfg.policy
+    if pol.unanchored:
+        return {
+            role: finder_prompt(
+                ctx.cfg,
+                repo=ctx.repo,
+                number=ctx.number,
+                head_sha=ctx.sha,
+                role=role,
+                lane_title=_lane_title(ctx, role),
+                meta=meta,
+                coverage_from=ctx.coverage_from,
+                evidence=ctx.finder_evidence or ctx.evidence,
+                guidance=guidance,
+                last_reviewed_sha=ctx.last_reviewed_sha,
+                settled=ctx.settled,
+                structured=pol.structured_output,
+            )
+            for role in roles
+        }
+    return {
+        role: reviewer_prompt(
+            ctx.cfg,
+            repo=ctx.repo,
+            number=ctx.number,
+            head_sha=ctx.sha,
+            phase=expected_phase,
+            role=role,
+            meta=meta,
+            coverage_from=ctx.coverage_from,
+            evidence=ctx.evidence,
+            prior=prior,
+            prior_sha=prior_sha,
+            fresh=fresh,
+            stamp_echo=pol.stamps_echo_fields,
+            guidance=guidance,
+        )
+        for role in roles
+    }
 
 
 def _reviewer_lanes(
@@ -1956,48 +2012,16 @@ def _reviewer_lanes(
     guidance = repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else ""
     # policy v12: finder lanes on the candidate contract (`rules.parse_finder_output`)
     unanchored = ctx.cfg.policy.unanchored
-    structured = ctx.cfg.policy.structured_output
-    prompts = (
-        {
-            role: finder_prompt(
-                ctx.cfg,
-                repo=ctx.repo,
-                number=ctx.number,
-                head_sha=ctx.sha,
-                role=role,
-                lane_title=_lane_title(ctx, role),
-                meta=meta,
-                coverage_from=ctx.coverage_from,
-                evidence=ctx.finder_evidence or ctx.evidence,
-                guidance=guidance,
-                last_reviewed_sha=ctx.last_reviewed_sha,
-                settled=ctx.settled,
-                structured=structured,
-            )
-            for role in roles
-        }
-        if unanchored
-        else {}
+    prompts = _lane_prompts(
+        ctx,
+        roles,
+        meta=meta,
+        expected_phase=expected_phase,
+        guidance=guidance,
+        prior=review_prior,
+        prior_sha=review_prior_sha,
+        fresh=fresh,
     )
-    prompts = prompts or {
-        role: reviewer_prompt(
-            ctx.cfg,
-            repo=ctx.repo,
-            number=ctx.number,
-            head_sha=ctx.sha,
-            phase=expected_phase,
-            role=role,
-            meta=meta,
-            coverage_from=ctx.coverage_from,
-            evidence=ctx.evidence,
-            prior=review_prior,
-            prior_sha=review_prior_sha,
-            fresh=fresh,
-            stamp_echo=stamp,
-            guidance=guidance,
-        )
-        for role in roles
-    }
     # (output key, role, lane model, comparison?)
     lanes: list[tuple[str, str, LaneModel, bool]] = [(r, r, lm, False) for r in roles]
     if phase == "phase2" and ctx.compare_model and not fresh:
@@ -2301,12 +2325,10 @@ def _blind(outputs: dict[str, Any], *, seed: int) -> dict[str, Any]:
     twins = {k.removesuffix(COMPARE_SUFFIX) for k in outputs if k.endswith(COMPARE_SUFFIX)}
     if not twins:
         return outputs
-    second_is_a = random.Random(seed).random() < 0.5
     out: dict[str, Any] = {}
     for key, value in outputs.items():
-        base = key.removesuffix(COMPARE_SUFFIX)
-        if base in twins:
-            key = f"{base}/{'a' if key.endswith(COMPARE_SUFFIX) == second_is_a else 'b'}"
+        if key.removesuffix(COMPARE_SUFFIX) in twins:
+            key = _blind_label(key, seed=seed)
         out[key] = value
     return dict(sorted(out.items()))
 
@@ -2323,10 +2345,7 @@ def _gate_kept(v1: VerifierOutput) -> list[Finding]:
     claim as the gate composed it (before the code's PLAUSIBLE demotion), with its gate verdict
     shown. The final verifier re-judges them."""
     out: list[Finding] = []
-    outcome = v1.rules
-    if outcome is None:
-        return out
-    for n, (g, f) in enumerate(outcome.kept, 1):
+    for n, (g, f) in enumerate(_outcome(v1).kept, 1):
         out.append(
             Finding(
                 file=f.file,
@@ -2385,25 +2404,21 @@ def _sources12(ctx: RunContext, members: list[Finding]) -> str:
     """Who raised a verified group: the models and agents of its members' lanes, named as
     `publish.attribute_sources` names them. A gate-kept candidate already carries its own."""
     parts: list[str] = []
-    groups: dict[tuple[str, str], list[str]] = {}
+    lanes: list[dict[str, Any]] = []
     for m in members:
         phase, _, key = m.source.partition(":")
         fresh = key.startswith("fresh:")
         key = key.removeprefix("fresh:")
-        lanes = [
+        own = [
             r
             for r in ctx.reviewers
             if r["phase"] == phase and r["key"] == key and bool(r.get("fresh")) == fresh
         ]
-        if not lanes:
-            if m.source and m.source not in parts:
-                parts.append(m.source)
-            continue
-        for r in lanes:
-            roles = groups.setdefault((str(r["model"]), str(r["agent"])), [])
-            if str(r["role"]) not in roles:
-                roles.append(str(r["role"]))
-    named = [f"`{model}` ({agent}: {', '.join(rs)})" for (model, agent), rs in groups.items()]
+        if own:
+            lanes += own
+        elif m.source and m.source not in parts:
+            parts.append(m.source)
+    named = publish.name_lanes(lanes)
     return "; ".join(named + [p for p in parts if p not in named]) or "unknown"
 
 
@@ -2413,7 +2428,7 @@ def _last_messages(ctx: RunContext) -> dict[str, str]:
         last = (t.get("transcript") or [])[-1:] or []
         if last:
             who = "you" if last[0].get("is_bot") else str(last[0].get("author") or "")
-            out[h] = f"{who}: {converse._strip_marker(str(last[0].get('body') or ''))}"
+            out[h] = f"{who}: {converse.strip_marker(str(last[0].get('body') or ''))}"
     return out
 
 
@@ -2480,12 +2495,11 @@ def _verify12(
 ) -> VerifierOutput:
     """One policy v12 verify+match per phase (v12 design §2.2): every candidate, the CodeRabbit
     comments and the ledger summary to one lane, split into at most three shards by file above
-    twelve candidates (running side by side). A shard that fails for good is retried once
-    inside `_run_checked_lane`; then its candidates are dropped when none of them is blocking
-    (the run can no longer approve), and the run fails (INFRA) when a blocker would go
-    unchecked. No candidates: no lane. The code rules (`rules.apply_rules`) turn the answer
-    into this round's issues; the ledger's standing issues ride along as `carried`."""
+    twelve candidates (`_verify_shards`). No candidates: no lane. The code rules
+    (`rules.apply_rules`) turn the answer into this round's issues; the ledger's standing
+    issues ride along as `carried`."""
     raised = list(raised_now or [])
+    raised_hashes = {f.hash for f in raised}
     outs = _thread_outcomes(ctx)
     summary = rules.ledger_summary(
         ctx.issues,
@@ -2493,80 +2507,23 @@ def _verify12(
         last_message=_last_messages(ctx),
         raised_now=raised,
     )
-    raised_hashes = {f.hash for f in raised}
-    batches = rules.shards(candidates) if candidates else []
-    answers: list[rules.VerifyAnswer] = []
-    if batches:
-        k = len(batches)
-        roles = ["verifier"] if k == 1 else [f"verifier-{n}of{k}" for n in range(1, k + 1)]
-        notes = (
-            [note]
-            if k == 1
-            else [
-                f"{note}\n\nThis is batch {n} of {k}: the other batches hold the candidates of other "
-                "files."
-                for n in range(1, k + 1)
-            ]
-        )
-
-        def one(n: int) -> rules.VerifyAnswer | None:
-            batch = batches[n]
-            try:
-                return _verify_shard(
-                    ctx,
-                    phase=phase,
-                    role=roles[n],
-                    lm=lm,
-                    batch=batch,
-                    summary=summary,
-                    raised_now=raised_hashes,
-                    note=notes[n],
-                )
-            except ReviewError as exc:
-                ctx.check_cancel()
-                blocking = [f.candidate_id for f in batch if f.severity == "blocking"]
-                if blocking:
-                    raise UncheckedBlockers(
-                        FailKind.INFRA,
-                        f"{phase}/{roles[n]} failed with blocking candidates unchecked "
-                        f"({', '.join(map(str, blocking))}): {exc.message}",
-                    ) from exc
-                ctx.verify_incomplete = True
-                _lane_event(
-                    ctx,
-                    "verify.shard_dropped",
-                    f"{phase}/{roles[n]}: {len(batch)} non-blocking candidate(s) dropped: {exc.message}",
-                )
-                return None
-            finally:
-                ctx.close_lane_conn()
-
-        if k == 1:
-            res = [one(0)]
-        else:
-            with ThreadPoolExecutor(max_workers=k, thread_name_prefix=f"{phase}-shard") as pool:
-                res = list(pool.map(one, range(k)))
-        answers = [a for a in res if a is not None]
-    groups = [g for a in answers for g in a.groups]
-    text = "\n\n".join(a.summary for a in answers if a.summary) or (
-        "The reviewers raised nothing to verify on this head." if not candidates else ""
-    )
-    answer = rules.VerifyAnswer(
-        summary=text,
-        groups=groups,
-        raw={"summary": text, "groups": [a.raw.get("groups") for a in answers]},
-        normalized=[n for a in answers for n in a.normalized],
-    )
-    if answer.normalized:
-        _lane_event(
+    answer = _merge_answers(
+        ctx,
+        phase,
+        _verify_shards(
             ctx,
-            "lane.output_normalized",
-            f"{phase}/verifier: {'; '.join(answer.normalized)}"[:1000],
-        )
-    by_id = {str(f.candidate_id): f for f in candidates}
+            phase=phase,
+            lm=lm,
+            candidates=candidates,
+            summary=summary,
+            raised=raised_hashes,
+            note=note,
+        ),
+        empty=not candidates,
+    )
     outcome = rules.apply_rules(
         answer,
-        by_id,
+        {str(f.candidate_id): f for f in candidates},
         ctx.issues,
         changed_since_closed=lambda i: _closed_changed(ctx, i),
         source_of=lambda ms: _sources12(ctx, ms),
@@ -2574,17 +2531,15 @@ def _verify12(
         extra_open=raised_hashes,
     )
     post, noted = _late_split(ctx, outcome.new)
-    projected = rules.project(
-        ctx.issues, _pending_statuses(outs, set(outcome.corroborated)), outcome.upgrades
+    carried = _carried12(
+        ctx,
+        rules.project(
+            ctx.issues, _pending_statuses(outs, set(outcome.corroborated)), outcome.upgrades
+        ),
     )
-    reactions: dict[int, dict[str, Any]] = {}
-    for r in outcome.reactions:  # one per comment; agreeing wins over disagreeing
-        if r["comment_id"] not in reactions or r["action"] == "agree":
-            reactions[r["comment_id"]] = r
-    carried = _carried12(ctx, projected)
     standing_sev = [f.severity for f in (*post, *carried)]
     out = VerifierOutput(
-        summary=text,
+        summary=answer.summary,
         # provisional (an audit's report reads it); a review's verdict is decided from the
         # ledger when it publishes (`_verdict12`)
         review_action=rules.verdict(
@@ -2596,7 +2551,7 @@ def _verify12(
         findings=post,
         dropped=outcome.dropped,
         out_of_scope=[],
-        coderabbit_reactions=list(reactions.values()),
+        coderabbit_reactions=_dedupe_reactions(outcome.reactions),
         prerequisite_adjudications=[],
         adjudication_complete=True,
         review_phase=expected_phase,
@@ -2607,13 +2562,125 @@ def _verify12(
         rules=outcome,
     )
     _record_findings(ctx, phase, stage, out.findings)
+    _write_verify_artifact(ctx, phase, stage, candidates, answer, out)
+    return out
+
+
+def _verify_shards(
+    ctx: RunContext,
+    *,
+    phase: str,
+    lm: LaneModel,
+    candidates: list[Finding],
+    summary: dict[str, Any],
+    raised: set[str],
+    note: str,
+) -> list[rules.VerifyAnswer]:
+    """The verify+match lanes over `candidates` (`rules.shards`), side by side. A shard that
+    fails for good (after the retry inside `_run_checked_lane`) has its candidates dropped
+    when none of them is blocking (the run can no longer approve), and fails the run (INFRA,
+    `UncheckedBlockers`) when a blocker would go unchecked."""
+    batches = rules.shards(candidates) if candidates else []
+    k = len(batches)
+    roles = ["verifier"] if k == 1 else [f"verifier-{n}of{k}" for n in range(1, k + 1)]
+    notes = (
+        [note]
+        if k == 1
+        else [
+            f"{note}\n\nThis is batch {n} of {k}: the other batches hold the candidates of other "
+            "files."
+            for n in range(1, k + 1)
+        ]
+    )
+
+    def one(n: int) -> rules.VerifyAnswer | None:
+        batch = batches[n]
+        try:
+            return _verify_shard(
+                ctx,
+                phase=phase,
+                role=roles[n],
+                lm=lm,
+                batch=batch,
+                summary=summary,
+                raised_now=raised,
+                note=notes[n],
+            )
+        except ReviewError as exc:
+            ctx.check_cancel()
+            blocking = [f.candidate_id for f in batch if f.severity == "blocking"]
+            if blocking:
+                raise UncheckedBlockers(
+                    FailKind.INFRA,
+                    f"{phase}/{roles[n]} failed with blocking candidates unchecked "
+                    f"({', '.join(map(str, blocking))}): {exc.message}",
+                ) from exc
+            ctx.verify_incomplete = True
+            _lane_event(
+                ctx,
+                "verify.shard_dropped",
+                f"{phase}/{roles[n]}: {len(batch)} non-blocking candidate(s) dropped: {exc.message}",
+            )
+            return None
+        finally:
+            ctx.close_lane_conn()
+
+    if k <= 1:
+        res = [one(0)] if k else []
+    else:
+        with ThreadPoolExecutor(max_workers=k, thread_name_prefix=f"{phase}-shard") as pool:
+            res = list(pool.map(one, range(k)))
+    return [a for a in res if a is not None]
+
+
+def _merge_answers(
+    ctx: RunContext, phase: str, answers: list[rules.VerifyAnswer], *, empty: bool
+) -> rules.VerifyAnswer:
+    """The shards' answers as one (`empty`: there was nothing to verify)."""
+    text = "\n\n".join(a.summary for a in answers if a.summary) or (
+        "The reviewers raised nothing to verify on this head." if empty else ""
+    )
+    answer = rules.VerifyAnswer(
+        summary=text,
+        groups=[g for a in answers for g in a.groups],
+        raw={"summary": text, "groups": [a.raw.get("groups") for a in answers]},
+        normalized=[n for a in answers for n in a.normalized],
+    )
+    if answer.normalized:
+        _lane_event(
+            ctx,
+            "lane.output_normalized",
+            f"{phase}/verifier: {'; '.join(answer.normalized)}"[:1000],
+        )
+    return answer
+
+
+def _dedupe_reactions(reactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One reaction per CodeRabbit comment; agreeing wins over disagreeing."""
+    out: dict[int, dict[str, Any]] = {}
+    for r in reactions:
+        if r["comment_id"] not in out or r["action"] == "agree":
+            out[r["comment_id"]] = r
+    return list(out.values())
+
+
+def _write_verify_artifact(
+    ctx: RunContext,
+    phase: str,
+    stage: str,
+    candidates: list[Finding],
+    answer: rules.VerifyAnswer,
+    out: VerifierOutput,
+) -> None:
+    outcome = out.rules
+    assert outcome is not None
     (ctx.run_dir / f"{phase}{'-fresh' if stage != 'verified' else ''}.json").write_text(
         json.dumps(
             {
                 "candidates": [rules.brief(f) for f in candidates],
-                "groups": [dataclasses.asdict(g) for g in groups],
-                "new": [f.to_dict() for f in post],
-                "noted": [f.to_dict() for f in noted],
+                "groups": [dataclasses.asdict(g) for g in answer.groups],
+                "new": [f.to_dict() for f in out.findings],
+                "noted": [f.to_dict() for f in out.noted],
                 "corroborated": outcome.corroborated,
                 "upgrades": sorted(outcome.upgrades),
                 "dropped": outcome.dropped,
@@ -2622,7 +2689,6 @@ def _verify12(
             indent=1,
         )
     )
-    return out
 
 
 def _stand12(
@@ -2863,15 +2929,7 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
         verified=verified,
     )
     with tx(ctx.conn):
-        for a in answered:
-            event(
-                ctx.conn,
-                "thread.answered",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=json.dumps(a),
-            )
+        _record_answered_events(ctx, answered)
     _ledger_write(
         ctx,
         "answers",
@@ -2885,6 +2943,20 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
             source="verifier",
         ),
     )
+
+
+def _record_answered_events(ctx: RunContext, answered: list[dict[str, Any]]) -> None:
+    """One `thread.answered` event per item an answering pass returned. Caller holds the
+    write transaction."""
+    for a in answered:
+        event(
+            ctx.conn,
+            "thread.answered",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=json.dumps(a),
+        )
 
 
 def _record_verdict(ctx: RunContext, phase: str, verified: VerifierOutput, new_event: str) -> None:
@@ -3135,7 +3207,7 @@ def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
 def _confirmation_provenance(ctx: RunContext) -> dict[str, Any] | None:
     """The policy v12 confirmation pass, disclosed when it ran on this head."""
     c = ctx.confirmation
-    return {"roles": c["roles"], "new": c["new"]} if c and c.get("ran") else None
+    return {"roles": c.roles, "new": c.new} if c is not None and c.ran else None
 
 
 def _degraded_provenance(ctx: RunContext) -> dict[str, Any] | None:
@@ -3923,15 +3995,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     lifted = {h for h in posted_ok if out.outcomes[h].status in converse.LIFTING_STATUSES}
     silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
     with tx(ctx.conn):
-        for a in answered:
-            event(
-                ctx.conn,
-                "thread.answered",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=json.dumps(a),
-            )
+        _record_answered_events(ctx, answered)
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
         _record_conceded(ctx, phase, lifted)
@@ -4336,33 +4400,19 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
     their candidates are verified, against everything already verified this round. Skipped
     while blockers stand, in degraded mode (which never approves) or when verification was
     incomplete. Recorded on the run (`ctx.confirmation`); an approval needs it when the policy
-    asks for it. Its lanes failing for good costs the approval, never the review."""
+    asks for it. Its lanes failing for good costs the approval, never the review; a blocker
+    its verification could not check fails the run, as in the main pass."""
     if not _confirmation_due(ctx):
         return verified
     pol = ctx.cfg.policy
     assert pol.pipeline is not None
     wanted = pol.pipeline.confirmation.roles
-    roles = [r for r in _phase_roles(ctx, "phase2") if wanted is None or r in wanted]
-    conf: dict[str, Any] = {
-        "required": True,
-        "ran": False,
-        "roles": roles,
-        "new": 0,
-        "skipped": None,
-    }
-    ctx.confirmation = conf
-    if verified.blocker_count:
-        conf["skipped"] = "blockers stand"
-    elif ctx.is_degraded:
-        conf["skipped"] = "degraded mode"
-    elif not pol.phase2_enabled or effort.phase2 is None:
-        conf["skipped"] = "no Phase 2"
-    elif ctx.verify_incomplete:
-        conf["skipped"] = "verification incomplete"
-    elif not roles:
-        conf["skipped"] = "no confirmation role selected"
-    if conf["skipped"]:
-        _lane_event(ctx, "confirmation.skipped", str(conf["skipped"]))
+    conf = ctx.confirmation = _Confirmation(
+        roles=[r for r in _phase_roles(ctx, "phase2") if wanted is None or r in wanted]
+    )
+    conf.skipped = _confirmation_skip(ctx, verified, effort, conf.roles)
+    if conf.skipped:
+        _lane_event(ctx, "confirmation.skipped", conf.skipped)
         return verified
     step = StepName.FRESH_PHASE2
     try:
@@ -4373,7 +4423,7 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
             lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
             expected_phase="final",
             fresh=True,
-            roles=roles,
+            roles=conf.roles,
         )
         step = StepName.FRESH_VERIFY2
         _step_start(ctx, step)
@@ -4394,15 +4444,38 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
         )
         _step_end(ctx, step, "ok", {"blockers": delta.blocker_count, "new": len(delta.findings)})
     except UncheckedBlockers:
-        raise  # a blocker nobody checked fails the run, here as in the main pass
+        raise
     except ReviewError as exc:
         ctx.check_cancel()
         _step_end(ctx, step, "failed", {"error": exc.message[:1000]})
-        conf["skipped"] = f"failed: {exc.message[:200]}"
+        conf.skipped = f"failed: {exc.message[:200]}"
         _lane_event(ctx, "confirmation.failed", exc.message)
         return verified
-    conf.update(ran=True, new=len(delta.findings))
-    r, d = verified.rules, delta.rules
+    conf.ran, conf.new = True, len(delta.findings)
+    _merge_confirmation(verified, delta)
+    return verified
+
+
+def _confirmation_skip(
+    ctx: RunContext, verified: VerifierOutput, effort: TierEffort, roles: list[str]
+) -> str | None:
+    """Why the confirmation pass cannot run on this round, or None when it can."""
+    pol = ctx.cfg.policy
+    if verified.blocker_count:
+        return "blockers stand"
+    if ctx.is_degraded:
+        return "degraded mode"
+    if not pol.phase2_enabled or effort.phase2 is None:
+        return "no Phase 2"
+    if ctx.verify_incomplete:
+        return "verification incomplete"
+    if not roles:
+        return "no confirmation role selected"
+    return None
+
+
+def _merge_confirmation(verified: VerifierOutput, delta: VerifierOutput) -> None:
+    """The confirmation pass's verified delta, added to the round's verified set."""
     verified.findings += delta.findings
     verified.noted += delta.noted
     verified.dropped += delta.dropped
@@ -4410,15 +4483,16 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
     verified.coderabbit_reactions += [
         x for x in delta.coderabbit_reactions if x["comment_id"] not in have
     ]
-    if r is not None and d is not None:
-        for h, ms in d.corroborated.items():
-            r.corroborated.setdefault(h, []).extend(ms)
-        for h, v in d.refound.items():
-            if r.refound.get(h) != "CONFIRMED":
-                r.refound[h] = v
-        for h, f in d.upgrades.items():
-            r.upgrades.setdefault(h, f)
-    return verified
+    r, d = verified.rules, delta.rules
+    if r is None or d is None:
+        return
+    for h, ms in d.corroborated.items():
+        r.corroborated.setdefault(h, []).extend(ms)
+    for h, v in d.refound.items():
+        if r.refound.get(h) != "CONFIRMED":
+            r.refound[h] = v
+    for h, f in d.upgrades.items():
+        r.upgrades.setdefault(h, f)
 
 
 def _verdict12(
@@ -4442,7 +4516,7 @@ def _verdict12(
         and not ctx.thread_conflict  # a concession and a re-find disagree; a human decides
         and not ctx.is_audit
     )
-    confirmed = ctx.confirmation is None or bool(ctx.confirmation.get("ran"))
+    confirmed = ctx.confirmation is None or ctx.confirmation.ran
     return rules.verdict(
         blockers=blockers, suggestions=suggestions, full_strength=full, confirmed=confirmed
     )
@@ -4478,15 +4552,7 @@ def _record_thread_answers(
     }
     affirmed = {h for h, o in outs.items() if o.status in {"STILL_VALID", "FIX_PENDING"}}
     with tx(ctx.conn):
-        for a in answered:
-            event(
-                ctx.conn,
-                "thread.answered",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=json.dumps(a),
-            )
+        _record_answered_events(ctx, answered)
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(ctx.open_threads[h].get("latest_reply_id")))
         _record_conceded(ctx, phase, conceded)
@@ -4554,9 +4620,7 @@ def _resolve_conflicts(ctx: RunContext, verified: VerifierOutput) -> None:
     not raised in place, the disagreement is recorded (`threads.conflict`, for the eval), and
     the round cannot approve. A FIXED / OUTDATED outcome a finder contradicts is the other way
     round (the issue stays open: `_apply_thread_outcomes`)."""
-    outcome = verified.rules
-    if outcome is None:
-        return
+    outcome = _outcome(verified)
     outs = _thread_outcomes(ctx)
     conflicts = {
         h: {"finding_hash": h, "outcome": outs[h].status, "verdict": outcome.refound.get(h, "")}
@@ -4583,8 +4647,8 @@ def _resolve_conflicts(ctx: RunContext, verified: VerifierOutput) -> None:
 def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
     """An open non-blocking issue a candidate restated and the verifier CONFIRMED as blocking
     is raised in place: the ledger's severity, and a note on its thread (never a new thread)."""
-    outcome = verified.rules
-    if outcome is None or not outcome.upgrades or ctx.dry_run:
+    outcome = _outcome(verified)
+    if not outcome.upgrades or ctx.dry_run:
         return
     for h, f in outcome.upgrades.items():
         t = ctx.open_threads.get(h)
@@ -4622,7 +4686,7 @@ def _ledger_after(ctx: RunContext, verified: VerifierOutput) -> dict[str, ledger
     if not ctx.dry_run:
         return ledger.load(ctx.conn, ctx.repo, ctx.number)
     corroborated = _refound(verified)
-    upgrades = verified.rules.upgrades if verified.rules is not None else {}
+    upgrades = _outcome(verified).upgrades
     return rules.project(
         ctx.issues, _pending_statuses(_thread_outcomes(ctx), corroborated), upgrades
     )
@@ -4706,9 +4770,18 @@ def _apply_budget(ctx: RunContext, verified: VerifierOutput) -> None:
     )
 
 
+def _outcome(v: VerifierOutput) -> rules.Outcome:
+    """The code rules' account of a v12 verifier answer (an empty one for any other)."""
+    return v.rules if isinstance(v.rules, rules.Outcome) else rules.Outcome()
+
+
+def _blockers(issues: Iterable[ledger.Issue]) -> int:
+    return sum(1 for i in issues if i.severity == "blocking")
+
+
 def _refound(verified: VerifierOutput) -> set[str]:
     """The ledger issues a candidate restated this round."""
-    return set(verified.rules.corroborated) if verified.rules is not None else set()
+    return set(_outcome(verified).corroborated)
 
 
 def _lifted_blocker_titles(before: dict[str, ledger.Issue], lifted: set[str]) -> list[str]:
@@ -4772,7 +4845,7 @@ def _record_revivals(ctx: RunContext, verified: VerifierOutput) -> None:
 
 def _ledger_blockers(ctx: RunContext) -> int:
     stand = _stand12(ctx, ledger.load(ctx.conn, ctx.repo, ctx.number))
-    return sum(1 for i in stand if i.severity == "blocking")
+    return _blockers(stand)
 
 
 def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
@@ -4813,7 +4886,7 @@ def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         else rules.project(before, _pending_statuses(out.outcomes, set()))
     )
     stand = _stand12(ctx, issues, out.outcomes)
-    blockers = sum(1 for i in stand if i.severity == "blocking")
+    blockers = _blockers(stand)
     update = None
     if not ctx.dry_run:
         update = _conversation_verdict12(ctx, phase, lm, stand, lifted=lifted, before=before)
@@ -4881,7 +4954,7 @@ def _conversation_verdict12(
     queuing one same-sha re-review when only the confirmation pass is missing. Nothing is
     posted when the verdict would not move, or a human overrode it."""
     lifted_any = any(h in before and before[h].severity != "nitpick" for h in lifted)
-    if any(i.severity == "blocking" for i in stand) or not lifted_any:
+    if _blockers(stand) or not lifted_any:
         return None
     state = _live_verdict_state(ctx, phase)
     if state is None:
@@ -4963,14 +5036,12 @@ def run(ctx: RunContext) -> RunStatus:
     effort = pol.tier_effort(ctx.tier)
     ctx.phase2_follows = pol.phase2_enabled and effort.phase2 is not None
     _choose_comparison(ctx)
-    if pol.thread_lane:
-        # policy v12: the thread lane runs beside whichever finders run first
-        _start_thread_lane(ctx)
-        try:
-            return _review(ctx, effort)
-        finally:
-            _stop_thread_lane(ctx)
-    return _review(ctx, effort)
+    # policy v12: the thread lane runs beside whichever finders run first (a no-op otherwise)
+    _start_thread_lane(ctx)
+    try:
+        return _review(ctx, effort)
+    finally:
+        _stop_thread_lane(ctx)
 
 
 def _review(ctx: RunContext, effort: TierEffort) -> RunStatus:

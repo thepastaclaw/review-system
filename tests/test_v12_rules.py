@@ -467,14 +467,14 @@ def test_a_deferral_needs_a_maintainer_on_the_thread():
     maint = [{"is_bot": True}, {"association": "MEMBER"}]
     outsider = [{"association": "MEMBER"}, {"is_bot": True}, {"association": "CONTRIBUTOR"}]
     assert (
-        converse.guard_deferrals(out("a"), {"a": maint}).outcomes["a"].status
+        converse.accept_deferrals(out("a"), {"a": {"transcript": maint}}).outcomes["a"].status
         == "INTENTIONALLY_DEFERRED"
     )
     assert (
-        converse.guard_deferrals(out("a"), {"a": outsider}).outcomes["a"].status
+        converse.accept_deferrals(out("a"), {"a": {"transcript": outsider}}).outcomes["a"].status
         == "DEFERRAL_PENDING"
     )
-    assert converse.guard_deferrals(out("a"), {}).outcomes["a"].status == "DEFERRAL_PENDING"
+    assert converse.accept_deferrals(out("a"), {"a": {}}).outcomes["a"].status == "DEFERRAL_PENDING"
 
 
 # ---- ledger: reconcile, severity, seen, outcomes without a thread ----
