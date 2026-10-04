@@ -4769,25 +4769,44 @@ def _standing_run12(ctx: RunContext, phase: str) -> int | None:
     return int(row["run_id"]) if row and row["run_id"] is not None else None
 
 
-def _review_strength12(ctx: RunContext, run_id: int | None) -> str:
-    """`_review_strength` under the v12 confirmation pass: "needs_fresh" when the policy asked
-    that run for a confirmation pass and it did not run (it had blockers then)."""
+# why a run's confirmation pass did not run, as the #38 note says it (`_confirm12` reasons)
+_SKIP_WORDS = {"blockers stand": "it had found a blocker"}
+
+
+def _review_strength12(ctx: RunContext, run_id: int | None) -> tuple[str, str]:
+    """`_review_strength` under policy v12, with why: ("ok", ""), ("weak", reason) when the
+    run cannot carry an approval (Phase 2 missing, stand-in models, or candidates it dropped
+    unverified, whatever the confirmation trigger), or ("needs_fresh", reason) when the policy
+    asked that run for a confirmation pass and it did not run, `reason` being why it did not."""
     if run_id is None:
-        return "weak"
+        return "weak", "no full review of this commit is on record"
     row = ctx.conn.execute(
         "SELECT r.degraded, "
         "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2, "
         "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh, "
-        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later "
+        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later, "
+        "EXISTS (SELECT 1 FROM events WHERE run_id=r.id AND kind='verify.shard_dropped') "
+        "AS dropped, "
+        "(SELECT kind || ':' || detail FROM events WHERE run_id=r.id AND kind IN "
+        "('confirmation.skipped', 'confirmation.failed') ORDER BY id DESC LIMIT 1) AS skipped "
         "FROM runs r WHERE r.id=?",
         (StepName.PHASE2.value, StepName.FRESH_VERIFY2.value, ctx.repo, ctx.number, run_id),
     ).fetchone()
     if not row or row["degraded"] or row["phase2"] != "ok":
-        return "weak"
+        return "weak", "Phase 2 or the primary models were missing"
+    if row["dropped"]:
+        return "weak", "some of its candidates were never verified"
     pipe = ctx.cfg.policy.pipeline
     trigger = pipe.confirmation.trigger if pipe else "off"
     required = trigger == "no_blockers" or (trigger == "rereview" and bool(row["later"]))
-    return "needs_fresh" if required and row["fresh"] != "ok" else "ok"
+    if not required or row["fresh"] == "ok":
+        return "ok", ""
+    kind, _, reason = str(row["skipped"] or "").partition(":")
+    if kind == "confirmation.failed":
+        why = "its lanes failed"  # the error itself is never published
+    else:
+        why = _SKIP_WORDS.get(reason, reason or "it did not run")
+    return "needs_fresh", why
 
 
 def _conversation_verdict12(
@@ -4814,7 +4833,7 @@ def _conversation_verdict12(
         return None
     left = sum(1 for i in stand if i.severity != "nitpick")
     run_id = _standing_run12(ctx, phase)
-    strength = _review_strength12(ctx, run_id)
+    strength, why = _review_strength12(ctx, run_id)
     prov = publish.Provenance(
         reviewers=[],
         verifier=_lane_provenance(lm, "conversation"),
@@ -4857,7 +4876,7 @@ def _conversation_verdict12(
         queued = _request_fresh_audit(ctx)
         note = (
             "Not approved yet: an approval needs the confirmation pass over the whole change, "
-            "which the review of this commit skipped because it had found a blocker. "
+            f"which the review of this commit did not run ({why}). "
             + (
                 "It is queued for this commit and approves if it finds nothing."
                 if queued
@@ -4867,7 +4886,7 @@ def _conversation_verdict12(
     else:
         note = (
             "Not approved: the standing review of this commit did not run at full strength "
-            "(Phase 2 or the primary models were missing), so it cannot carry an approval."
+            f"({why}), so it cannot carry an approval."
         )
     titles = [before[h].title for h in lifted if h in before and before[h].severity == "blocking"]
     return _post_conversation_update(

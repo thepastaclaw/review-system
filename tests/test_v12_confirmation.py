@@ -14,7 +14,7 @@ from tests.test_pipeline_policy import load_with
 from tests.test_v12_e2e import _confirm_phase2, _hash_of
 from tests.test_v12_worker import _shard_setup, refute_gate  # noqa: F401
 from tests.test_worker_e2e import fake_git  # noqa: F401  (autouse: fake mirror/worktree)
-from tests.v12_support import Git, cand, publish_threads, reply, run_round, v12_cfg
+from tests.v12_support import Git, cand, issues, publish_threads, reply, run_round, v12_cfg
 
 A, B = "a" * 40, "c" * 40
 
@@ -127,6 +127,7 @@ def test_same_sha_reply_without_the_confirmation_pass_queues_it(v12, conn, gh, l
     rid = run_round(v12, conn, gh, lanes, A, Trigger.REVIEW_REPLY)
     upd = gh.posted_reviews[before]
     assert upd["event"] == "COMMENT" and "confirmation pass" in upd["body"]
+    assert "which the review of this commit did not run (it had found a blocker)" in upd["body"]
     assert "converse.fresh_audit" in str(
         conn.execute("SELECT key FROM kv WHERE key LIKE 'converse.fresh_audit:%'").fetchall()[0][0]
     )
@@ -189,3 +190,29 @@ def test_an_incomplete_verification_skips_the_pass(cfg, skills_dir, conn, gh, la
 def test_no_blockers_trigger_needs_the_v12_verifier(cfg, skills_dir):
     with pytest.raises(ValueError, match=r'"no_blockers" needs verifier\.contract "v12"'):
         load_with(cfg, skills_dir, {"version": "v12", "confirmation": {"trigger": "no_blockers"}})
+
+
+@pytest.mark.parametrize("trigger", ["off", "no_blockers"])
+def test_no_same_sha_approval_over_a_review_that_dropped_candidates(
+    cfg, skills_dir, conn, gh, lanes, git, trigger
+):
+    """The standing review dropped a verifier shard (its candidates were never verified): a
+    discussion lifting its last blocker comments, whatever the confirmation trigger."""
+    v12 = v12_cfg(cfg, skills_dir, confirmation={"trigger": trigger})
+    gh.diff = "diff --git a/b.rs b/b.rs\n+++ b/b.rs\n@@ -1,3 +1,60 @@\n+x\n"
+    _shard_setup(lanes, blocking_in_failing=False)
+    lanes.candidates["general"][-1]["severity"] = "blocking"  # in the shard that verifies
+    run_round(v12, conn, gh, lanes, A)
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    ids = publish_threads(gh)
+    blocker = next(h for h, i in issues(conn).items() if i.severity == "blocking")
+    reply(gh, ids[blocker], "Not reachable.", rid=908)
+    lanes.thread_out[blocker] = {"status": "WITHDRAWN", "reply": "Right."}
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, A, Trigger.REVIEW_REPLY)
+    upd = gh.posted_reviews[before]
+    assert upd["event"] == "COMMENT"
+    assert (
+        "did not run at full strength (some of its candidates were never verified)" in upd["body"]
+    )
+    assert not conn.execute("SELECT 1 FROM kv WHERE key LIKE 'rereview.after_run:%'").fetchone()
