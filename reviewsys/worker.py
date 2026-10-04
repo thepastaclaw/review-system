@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from . import audit, converse, degraded, github, labels, lanepool, publish, quota
+from . import audit, converse, degraded, github, labels, lanepool, ledger, publish, quota
 from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
@@ -908,6 +908,19 @@ def step_context(ctx: RunContext) -> None:
     # prior findings: last posted set for this PR from our DB, plus any human replies on
     # their inline threads (the reviewer must engage with pushback, not re-raise past it)
     ctx.open_threads = github.finding_threads(threads, ctx.cfg.bot_login)
+    _ledger_write(
+        ctx,
+        "threads",
+        lambda c: ledger.sync_threads(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            threads=threads,
+            bot_login=ctx.cfg.bot_login,
+        ),
+    )
     replied = {h: t for h, t in ctx.open_threads.items() if t["awaiting_answer"]}
     rows = ctx.conn.execute(
         "SELECT pf.hash, pf.sha, f.file, f.line_start, f.line_end, f.severity, f.category, f.title, f.body FROM posted_findings pf LEFT JOIN findings f ON f.hash=pf.hash AND f.stage='posted' WHERE pf.repo=? AND pf.number=? ORDER BY pf.posted_at DESC, f.id DESC",
@@ -1711,6 +1724,23 @@ def _backfill_posted(
             review_url=str(existing.get("html_url") or "") or None,
         )
 
+    def record(c: sqlite3.Connection) -> None:
+        # nothing new went on GitHub: the findings the PR already had are carried, and only
+        # those it never had (a prior attempt posted them, then died) are recorded as posted
+        have = ledger.known(c, ctx.repo, ctx.number)
+        posted = [f for f in verified.findings if (f.prior_hash or f.hash) not in have]
+        ledger.record_published(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            posted=posted,
+            kept=verified.findings,
+        )
+
+    _ledger_write(ctx, "publication", record)
+
 
 def step_publish(
     ctx: RunContext,
@@ -1817,6 +1847,19 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
                 run_id=ctx.run_id,
                 detail=json.dumps(a),
             )
+    _ledger_write(
+        ctx,
+        "answers",
+        lambda c: ledger.record_answers(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            answered=answered,
+            source="verifier",
+        ),
+    )
 
 
 def _record_verdict(ctx: RunContext, phase: str, verified: VerifierOutput, new_event: str) -> None:
@@ -2211,6 +2254,31 @@ def _record_publication(
             review_id=result.review_id,
             review_url=result.review_url,
         )
+    if result.posted:
+        _ledger_write(
+            ctx,
+            "publication",
+            lambda c: ledger.record_published(
+                c,
+                ctx.repo,
+                ctx.number,
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+                posted=model.kept,
+                kept=verified.findings,
+                deduped_comment_ids=[s.comment_id for s in model.suppressed if s.comment_id],
+            ),
+        )
+
+
+def _ledger_write(ctx: RunContext, what: str, fn: Callable[[sqlite3.Connection], object]) -> None:
+    """Write-through to the issue ledger (ledger.py), after the step's own bookkeeping has
+    committed. Write-only under policy v11: nothing reads it, and a failed write is logged and
+    recorded (`ledger.write_failed`), never raised. Audits and dry runs are not part of a PR's
+    review history."""
+    if ctx.is_audit or ctx.dry_run:
+        return
+    ledger.safe_write(ctx.conn, what, fn, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id)
 
 
 # ---- orchestration ----
@@ -2763,6 +2831,20 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
         _record_conceded(ctx, phase, lifted)
+    _ledger_write(
+        ctx,
+        "conversation",
+        lambda c: ledger.record_answers(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            answered=answered,
+            source="conversation",
+            conceded=lifted,
+        ),
+    )
     kept = _standing_findings(ctx, phase, lifted=lifted)
     update = None
     if not ctx.dry_run:
