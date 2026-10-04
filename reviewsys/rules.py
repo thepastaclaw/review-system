@@ -511,6 +511,26 @@ def apply_rules(
     return out
 
 
+def within_budget(new: list[Finding], budget: int) -> tuple[list[Finding], list[Finding]]:
+    """The comment budget, in code (v11 asked the verifier to keep to it): every blocker is
+    posted; then suggestions before nitpicks, CONFIRMED before PLAUSIBLE, and those more lanes
+    found first, up to `budget` findings in all. Returns (posted, over budget); each keeps its
+    order. A budget of 0 or less posts everything."""
+    if budget <= 0 or len(new) <= budget:
+        return list(new), []
+
+    def rank(f: Finding) -> tuple[int, int, int]:
+        confirmed = f.extra.get("verdict") == "CONFIRMED"
+        return (-_SEV_RANK.get(f.severity, 0), -int(confirmed), -len(f.extra.get("members") or []))
+
+    keep = {id(f) for f in [f for f in new if f.severity == "blocking"]}
+    for f in sorted((f for f in new if f.severity != "blocking"), key=rank):
+        if len(keep) >= budget:
+            break
+        keep.add(id(f))
+    return [f for f in new if id(f) in keep], [f for f in new if id(f) not in keep]
+
+
 # ---- what the lanes are told from the ledger ----
 
 

@@ -652,3 +652,28 @@ def test_anchor_moved():
         )
         is False
     )
+
+
+def test_the_comment_budget_keeps_every_blocker_and_the_best_suggestions():
+    def f(title, sev, verdict="CONFIRMED", members=1):
+        return Finding(
+            file="f.rs",
+            title=title,
+            body="",
+            severity=sev,
+            extra={"verdict": verdict, "members": ["x"] * members},
+        )
+
+    new = [
+        f("n1", "nitpick"),
+        f("s-plausible", "suggestion", "PLAUSIBLE"),
+        f("b1", "blocking"),
+        f("s-two-lanes", "suggestion", members=2),
+        f("b2", "blocking"),
+        f("s1", "suggestion"),
+    ]
+    posted, over = rules.within_budget(new, 4)
+    assert [x.title for x in posted] == ["b1", "s-two-lanes", "b2", "s1"]
+    assert [x.title for x in over] == ["n1", "s-plausible"]
+    assert rules.within_budget(new, 1)[0] == [new[2], new[4]]  # blockers are never over budget
+    assert rules.within_budget(new, 0) == (new, [])

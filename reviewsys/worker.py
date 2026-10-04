@@ -4376,6 +4376,15 @@ def _publish12(
             FailKind.FATAL, f"live base {live.base_sha[:8]} != assigned {ctx.base_sha[:8]}"
         )
     before = dict(ctx.issues)
+    verified.findings, over = rules.within_budget(verified.findings, ctx.cfg.comment_budget)
+    if over:
+        verified.dropped += [
+            {"original_title": f.title, "reason": "BUDGET: over the comment budget"} for f in over
+        ]
+        verified.summary += (
+            f"\n\n_{len(over)} more non-blocking finding(s) over the comment budget of "
+            f"{ctx.cfg.comment_budget} are not posted on this round._"
+        )
     lifted = _apply_thread_outcomes(ctx, verified, phase)
     _apply_upgrades(ctx, verified)
     verified.carried = _carried12(ctx, _standing_now(ctx, verified))

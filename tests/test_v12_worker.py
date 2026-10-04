@@ -315,3 +315,17 @@ def test_v12_lanes_without_structured_output_answer_in_text(cfg, skills_dir, con
     v12_specs = [s for s in lanes.calls if "## Output: " in s.prompt]
     assert v12_specs and all(s.json_schema is None for s in v12_specs)
     assert all(prompts.RAW_JSON_CONTRACT in s.prompt for s in v12_specs)
+
+
+def test_findings_over_the_comment_budget_are_not_posted(cfg, skills_dir, conn, gh, lanes, git):
+    v12 = v12_cfg(cfg, skills_dir)
+    lanes.verify12 = refute_gate
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [
+        cand(f"s{i}", severity="suggestion", line=i) for i in range(1, v12.comment_budget + 3)
+    ]
+    run_round(v12, conn, gh, lanes, A)
+    review = gh.posted_reviews[-1]
+    assert len(review["comments"]) == v12.comment_budget
+    assert "2 more non-blocking finding(s) over the comment budget" in review["body"]
+    assert len(issues(conn)) == v12.comment_budget
