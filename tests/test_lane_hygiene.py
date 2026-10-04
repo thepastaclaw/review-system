@@ -5,7 +5,10 @@ whose lanes must start exactly as v0.24's did (pinned below, end to end through 
 
 from __future__ import annotations
 
+import dataclasses
+import json
 import os
+import re
 import subprocess
 import threading
 from pathlib import Path
@@ -13,11 +16,13 @@ from pathlib import Path
 import pytest
 
 from reviewsys import lane as lane_mod
-from reviewsys import worker
+from reviewsys import schemas, worker
+from reviewsys.config import LaneModel
+from reviewsys.contract import CATEGORIES, SEVERITIES
 from reviewsys.db import tx
 from reviewsys.ingest import enqueue_head
 from reviewsys.lane import LaneResult, LaneSpec
-from reviewsys.models import RunStatus, Trigger
+from reviewsys.models import FailKind, ReviewError, RunStatus, Trigger
 from reviewsys.scheduler import schedule
 from reviewsys.steps import worktree as wt
 from tests.test_pipeline_policy import load_with
@@ -222,3 +227,283 @@ def test_v12_without_isolation_keeps_the_v11_environment(
     _, status = _run(cfg, conn, gh, procs)
     assert status == RunStatus.DONE
     assert all(env == {**os.environ, **V024_ENV} for _, _, env in procs.started)
+
+
+# ---- structured_output ----
+
+SCHEMA = {"type": "object", "properties": {"ok": {"type": "boolean"}}, "required": ["ok"]}
+
+
+def _spec(tmp_path, **kw) -> LaneSpec:
+    base = {
+        "role": "verifier",
+        "agent": "a",
+        "model": "gpt-6.1-sol",
+        "effort": "high",
+        "prompt": "p",
+        "cwd": tmp_path,
+        "add_dir": tmp_path,
+        "timeout_seconds": 60,
+        "claude_bin": "claude",
+    }
+    return LaneSpec(**{**base, **kw})
+
+
+def _envelope(structured=None, *, result="Done.", subtype="success", session=None) -> LaneResult:
+    """A finished lane as `run_claude_lane` reads Claude Code's JSON envelope."""
+    env = {
+        "type": "result",
+        "subtype": subtype,
+        "is_error": subtype != "success",
+        "result": result,
+        "num_turns": 4,
+        "usage": {"input_tokens": 100, "output_tokens": 10},
+    }
+    if structured is not None:
+        env["structured_output"] = structured
+    if session:
+        env["session_id"] = session
+    res = LaneResult(exit_code=0, stdout=json.dumps(env), stderr="", duration_s=1)
+    lane_mod._extract_result(res)
+    return res
+
+
+def test_json_schema_goes_on_the_command_line_only_when_given(tmp_path):
+    assert "--json-schema" not in lane_mod.argv_for(_spec(tmp_path))
+    spec = _spec(tmp_path, json_schema=SCHEMA, session_id=lane_mod.new_session_id())
+    argv = lane_mod.argv_for(spec)
+    assert argv[argv.index("--json-schema") + 1] == json.dumps(SCHEMA, separators=(",", ":"))
+    assert argv[: argv.index("--json-schema")] == v024_argv(spec), "appended, nothing else"
+    resumed = lane_mod.argv_for(dataclasses.replace(spec, resume=True))
+    assert "--resume" in resumed and "--json-schema" in resumed, "a correction turn keeps it"
+
+
+def test_structured_output_is_read_before_the_text():
+    res = _envelope({"ok": True}, result='Here it is: {"ok": false}')
+    assert res.structured == {"ok": True}
+    assert lane_mod.lane_output(res) == {"ok": True}
+    plain = _envelope(None, result='{"ok": false}')
+    assert plain.structured is None and lane_mod.lane_output(plain) == {"ok": False}
+
+
+def test_exhausted_structured_retries_are_a_contract_failure():
+    res = _envelope(None, result="", subtype="error_max_structured_output_retries")
+    assert not res.ok
+    with pytest.raises(ReviewError) as exc:
+        lane_mod.lane_output(res)
+    assert exc.value.kind is FailKind.CONTRACT
+    assert "4 turns" in exc.value.message and "exit" not in exc.value.message
+    budget = _envelope(None, result="", subtype="error_max_budget_usd")
+    with pytest.raises(ReviewError) as other:
+        lane_mod.lane_output(budget)
+    assert other.value.kind is FailKind.INFRA, "other error envelopes stay infrastructure"
+
+
+def _checked_ctx(cfg, conn, tmp_path, runner) -> worker.RunContext:
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MENTION)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    head_id = conn.execute("SELECT head_id FROM runs WHERE id=?", (rid,)).fetchone()[0]
+    return worker.RunContext(
+        cfg=cfg,
+        main_conn=conn,
+        gh=None,
+        run_id=rid,
+        head_id=head_id,
+        repo="dashpay/platform",
+        number=1,
+        sha=HEAD,
+        token="t",
+        run_dir=tmp_path / "run",
+        worktree=tmp_path,
+        # what lanepool.gated does for every lane: the correction turns run in its slot
+        lane_runner=lambda spec, art, wt: lane_mod.run_with_corrections(runner, spec, art, wt),
+    )
+
+
+def _verifier_check() -> worker.OutputCheck:
+    def validate(raw):
+        if raw.get("ok") is not True:
+            raise ReviewError(FailKind.CONTRACT, "ok must be true")
+        return raw
+
+    return worker.OutputCheck(validate=validate, kind="verifier", expected_phase="final")
+
+
+def _checked(ctx, **kw):
+    return worker._run_checked_lane(
+        ctx,
+        phase="verify2",
+        role="verifier",
+        lm=LaneModel(agent="sol-verifier", model="gpt-6.1-sol"),
+        prompt="verify",
+        is_verifier=True,
+        check=_verifier_check(),
+        schema=SCHEMA,
+        **kw,
+    )
+
+
+@pytest.mark.parametrize(
+    ("pipeline", "sent"),
+    [
+        (None, False),
+        ({"version": "v12"}, False),
+        ({"version": "v12", "structured_output": True}, True),
+    ],
+)
+def test_a_lane_answers_through_its_schema_only_when_the_policy_says_so(
+    cfg, conn, skills_dir, tmp_path, _claude_config_dir, pipeline, sent
+):
+    cfg = load_with(cfg, skills_dir, pipeline, refingerprint=pipeline is not None)
+    calls: list[LaneSpec] = []
+
+    def runner(spec, art, worktree):
+        calls.append(spec)
+        if spec.json_schema is not None:
+            return _envelope({"ok": True}, result="Structured output provided.")
+        return _envelope(None, result='{"ok": true}')
+
+    out = _checked(_checked_ctx(cfg, conn, tmp_path, runner))
+    assert out == {"ok": True}
+    assert [c.json_schema for c in calls] == [SCHEMA if sent else None]
+
+
+def test_correction_turns_stay_the_fallback_for_a_schema_valid_answer(
+    cfg, conn, skills_dir, tmp_path, _claude_config_dir
+):
+    """The schema checks shape; the contract checks meaning. A schema-valid answer the
+    contract rejects is corrected in the lane's own session, through the schema again."""
+    cfg = load_with(cfg, skills_dir, {"version": "v12", "structured_output": True})
+    calls: list[LaneSpec] = []
+
+    def runner(spec, art, worktree):
+        calls.append(spec)
+        return _envelope({"ok": spec.resume}, session=spec.session_id)
+
+    ctx = _checked_ctx(cfg, conn, tmp_path, runner)
+    assert _checked(ctx) == {"ok": True}
+    first, again = calls
+    assert again.resume and again.session_id == first.session_id
+    assert again.json_schema == first.json_schema == SCHEMA
+    assert "ok must be true" in again.prompt
+    row = conn.execute("SELECT status FROM lanes WHERE run_id=?", (ctx.run_id,)).fetchone()
+    assert row["status"] == "corrected"
+
+
+def test_exhausted_structured_retries_fail_the_lane_as_a_contract_failure(
+    cfg, conn, skills_dir, tmp_path, _claude_config_dir
+):
+    cfg = load_with(cfg, skills_dir, {"version": "v12", "structured_output": True})
+    calls: list[LaneSpec] = []
+
+    def runner(spec, art, worktree):
+        calls.append(spec)
+        return _envelope(None, result="", subtype="error_max_structured_output_retries")
+
+    ctx = _checked_ctx(cfg, conn, tmp_path, runner)
+    with pytest.raises(worker.LaneFailed) as exc:
+        _checked(ctx)
+    assert exc.value.kind is FailKind.CONTRACT
+    assert len(calls) == 2 and not any(c.resume for c in calls), "retried whole, not resumed"
+    assert not any(c.role == "repair" for c in calls)
+    reasons = [
+        r["reason"] for r in conn.execute("SELECT reason FROM lanes WHERE run_id=?", (ctx.run_id,))
+    ]
+    assert len(reasons) == 2 and all("structured output retries" in r for r in reasons)
+
+
+# ---- the schemas ----
+
+
+def _walk(node, path=""):
+    """Every (path, property schema) in a schema, recursively."""
+    for name, prop in (node.get("properties") or {}).items():
+        yield f"{path}.{name}", prop
+        yield from _walk(prop, f"{path}.{name}")
+    if isinstance(node.get("items"), dict):
+        yield f"{path}[]", node["items"]
+        yield from _walk(node["items"], f"{path}[]")
+
+
+ALL_SCHEMAS = {
+    "finder": schemas.FINDER_SCHEMA,
+    "verifier": schemas.VERIFIER_SCHEMA,
+    "thread": schemas.THREAD_SCHEMA,
+    "verifier(ids)": schemas.verifier_schema(["p1-general-1", "p2-general-3"]),
+    "thread(hashes)": schemas.thread_schema(["0123456789ab", "ba9876543210"]),
+}
+
+
+@pytest.mark.parametrize("name", ALL_SCHEMAS)
+def test_every_allowed_value_is_stated_in_prose_too(name):
+    """Gemini strips `enum` from tool schemas: the description must carry the values."""
+    schema = ALL_SCHEMAS[name]
+    json.dumps(schema)  # plain data
+    constrained = [(p, s) for p, s in _walk(schema) if "enum" in s]
+    assert constrained
+    for path, prop in constrained:
+        for value in prop["enum"]:
+            assert value in prop["description"], f"{name}{path}: {value!r} not in prose"
+    for path, prop in _walk(schema):
+        assert "pattern" not in prop or "Exactly one of" in prop["description"], path
+
+
+@pytest.mark.parametrize("name", ALL_SCHEMAS)
+def test_no_echo_fields_no_caps_no_nulls(name):
+    schema = ALL_SCHEMAS[name]
+    names = {p.rsplit(".", 1)[-1] for p, _ in _walk(schema)}
+    assert not names & {"review_phase", "head_sha", "confidence"}
+    for path, prop in _walk(schema):
+        assert "null" not in json.dumps(prop.get("type")), path
+        if not name.startswith("thread("):
+            assert "maxItems" not in prop, path
+
+
+def test_schema_values_follow_the_contract():
+    finder = schemas.FINDER_SCHEMA["properties"]["candidates"]["items"]["properties"]
+    assert finder["severity"]["enum"] == list(SEVERITIES)
+    assert finder["category"]["enum"] == list(CATEGORIES)
+    group = schemas.VERIFIER_SCHEMA["properties"]["groups"]["items"]["properties"]
+    assert group["verdict"]["enum"] == ["CONFIRMED", "PLAUSIBLE", "REFUTED"]
+    row = schemas.THREAD_SCHEMA["properties"]["threads"]["items"]["properties"]
+    assert row["status"]["enum"] == [
+        "STILL_VALID",
+        "FIXED",
+        "OUTDATED",
+        "WITHDRAWN",
+        "INTENTIONALLY_DEFERRED",
+    ]
+    assert "NO_REPLY" in row["reply"]["description"]
+
+
+@pytest.mark.parametrize(
+    ("match", "ok"),
+    [
+        ("new", True),
+        ("open:0123456789ab", True),
+        ("settled:0123456789ab", True),
+        ("fixed:0123456789ab", True),
+        ("coderabbit:2412", True),
+        ("open:0123", False),
+        ("open:0123456789AB", False),
+        ("closed:0123456789ab", False),
+        ("NEW", False),
+    ],
+)
+def test_match_pattern(match, ok):
+    assert bool(re.match(schemas.MATCH_PATTERN, match)) is ok
+
+
+def test_narrowed_schemas_pin_the_ids_and_leave_the_base_alone():
+    ids = ["p1-general-1", "p2-general-3"]
+    v = schemas.verifier_schema(ids)
+    assert v["properties"]["groups"]["items"]["properties"]["members"]["items"]["enum"] == ids
+    hashes = ["0123456789ab", "ba9876543210"]
+    t = schemas.thread_schema(hashes)["properties"]["threads"]
+    assert t["minItems"] == t["maxItems"] == 2
+    assert t["items"]["properties"]["finding_hash"]["enum"] == hashes
+    assert "enum" not in json.dumps(
+        schemas.THREAD_SCHEMA["properties"]["threads"]["items"]["properties"]["finding_hash"]
+    )
+    assert "minItems" not in schemas.THREAD_SCHEMA["properties"]["threads"]

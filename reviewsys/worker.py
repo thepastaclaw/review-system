@@ -969,6 +969,7 @@ def _run_lane(
     lm: LaneModel,
     prompt: str,
     is_verifier: bool,
+    schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A lane whose JSON answer its caller checks itself (persistence, conversation): retries
     and the repair lane as below, no correction turns."""
@@ -980,6 +981,7 @@ def _run_lane(
         prompt=prompt,
         is_verifier=is_verifier,
         check=PLAIN_OUTPUT,
+        schema=schema,
     )
 
 
@@ -996,8 +998,16 @@ def _run_checked_lane[T](
     should_stop: Callable[[], bool] | None = None,
     comparison: bool = False,
     stop_reason: Callable[[], str] | None = None,
+    schema: dict[str, Any] | None = None,
 ) -> T:
     """Run a lane with bounded retries until its answer passes `check`. Returns the output.
+
+    `schema` (schemas.py) is the lane kind's answer schema. Under policy v12 with
+    `pipeline.structured_output` the lane answers through it (`--json-schema`), its
+    correction turns too, and its envelope's `structured_output` is read before its text; a
+    lane whose structured-output retries ran out failed its contract. Otherwise it is
+    ignored. The schema enforces shape only: the answer still goes through `check`, and
+    the correction turns below remain the fallback for everything else.
 
     An answer that breaks the contract (no JSON object in it, or `check.validate` rejects it
     after the deterministic normalization in contract.py) is first corrected in the lane's
@@ -1026,6 +1036,8 @@ def _run_checked_lane[T](
     key = f"{role}{COMPARE_SUFFIX}" if comparison else role
     pool = lanepool.COMPARE_POOL if comparison else None
     corrections = ctx.cfg.lane_correction_turns if check.kind else 0
+    pipeline = ctx.cfg.policy.pipeline
+    json_schema = schema if pipeline is not None and pipeline.structured_output else None
     last = cause = ""
     attempt, budget = 0, 1 if comparison else 2
     while attempt < budget:
@@ -1078,6 +1090,7 @@ def _run_checked_lane[T](
             session_id=session,
             check=ask if session else None,
             corrections=corrections,
+            json_schema=json_schema,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)

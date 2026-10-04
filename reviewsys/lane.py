@@ -80,6 +80,11 @@ class LaneSpec:
     # LANE_ENV in the lane's environment (see `isolated`); correction turns, being copies of
     # the spec, keep it
     isolate_env: bool = False
+    # JSON Schema the answer must match (`--json-schema`; schemas.py). Claude Code enforces it
+    # client-side: the model answers through a `StructuredOutput` tool validated locally and
+    # retried in-conversation, so it works for every model behind the proxy, and the answer
+    # lands in the envelope's `structured_output`. Correction turns answer through it too.
+    json_schema: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -98,6 +103,7 @@ class LaneResult:
     cancelled: bool = False  # stopped by `LaneSpec.should_stop`, not by the model or a timeout
     started: bool = True  # False: stopped while waiting for a lane slot, never ran
     session_id: str | None = None  # the envelope's, when the CLI reported one
+    structured: dict[str, Any] | None = None  # the envelope's schema-validated answer, if any
     # the correction turns run in this lane's session and slot after it, in order
     followups: list[LaneResult] = field(default_factory=list)
 
@@ -350,6 +356,8 @@ def argv_for(spec: LaneSpec) -> list[str]:
     ]
     if spec.max_budget_usd:
         argv += ["--max-budget-usd", f"{spec.max_budget_usd:.2f}"]
+    if spec.json_schema is not None:
+        argv += ["--json-schema", json.dumps(spec.json_schema, separators=(",", ":"))]
     return argv
 
 
@@ -476,6 +484,9 @@ def _extract_result(res: LaneResult) -> None:
         res.result_text = text
         return
     res.result_text = str(env.get("result") or "")
+    structured = env.get("structured_output")
+    if isinstance(structured, dict):
+        res.structured = structured
     usage = env.get("usage") or {}
     if isinstance(usage, dict):
         res.tokens_in = int(usage.get("input_tokens") or 0) + int(
@@ -499,11 +510,22 @@ def _extract_result(res: LaneResult) -> None:
 
 
 def lane_output(res: LaneResult) -> dict[str, Any]:
+    """A finished lane's answer: the envelope's schema-validated `structured_output` when it
+    has one, else the JSON object in its text (a lane without a schema, or one that answered
+    in prose anyway: the correction turns and the repair lane take it from there)."""
     if res.cancelled:
         raise ReviewError(FailKind.INFRA, "lane stopped before it finished")
     if res.timed_out:
         raise ReviewError(FailKind.INFRA, "lane timed out")
     if res.exit_code != 0:
+        if res.subtype == "error_max_structured_output_retries":
+            # the model kept answering off-schema until Claude Code gave up: its contract
+            # failure, not infrastructure (no "exit" here: LaneFailed reads that as INFRA)
+            raise ReviewError(
+                FailKind.CONTRACT,
+                f"no schema-valid answer: structured output retries ran out after "
+                f"{res.turns or '?'} turns",
+            )
         if res.subtype and res.subtype.startswith("error_"):
             raise ReviewError(
                 FailKind.INFRA,
@@ -513,6 +535,8 @@ def lane_output(res: LaneResult) -> dict[str, Any]:
             FailKind.INFRA,
             f"lane exit {res.exit_code}: {(res.first_stderr_line or res.result_text)[:200]}",
         )
+    if res.structured is not None:
+        return dict(res.structured)
     return parse_json_object(res.result_text)
 
 
