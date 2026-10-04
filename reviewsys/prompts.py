@@ -714,8 +714,13 @@ def thread_prompt(
             "mode_note": mode,
             "issues": _json_block(issues, ISSUES_FENCE),
             "linked_commits": linked_commits or "- none",
-            "discussion": _json_block(evidence.get("issue_comments") or [])[:12000],
-            "static_review": STATIC_REVIEW.format(number=number, repo=repo),
+            "discussion": "```json\n"
+            + json.dumps(evidence.get("issue_comments") or [], indent=1)[:12000]
+            + "\n```",
+            "ci": "```json\n" + json.dumps(evidence.get("ci") or {}, indent=1)[:6000] + "\n```",
+            "static_review": STATIC_REVIEW.format(number=number, repo=repo).replace(
+                "evidence below", "CI section"
+            ),
         },
     )
     hashes = [str(i["finding_hash"]) for i in issues]

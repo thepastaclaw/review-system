@@ -677,3 +677,26 @@ def test_the_comment_budget_keeps_every_blocker_and_the_best_suggestions():
     assert [x.title for x in over] == ["n1", "s-plausible"]
     assert rules.within_budget(new, 1)[0] == [new[2], new[4]]  # blockers are never over budget
     assert rules.within_budget(new, 0) == (new, [])
+
+
+def test_the_thread_prompt_carries_ci_and_bounded_discussion(cfg, skills_dir):
+    (skills_dir / "prompts" / "v12" / "thread.md").write_text(
+        "{static_review}\n{issues}\n## Discussion\n{discussion}\n## CI\n{ci}\n"
+    )
+    text = prompts.thread_prompt(
+        cfg,
+        repo="dashpay/platform",
+        number=7,
+        head_sha="a" * 40,
+        meta={"title": "t"},
+        issues=[{"finding_hash": "abc"}],
+        linked_commits="",
+        evidence={"issue_comments": [{"body": "x" * 20000}], "ci": {"state": "failure"}},
+        standing_verdict=None,
+        same_sha=False,
+        structured=False,
+    )
+    discussion = text.split("## Discussion\n", 1)[1].split("## CI", 1)[0]
+    assert discussion.startswith("```json\n") and discussion.rstrip().endswith("```")
+    assert '"state": "failure"' in text and "the `ci` snapshot in the CI section" in text
+    assert "`abc`" in text.split("## Output: thread outcomes", 1)[1]
