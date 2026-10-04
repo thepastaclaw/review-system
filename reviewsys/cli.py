@@ -82,6 +82,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
     from .replay import EXIT_ABORTED, ReplayAborted, replay
 
     cfg = _cfg(args)
+    token = os.environ.get(args.gh_token_env) or None
     out = Path(args.out).expanduser()
     for rid in args.run_id:
         try:
@@ -96,6 +97,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 pin_phase1_model=args.pin_phase1_model,
                 sample=args.sample,
                 policy_name=args.policy_name,
+                gh_token=token,
             )
         except ReplayAborted as exc:
             print(str(exc), file=sys.stderr)
@@ -116,7 +118,8 @@ def cmd_replay(args: argparse.Namespace) -> int:
         )
         if report["invalid"]:
             print(f"run {rid}: replay invalid ({report['invalid']})", file=sys.stderr)
-            return EXIT_ABORTED
+            # dry models stop a replay set; any other invalid replay is that replay's failure
+            return EXIT_ABORTED if report["invalid"].startswith("quota") else 1
     return 0
 
 
@@ -124,7 +127,7 @@ def cmd_replay_set(args: argparse.Namespace) -> int:
     """Replay a set of past runs under several policies (replayset.py)."""
     from .replayset import main_set
 
-    return main_set(args, args.config)
+    return main_set(args)
 
 
 def cmd_replay_score(args: argparse.Namespace) -> int:
@@ -414,6 +417,11 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--pin-phase1-model", help="run every Phase-1 lane on this model")
     s.add_argument("--sample", type=int, default=0, help="repeat sample number (dir run-<id>-r<k>)")
     s.add_argument("--policy-name", help="eval arm name (replay.policy_overrides)")
+    s.add_argument(
+        "--gh-token-env",
+        default="REVIEWSYS_REPLAY_GH_TOKEN",
+        help="env var holding a read-only GitHub token for every read the replay makes",
+    )
     s.set_defaults(fn=cmd_replay)
     s = sub.add_parser(
         "replay-set", help="replay a set of past runs under several policies (eval arms)"
@@ -430,6 +438,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--force-phase2", action="store_true")
     s.add_argument("--pin-phase1-model")
     s.add_argument("--source-db")
+    s.add_argument("--source-runs", help="run artifact dir holding the runs' evidence.json")
+    s.add_argument(
+        "--gh-token-env",
+        default="REVIEWSYS_REPLAY_GH_TOKEN",
+        help="env var holding a read-only GitHub token (passed to every replay)",
+    )
     s.add_argument(
         "--retry-failed", action="store_true", help="also re-run failed and invalid replays"
     )

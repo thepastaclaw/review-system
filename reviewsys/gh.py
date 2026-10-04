@@ -37,9 +37,15 @@ _TRANSIENT_MARKERS = (
 
 
 def _default_runner(
-    argv: Sequence[str], stdin: str | None, timeout: int
+    argv: Sequence[str], stdin: str | None, timeout: int, extra_env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[str]:
-    env = {**os.environ, "GODEBUG": "netdns=go", "GH_PROMPT_DISABLED": "1", "NO_COLOR": "1"}
+    env = {
+        **os.environ,
+        "GODEBUG": "netdns=go",
+        "GH_PROMPT_DISABLED": "1",
+        "NO_COLOR": "1",
+        **(extra_env or {}),
+    }
     return subprocess.run(
         list(argv),
         input=stdin,
@@ -49,6 +55,11 @@ def _default_runner(
         env=env,
         check=False,
     )
+
+
+def env_runner(extra_env: dict[str, str]) -> GhRunner:
+    """The default runner with `extra_env` set (a replay's read-only GH_TOKEN)."""
+    return lambda argv, stdin, timeout: _default_runner(argv, stdin, timeout, extra_env)
 
 
 GRAPHQL_MUTATION = re.compile(r"(^|[^A-Za-z0-9_])mutation\b")
@@ -66,8 +77,11 @@ def read_only_runner(inner: GhRunner | None = None) -> GhRunner:
         args = list(argv)[1:]
         writes = False
         if args[:2] == ["api", "graphql"]:
-            q = next((a for a in args if a.startswith("query=")), "")
-            writes = bool(GRAPHQL_MUTATION.search(q.split("=", 1)[-1]))
+            # every query field (gh sends the last), never one read from a file or stdin
+            queries = [a.removeprefix("query=") for a in args if a.startswith("query=")]
+            writes = "--input" in args or any(
+                q.startswith("@") or GRAPHQL_MUTATION.search(q) for q in queries
+            )
         elif args[:1] == ["api"]:
             method = args[args.index("--method") + 1] if "--method" in args else "GET"
             writes = method.upper() != "GET" or "--input" in args

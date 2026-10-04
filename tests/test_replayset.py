@@ -50,6 +50,22 @@ def test_set_file_forms(tmp_path):
     p.write_text("[5, 5]")
     with pytest.raises(SystemExit, match="twice"):
         load_set(p)
+    # eval/set.json: `source_run_id`, head ids, and `repeats` (two samples of those heads)
+    p.write_text(
+        json.dumps(
+            {
+                "heads": [
+                    {"id": "dash-1-aa", "set": "S1", "source_run_id": 11, "why": "late blocker"},
+                    {"id": "dash-2-bb", "set": "S4", "source_run_id": 12},
+                ],
+                "repeats": ["dash-2-bb"],
+            }
+        )
+    )
+    assert load_set(p) == [
+        SetItem(11, "S1", 1, "late blocker", "dash-1-aa"),
+        SetItem(12, "S4", 2, "", "dash-2-bb"),
+    ]
 
 
 def test_plan_runs_every_arm_per_head_and_alternates_which_goes_first(tmp_path):
@@ -87,10 +103,18 @@ def test_run_set_resumes_skipping_completed_replays(tmp_path):
     ran.clear()
     res = run_set(items, pols, out, concurrency=2, runner=runner, echo=lambda s: None)
     assert ran == [] and res["skipped"] == 4
+    seen_stale: list[bool] = []
+
+    def retry(job: Job, out_: Path) -> int:
+        seen_stale.append((job.dir(out_) / "report.json").exists())
+        return runner(job, out_)
+
+    _write(failed, out, _report(failed, status="failed"))
+    ran.clear()
     res = run_set(
-        items, pols, out, concurrency=2, runner=runner, retry_failed=True, echo=lambda s: None
+        items, pols, out, concurrency=2, runner=retry, retry_failed=True, echo=lambda s: None
     )
-    assert ran == ["v12/run-2"]  # the failed one, on request
+    assert ran == ["v12/run-2"] and seen_stale == [False]  # the old report goes first
     manifest = json.loads((out / replayset.MANIFEST).read_text())
     assert [p["name"] for p in manifest["policies"]] == ["v11", "v12"]
 
@@ -120,6 +144,32 @@ def test_run_set_respects_concurrency(tmp_path):
         echo=lambda s: None,
     )
     assert peak[0] == 3
+
+
+def test_the_manifest_keeps_arms_run_separately(tmp_path):
+    out, (v11, v12) = tmp_path / "out", _policies(tmp_path)
+    run_set([SetItem(1)], [v11], out, concurrency=1, runner=lambda j, o: 0, echo=lambda s: None)
+    run_set([SetItem(2)], [v12], out, concurrency=1, runner=lambda j, o: 0, echo=lambda s: None)
+    manifest = json.loads((out / replayset.MANIFEST).read_text())
+    assert [p["name"] for p in manifest["policies"]] == ["v11", "v12"]
+    assert sorted(h["run_id"] for h in manifest["heads"]) == [1, 2]
+
+
+def test_an_abort_stops_the_set_even_over_a_stale_report(tmp_path):
+    out, pols = tmp_path / "out", _policies(tmp_path)
+    stale = Job(SetItem(1), pols[0], 0)
+    _write(stale, out, _report(stale, status="failed"))
+    res = run_set(
+        [SetItem(1), SetItem(2)],
+        pols,
+        out,
+        concurrency=1,
+        runner=lambda j, o: EXIT_ABORTED,
+        retry_failed=True,
+        echo=lambda s: None,
+    )
+    assert res["aborted"] and res["ran"] == 1 and res["not_started"] == 3
+    assert EXIT_ABORTED == 75
 
 
 def test_a_degraded_abort_stops_the_set(tmp_path):
@@ -246,10 +296,40 @@ def test_matcher_falls_back_to_compare_identity():
         "category": "logic",
     }
     assert matches(_f("Something reworded", 90, hash="h1"), label)  # same finding hash
-    assert matches(_f("Reworded entirely", 40, hash="h2", category="logic"), label)
-    assert not matches(_f("Reworded entirely", 40, hash="h2", category="style"), label)
+    label["title"] = "Fee estimation omits drainage costs on change outputs"
+    # same file, category and lines, a little title overlap (Jaccard 1/8, under 0.2)
+    assert matches(_f("Wrong fee", 40, hash="h2", category="logic"), label)
+    assert not matches(_f("Wrong fee", 40, hash="h2", category="style"), label)
+    assert not matches(_f("Unrelated thing", 40, hash="h2", category="logic"), label)  # no overlap
     nocat = {**label, "hash": "", "category": ""}
-    assert not matches(_f("Reworded entirely", 40, hash=""), nocat)  # no hash/category luck
+    assert not matches(_f("Wrong fee", 40, hash=""), nocat)  # no hash/category luck
+
+
+def test_matching_is_one_to_one():
+    labels = [
+        {
+            "file": "a.rs",
+            "line_start": 10,
+            "line_end": 10,
+            "title": "Overflow in fee calc",
+            "hash": "",
+            "category": "",
+        },
+        {
+            "file": "a.rs",
+            "line_start": 12,
+            "line_end": 12,
+            "title": "Overflow in fee path",
+            "hash": "",
+            "category": "",
+        },
+    ]
+    got, rest = replayscore.assign([_f("Overflow in fee calc", 11)], labels)
+    assert list(got) == [0] and rest == []  # the closer title wins; one label only
+    got, rest = replayscore.assign(
+        [_f("Overflow in fee calc", 11), _f("Overflow in the fee calc", 10, hash="x")], labels[:1]
+    )
+    assert len(got) == 1 and len(rest) == 1  # the second finding is not the same label again
 
 
 # ---- scoring ----
@@ -336,7 +416,7 @@ def test_scorer_paired_metrics_per_set():
     assert s1["v12"]["new_blockers"] == 1 and s1["v11"]["new_blockers"] == 0
     s4 = result["sets"]["S4"]
     assert (s4["v11"]["fp_blockers"], s4["v12"]["fp_blockers"]) == (1, 0)
-    assert s4["v11"]["runs_with_blocker_rate"] == 1.0
+    assert s4["v11"]["heads_with_blocker_rate"] == 1.0
     s5 = result["sets"]["S5"]
     # a settled issue re-raised at any severity on an unchanged anchor counts; a changed one not
     assert (s5["v11"]["reraised_unchanged"], s5["v12"]["reraised_unchanged"]) == (1, 0)
@@ -383,11 +463,252 @@ def test_noise_floor_from_repeat_samples():
         _sample("v12", 2, [], k=1, samples=2),
     ]
     result, _, _ = score(items, labels, samples, ["v11", "v12"])
-    assert result["noise"]["per_arm"]["v11"]["flip_rate"] == 0.5
-    assert result["noise"]["per_arm"]["v12"]["flip_rate"] == 0.0
-    assert result["noise"]["floor_pp"] == 25.0
+    # v11 found 2 of 2 in sample 0 and 1 of 2 in sample 1; v12 1 of 2 in both
+    assert result["noise"]["per_arm"]["v11"]["recall_delta_pp"] == 50.0
+    assert result["noise"]["per_arm"]["v11"]["label_flips"] == 1
+    assert result["noise"]["per_arm"]["v12"]["recall_delta_pp"] == 0.0
+    assert result["noise"]["floor_pp"] == 50.0
     # recall averages the samples of a head: v11 found label 1 in half its samples
     assert result["sets"]["S1"]["v11"]["recall"] == 0.75
+
+
+def test_per_head_means_over_samples_for_counts():
+    """A known FP raised as a blocker in one of two samples counts 0.5, not 1 (or 2)."""
+    items = [SetItem(3, "S4", samples=2)]
+    labels = [_label(3, "FindDevNetGenesisBlock unused", "fp", "S4")]
+    fp = [_f("FindDevNetGenesisBlock is unused")]
+    samples = [
+        _sample("v11", 3, fp, set_="S4", k=0, samples=2),
+        _sample("v11", 3, [], set_="S4", k=1, samples=2),
+        _sample("v12", 3, [_f("New thing", 90)], set_="S4", k=0, samples=2),
+        _sample("v12", 3, [_f("New thing", 90)], set_="S4", k=1, samples=2),
+    ]
+    result, _, _ = score(items, labels, samples, ["v11", "v12"])
+    s4 = result["sets"]["S4"]
+    assert s4["v11"]["fp_blockers"] == 0.5 and s4["v11"]["heads_with_blocker_rate"] == 0.5
+    assert s4["v12"]["new_blockers"] == 1.0
+    assert s4["delta_vs_v11"]["v12"]["fp_blockers"] == -0.5
+
+
+def test_subsets_pooled_recall_bootstrap_and_thread_outcomes():
+    items = [SetItem(i, s) for i, s in ((1, "S1"), (2, "S2"), (3, "S5"), (4, "S5"), (5, "S8"))]
+    labels = [
+        _label(1, "Overflow in fee calc", "tp", "S1"),
+        _label(2, "Race in wallet unlock", "tp", "S2"),
+        _label(3, "Settled rename", "fp", "S5", round_kind="settling_round"),
+        _label(4, "Settled migration", "fp", "S5", round_kind="post_settle"),
+        _label(
+            5, "HMAC erase", "deferred", "S8", hash="a77", thread_outcome="INTENTIONALLY_DEFERRED"
+        ),
+    ]
+    conv = {"a77": {"status": "DEFERRAL_PENDING"}}
+    samples = [
+        _sample("v11", 1, []),
+        _sample("v11", 2, [], set_="S2"),
+        _sample("v11", 3, [_f("Settled rename", sev="suggestion")], set_="S5"),
+        _sample("v11", 4, [], set_="S5"),
+        _sample("v11", 5, [], set_="S8", conversation={"a77": {"status": "STILL_VALID"}}),
+        _sample("v12", 1, [_f("Overflow in fee calc")]),
+        _sample("v12", 2, [_f("Race in wallet unlock")], set_="S2"),
+        _sample("v12", 3, [], set_="S5"),
+        _sample("v12", 4, [_f("Settled migration")], set_="S5"),
+        _sample("v12", 5, [], set_="S8", conversation=conv),
+    ]
+    result, _, _ = score(items, labels, samples, ["v11", "v12"])
+    sets = result["sets"]
+    assert sets["S1+S2"]["v11"]["recall"] == 0.0 and sets["S1+S2"]["v12"]["recall"] == 1.0
+    assert sets["S1+S2"]["v12"]["tp_labels"] == 2
+    ci = sets["S1+S2"]["delta_vs_v11"]["v12"]["recall_ci95_pp"]
+    assert ci == [100.0, 100.0]
+    assert sets["S5:settling_round"]["v11"]["reraised_unchanged"] == 1.0
+    assert sets["S5:settling_round"]["v12"]["reraised_unchanged"] == 0.0
+    assert sets["S5:post_settle"]["v12"]["reraised_unchanged"] == 1.0
+    assert sets["S5"]["v12"]["fp_blockers"] == 1.0
+    # a pending deferral reaches an expected deferral
+    assert sets["S8"]["v11"]["thread_outcomes_reached"] == 0.0
+    assert sets["S8"]["v12"]["thread_outcomes_reached"] == 1.0
+
+
+EVAL = Path("/Users/pasta/workspace/reviewsys-v12-design/eval")
+
+
+def test_the_eval_set_and_labels_format(tmp_path):
+    """eval/set.json and eval/labels.jsonl as the eval-set builder writes them (a sample of
+    their rows here; the real files are scored too when they are on this machine)."""
+    setfile = tmp_path / "set.json"
+    labels = tmp_path / "labels.jsonl"
+    setfile.write_text(
+        json.dumps(
+            {
+                "targets": {"S1": 1},
+                "heads": [
+                    {
+                        "id": "yappr-484-87bdb83b",
+                        "set": "S1",
+                        "source_run_id": 775,
+                        "repo": "o/r",
+                        "number": 484,
+                        "sha": "8" * 40,
+                        "cutoff": "2026-09-16T09:23:12Z",
+                    },
+                    {
+                        "id": "bls-132-7cded921",
+                        "set": "S4",
+                        "source_run_id": 2885,
+                        "repo": "o/r",
+                        "number": 132,
+                        "sha": "7" * 40,
+                    },
+                    {
+                        "id": "bls-132-7cded921-reply",
+                        "set": "S8",
+                        "source_run_id": 2926,
+                        "repo": "o/r",
+                        "number": 132,
+                        "sha": "7" * 40,
+                    },
+                    {
+                        "id": "dash-7107-5885d7ba",
+                        "set": "S6",
+                        "source_run_id": 3248,
+                        "repo": "o/r",
+                        "number": 7107,
+                        "sha": "5" * 40,
+                    },
+                ],
+                "repeats": ["yappr-484-87bdb83b"],
+                "missing_locally": [],
+            }
+        )
+    )
+    rows = [
+        {
+            "repo": "o/r",
+            "number": 484,
+            "sha": "8" * 40,
+            "file": "lib/x.ts",
+            "line_start": 145,
+            "line_end": 151,
+            "title": "Prevent background contract revalidation from recursively triggering recovery",
+            "severity": "blocking",
+            "label": "tp",
+            "set": "S1",
+            "source": "late_unchanged_fixed",
+            "head_id": "yappr-484-87bdb83b",
+            "strength": "TP-strong",
+            "finding_hash": "2feb0f040eab",
+        },
+        {
+            "repo": "o/r",
+            "number": 132,
+            "sha": "7" * 40,
+            "file": "src/hmac.c",
+            "line_start": 77,
+            "line_end": 77,
+            "title": "BLST MSVC sources",
+            "severity": "blocking",
+            "label": "fp",
+            "set": "S4",
+            "source": "withdrawn",
+            "head_id": "bls-132-7cded921",
+            "human_reply": {"user": "knst", "body": "no"},
+        },
+        {
+            "repo": "o/r",
+            "number": 132,
+            "sha": "7" * 40,
+            "file": "include/util.hpp",
+            "line_start": 77,
+            "line_end": 77,
+            "title": "Explicitly erase the HMAC allocation before releasing it",
+            "severity": "blocking",
+            "label": "deferred",
+            "set": "S8",
+            "source": "reply_outcome",
+            "head_id": "bls-132-7cded921-reply",
+            "finding_hash": "a772484d6d1a",
+            "thread_outcome": "INTENTIONALLY_DEFERRED",
+            "production_outcome": "STILL_VALID",
+        },
+        {
+            "repo": "o/r",
+            "number": 7107,
+            "sha": "5" * 40,
+            "file": None,
+            "line_start": None,
+            "line_end": None,
+            "title": "long-tail head (checks only)",
+            "severity": None,
+            "label": "none",
+            "set": "S6",
+            "source": "long_tail",
+        },
+    ]
+    labels.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    items = load_set(setfile)
+    assert [(i.run_id, i.samples) for i in items] == [(775, 2), (2885, 1), (2926, 1), (3248, 1)]
+    out = tmp_path / "out"
+    run_set(
+        items, _policies(tmp_path), out, concurrency=1, runner=lambda j, o: 0, echo=lambda s: None
+    )
+    by_run = {
+        i.run_id: next(
+            json.loads(json.dumps(h))
+            for h in json.loads(setfile.read_text())["heads"]
+            if h["source_run_id"] == i.run_id
+        )
+        for i in items
+    }
+    for item in items:
+        for p in ("v11", "v12"):
+            for k in range(item.samples):
+                job = Job(item, Policy(p, Path()), k)
+                h = by_run[item.run_id]
+                found = (
+                    [
+                        _f(
+                            "Prevent contract revalidation from triggering recovery",
+                            146,
+                            file="lib/x.ts",
+                        )
+                    ]
+                    if item.run_id == 775 and p == "v12"
+                    else []
+                )
+                _write(
+                    job,
+                    out,
+                    _report(
+                        job,
+                        number=h["number"],
+                        sha=h["sha"],
+                        published=found,
+                        conversation={"a772484d6d1a": {"status": "STILL_VALID"}}
+                        if item.run_id == 2926
+                        else None,
+                    ),
+                )
+    from reviewsys.cli import main
+
+    assert main(["replay-score", str(setfile), str(labels), "--out", str(out)]) == 0
+    result = json.loads((out / "score.json").read_text())
+    assert result["heads"]["paired"] == 4 and result["labels"]["on_paired_heads"] == 4
+    assert (
+        result["sets"]["S1"]["v12"]["recall"] == 1.0
+        and result["sets"]["S1"]["v11"]["recall"] == 0.0
+    )
+    # the S4 and S8 heads share a commit: each label scores only on its own head
+    assert (
+        result["sets"]["S4"]["v11"]["heads"] == 1
+        and result["sets"]["S8"]["v11"]["thread_outcome_labels"] == 1
+    )
+    assert result["sets"]["S6"]["v11"]["tp_labels"] == 0
+    real_set, real_labels = EVAL / "set.json", EVAL / "labels.jsonl"
+    if real_set.exists() and real_labels.exists():
+        assert len(load_set(real_set)) == len(json.loads(real_set.read_text())["heads"])
+        assert len(replayscore.load_labels(real_labels)) == len(
+            real_labels.read_text().splitlines()
+        )
 
 
 def test_judge_list_clusters_one_issue_raised_by_both_arms():

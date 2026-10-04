@@ -11,9 +11,8 @@ from typing import Any
 
 import pytest
 
-from reviewsys import ghshim
 from reviewsys.gh import Gh, read_only_runner
-from reviewsys.ghshim import Pin, install_shim, pinned_runner, serve
+from reviewsys.ghshim import Broker, Pin, install_shim, pinned_runner, serve
 from reviewsys.models import ReviewError
 
 CUTOFF = "2026-09-20T12:00:00Z"
@@ -338,20 +337,240 @@ def test_reads_of_other_repositories_pass_through(history, tmp_path):
     ]
 
 
-def test_the_installed_shim_runs_the_view(history, tmp_path):
-    pin = _pin(history, tmp_path, real_gh="/nonexistent/gh")
-    pin_path = tmp_path / "pin.json"
-    pin.save(pin_path)
-    shim = install_shim(pin_path, tmp_path / "bin")
-    ok = subprocess.run([str(shim), ghshim.SHIM_CHECK], capture_output=True, text=True)
-    assert ok.stdout == "ok\n"
-    diff = subprocess.run([str(shim), "pr", "diff", "7"], capture_output=True, text=True)
-    assert diff.returncode == 0 and "+new file" in diff.stdout
-    post = subprocess.run(
-        [str(shim), "pr", "comment", "7", "--body", "hi"], capture_output=True, text=True
+def test_the_installed_shim_asks_the_broker(history, tmp_path):
+    """The lane's gh is a client of the replay's broker: it runs no gh of its own."""
+    pin = _pin(history, tmp_path)
+    real = Real({"--version": "gh version 9\n"})
+    try:
+        broker = Broker(
+            pin,
+            lambda args: (
+                real(args)
+                if args != ["--version"]
+                else subprocess.CompletedProcess(args, 0, "gh version 9\n", "")
+            ),
+        ).__enter__()
+    except PermissionError:
+        pytest.skip("this sandbox refuses binding a Unix socket")
+    try:
+        shim = install_shim(broker.path, tmp_path / "bin", curl_log=tmp_path / "curl.log")
+        ver = subprocess.run([str(shim), "--version"], capture_output=True, text=True)
+        assert ver.returncode == 0 and ver.stdout == "gh version 9\n"
+        diff = subprocess.run([str(shim), "pr", "diff", "7"], capture_output=True, text=True)
+        assert diff.returncode == 0 and "+new file" in diff.stdout
+        post = subprocess.run(
+            [str(shim), "pr", "comment", "7", "--body", "hi"], capture_output=True, text=True
+        )
+        assert post.returncode == 1 and "read-only replay" in post.stderr
+        q = subprocess.run(
+            [str(shim), "api", "graphql", "-F", "query=@-"],
+            input="mutation { x }",
+            capture_output=True,
+            text=True,
+        )
+        assert q.returncode == 1 and "mutation" in q.stderr
+        curl = tmp_path / "bin" / "curl"
+        if curl.exists():
+            got = subprocess.run(
+                [str(curl), "-s", "https://api.github.com/repos/o/r/pulls/7"],
+                capture_output=True,
+                text=True,
+            )
+            assert got.returncode == 22 and "refused" in got.stderr
+            assert "api.github.com" in (tmp_path / "curl.log").read_text()
+    finally:
+        broker.__exit__(None, None, None)
+    sources = {json.loads(x)["source"] for x in Path(pin.log).read_text().splitlines()}
+    assert sources == {"lane"}
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("pr", "comment", "5", "--body", "--help"),  # gh would post a comment saying --help
+        ("pr", "comment", "5", "-b", "-h"),
+        ("api", "-X", "POST", "repos/o/r/issues/7/comments", "-f", "body=--help", "--help"),
+    ],
+)
+def test_help_is_served_for_the_command_words_only(history, tmp_path, args):
+    pin, real = _pin(history, tmp_path), Real()
+    real.routes = {}
+    _serve(pin, real, *args)
+    assert len(real.calls) == 1
+    call = real.calls[0]
+    assert call[-1] == "--help" and all(a.isalpha() for a in call[:-1])
+    assert "5" not in call and "POST" not in call
+
+
+def test_graphql_needs_exactly_one_checked_query(history, tmp_path):
+    pin = _pin(history, tmp_path)
+    real = Real({"graphql": {"data": {}}})
+    two = _serve(
+        pin, real, "api", "graphql", "-f", "query={viewer{login}}", "-f", "query=mutation{x}"
     )
-    assert post.returncode == 1 and "read-only replay" in post.stderr
-    assert Pin.load(pin_path) == pin
+    assert two.returncode == 1 and "exactly one" in two.stderr
+    assert _serve(pin, real, "api", "graphql", "-f", "query={x}", "--input", "q.json").returncode
+    assert real.calls == []
+    qfile = tmp_path / "q.graphql"
+    qfile.write_text("{ viewer { login } }")
+    assert _serve(pin, real, "api", "graphql", "-F", f"query=@{qfile}").returncode == 0
+    # the query that was checked is the one sent, as text: gh never re-reads the file
+    assert real.calls[-1][:4] == ["api", "graphql", "-f", "query={ viewer { login } }"]
+    res = serve(pin, ["api", "graphql", "-F", "query=@-"], real=real, stdin="{ a }")
+    assert res.returncode == 0 and real.calls[-1][3] == "query={ a }"
+
+
+def test_auth_status_never_shows_the_token(history, tmp_path):
+    pin, real = _pin(history, tmp_path), Real()
+    _serve(pin, real, "auth", "status", "--show-token")
+    _serve(pin, real, "auth", "status", "-t")
+    assert real.calls == [["auth", "status"], ["auth", "status"]]
+
+
+def test_bodies_and_threads_are_rewound(history, tmp_path):
+    root = "<!-- thepastaclaw-review v1 finding={h} -->\n<!-- thepastaclaw-thread-status v1 -->\n> ✅ **Withdrawn** at `abcdef12`; see the replies below.\n\n**🔴 Blocking: {t}**"
+    pin = _pin(history, tmp_path, lifted={"aaaaaaaaaaaa": "INTENTIONALLY_DEFERRED"})
+    real = Real(
+        {
+            "repos/o/r/pulls/7/comments": [
+                {
+                    "id": 1,
+                    "created_at": OLD,
+                    "updated_at": NEW,
+                    "body": root.format(h="aaaaaaaaaaaa", t="Kept"),
+                },
+                {
+                    "id": 2,
+                    "created_at": OLD,
+                    "body": root.format(h="bbbbbbbbbbbb", t="Lifted later"),
+                },
+            ],
+            "repos/o/r/issues/7/comments": [
+                {
+                    "id": 3,
+                    "created_at": OLD,
+                    "body": "<!-- thepastaclaw-gate v1 -->\n✅ Final review complete (commit later)",
+                }
+            ],
+            "graphql": {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "reviewThreads": {
+                                "nodes": [
+                                    {
+                                        "id": "T1",
+                                        "isResolved": True,
+                                        "comments": {
+                                            "nodes": [{"createdAt": OLD}, {"createdAt": NEW}]
+                                        },
+                                    },
+                                    {
+                                        "id": "T2",
+                                        "isResolved": True,
+                                        "isOutdated": True,
+                                        "comments": {"nodes": [{"createdAt": OLD}]},
+                                    },
+                                ]
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    )
+    got = json.loads(_serve(pin, real, "api", "repos/o/r/pulls/7/comments").stdout)
+    assert "⏭️ **Deferred**" in got[0]["body"] and "`abcdef12`" in got[0]["body"]
+    assert "thread-status" not in got[1]["body"] and "Lifted later" in got[1]["body"]
+    gate = json.loads(_serve(pin, real, "api", "repos/o/r/issues/7/comments").stdout)
+    assert "Final review complete" not in gate[0]["body"]
+    assert gate[0]["body"].startswith("<!-- thepastaclaw-gate v1 -->")
+    q = 'query { repository(owner: "o", name: "r") { pullRequest(number: 7) { id } } }'
+    data = json.loads(_serve(pin, real, "api", "graphql", "-f", f"query={q}").stdout)
+    nodes = data["data"]["repository"]["pullRequest"]["reviewThreads"]["nodes"]
+    assert [(n["id"], n["isResolved"]) for n in nodes] == [("T1", False), ("T2", True)]
+    notes: dict[str, int] = {}
+    for line in Path(pin.log).read_text().splitlines():
+        for k, v in (json.loads(line).get("notes") or {}).items():
+            notes[k] = notes.get(k, 0) + v
+    assert notes == {
+        "edited_after_cutoff": 1,
+        "thread_status_stripped": 1,
+        "gate_comment_replaced": 1,
+        "dropped_after_cutoff": 1,
+        "thread_reopened_by_cutoff": 1,
+        "thread_resolved_as_of_now": 1,
+        "thread_outdated_as_of_now": 1,
+    }
+
+
+def test_later_commits_and_counts_are_pinned_to_the_replayed_range(history, tmp_path):
+    pin = _pin(history, tmp_path)
+    real = Real(
+        {
+            "repos/o/r/pulls/7": {
+                "number": 7,
+                "head": {"sha": history["later"]},
+                "commits": 3,
+                "additions": 9,
+                "deletions": 9,
+                "changed_files": 3,
+            },
+            "repos/o/r/issues/7/timeline": [
+                {"event": "committed", "sha": pin.sha},
+                {"event": "committed", "sha": history["later"]},
+                {"event": "commented", "created_at": OLD},
+            ],
+            "graphql": {
+                "data": {
+                    "repository": {
+                        "pullRequest": {
+                            "additions": 9,
+                            "commits": {
+                                "totalCount": 3,
+                                "nodes": [
+                                    {"commit": {"oid": pin.sha}},
+                                    {"commit": {"oid": history["later"]}},
+                                ],
+                            },
+                        }
+                    }
+                }
+            },
+        }
+    )
+    pr = json.loads(_serve(pin, real, "api", "repos/o/r/pulls/7").stdout)
+    assert (pr["commits"], pr["additions"], pr["deletions"], pr["changed_files"]) == (2, 2, 1, 2)
+    tl = json.loads(_serve(pin, real, "api", "repos/o/r/issues/7/timeline").stdout)
+    assert [e.get("sha") for e in tl] == [pin.sha, None]
+    q = 'query { repository(owner: "o", name: "r") { pullRequest(number: 7) { additions } } }'
+    gq = json.loads(_serve(pin, real, "api", "graphql", "-f", f"query={q}").stdout)
+    p = gq["data"]["repository"]["pullRequest"]
+    assert p["additions"] == 2 and p["commits"]["totalCount"] == 2
+    assert [n["commit"]["oid"] for n in p["commits"]["nodes"]] == [pin.sha]
+
+
+def test_combined_status_follows_the_snapshot(history, tmp_path):
+    pin, real = _pin(history, tmp_path), Real()
+    st = json.loads(_serve(pin, real, "api", f"repos/o/r/commits/{pin.sha}/status").stdout)
+    assert st["state"] == "failure"  # the snapshot has a failing check
+
+
+def test_read_only_runner_refuses_any_unchecked_query():
+    calls: list[list[str]] = []
+
+    def inner(argv, stdin, timeout):
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, "{}", "")
+
+    run = read_only_runner(inner)
+    for argv in (
+        ["gh", "api", "graphql", "-f", "query={a}", "-f", "query=mutation{b}"],
+        ["gh", "api", "graphql", "-F", "query=@q.graphql"],
+        ["gh", "api", "graphql", "-f", "query={a}", "--input", "-"],
+    ):
+        assert run(argv, None, 1).returncode == 1
+    assert calls == []
 
 
 def test_read_only_runner_refuses_mutations_anywhere_in_the_document():

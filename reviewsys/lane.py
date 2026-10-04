@@ -57,8 +57,10 @@ class LaneSpec:
     pool: str | None = None
     # macOS sandbox profile the lane runs under ("" = none); see `exec_deny_profile`
     sandbox_profile: str = ""
-    # set in the lane's environment on top of the worker's own (see `with_env`)
+    # set in the lane's environment on top of the worker's own, and Claude Code tools the
+    # lane may not use (see `with_overrides`)
     env: tuple[tuple[str, str], ...] = ()
+    disallowed_tools: tuple[str, ...] = ()
     # Correction turns (see `run_with_corrections`). `session_id` (a UUID) makes the lane keep
     # its Claude Code session under that id instead of `--no-session-persistence`; with
     # `resume` the lane continues that session, `prompt` being the next user turn. `check` looks
@@ -178,15 +180,23 @@ def sandboxed(runner: LaneRunner, profile: str) -> LaneRunner:
     return run
 
 
-def with_env(runner: LaneRunner, env: dict[str, str]) -> LaneRunner:
-    """`runner`, with `env` set in every lane's environment on top of the worker's own (no
-    change when it is empty). `reviewsys replay` puts its pinned `gh` first on PATH this way."""
-    if not env:
+def with_overrides(
+    runner: LaneRunner, *, env: dict[str, str], disallowed_tools: tuple[str, ...] = ()
+) -> LaneRunner:
+    """`runner`, with `env` set in every lane's environment on top of the worker's own and
+    `disallowed_tools` refused to every lane (no change when both are empty). `reviewsys
+    replay` puts its pinned `gh` first on PATH and takes the web tools away this way."""
+    if not env and not disallowed_tools:
         return runner
     pairs = tuple(env.items())
 
     def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
-        return runner(dataclasses.replace(spec, env=(*spec.env, *pairs)), artifact_dir, worktree)
+        spec = dataclasses.replace(
+            spec,
+            env=(*spec.env, *pairs),
+            disallowed_tools=(*spec.disallowed_tools, *disallowed_tools),
+        )
+        return runner(spec, artifact_dir, worktree)
 
     return run
 
@@ -326,6 +336,7 @@ def argv_for(spec: LaneSpec) -> list[str]:
         str(spec.add_dir),
         "--output-format",
         "json",
+        *(["--disallowedTools", ",".join(spec.disallowed_tools)] if spec.disallowed_tools else []),
         *session_args(spec),
         "--print",
     ]

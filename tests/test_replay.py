@@ -270,11 +270,23 @@ def _replay(cfg, history, tmp_path, lanes, **kw) -> dict[str, Any]:
     )
 
 
+class _FakeBroker:
+    """The broker binds a Unix socket, which a sandboxed test host may refuse; test_ghshim
+    runs the real one. Lanes here are fakes and never call the shim."""
+
+    def __init__(self, pin, real) -> None:
+        self.path = "/nonexistent/socket"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> None:
+        return None
+
+
 @pytest.fixture(autouse=True)
-def _no_real_gh(monkeypatch):
-    """The replay copies the installed gh and checks its shim under the lane sandbox; neither
-    is this test host's business (test_ghshim runs the shim itself)."""
-    monkeypatch.setattr(replay, "stage_gh", lambda real, root: ("gh", ()))
+def _no_broker(monkeypatch):
+    monkeypatch.setattr(replay, "Broker", _FakeBroker)
     monkeypatch.setattr(replay, "check_shim", lambda shim, profile: "")
 
 
@@ -301,6 +313,12 @@ def test_replay_reviews_the_source_head_with_pinned_lanes_and_posts_nothing(
     bin_dir = str(work / "bin")
     assert lanes.calls and all(dict(s.env)["PATH"].startswith(bin_dir) for s in lanes.calls)
     assert all(dict(s.env)["CLAUDE_ENV_FILE"].startswith(bin_dir) for s in lanes.calls)
+    # no web tools, and no GitHub token of the developer's own (none was given)
+    assert all(set(s.disallowed_tools) == {"WebFetch", "WebSearch"} for s in lanes.calls)
+    assert all(dict(s.env)["GH_TOKEN"] == "" == dict(s.env)["GITHUB_TOKEN"] for s in lanes.calls)
+    # lane slots are the machine's, shared by every replay
+    assert (work / "work" / "lane-slots").resolve() == (cfg.work_dir / "lane-slots").resolve()
+    assert report["options"]["gh_token"].startswith("none")
     reviewer = next(s for s in lanes.calls if s.role == "general")
     assert f"`{history['base']}..{history['head']}`" in reviewer.prompt
     assert "Title then" in reviewer.prompt and "Retitled" not in reviewer.prompt
@@ -446,9 +464,13 @@ def test_lane_env_reaches_the_spawned_process(tmp_path, monkeypatch):
         timeout_seconds=30,
         claude_bin=str(script),
     )
-    run = lane_mod.with_env(lane_mod.run_claude_lane, {"REPLAY_PROBE": "pinned"})
+    run = lane_mod.with_overrides(
+        lane_mod.run_claude_lane, env={"REPLAY_PROBE": "pinned"}, disallowed_tools=("WebFetch",)
+    )
     res: LaneResult = run(spec, tmp_path / "art", tmp_path)
     assert res.result_text == "pinned"
+    argv = json.loads((tmp_path / "art" / "lane-meta.json").read_text())["argv"]
+    assert argv[argv.index("--disallowedTools") + 1] == "WebFetch"
 
 
 def test_status_is_reported_for_failed_replays(cfg, conn, history, tmp_path):
@@ -467,3 +489,112 @@ def test_fetch_head_keeps_going_when_the_commit_is_already_there(cfg, mirror):
     wt.fetch_head(m, 1, mirror["head"])  # there is no refs/pull/1/head to fetch
     with pytest.raises(ReviewError, match="fetch"):
         wt.fetch_head(m, 1, "d" * 40)
+
+
+def test_a_finding_posted_before_the_cutoff_by_a_run_still_going_is_seeded(conn, history, tmp_path):
+    """The straddling run posted h-straddle before the cutoff and finished after it: its
+    findings row is recovered, so the worker's prior list keeps the finding."""
+    from reviewsys.db import connect
+
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO posted_findings (repo, number, hash, sha, posted_at) VALUES (?,?,?,?,?)",
+            (REPO, NUMBER, "h-straddle", history["old_sha"], "2026-09-20T11:30:00Z"),
+        )
+    scratch = connect(tmp_path / "scratch.db")
+    counts = replay.seed_history(
+        scratch, conn, repo=REPO, number=NUMBER, sha=history["head"], cutoff=CUTOFF, exclude_run=0
+    )
+    assert counts["posted_rows_recovered"] == 1
+    row = scratch.execute(
+        "SELECT pf.hash, f.title FROM posted_findings pf JOIN findings f "
+        "ON f.hash=pf.hash AND f.stage='posted' WHERE pf.hash='h-straddle'"
+    ).fetchone()
+    assert row["title"] == "Posted after the cutoff"
+
+
+def test_lifted_statuses_as_of_the_cutoff(conn, history):
+    with tx(conn):
+        for ts, h, status, action in (
+            (BEFORE, "h1", "WITHDRAWN", "replied"),
+            (BEFORE, "h2", "FIXED", "replied"),
+            ("2026-09-20T11:00:00Z", "h2", "STILL_VALID", "replied"),  # reopened before cutoff
+            (BEFORE, "h3", "WITHDRAWN", "no_reply"),  # never reached the thread
+            (AFTER, "h4", "WITHDRAWN", "replied"),  # after the cutoff
+        ):
+            conn.execute(
+                "INSERT INTO events (ts, kind, repo, number, detail) VALUES (?,?,?,?,?)",
+                (
+                    ts,
+                    "thread.answered",
+                    REPO,
+                    NUMBER,
+                    json.dumps({"finding_hash": h, "status": status, "action": action}),
+                ),
+            )
+    got = replay.lifted_before(conn, REPO, NUMBER, CUTOFF)
+    assert got == {"h1": "WITHDRAWN"}
+
+
+def test_a_same_sha_rereview_records_its_verdict_update_without_posting(
+    cfg, conn, history, tmp_path
+):
+    """With the pinned gh a replay takes the paths a dry run skips: a final review of this
+    head already stands, so the verdict follow-up is computed and recorded, never posted."""
+    _evidence(cfg, history["src"], history["base"])
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [_blocker()])
+    gh = FakeGh()
+    gh.posted_reviews = [
+        {
+            "id": 9,
+            "body": f"<!-- thepastaclaw-review v1 phase=final sha={history['head']} -->",
+            "event": "COMMENT",
+        }
+    ]
+    report = _replay(cfg, history, tmp_path, lanes, gh_runner=gh.runner)
+    assert report["status"] == "done", report["reason"]
+    assert len(gh.posted_reviews) == 1  # nothing posted
+    assert report["publications"]["final"]["verdict_update"] is True
+    assert report["publications"]["final"]["event"] == "REQUEST_CHANGES"
+    assert [f["title"] for f in report["published"]] == ["Overflow in f3"]
+
+
+def test_lane_output_reading_github_directly_marks_the_replay_invalid(cfg, conn, history, tmp_path):
+    _evidence(cfg, history["src"], history["base"])
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [])
+
+    def leaky(spec, art, wt_):
+        res = lanes(spec, art, wt_)
+        if spec.role == "general":
+            (art / "stdout.json").write_text(
+                "fetched https://api.github.com/repos/dashpay/platform/pulls/1/files"
+            )
+        return res
+
+    report = _replay(cfg, history, tmp_path, leaky)
+    assert report["invalid"] == "lane reached live GitHub"
+    assert report["live_github"]["lane_output_hits"]
+
+
+def test_a_read_only_token_reaches_the_lanes(cfg, conn, history, tmp_path):
+    _evidence(cfg, history["src"], history["base"])
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [])
+    report = _replay(cfg, history, tmp_path, lanes, gh_token="ro-token")
+    assert {dict(s.env)["GH_TOKEN"] for s in lanes.calls} == {"ro-token"}
+    assert report["options"]["gh_token"] == "read-only token"
+
+
+def test_an_audit_queue_source_run_is_replayed_as_a_live_review(cfg, conn, history, tmp_path):
+    with tx(conn):
+        conn.execute(
+            "UPDATE heads SET queue='audit' WHERE id=(SELECT head_id FROM runs WHERE id=?)",
+            (history["src"],),
+        )
+    _evidence(cfg, history["src"], history["base"])
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [])
+    report = _replay(cfg, history, tmp_path, lanes)
+    assert report["status"] == "done" and report["source"]["queue"] == "audit"

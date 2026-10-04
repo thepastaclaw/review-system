@@ -3,118 +3,83 @@
 A replay re-reviews the exact head a past run reviewed. Everything the review reads about the
 PR has to look as it did when that run started (the cutoff), and nothing may write to GitHub.
 The v10 eval pinned only the harness's own client; lanes calling `gh pr diff N` saw the PR's
-*current* head, `gh pr checks` its current CI, and every comment posted since. Now the
-harness's client routes through `pinned_runner`, and every lane finds a `gh` shim first on its
-PATH (`install_shim`) that runs `main` here. Both serve the same view:
+*current* head, `gh pr checks` its current CI, and every comment posted since. Now:
+
+- the harness's client routes through `pinned_runner`;
+- every lane finds a `gh` shim first on its PATH (`install_shim`). The shim runs nothing
+  itself: it hands its arguments to the replay's `Broker` over a Unix socket, and the broker,
+  outside the lane sandbox, answers from the same view. The lane sandbox denies executing the
+  installed gh, so a lane has no gh of its own to reach the live PR with.
+
+The view (`serve`):
 
 - `gh pr diff` is `git diff <merge-base> <sha>` from the repo's mirror.
 - The PR itself (REST `pulls/N` and `issues/N`, `gh pr view`, GraphQL `pullRequest`) is open,
   unmerged, at the replayed sha and at the base the source run saw, with the title and body
-  the source run saw (when its evidence is on disk). Its files and commits come from git.
+  the source run saw (when its evidence is on disk). Its files, commits and line counts come
+  from git; commits pushed after the replayed head are dropped wherever they appear.
 - CI (`gh pr checks`, the head's check-runs and status) comes from the source run's
   `evidence.json` snapshot; without one it is reported unavailable, never fetched live.
 - Comments, reviews, review threads and thread comments created at or after the cutoff are
-  dropped, the bot's own included.
+  dropped, the bot's own included. A thread that lost a comment that way is shown unresolved.
+  A bot finding's thread-status line (✅ Withdrawn, ...) is kept only when a thread answer
+  before the cutoff set it (`Pin.lifted`); the gate comment's content is replaced (it is one
+  comment edited all along, so its text is as of now).
 - Every write is refused, and so is every command not known to be a read: an unknown command
-  never reaches GitHub.
+  never reaches GitHub. Help is served for the command words only.
 
-Not rewound (as of now): whether a thread is resolved, reactions, labels, and the state of
-other PRs and issues (those created after the cutoff are refused, though). Every call and what
-was done with it is appended to the pin's log.
+Not rewound, counted per call in the log's `notes` (report.json sums them): whether a thread
+with no later comment is resolved, whether it is outdated, comment edits other than the ones
+above, reactions, labels, and other PRs and issues (those opened after the cutoff are
+refused).
 """
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import re
-import shlex
 import shutil
+import socketserver
 import subprocess
 import sys
+import tempfile
+import threading
+from collections import Counter
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
+from itertools import takewhile
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 
-from .gh import GRAPHQL_MUTATION, GhRunner
+from .db import now
+from .dedupe import FINDING_MARKER_RE, THREAD_STATUS_MARKER, THREAD_STATUS_RE
+from .gh import GRAPHQL_MUTATION, GhRunner, _default_runner
+from .github import GATE_MARKER
+from .publish import with_thread_status
 
 Result = subprocess.CompletedProcess[str]
 RealGh = Callable[[list[str]], Result]  # runs the real gh with these args (no argv[0])
 
-SHIM_CHECK = "--reviewsys-shim-check"
 # creation timestamps, REST and GraphQL spellings; `updated_at` is deliberately not one
 _CREATED = ("created_at", "createdAt", "submitted_at", "submittedAt")
+_UPDATED = ("updated_at", "updatedAt", "lastEditedAt")
 # subcommands that change something (on GitHub, or the lane's checkout): refused as writes
 _WRITE_VERBS = frozenset(
-    {
-        "add",
-        "archive",
-        "cancel",
-        "checkout",
-        "clone",
-        "close",
-        "comment",
-        "create",
-        "delete",
-        "deploy-key",
-        "develop",
-        "disable",
-        "download",
-        "edit",
-        "enable",
-        "fork",
-        "lock",
-        "login",
-        "logout",
-        "merge",
-        "pin",
-        "ready",
-        "refresh",
-        "remove",
-        "rename",
-        "reopen",
-        "rerun",
-        "review",
-        "revert",
-        "run",
-        "set",
-        "set-default",
-        "setup-git",
-        "sync",
-        "transfer",
-        "unarchive",
-        "unlock",
-        "unpin",
-        "update-branch",
-        "upload",
-    }
+    "add archive cancel checkout clone close comment create delete deploy-key develop "  # noqa: SIM905
+    "disable download edit enable fork lock login logout merge pin ready refresh remove "
+    "rename reopen rerun review revert run set set-default setup-git sync transfer "
+    "unarchive unlock unpin update-branch upload".split()
 )
+_WORD = re.compile(r"[a-z][a-z0-9-]*")
 _PR_URL = re.compile(r"https?://github\.com/([^/]+/[^/]+)/(?:pull|issues)/(\d+)")
 _COMPUTED_VIEW = frozenset(
-    {
-        "headRefOid",
-        "baseRefOid",
-        "state",
-        "closed",
-        "closedAt",
-        "mergedAt",
-        "mergedBy",
-        "mergeCommit",
-        "commits",
-        "files",
-        "additions",
-        "deletions",
-        "changedFiles",
-        "statusCheckRollup",
-        "reviewDecision",
-        "mergeable",
-        "mergeStateStatus",
-        "potentialMergeCommit",
-        "autoMergeRequest",
-        "updatedAt",
-    }
+    "headRefOid baseRefOid state closed closedAt mergedAt mergedBy mergeCommit commits files "  # noqa: SIM905
+    "additions deletions changedFiles statusCheckRollup reviewDecision mergeable "
+    "mergeStateStatus potentialMergeCommit autoMergeRequest updatedAt".split()
 )
 _TEXT_FIELDS = (
     "number",
@@ -128,6 +93,8 @@ _TEXT_FIELDS = (
     "labels",
     "body",
 )
+GATE_REPLACED = f"{GATE_MARKER}\n_(replay: this comment's content as of the cutoff is unknown)_"
+_NOTES: contextvars.ContextVar[Counter[str]] = contextvars.ContextVar("ghshim_notes")
 
 
 class Refused(Exception):
@@ -149,7 +116,9 @@ class Pin:
     git_dir: str  # the repo's mirror (any git dir holding both commits)
     real_gh: str
     ci: dict[str, Any] | None = None  # the source run's `ci` evidence snapshot
-    pr: dict[str, Any] = field(default_factory=dict)  # its `PrMeta.as_dict()` evidence
+    pr: dict[str, str] = field(default_factory=dict)  # the source run's PR `title` and `body`
+    # finding hash -> the lifting thread status a thread answer before the cutoff recorded
+    lifted: dict[str, str] = field(default_factory=dict)
     jq: str = ""  # jq binary for `--jq` on filtered responses ("" = none)
     log: str = ""  # JSONL of every call ("" = not logged)
 
@@ -172,95 +141,148 @@ def serve(
     pin: Pin, args: list[str], *, real: RealGh, stdin: str | None = None, source: str = "lane"
 ) -> Result:
     """Answer one `gh` invocation (`args` without argv[0]) from the pinned view."""
+    notes: Counter[str] = Counter()
+    token = _NOTES.set(notes)
     try:
         res = _dispatch(pin, args, real, stdin)
         outcome = "served" if res.returncode == 0 else "error"
     except Refused as exc:
         res = _fail(f"gh (reviewsys replay): {exc}")
         outcome = "refused"
-    _log(pin, source, args, outcome, res.returncode)
+    finally:
+        _NOTES.reset(token)
+    _log(pin, source, args, outcome, res.returncode, notes)
     return res
+
+
+def real_gh(pin: Pin, run: GhRunner, timeout: int = 600) -> RealGh:
+    """The real gh as `serve` calls it, through a `Gh` runner."""
+    return lambda args: run([pin.real_gh, *args], None, timeout)
 
 
 def pinned_runner(pin: Pin, inner: GhRunner | None = None) -> GhRunner:
     """A `Gh` runner serving the harness from the pinned view; `inner` runs the real gh."""
-    from .gh import _default_runner
-
     run = inner or _default_runner
 
     def runner(argv: Sequence[str], stdin: str | None, timeout: int) -> Result:
-        def real(args: list[str]) -> Result:
-            return run([pin.real_gh, *args], None, timeout)
-
-        return serve(pin, list(argv)[1:], real=real, stdin=stdin, source="harness")
+        return serve(
+            pin, list(argv)[1:], real=real_gh(pin, run, timeout), stdin=stdin, source="harness"
+        )
 
     return runner
 
 
-def main(argv: list[str] | None = None) -> int:
-    """The lane-side shim: `python -m reviewsys.ghshim PIN.json gh-args...`."""
-    args = sys.argv[1:] if argv is None else argv
-    if not args:
-        print("usage: python -m reviewsys.ghshim PIN.json [gh args...]", file=sys.stderr)
-        return 2
-    if args[1:] == [SHIM_CHECK]:
-        print("ok")
-        return 0
-    pin = Pin.load(Path(args[0]))
+class Broker:
+    """Serves the pinned view to the lanes' gh shims over a Unix socket, from the replay's
+    own process: outside the lane sandbox, so the real gh it runs needs no exemption from the
+    sandbox's deny list. A socket path must be short (104 bytes on macOS): it lives in a
+    private temporary directory, removed on exit."""
 
-    def real(gh_args: list[str]) -> Result:
-        env = {**os.environ, "GODEBUG": "netdns=go", "GH_PROMPT_DISABLED": "1", "NO_COLOR": "1"}
-        return subprocess.run(
-            [pin.real_gh, *gh_args], capture_output=True, text=True, env=env, check=False
-        )
+    def __init__(self, pin: Pin, real: RealGh) -> None:
+        self.pin, self.real = pin, real
+        self.path = ""
+        self._dir = ""
+        self._server: socketserver.ThreadingUnixStreamServer | None = None
 
-    stdin = None if sys.stdin is None or sys.stdin.isatty() else _lazy_stdin(args[1:])
-    res = serve(pin, args[1:], real=real, stdin=stdin)
-    sys.stdout.write(res.stdout or "")
-    sys.stderr.write(res.stderr or "")
-    return res.returncode
+    def __enter__(self) -> Broker:
+        pin, real = self.pin, self.real
+
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self) -> None:
+                try:
+                    req = json.loads(self.rfile.read() or b"{}")
+                    args = [str(a) for a in req.get("args") or []]
+                    stdin = req.get("stdin")
+                    res = serve(
+                        pin, args, real=real, stdin=stdin if isinstance(stdin, str) else None
+                    )
+                    out = {"rc": res.returncode, "stdout": res.stdout, "stderr": res.stderr}
+                except Exception as exc:  # one bad request never takes the broker down
+                    out = {"rc": 1, "stdout": "", "stderr": f"gh (reviewsys replay): {exc}\n"}
+                self.wfile.write(json.dumps(out).encode())
+
+        self._dir = tempfile.mkdtemp(prefix="rsgh-")
+        self.path = os.path.join(self._dir, "s")
+        self._server = socketserver.ThreadingUnixStreamServer(self.path, Handler)
+        self._server.daemon_threads = True
+        threading.Thread(target=self._server.serve_forever, daemon=True).start()
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if self._server is not None:
+            self._server.shutdown()
+            self._server.server_close()
+        shutil.rmtree(self._dir, ignore_errors=True)
 
 
-def install_shim(pin_path: Path, bin_dir: Path) -> Path:
-    """Write the `gh` shim into `bin_dir` (put first on a lane's PATH). It runs this module
-    with the interpreter and package the replay itself runs on."""
+# The lane-side shim: a standalone script (no reviewsys import, so it starts fast and needs
+# nothing of the package inside the sandbox) that forwards its arguments to the broker.
+_CLIENT = r"""#!{python}
+# reviewsys replay: a pinned, read-only gh served by the replay's broker (reviewsys/ghshim.py)
+import json, socket, sys
+args = sys.argv[1:]
+stdin = None
+if any(a.endswith("=@-") for a in args) and not sys.stdin.isatty():
+    stdin = sys.stdin.read()
+try:
+    s = socket.socket(socket.AF_UNIX)
+    s.settimeout(900)
+    s.connect({socket!r})
+    s.sendall(json.dumps({{"args": args, "stdin": stdin}}).encode())
+    s.shutdown(socket.SHUT_WR)
+    buf = b""
+    while chunk := s.recv(65536):
+        buf += chunk
+    res = json.loads(buf)
+except Exception as exc:
+    sys.stderr.write(f"gh (reviewsys replay): the replay's gh broker is unreachable: {{exc}}\n")
+    sys.exit(1)
+sys.stdout.write(res["stdout"])
+sys.stderr.write(res["stderr"])
+sys.exit(res["rc"])
+"""
+
+# curl to GitHub would read the PR live: refused (and logged); anything else goes through
+_CURL = r"""#!/bin/sh
+# reviewsys replay: curl without GitHub (reviewsys/ghshim.py)
+for a in "$@"; do
+  case "$a" in
+    *github.com*|*githubusercontent.com*)
+      printf '%s\n' "$a" >> {log}
+      echo "curl (reviewsys replay): refused $a: GitHub is pinned to the reviewed commit in this replay; use gh" >&2
+      exit 22;;
+  esac
+done
+exec {curl} "$@"
+"""
+
+
+def install_shim(socket_path: str, bin_dir: Path, *, curl_log: Path | None = None) -> Path:
+    """Write the `gh` shim (and, with `curl_log`, a curl that refuses GitHub) into `bin_dir`,
+    to go first on a lane's PATH."""
     bin_dir.mkdir(parents=True, exist_ok=True)
-    pkg_root = Path(__file__).resolve().parent.parent
     path = bin_dir / "gh"
-    path.write_text(
-        "#!/bin/sh\n"
-        "# reviewsys replay: a pinned, read-only gh (reviewsys/ghshim.py)\n"
-        f"export PYTHONPATH={shlex.quote(str(pkg_root))}\n"
-        f'exec {shlex.quote(sys.executable)} -m reviewsys.ghshim {shlex.quote(str(pin_path))} "$@"\n'
-    )
+    path.write_text(_CLIENT.format(python=sys.executable, socket=socket_path))
     path.chmod(0o755)
+    real_curl = shutil.which("curl", path=os.pathsep.join(_path_without(bin_dir)))
+    if curl_log is not None and real_curl:
+        curl = bin_dir / "curl"
+        curl.write_text(_CURL.format(log=_sh_quote(str(curl_log)), curl=_sh_quote(real_curl)))
+        curl.chmod(0o755)
     return path
 
 
-def stage_real_gh(real: str, dest_dir: Path) -> Path:
-    """A private copy of the real gh binary for the shim to run. The replay denies lanes
-    executing the installed gh (so a lane that calls it by absolute path is stopped by the
-    sandbox, not served the live PR), and that deny is by path: the copy is not covered. An APFS
-    clone where possible; refreshed when the installed binary changes."""
-    src = Path(os.path.realpath(shutil.which(real) or real))
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / "gh"
-    st = src.stat()
-    if dest.exists():
-        d = dest.stat()
-        if (d.st_size, int(d.st_mtime)) == (st.st_size, int(st.st_mtime)):
-            return dest
-        dest.unlink()
-    tmp = dest_dir / f".gh.{os.getpid()}"
-    if subprocess.run(["cp", "-c", "-p", str(src), str(tmp)], capture_output=True).returncode:
-        shutil.copy2(src, tmp)
-    tmp.replace(dest)
-    return dest
+def _path_without(d: Path) -> list[str]:
+    return [p for p in os.environ.get("PATH", "").split(os.pathsep) if p and Path(p) != d]
 
 
-def _lazy_stdin(args: list[str]) -> str | None:
-    """Only a GraphQL query read from `@-` is ever taken from stdin."""
-    return sys.stdin.read() if any(a.endswith("=@-") for a in args) else None
+def _sh_quote(s: str) -> str:
+    return "'" + s.replace("'", "'\\''") + "'"
 
 
 # ---- dispatch ----
@@ -270,20 +292,25 @@ def _dispatch(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Res
     if not args or args[0] in ("--version", "version"):
         return real(["--version"])
     if args[0] == "help" or "--help" in args or "-h" in args:
-        return real(args)
+        # only the command words: gh would read a flag's value as `--help` and run the command
+        words = list(takewhile(_WORD.fullmatch, args))[:3]
+        return real(words if words[:1] == ["help"] else [*words, "--help"])
     cmd, sub = args[0], (args[1] if len(args) > 1 else "")
     if cmd == "api":
         return _api(pin, args[1:], real, stdin)
     if cmd == "pr" and sub == "diff":
-        return _pr_diff(pin, args[2:], real, args)
+        return _pr_diff(pin, args, real)
     if cmd in ("pr", "issue") and sub == "view":
-        return _view(pin, args[2:], real, args)
+        return _view(pin, args, real)
     if cmd == "pr" and sub == "checks":
         return _pr_checks(pin, args[2:])
     if cmd == "run" and sub == "view":
         return _run_view(args, real)
-    if (cmd, sub) in (("repo", "view"), ("auth", "status")):
+    if (cmd, sub) == ("repo", "view"):
+        _parse_read(args)
         return real(args)
+    if (cmd, sub) == ("auth", "status"):
+        return real(["auth", "status"])  # never `--show-token`
     shown = " ".join(args[:2])
     if sub in _WRITE_VERBS or cmd in ("browse", "extension", "codespace"):
         raise Refused(
@@ -300,22 +327,8 @@ def _dispatch(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Res
 # ---- argument parsing ----
 
 _VALUE_FLAGS = frozenset(
-    {
-        "-R",
-        "--repo",
-        "--json",
-        "-q",
-        "--jq",
-        "-t",
-        "--template",
-        "--color",
-        "-i",
-        "--interval",
-        "-j",
-        "--job",
-        "-a",
-        "--attempt",
-    }
+    "-R --repo --json -q --jq -t --template --color -i --interval -j --job -a --attempt "  # noqa: SIM905
+    "-b --branch".split()
 )
 
 
@@ -340,6 +353,14 @@ def _parse(args: list[str]) -> tuple[list[str], dict[str, str]]:
     return pos, flags
 
 
+def _parse_read(args: list[str]) -> tuple[list[str], dict[str, str]]:
+    """`_parse` of `gh <cmd> <sub> ...`, refusing `--web` (it opens a browser on the live PR)."""
+    pos, flags = _parse(args[2:])
+    if "--web" in flags or "-w" in flags:
+        raise Refused("`--web` is not available in a replay")
+    return pos, flags
+
+
 def _flag(flags: dict[str, str], *names: str) -> str | None:
     return next((flags[n] for n in names if n in flags), None)
 
@@ -360,7 +381,7 @@ def _target(pin: Pin, pos: list[str], flags: dict[str, str]) -> tuple[str, int]:
 
 
 def _is_pinned(pin: Pin, repo: str, number: int) -> bool:
-    return repo.lower() == pin.repo.lower() and number == pin.number
+    return _same_repo(pin, repo) and number == pin.number
 
 
 def _same_repo(pin: Pin, repo: str) -> bool:
@@ -369,6 +390,8 @@ def _same_repo(pin: Pin, repo: str) -> bool:
 
 def _existed(pin: Pin, repo: str, number: int, real: RealGh) -> None:
     """Refuse an issue or PR of the replayed repo that was opened after the cutoff."""
+    if not _same_repo(pin, repo):
+        return
     res = real(["api", f"repos/{repo}/issues/{number}", "--jq", ".created_at"])
     if res.returncode == 0 and res.stdout.strip() >= pin.cutoff:
         raise Refused(f"{repo}#{number} did not exist yet at this replay's cutoff ({pin.cutoff})")
@@ -377,34 +400,29 @@ def _existed(pin: Pin, repo: str, number: int, real: RealGh) -> None:
 # ---- pr diff / view / checks, issue view, run view ----
 
 
-def _pr_diff(pin: Pin, rest: list[str], real: RealGh, args: list[str]) -> Result:
-    pos, flags = _parse(rest)
-    if "--web" in flags or "-w" in flags:
-        raise Refused("`--web` is not available in a replay")
+def _pr_diff(pin: Pin, args: list[str], real: RealGh) -> Result:
+    pos, flags = _parse_read(args)
     repo, number = _target(pin, pos, flags)
     if not _is_pinned(pin, repo, number):
-        if _same_repo(pin, repo):
-            _existed(pin, repo, number, real)
+        _existed(pin, repo, number, real)
         return real(args)
     if "--name-only" in flags:
         return _ok(_git(pin, "diff", "--name-only", "-M", pin.merge_base, pin.sha))
     return _ok(_diff(pin))
 
 
-def _view(pin: Pin, rest: list[str], real: RealGh, args: list[str]) -> Result:
-    pos, flags = _parse(rest)
-    if "--web" in flags or "-w" in flags:
-        raise Refused("`--web` is not available in a replay")
+def _view(pin: Pin, args: list[str], real: RealGh) -> Result:
+    pos, flags = _parse_read(args)
     repo, number = _target(pin, pos, flags)
     fields = _flag(flags, "--json")
     jq = _flag(flags, "-q", "--jq")
+    comments = "--comments" in flags or "-c" in flags
     if _flag(flags, "-t", "--template") is not None:
         raise Refused("`--template` is not available in a replay; use --json with --jq")
     if not _is_pinned(pin, repo, number):
-        if _same_repo(pin, repo):
-            _existed(pin, repo, number, real)
+        _existed(pin, repo, number, real)
         if fields is None:
-            if "--comments" in flags or "-c" in flags:
+            if comments:
                 raise Refused(
                     "`--comments` is not available here in a replay; use --json comments "
                     "(comments after the replay's cutoff are hidden)"
@@ -420,7 +438,7 @@ def _view(pin: Pin, rest: list[str], real: RealGh, args: list[str]) -> Result:
     want = (
         [f.strip() for f in fields.split(",") if f.strip()]
         if fields is not None
-        else [*_TEXT_FIELDS, *(["comments"] if "--comments" in flags or "-c" in flags else [])]
+        else [*_TEXT_FIELDS, *(["comments"] if comments else [])]
     )
     data = _pinned_view(pin, want, real)
     if fields is not None:
@@ -454,18 +472,8 @@ def _pinned_view(pin: Pin, want: list[str], real: RealGh) -> dict[str, Any]:
         "reviewDecision": "",  # cannot be rewound
         "updatedAt": pin.cutoff,
         "statusCheckRollup": _rollup(pin),
-        "additions": sum(f["additions"] for f in files),
-        "deletions": sum(f["deletions"] for f in files),
-        "changedFiles": len(files),
-        "files": [
-            {
-                "path": f["filename"],
-                "additions": f["additions"],
-                "deletions": f["deletions"],
-                "changeType": _CHANGE_TYPES.get(f["status"], "MODIFIED"),
-            }
-            for f in files
-        ],
+        **_line_counts(files),
+        "files": [_graphql_file(f) for f in files],
         **{k: pin.pr[k] for k in known},
     }
     if "commits" in want:
@@ -487,6 +495,23 @@ def _pinned_view(pin: Pin, want: list[str], real: RealGh) -> dict[str, Any]:
             for c in _commits(pin)
         ]
     return {f: computed[f] if f in computed else data.get(f) for f in want}
+
+
+def _line_counts(files: list[dict[str, Any]]) -> dict[str, int]:
+    return {
+        "additions": sum(f["additions"] for f in files),
+        "deletions": sum(f["deletions"] for f in files),
+        "changedFiles": len(files),
+    }
+
+
+def _graphql_file(f: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": f["filename"],
+        "additions": f["additions"],
+        "deletions": f["deletions"],
+        "changeType": _CHANGE_TYPES.get(f["status"], "MODIFIED"),
+    }
 
 
 def _render_view(d: dict[str, Any]) -> str:
@@ -555,9 +580,7 @@ def _pr_checks(pin: Pin, rest: list[str]) -> Result:
 
 
 def _run_view(args: list[str], real: RealGh) -> Result:
-    pos, flags = _parse(args[2:])
-    if "--web" in flags or "-w" in flags:
-        raise Refused("`--web` is not available in a replay")
+    pos, flags = _parse_read(args)
     if not (pos and pos[0].isdigit()) and not _flag(flags, "-j", "--job"):
         raise Refused("`gh run view` needs a run id (or --job id) in a replay")
     return real(args)
@@ -567,26 +590,10 @@ def _run_view(args: list[str], real: RealGh) -> Result:
 
 
 _API_VALUE_FLAGS = frozenset(
-    {
-        "-X",
-        "--method",
-        "-f",
-        "--raw-field",
-        "-F",
-        "--field",
-        "-q",
-        "--jq",
-        "-t",
-        "--template",
-        "-H",
-        "--header",
-        "--hostname",
-        "-p",
-        "--preview",
-        "--cache",
-        "--input",
-    }
+    "-X --method -f --raw-field -F --field -q --jq -t --template -H --header --hostname "  # noqa: SIM905
+    "-p --preview --cache --input".split()
 )
+_BAD_HEADER = re.compile(r"override|method", re.IGNORECASE)
 
 
 def _api(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Result:
@@ -597,7 +604,7 @@ def _api(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Result:
     endpoint = ""
     method: str | None = None
     fields: list[tuple[str, str, str]] = []  # (flag, key, value)
-    keep: list[str] = []  # flags passed through to the real call (headers, hostname, ...)
+    keep: list[str] = []  # flags passed through to the real call (headers, ...)
     jq = template = None
     paginate = slurp = include = has_input = False
     i = 0
@@ -611,20 +618,27 @@ def _api(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Result:
 
     while i < len(rest):
         name = rest[i]
-        val = value
         if name in ("-X", "--method"):
-            method = val().upper()
+            method = value().upper()
         elif name in ("-f", "--raw-field", "-F", "--field"):
-            k, _, v = val().partition("=")
+            k, _, v = value().partition("=")
             fields.append((name, k, v))
         elif name in ("-q", "--jq"):
-            jq = val()
+            jq = value()
         elif name in ("-t", "--template"):
-            template = val()
-        elif name in ("-H", "--header", "--hostname", "-p", "--preview", "--cache"):
-            keep += [name, val()]
+            template = value()
+        elif name in ("-H", "--header"):
+            header = value()
+            if _BAD_HEADER.search(header):
+                raise Refused(f"header `{header}` is not available in a replay")
+            keep += [name, header]
+        elif name in ("-p", "--preview", "--cache"):
+            keep += [name, value()]
+        elif name == "--hostname":
+            if value() != "github.com":
+                raise Refused("only github.com is served in a replay")
         elif name == "--input":
-            val()
+            value()
             has_input = True
         elif name == "--paginate":
             paginate = True
@@ -644,21 +658,9 @@ def _api(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Result:
     if not endpoint:
         raise Refused("`gh api` needs an endpoint")
     if endpoint == "graphql":
-        query = _graphql_query(fields, stdin)
-        if GRAPHQL_MUTATION.search(query):
-            raise Refused(
-                f"refused a GraphQL mutation: this is a read-only replay of {pin.where}; "
-                "nothing may be written to GitHub"
-            )
-        if template is not None or include:
-            raise Refused("`--template`/`--include` are not available on a replay's GraphQL reads")
-        live = real(["api", "graphql", *_field_args(fields), *keep, *_page_args(paginate, slurp)])
-        if live.returncode:
-            return live
-        data = json.loads(live.stdout or "null")
-        if _mentions_pin(pin, query, fields):
-            data = _pin_pull_request(pin, data)
-        return _emit(pin, _unslurp(_before_cutoff(pin, data), paginate, slurp), jq)
+        return _graphql(
+            pin, fields, keep, real, stdin, has_input, template, include, paginate, slurp, jq
+        )
     method = method or ("POST" if fields or has_input else "GET")
     if method != "GET" or has_input:
         raise Refused(
@@ -667,6 +669,9 @@ def _api(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Result:
         )
     path = endpoint.removeprefix("https://api.github.com").lstrip("/").split("?", 1)[0]
     parts = path.split("/")
+    name = pin.repo.split("/", 1)[1].lower()
+    if parts[0] == "search" and name in endpoint.lower():
+        raise Refused("searching the replayed repository is not available (results are live)")
     if parts[0] != "repos" or len(parts) < 3 or not _same_repo(pin, "/".join(parts[1:3])):
         # another repository, or not repository-scoped: nothing of this PR to pin
         return real(["api", *rest])
@@ -674,20 +679,12 @@ def _api(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Result:
         raise Refused("`--template`/`--include` are not available on this replay's pinned reads")
     tail = parts[3:]
     synthetic = _synthetic(pin, tail)
+    if isinstance(synthetic, subprocess.CompletedProcess):
+        return synthetic
     if synthetic is not None:
-        if isinstance(synthetic, subprocess.CompletedProcess):
-            return synthetic
-        return _emit(pin, _paged(synthetic, paginate, slurp), jq)
+        return _emit(pin, [synthetic] if paginate and slurp else synthetic, jq)
     live = real(
-        [
-            "api",
-            endpoint,
-            "--method",
-            "GET",
-            *_field_args(fields),
-            *keep,
-            *_page_args(paginate, slurp),
-        ]
+        ["api", endpoint, "--method", "GET", *_field_args(fields), *keep, *_page_args(paginate)]
     )
     if live.returncode:
         return live
@@ -697,6 +694,54 @@ def _api(pin: Pin, args: list[str], real: RealGh, stdin: str | None) -> Result:
     ):
         data = _pin_rest_pr(pin, data)
     return _emit(pin, _unslurp(data, paginate, slurp), jq)
+
+
+def _graphql(
+    pin: Pin,
+    fields: list[tuple[str, str, str]],
+    keep: list[str],
+    real: RealGh,
+    stdin: str | None,
+    has_input: bool,
+    template: str | None,
+    include: bool,
+    paginate: bool,
+    slurp: bool,
+    jq: str | None,
+) -> Result:
+    """A GraphQL read: exactly one query, checked, and forwarded as the text that was checked
+    (gh sends the last `query` field, and reads `@file` again itself)."""
+    queries = [f for f in fields if f[1] == "query"]
+    if has_input:
+        raise Refused("`--input` is not available on a replay's GraphQL reads; use -f query=")
+    if len(queries) != 1:
+        raise Refused(f"a GraphQL read needs exactly one `query` field (got {len(queries)})")
+    query = _graphql_query(queries[0], stdin)
+    if GRAPHQL_MUTATION.search(query):
+        raise Refused(
+            f"refused a GraphQL mutation: this is a read-only replay of {pin.where}; "
+            "nothing may be written to GitHub"
+        )
+    if template is not None or include:
+        raise Refused("`--template`/`--include` are not available on a replay's GraphQL reads")
+    others = [f for f in fields if f[1] != "query"]
+    live = real(
+        [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            *_field_args(others),
+            *keep,
+            *_page_args(paginate),
+        ]
+    )
+    if live.returncode:
+        return live
+    data = json.loads(live.stdout or "null")
+    if _mentions_pin(pin, query, fields):
+        data = _pin_pull_request(pin, data)
+    return _emit(pin, _unslurp(_before_cutoff(pin, data), paginate, slurp), jq)
 
 
 def _synthetic(pin: Pin, tail: list[str]) -> Any:
@@ -734,37 +779,40 @@ def _synthetic(pin: Pin, tail: list[str]) -> Any:
                 ],
             }
         if kind == "status":  # every recorded check is served as a check run above
-            return {"state": "success", "sha": pin.sha, "total_count": 0, "statuses": []}
+            return {"state": _combined(checks), "sha": pin.sha, "total_count": 0, "statuses": []}
         if kind == "statuses":
             return []
         return {"total_count": 0, "check_suites": []}
     return None
 
 
+def _combined(checks: list[dict[str, Any]]) -> str:
+    """The commit's combined state as the snapshot recorded its checks."""
+    buckets = {_bucket(c) for c in checks}
+    return "failure" if "fail" in buckets else "pending" if "pending" in buckets else "success"
+
+
 def _is_head(pin: Pin, ref: str) -> bool:
     return len(ref) >= 7 and pin.sha.startswith(ref.lower())
 
 
-def _graphql_query(fields: list[tuple[str, str, str]], stdin: str | None) -> str:
-    for flag, k, v in fields:
-        if k != "query":
-            continue
-        if flag in ("-F", "--field") and v.startswith("@"):
-            if v == "@-":
-                return stdin or ""
-            try:
-                return Path(v[1:]).read_text()
-            except OSError as exc:
-                raise Refused(f"cannot read the query file {v[1:]}: {exc}") from exc
-        return v
-    return ""
+def _graphql_query(query: tuple[str, str, str], stdin: str | None) -> str:
+    flag, _, v = query
+    if flag in ("-F", "--field") and v.startswith("@"):
+        if v == "@-":
+            return stdin or ""
+        try:
+            return Path(v[1:]).read_text()
+        except OSError as exc:
+            raise Refused(f"cannot read the query file {v[1:]}: {exc}") from exc
+    return v
 
 
 def _field_args(fields: list[tuple[str, str, str]]) -> list[str]:
     return [a for flag, k, v in fields for a in (flag, f"{k}={v}")]
 
 
-def _page_args(paginate: bool, slurp: bool) -> list[str]:
+def _page_args(paginate: bool) -> list[str]:
     # always slurped when paginated, so the pages parse as one JSON document
     return ["--paginate", "--slurp"] if paginate else []
 
@@ -779,10 +827,6 @@ def _unslurp(data: Any, paginate: bool, slurp: bool) -> Any:
     return data[0] if len(data) == 1 else data
 
 
-def _paged(data: Any, paginate: bool, slurp: bool) -> Any:
-    return [data] if paginate and slurp else data
-
-
 def _mentions_pin(pin: Pin, query: str, fields: list[tuple[str, str, str]]) -> bool:
     """A GraphQL read about the replayed PR: its number and repository name appear in the
     query or its variables."""
@@ -794,15 +838,25 @@ def _mentions_pin(pin: Pin, query: str, fields: list[tuple[str, str, str]]) -> b
 # ---- the view ----
 
 
+def _note(key: str, n: int = 1) -> None:
+    notes = _NOTES.get(None)
+    if notes is not None and n:
+        notes[key] += n
+
+
 def _before_cutoff(pin: Pin, data: Any, *, pin_objects: bool = False) -> Any:
-    """`data` without anything created at or after the cutoff: list items with a later
-    creation time, and review threads whose every comment is later. With `pin_objects` (a
-    response from the replayed repository) the replayed PR is pinned wherever it appears as
-    an object carrying its number."""
+    """`data` as of the cutoff: without list items created at or after it, review threads
+    whose every comment is later, or (`pin_objects`: a response from the replayed repository)
+    commits pushed after the replayed head; with comment bodies and thread states rewound as
+    far as they can be. With `pin_objects` the replayed PR is pinned wherever it appears as an
+    object carrying its number."""
     if isinstance(data, list):
         kept = []
         for item in data:
-            if isinstance(item, dict) and _late(pin, item):
+            if isinstance(item, dict) and (
+                _late(pin, item) or (pin_objects and _later_commit(pin, item))
+            ):
+                _note("dropped_after_cutoff")
                 continue
             new = _before_cutoff(pin, item, pin_objects=pin_objects)
             if isinstance(item, dict) and _emptied_thread(item, new):
@@ -811,6 +865,12 @@ def _before_cutoff(pin: Pin, data: Any, *, pin_objects: bool = False) -> Any:
         return kept
     if isinstance(data, dict):
         out = {k: _before_cutoff(pin, v, pin_objects=pin_objects) for k, v in data.items()}
+        if isinstance(out.get("body"), str):
+            out["body"] = _rewound_body(pin, out["body"])
+            if any(isinstance(data.get(k), str) and data[k] >= pin.cutoff for k in _UPDATED):
+                _note("edited_after_cutoff")
+        if "isResolved" in out:
+            _rewind_thread(data, out)
         if pin_objects and out.get("number") == pin.number:
             if "head" in out:
                 out = _pin_rest_pr(pin, out)
@@ -822,6 +882,51 @@ def _before_cutoff(pin: Pin, data: Any, *, pin_objects: bool = False) -> Any:
 
 def _late(pin: Pin, item: dict[str, Any]) -> bool:
     return any(isinstance(item.get(k), str) and item[k] >= pin.cutoff for k in _CREATED)
+
+
+def _later_commit(pin: Pin, item: dict[str, Any]) -> bool:
+    """A timeline `committed` event or a GraphQL `PullRequestCommit` for a commit that is not
+    in the replayed range (pushed after the replayed head)."""
+    if item.get("event") == "committed":
+        sha = item.get("sha")
+    elif isinstance(item.get("commit"), dict) and ("oid" in item["commit"]):
+        sha = item["commit"]["oid"]
+    else:
+        return False
+    return isinstance(sha, str) and sha not in _range_shas(pin)
+
+
+def _rewound_body(pin: Pin, body: str) -> str:
+    if GATE_MARKER in body:
+        _note("gate_comment_replaced")
+        return GATE_REPLACED
+    if THREAD_STATUS_MARKER not in body:
+        return body
+    m = FINDING_MARKER_RE.search(body)
+    status = pin.lifted.get(m.group(1)) if m else None
+    if status is None:
+        _note("thread_status_stripped")
+        return str(THREAD_STATUS_RE.sub("", body, count=1))
+    at = re.search(r"at `([0-9a-f]{7,40})`", body)
+    return with_thread_status(body, status=status, head_sha=at.group(1) if at else pin.sha)
+
+
+def _rewind_thread(before: dict[str, Any], out: dict[str, Any]) -> None:
+    """A review thread that lost a comment to the cutoff was still open then; whether any
+    other was resolved, or is outdated, is as of now (counted)."""
+    b, a = before.get("comments"), out.get("comments")
+    lost = (
+        isinstance(b, dict)
+        and isinstance(a, dict)
+        and len(b.get("nodes") or []) > len(a.get("nodes") or [])
+    )
+    if lost:
+        out["isResolved"] = False
+        _note("thread_reopened_by_cutoff")
+    elif out.get("isResolved"):
+        _note("thread_resolved_as_of_now")
+    if out.get("isOutdated"):
+        _note("thread_outdated_as_of_now")
 
 
 def _emptied_thread(before: dict[str, Any], after: Any) -> bool:
@@ -842,6 +947,14 @@ def _pin_rest_pr(pin: Pin, d: dict[str, Any]) -> dict[str, Any]:
         out["base"] = {**d["base"], "sha": pin.base_sha}
     if "pull_request" in d and isinstance(d["pull_request"], dict):
         out["pull_request"] = {**d["pull_request"], "merged_at": None}
+    if {"commits", "additions", "deletions", "changed_files"} & d.keys():
+        counts = _line_counts(_files(pin))
+        out.update(
+            commits=len(_range_shas(pin)),
+            additions=counts["additions"],
+            deletions=counts["deletions"],
+            changed_files=counts["changedFiles"],
+        )
     for k in ("title", "body"):
         if k in pin.pr:
             out[k] = pin.pr[k]
@@ -850,7 +963,7 @@ def _pin_rest_pr(pin: Pin, d: dict[str, Any]) -> dict[str, Any]:
 
 def _pin_graphql_pr(pin: Pin, d: dict[str, Any]) -> dict[str, Any]:
     out = dict(d)
-    pinned = {
+    pinned: dict[str, Any] = {
         "headRefOid": pin.sha,
         "state": "OPEN",
         "merged": False,
@@ -862,9 +975,17 @@ def _pin_graphql_pr(pin: Pin, d: dict[str, Any]) -> dict[str, Any]:
     }
     if pin.base_sha:
         pinned["baseRefOid"] = pin.base_sha
+    if {"additions", "deletions", "changedFiles", "files"} & d.keys():
+        files = _files(pin)
+        pinned.update(_line_counts(files))
+        nodes = [_graphql_file(f) for f in files]
+        pinned["files"] = {"totalCount": len(nodes), "nodes": nodes}
     for k, v in pinned.items():
         if k in out:
             out[k] = v
+    if isinstance(out.get("commits"), dict) and isinstance(out["commits"].get("nodes"), list):
+        nodes = [n for n in out["commits"]["nodes"] if not _later_commit(pin, n)]
+        out["commits"] = {**out["commits"], "nodes": nodes, "totalCount": len(_range_shas(pin))}
     for k in ("title", "body"):
         if k in out and k in pin.pr:
             out[k] = pin.pr[k]
@@ -930,6 +1051,7 @@ _CHANGE_TYPES = {
     "changed": "CHANGED",
 }
 _STATUS = {"A": "added", "D": "removed", "M": "modified", "R": "renamed", "C": "copied"}
+_RANGES: dict[tuple[str, str, str], frozenset[str]] = {}
 
 
 def _git(pin: Pin, *args: str) -> str:
@@ -943,6 +1065,14 @@ def _git(pin: Pin, *args: str) -> str:
     if proc.returncode:
         raise Refused(f"git {args[0]} failed in the replay mirror: {proc.stderr.strip()[:300]}")
     return proc.stdout
+
+
+def _range_shas(pin: Pin) -> frozenset[str]:
+    """The PR's commits as of the replayed head (merge base excluded)."""
+    key = (pin.git_dir, pin.merge_base, pin.sha)
+    if key not in _RANGES:
+        _RANGES[key] = frozenset(_git(pin, "rev-list", f"{pin.merge_base}..{pin.sha}").split())
+    return _RANGES[key]
 
 
 def _diff(pin: Pin) -> str:
@@ -1061,24 +1191,25 @@ def _emit(pin: Pin, data: Any, jq: str | None) -> Result:
     return Result([], proc.returncode, proc.stdout, proc.stderr)
 
 
-def _log(pin: Pin, source: str, args: list[str], outcome: str, rc: int) -> None:
+_LOG_LOCK = threading.Lock()
+
+
+def _log(
+    pin: Pin, source: str, args: list[str], outcome: str, rc: int, notes: Counter[str]
+) -> None:
     if not pin.log:
         return
-    line = json.dumps(
-        {
-            "ts": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
-            "source": source,
-            "args": [a[:200] for a in args[:12]],
-            "outcome": outcome,
-            "rc": rc,
-        }
-    )
+    entry: dict[str, Any] = {
+        "ts": now(),
+        "source": source,
+        "args": [a[:200] for a in args[:12]],
+        "outcome": outcome,
+        "rc": rc,
+    }
+    if notes:
+        entry["notes"] = dict(notes)
     try:
-        with open(pin.log, "a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
+        with _LOG_LOCK, open(pin.log, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry) + "\n")
     except OSError:
         pass
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
