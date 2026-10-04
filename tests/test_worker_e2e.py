@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from reviewsys import labels, worker
+from reviewsys import labels, publish, worker
 from reviewsys import lane as lane_mod
 from reviewsys.daemon import Daemon
 from reviewsys.db import kv_get, tx
@@ -3102,3 +3102,46 @@ def test_reviewers_and_verifiers_are_told_to_review_statically_from_ci(cfg, conn
         assert all(s.sandbox_profile for s in lanes.calls)
     assert graded and all("This is a static review." in s.prompt for s in graded)
     assert all('"ci": {' in s.prompt and "--log-failed" in s.prompt for s in graded)
+
+
+def test_the_same_sha_rereview_writes_its_artifact_before_posting(
+    cfg, conn, gh, lanes, monkeypatch
+):
+    """M10: a failed artifact write after the post can never fail the run (whose retry would
+    post the COMMENT again): the body is on disk before the post, a later write error is
+    ignored."""
+    # a COMMENT stands for this commit and the re-review finds a suggestion again: the
+    # verdict does not move, so the re-review summary posts as an informational COMMENT
+    gh.posted_reviews.append(
+        {
+            "id": 1,
+            "body": f"<!-- thepastaclaw-review v1 phase=final sha={HEAD} -->",
+            "event": "COMMENT",
+        }
+    )
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_sugg()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["default"] = _verifier([_sugg()])
+    real = publish.publish
+    seen: list[bool] = []
+
+    def posting(gh_, model, **kw):
+        if kw.get("force_comment"):
+            seen.append(any(cfg.runs_dir.glob("run-*/review-final.md")))
+            path_write = Path.write_text
+
+            def failing(self, *a, **k):  # the write after the post fails
+                if self.name == "review-final.md":
+                    raise OSError("disk full")
+                return path_write(self, *a, **k)
+
+            monkeypatch.setattr(Path, "write_text", failing)
+        return real(gh_, model, **kw)
+
+    monkeypatch.setattr(worker.publish, "publish", posting)
+    _, status = _run(cfg, conn, gh, lanes)
+    monkeypatch.undo()
+    assert seen == [True] and status.value == "done" and len(gh.posted_reviews) == 2

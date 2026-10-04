@@ -130,7 +130,8 @@ MIGRATIONS: dict[int, str] = {
     # ...): the backfill and the live write-through derive the same key for the same fact, so
     # either can run first and neither duplicates the other. Only additive statements: the old
     # code keeps working against this schema (it never names these tables or the new column).
-    # `findings.candidate_id` is the harness-assigned candidate id of v12 finder lanes.
+    # `findings.candidate_id` is the harness-assigned candidate id of v12 finder lanes;
+    # `events_run` serves the v12 review-strength query (a run's own events).
     6: """
     CREATE TABLE IF NOT EXISTS issues (
         repo TEXT NOT NULL, number INTEGER NOT NULL, hash TEXT NOT NULL,
@@ -151,6 +152,7 @@ MIGRATIONS: dict[int, str] = {
         UNIQUE (repo, number, key));
     CREATE INDEX IF NOT EXISTS issue_events_issue ON issue_events (repo, number, hash);
     CREATE INDEX IF NOT EXISTS issue_events_run ON issue_events (run_id);
+    CREATE INDEX IF NOT EXISTS events_run ON events (run_id);
     ALTER TABLE findings ADD COLUMN candidate_id TEXT;
     """,
 }

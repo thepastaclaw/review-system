@@ -55,7 +55,7 @@ from .contract import (
     parse_verifier_output,
 )
 from .db import connect_existing, event, fmt_ts, kv_get, kv_set, now, now_dt, tx
-from .dedupe import ExistingComment, find_duplicate
+from .dedupe import FINDING_MARKER_RE, ExistingComment, find_duplicate
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
@@ -2912,6 +2912,9 @@ def _publish_review(
         rereview=rereview or ctx.has_prior_review,
     )
     if rereview:
+        # the artifact goes first, as on the normal path: a failed write after the post would
+        # fail the run and its retry would post the COMMENT again
+        (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
         result = publish.publish(
             ctx.gh,
             model,
@@ -2919,7 +2922,8 @@ def _publish_review(
             dry_run=ctx.dry_run,
             force_comment=True,
         )
-        (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
+        with contextlib.suppress(OSError):  # the posted body (with its transport note)
+            (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
         _record_publication(ctx, phase, model, result, verified)
         return model, result
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
@@ -3374,6 +3378,25 @@ def _finding_record(f: Finding) -> dict[str, Any]:
     return {**f.to_dict(), "hash": f.hash}
 
 
+def _inline_record(comments: list[dict[str, Any]], kept: list[Finding]) -> list[dict[str, Any]]:
+    titles = {f.hash: f.title for f in kept}
+    out = []
+    for c in comments:
+        m = FINDING_MARKER_RE.search(str(c.get("body") or ""))
+        h = m.group(1) if m else ""
+        line = c.get("line")
+        out.append(
+            {
+                "hash": h,
+                "file": c.get("path"),
+                "line_start": c.get("start_line") or line,
+                "line_end": line,
+                "title": titles.get(h, ""),
+            }
+        )
+    return out
+
+
 def _record_dry_publication(
     ctx: RunContext,
     phase: str,
@@ -3394,6 +3417,9 @@ def _record_dry_publication(
                 "verdict_update": verdict_update,
                 "kept": [_finding_record(f) for f in kept],
                 "suppressed": len(result.suppressed),
+                # the inline comments it would open (a new thread each): the eval counts those
+                # landing on an issue that already has an open thread
+                "inline": _inline_record(result.comments, kept),
                 "body": result.body,
             },
             indent=1,
@@ -5321,8 +5347,24 @@ def _review(ctx: RunContext, effort: TierEffort) -> RunStatus:
 def _record_gate_would_publish(ctx: RunContext, *, gate_deferred: bool) -> None:
     """A replay forcing Phase 2 past the gate (`force_phase2`): write the preliminary review
     the gate would have published instead (`gate-would-publish.json`), so the eval can score
-    both what the gate published and what the whole pipeline finds."""
+    both what the gate published and what the whole pipeline finds. Not under policy v12:
+    its publication is decided by `_publish12`'s post-rules pass (budget, settled re-folds,
+    thread outcomes, the ledger verdict), which writes events and the ledger as it goes and so
+    cannot be run a second time for a publication that never happens; a preliminary built
+    from the gate verifier's raw set would not be what v12 posts, so none is recorded."""
     assert ctx.verify1 is not None
+    if ctx.cfg.policy.pipeline is not None:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "replay.phase2_forced",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"gate held Phase 2 ({ctx.verify1.blocker_count} blockers); running it "
+                "anyway (policy v12: no gate-would-publish record)",
+            )
+        return
     out: dict[str, Any] = {
         "phase": "preliminary",
         "gate_deferred": gate_deferred,

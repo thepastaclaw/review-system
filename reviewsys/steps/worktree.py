@@ -9,6 +9,8 @@ from pathlib import Path
 
 from ..models import FailKind, ReviewError
 
+SHA_FETCH_TIMEOUT = 600  # fetch_head's fallback: one commit by id
+
 
 def _git(*args: str, cwd: Path | None = None, timeout: int = 600) -> str:
     try:
@@ -80,7 +82,9 @@ def fetch_head(mirror: Path, number: int, sha: str) -> None:
     try:
         _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
     except ReviewError:
-        _git("fetch", "--no-tags", "origin", sha, cwd=mirror, timeout=1800)
+        # one object by id: bounded tighter than the ref fetch above, so a dead origin fails
+        # the checkout within ~40 minutes rather than an hour
+        _git("fetch", "--no-tags", "origin", sha, cwd=mirror, timeout=SHA_FETCH_TIMEOUT)
         _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
 
 
