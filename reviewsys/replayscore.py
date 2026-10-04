@@ -28,6 +28,13 @@ outcomes reached. `S1+S2` pools the two recall sets, as the gate does. Per arm: 
 per run (same file within 3 lines, different hash), gpt lanes and tokens per run, wall clock
 p50, contract failures, ratios to the baseline.
 
+Wall clock: replays share the box's lane pools behind production, so `active_p50_s` (wall
+clock less the run's slot wait, `report.slot_wait_s`) is what a wall-clock gate should read;
+both are reported. Thread state: a head where the pinned view could not rewind whether a
+thread was resolved (`report.thread_resolution_as_of_now`) is listed in
+`heads.thread_resolution_as_of_now`, and S5 and S8 are scored twice: every head (`S5`) and
+only the exact ones (`S5:exact_threads`).
+
 Noise: on heads with repeat samples, how far an arm's recall moves between its own two samples
 (`recall_delta_pp`, the floor being the largest over arms), and a bootstrap over heads of the
 paired recall difference to the baseline (95% interval, in pp).
@@ -87,6 +94,8 @@ SPOT_CHECK = 20
 TO_JUDGE, JUDGED = "to_judge.jsonl", "judged.jsonl"
 NEW_BLOCKER, LABEL_MATCH = "new_blocker", "label_match"
 ANSWERS = ("yes", "no", "unsure")
+THREAD_SETS = frozenset({"S5", "S8"})  # scored again on heads with exact thread state
+EXACT = "exact_threads"
 _STOP = frozenset(
     "a an and are as at be but by can for from has in is it its not of on or so the this to "  # noqa: SIM905
     "was when where which with without".split()
@@ -525,8 +534,22 @@ def score(
     match_pool: dict[tuple[HeadKey, str], tuple[dict[str, Any], dict[str, Any], set[Any]]] = {}
     bases: dict[HeadKey, dict[str, Any]] = {}
     labelled = 0
+    as_of_now: set[int] = set()  # heads whose thread resolution the view could not rewind
     for item in paired:
         key = _head_key(item)
+        if any(
+            int(s.report.get("thread_resolution_as_of_now") or 0) > 0
+            for p in policies
+            for s in usable[(item.run_id, p)]
+        ):
+            as_of_now.add(item.run_id)
+        exact = item.run_id not in as_of_now
+
+        def also(st: str, exact: bool = exact) -> list[str]:
+            """S5 / S8 are reported twice: every head, and only the heads whose threads read
+            as they stood at the cutoff (`<set>:exact_threads`)."""
+            return [f"{st}:{EXACT}"] if exact and st in THREAD_SETS else []
+
         for p in policies:
             runs = sorted(usable[(item.run_id, p)], key=lambda s: s.sample)
             head: HeadKey = (*runs[0].head, key)
@@ -545,16 +568,17 @@ def score(
                 return verdicts.same_of(head, f, lab) == "yes"
 
             assigned = [assign(r.published, dicts, same) for r in runs]
-            acc = per_set[item.set][p]
-            acc.heads.add(key)
-            acc.blocker_heads.append(
-                _frac([any(f.get("severity") == "blocking" for f in r.published) for r in runs])
-            )
-            acc.new_blockers += statistics.fmean(
-                sum(f.get("severity") == "blocking" for f in rest) for _, rest in assigned
-            )
-            for target in (acc, prec[p]):
-                _count_precision(target, verdicts, head, scored, assigned)
+            for st in (item.set, *also(item.set)):
+                acc = per_set[st][p]
+                acc.heads.add(key)
+                acc.blocker_heads.append(
+                    _frac([any(f.get("severity") == "blocking" for f in r.published) for r in runs])
+                )
+                acc.new_blockers += statistics.fmean(
+                    sum(f.get("severity") == "blocking" for f in rest) for _, rest in assigned
+                )
+                _count_precision(acc, verdicts, head, scored, assigned)
+            _count_precision(prec[p], verdicts, head, scored, assigned)
             for r, (got, rest) in zip(runs, assigned, strict=True):
                 for f in rest:
                     if f.get("severity") == "blocking" and verdicts.real_of(head, f) is None:
@@ -570,7 +594,7 @@ def score(
                             entry[2].add((p, r.sample))
             for li, lab in enumerate(scored):
                 hits = [got.get(li) for got, _ in assigned]
-                for b in lab.buckets:
+                for b in (*lab.buckets, *also(lab.set)):
                     a = per_set[b][p]
                     a.heads.add(key)
                     if lab.label == "tp":
@@ -591,7 +615,7 @@ def score(
                             a.reraised += _frac([h is not None for h in hits])
             for lab in head_labels:
                 if lab.thread_outcome and lab.hash:
-                    for b in lab.buckets:
+                    for b in (*lab.buckets, *also(lab.set)):
                         per_set[b][p].outcomes.append(
                             _frac([_outcome_reached(r, lab) for r in runs])
                         )
@@ -641,6 +665,7 @@ def score(
             "in_set": len(items),
             "paired": len(paired),
             "unpaired": sorted(i.run_id for i in items if i not in paired),
+            "thread_resolution_as_of_now": sorted(as_of_now),
         },
         "labels": {"total": len(labels), "on_paired_heads": labelled},
         "arms": arms,
@@ -700,6 +725,9 @@ def _arm(samples: list[Sample], paired: list[SetItem]) -> dict[str, Any]:
         return sum(float((s.report.get("gpt") or {}).get(k) or 0) for k in keys)
 
     walls = [float(s.report.get("wall_clock_s") or 0) for s in runs]
+    # wall clock less the time the run only waited for lane slots (shared with production)
+    actives = [float(s.report.get("active_s", s.report.get("wall_clock_s")) or 0) for s in runs]
+    waits = [float(s.report.get("slot_wait_s") or 0) for s in runs]
     contract = [s.report.get("contract") or {} for s in every]
     return {
         "samples": len(every),
@@ -716,6 +744,8 @@ def _arm(samples: list[Sample], paired: list[SetItem]) -> dict[str, Any]:
             1,
         ),
         "wall_clock_p50_s": round(statistics.median(walls), 1) if walls else None,
+        "active_p50_s": round(statistics.median(actives), 1) if actives else None,
+        "slot_wait_p50_s": round(statistics.median(waits), 1) if waits else None,
         "contract_failures": {
             "runs_failed": sum(bool(c.get("run_failed")) for c in contract),
             "lane_attempts_failed": sum(int(c.get("failed_attempts") or 0) for c in contract),
@@ -737,7 +767,7 @@ def _ratios(arms: dict[str, dict[str, Any]], baseline: str | None) -> dict[str, 
     return {
         p: {
             k: round(a[k] / base[k], 3) if a.get(k) is not None and base.get(k) else None
-            for k in ("gpt_lanes_per_run", "gpt_tokens_per_run", "wall_clock_p50_s")
+            for k in ("gpt_lanes_per_run", "gpt_tokens_per_run", "wall_clock_p50_s", "active_p50_s")
         }
         for p, a in arms.items()
         if p != baseline
@@ -843,14 +873,14 @@ def render(result: dict[str, Any]) -> str:
         f"{result.get('judged', 0)} judged",
         "",
         f"{'arm':<16} {'usable':>6} {'gpt lanes':>9} {'gpt tok':>12} {'wall p50':>9} "
-        f"{'contract':>8} {'dups':>6} {'new prec':>8} {'blk prec':>8}",
+        f"{'active':>7} {'contract':>8} {'dups':>6} {'new prec':>8} {'blk prec':>8}",
     ]
     for p, a in result["arms"].items():
         pr = a.get("precision") or {}
         lines.append(
             f"{p:<16} {a['usable']:>6} {a['gpt_lanes_per_run'] or 0:>9} "
             f"{a['gpt_tokens_per_run'] or 0:>12} {a['wall_clock_p50_s'] or 0:>9} "
-            f"{a['contract_failures']['runs_failed']:>8} {a['duplicates_per_run'] or 0:>6} "
+            f"{a.get('active_p50_s') or 0:>7} {a['contract_failures']['runs_failed']:>8} {a['duplicates_per_run'] or 0:>6} "
             f"{_pct(pr.get('new_blocker_precision')):>8} {_pct(pr.get('blocker_precision')):>8}"
         )
     lines += [

@@ -83,10 +83,13 @@ def _path(value: str | None) -> Path | None:
 
 def cmd_replay(args: argparse.Namespace) -> int:
     """Re-review past runs' exact heads under a skills checkout (replay.py); posts nothing."""
-    from .replay import EXIT_ABORTED, ReplayAborted, replay
+    from .replay import EXIT_ABORTED, TOKEN_VARS, ReplayAborted, replay
 
     cfg = _cfg(args)
     token = os.environ.get(args.gh_token_env) or None
+    # the token is the broker's alone: nothing this process starts inherits it
+    for var in (*TOKEN_VARS, args.gh_token_env):
+        os.environ.pop(var, None)
     out = Path(args.out).expanduser()
     lanes = None
     if args.fake_lanes:  # smoke tests only (deploy/eval-run.sh --dry): no model is called
@@ -108,6 +111,7 @@ def cmd_replay(args: argparse.Namespace) -> int:
                 policy_name=args.policy_name,
                 gh_token=token,
                 lane_runner=lanes,
+                eval_mirrors=_path(args.eval_mirrors),
             )
         except ReplayAborted as exc:
             print(str(exc), file=sys.stderr)
@@ -150,7 +154,10 @@ def cmd_replay_score(args: argparse.Namespace) -> int:
 def cmd_replay_judge(args: argparse.Namespace) -> int:
     """The blinded judge lane over a replay set's unsettled findings (judge.py)."""
     from .judge import main_judge
+    from .replay import TOKEN_VARS
 
+    for var in TOKEN_VARS:  # the judge reads no GitHub: no token anywhere near its lanes
+        os.environ.pop(var, None)
     lanes = None
     if args.fake_lanes:
         from .replayfake import FakeLanes
@@ -168,29 +175,22 @@ def cmd_replay_fixture(args: argparse.Namespace) -> int:
 
 
 def cmd_replay_preflight(args: argparse.Namespace) -> int:
-    """Before an eval: degraded mode off, the set's source runs and evidence on hand. Opens
-    the databases read-only (never migrates the production one)."""
+    """Before an eval (and before its judge): production healthy (replayset.production_guard:
+    not degraded, enough usable OpenAI accounts, a short queue) and the set's source runs and
+    evidence on hand. Opens the databases read-only (never migrates the production one)."""
     from .replay import EXIT_ABORTED, open_source
-    from .replayset import load_set
+    from .replayset import load_set, production_guard
 
     cfg = _cfg(args)
     problems: list[str] = []
-    live = open_source(cfg.db_path)
-    try:
-        if degraded_mod.forced(live) == "on":
-            problems.append("degraded mode is forced on (reviewsys degraded on)")
-        state = live.execute(
-            "SELECT value FROM kv WHERE key=?", (degraded_mod.KV_STATE,)
-        ).fetchone()
-        try:
-            active = bool(json.loads(state[0]).get("active")) if state else False
-        except (ValueError, AttributeError):
-            active = False
-        if active:
-            problems.append("the daemon's last degraded-mode state is active")
-    finally:
-        live.close()
-    out: dict[str, object] = {"degraded": problems[:]}
+    why, _ = production_guard(
+        cfg.db_path,
+        min_accounts=args.min_usable_accounts,
+        backlog_limit=cfg.backlog_skip_phase1_above,
+    )
+    if why:
+        problems.append(why)
+    out: dict[str, object] = {"production": problems[:]}
     if args.set:
         source = open_source(_path(args.source_db) or cfg.db_path)
         runs_dir = _path(args.source_runs) or cfg.runs_dir
@@ -210,7 +210,7 @@ def cmd_replay_preflight(args: argparse.Namespace) -> int:
     print(json.dumps(out | {"ok": not problems}, indent=1))
     if problems:
         print("preflight: " + "; ".join(problems), file=sys.stderr)
-        return EXIT_ABORTED if out["degraded"] else 1
+        return EXIT_ABORTED if out["production"] else 1
     return 0
 
 
@@ -533,6 +533,45 @@ def cmd_init_config(args: argparse.Namespace) -> int:
     return 0
 
 
+def _gate_args(s: argparse.ArgumentParser) -> None:
+    """What replay-set and replay-judge check before each launch (replayset.Gate)."""
+    s.add_argument(
+        "--min-free-gb",
+        type=float,
+        default=35.0,
+        help="free disk to keep under OUT, after --disk-per-job-gb per running job (35)",
+    )
+    s.add_argument(
+        "--disk-per-job-gb",
+        type=float,
+        default=6.0,
+        help="disk a running job may still take, counted before launching another (6)",
+    )
+    s.add_argument(
+        "--disk-wait-minutes",
+        type=float,
+        default=30.0,
+        help="with nothing running and the disk short, wait this long, then stop (30)",
+    )
+    s.add_argument(
+        "--min-usable-accounts",
+        type=int,
+        default=2,
+        help="stop launching below this many usable OpenAI accounts (2; 0: not checked)",
+    )
+    s.add_argument(
+        "--busy-wait-minutes",
+        type=float,
+        default=60.0,
+        help="with production's queue long and nothing running, wait this long, then stop (60)",
+    )
+    s.add_argument(
+        "--no-production-guard",
+        action="store_true",
+        help="do not read the configured database before launches (tests only)",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="reviewsys")
     p.add_argument("--config", help="path to config.toml")
@@ -586,6 +625,10 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="smoke tests only: canned lane answers, no model is called (replayfake.py)",
     )
+    s.add_argument(
+        "--eval-mirrors",
+        help="where to mirror a repository the work dir has no mirror of (default OUT/.mirrors)",
+    )
     s.set_defaults(fn=cmd_replay)
     s = sub.add_parser(
         "replay-set", help="replay a set of past runs under several policies (eval arms)"
@@ -614,18 +657,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument(
         "--limit", type=int, help="only the first N heads, round-robin over the sets (smoke test)"
     )
-    s.add_argument(
-        "--min-free-gb",
-        type=float,
-        default=25.0,
-        help="launch a replay only with this much free disk under --out (default 25)",
-    )
-    s.add_argument(
-        "--disk-wait-minutes",
-        type=float,
-        default=0.0,
-        help="with nothing running and the disk still short, wait this long before stopping",
-    )
+    _gate_args(s)
+    s.add_argument("--eval-mirrors", help="as replay --eval-mirrors (default OUT/.mirrors)")
     s.add_argument("--fake-lanes", action="store_true", help="smoke tests only (replay --help)")
     s.set_defaults(fn=cmd_replay_set)
     s = sub.add_parser("replay-score", help="score a replay set against labels, arm against arm")
@@ -649,10 +682,17 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--baseline", help="as replay-score")
     s.add_argument("--seed", type=int, default=0, help="item order and to_judge shuffle seed")
     s.add_argument("--limit", type=int, help="as replay-set --limit")
-    s.add_argument("--min-free-gb", type=float, default=25.0, help="as replay-set")
+    _gate_args(s)
+    s.add_argument("--work-dir", help="worktrees and lane artifacts (default OUT.judge-work)")
+    s.add_argument("--eval-mirrors", help="as replay-set (default OUT/.mirrors)")
     s.add_argument("--fake-lanes", action="store_true", help="smoke tests only (replay --help)")
     s.set_defaults(fn=cmd_replay_judge)
-    s = sub.add_parser("replay-preflight", help="before an eval: degraded mode, source runs")
+    s = sub.add_parser(
+        "replay-preflight", help="before an eval: production healthy, source runs on hand"
+    )
+    s.add_argument(
+        "--min-usable-accounts", type=int, default=2, help="as replay-set (0: not checked)"
+    )
     s.add_argument("--set", help="check the set's source runs and their evidence.json")
     s.add_argument("--source-db", help="database the runs come from (default: the configured)")
     s.add_argument("--source-runs", help="run artifact dir (default: work/runs)")

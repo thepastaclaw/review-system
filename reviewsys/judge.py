@@ -8,17 +8,21 @@ defect?). This runs one lane per item:
 - Blinded: the prompt names no arm, policy or label class, and the items run in an order
   shuffled with `--seed`.
 - On gpt (default `gpt-6.1-sol`) at `xhigh`, with read access to a worktree at the replayed
-  head, checked out from a pinned clone (replay.pinned_clone: only the base and head refs, no
-  later commit, removed after the head's items). No GitHub: the installed gh is denied by the
-  lane sandbox, the `gh` on PATH answers nothing and a curl shim refuses GitHub hosts;
-  WebFetch/WebSearch are off and the lane has no token.
+  head, checked out from a pinned clone (replaygit.py: only the base and head refs, no later
+  commit, nothing written to a production mirror, removed after the head's items). No
+  GitHub: the installed gh is denied by the lane sandbox, the `gh` on PATH answers nothing, a
+  curl shim refuses GitHub hosts, WebFetch/WebSearch are off, and the lane has no token and
+  an empty gh config dir.
+- Its worktrees and lane artifacts live outside OUT (`--work-dir`, default
+  `OUT.judge-work`), so nothing the lanes saw sits in the scored directory.
 - Machine: the lanes take slots in the configured work dir's lane pools at the `replay`
   rank (lanepool.py), like the replays, the gpt pool sized from the configured database.
 - Resumable: each answer is appended to `judged.jsonl` (the item plus `verdict` and `judge`)
   as soon as it is in; an item whose id is there is not asked again. A lane that fails
   leaves its item unanswered for the next run.
-- Disk: like `replay-set`, a head's worktree is only checked out while the free space is at
-  least `--min-free-gb`; when it is short and nothing is running, the judge stops.
+- Launches: like `replay-set` (replayset.Gate), a head starts only while production is
+  healthy (not degraded, enough usable OpenAI accounts, its queue short) and the disk has
+  room; it stops (exit 75 or 74) as replay-set does, resumable.
 
 Run as a whole: score (to refresh `to_judge.jsonl`), judge what is pending, score again (the
 verdicts give precision and settle label matches; see replayscore.py).
@@ -37,11 +41,11 @@ import threading
 import time
 from collections import defaultdict
 from collections.abc import Callable
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
 from . import config as cfg_mod
+from . import replaygit
 from .db import connect, now
 from .ghshim import install_shim
 from .lane import (
@@ -57,9 +61,9 @@ from .lane import (
 )
 from .lanepool import gated
 from .models import ReviewError
-from .replay import LANE_DISALLOWED_TOOLS, pinned_clone, pinned_refs
+from .replay import LANE_DISALLOWED_TOOLS, TOKEN_VARS
 from .replayscore import JUDGED, LABEL_MATCH, NEW_BLOCKER, TO_JUDGE, render, score_dir
-from .replayset import DEFAULT_MIN_FREE_GB, EXIT_DISK, GB, free_bytes
+from .replayset import Gate, gate_from_args, gated_pool, stopped_exit
 from .steps import worktree as wt
 
 DEFAULT_MODEL = "gpt-6.1-sol"
@@ -198,6 +202,25 @@ def _thread_conn(path: Path) -> Callable[[], sqlite3.Connection]:
     return get
 
 
+def lane_env(root: Path) -> dict[str, str]:
+    """A judge lane's environment on top of the worker's: the shims first on PATH (a gh that
+    answers nothing, a curl that refuses GitHub), no token, and an empty gh config dir, so no
+    gh anywhere could find credentials."""
+    gh_config = root / "gh-config"
+    gh_config.mkdir(parents=True, exist_ok=True)
+    return {
+        "PATH": f"{root / 'bin'}{os.pathsep}{os.environ.get('PATH', '')}",
+        "GH_CONFIG_DIR": str(gh_config),
+        **dict.fromkeys(TOKEN_VARS, ""),
+    }
+
+
+def default_work_dir(out: Path) -> Path:
+    """Where the judge's worktrees and lane artifacts go: beside OUT, never in it (what the
+    lanes saw stays out of the scored directory)."""
+    return out.parent / f"{out.name}.judge-work"
+
+
 def judge(
     cfg: cfg_mod.Config,
     out: Path,
@@ -206,13 +229,15 @@ def judge(
     effort: str = DEFAULT_EFFORT,
     concurrency: int = 3,
     seed: int = 0,
-    min_free_gb: float = DEFAULT_MIN_FREE_GB,
     lane_runner: LaneRunner | None = None,
-    disk_free: Callable[[Path], int] | None = None,
+    gate: Gate | None = None,
+    work_root: Path | None = None,
+    eval_mirrors: Path | None = None,
     echo: Callable[[str], None] = print,
 ) -> dict[str, Any]:
-    """Ask every pending item of `out`'s to_judge.jsonl (see the module docstring). Returns
-    counts; `stopped` says why it ended early ("" when it did not)."""
+    """Ask every pending item of `out`'s to_judge.jsonl (see the module docstring), one head
+    at a time per slot, each head only when `gate` lets it start. Returns counts; `stopped`
+    says why it ended early ("" when it did not)."""
     todo = pending_items(out, seed)
     by_head: dict[tuple[str, int, str], list[dict[str, Any]]] = defaultdict(list)
     for it in todo:
@@ -221,8 +246,8 @@ def judge(
     counts: dict[str, Any] = {"pending": len(todo), "heads": len(heads), "judged": 0, "failed": 0}
     echo(f"replay-judge: {len(todo)} items on {len(heads)} heads, model {model} at {effort}")
     if not todo:
-        return {**counts, "stopped": ""}
-    root = out / "judge"
+        return {**counts, "not_started": 0, "stopped": ""}
+    root = work_root or default_work_dir(out)
     work = root / "work"
     (work / "runs").mkdir(parents=True, exist_ok=True)
     slots = work / "lane-slots"  # the machine's pools, shared with production and the replays
@@ -240,19 +265,13 @@ def judge(
         lane_capacity_db=cfg.db_path,
         lane_deny_exec=(*cfg.lane_deny_exec, *deny_gh),
     )
-    bin_dir = root / "bin"
-    install_shim(NO_GH_SOCKET, bin_dir, curl_log=root / "curl-refused.log")
-    env = {
-        "PATH": f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}",
-        "GH_TOKEN": "",
-        "GITHUB_TOKEN": "",
-    }
+    install_shim(NO_GH_SOCKET, root / "bin", curl_log=root / "curl-refused.log")
     runner = gated(
         sandboxed(
             isolated(
                 with_overrides(
                     lane_runner or run_claude_lane,
-                    env=env,
+                    env=lane_env(root),
                     disallowed_tools=LANE_DISALLOWED_TOOLS,
                 ),
                 True,
@@ -266,7 +285,6 @@ def judge(
         run_id=0,
     )
     write_lock = threading.Lock()
-    floor = int(min_free_gb * GB)
 
     def record(it: dict[str, Any], verdict: dict[str, Any], lane_dir: Path) -> None:
         line = {
@@ -283,21 +301,21 @@ def judge(
         items = by_head[head]
         first = items[0]
         name = f"{repo.replace('/', '__')}-{number}-{sha[:12]}"
-        mirror = wt.ensure_mirror(cfg.mirrors_dir, repo)
-        wt.fetch_head(mirror, number, sha)
-        base_ref, base_sha = str(first.get("base_ref") or ""), str(first.get("base_sha") or "")
-        if base_sha and not wt.ensure_commit(mirror, base_sha):
-            base_ref = base_sha = ""
-        pinned = pinned_clone(
-            mirror,
-            work / "mirrors" / name,
-            pinned_refs(number=number, sha=sha, base_ref=base_ref, base_sha=base_sha),
-            head_branch=base_ref if base_ref and base_sha else "replay-head",
-        )
-        ok = failed = 0
+        clone = work / "mirrors" / name
         tree = None
+        ok = failed = 0
         try:
-            tree = wt.create_worktree(pinned, work / "worktrees", name, sha)
+            replaygit.pinned_clone(
+                cfg.mirrors_dir,
+                eval_mirrors or out / ".mirrors",
+                clone,
+                repo=repo,
+                number=number,
+                sha=sha,
+                base_ref=str(first.get("base_ref") or ""),
+                base_sha=str(first.get("base_sha") or ""),
+            )
+            tree = wt.create_worktree(clone, work / "worktrees", name, sha)
             for it in items:
                 lane_dir = work / "runs" / str(it["id"])
                 spec = LaneSpec(
@@ -324,38 +342,29 @@ def judge(
                 ok += 1
         finally:
             if tree is not None:
-                wt.remove_worktree(pinned, tree)
-            shutil.rmtree(pinned, ignore_errors=True)
+                wt.remove_worktree(clone, tree)
             shutil.rmtree(work / "worktrees" / name, ignore_errors=True)
+            shutil.rmtree(clone, ignore_errors=True)
         return ok, failed
 
-    stopped = ""
-    queue = list(reversed(heads))
-    running: dict[Future[tuple[int, int]], tuple[str, int, str]] = {}
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        while queue or running:
-            while queue and len(running) < max(1, concurrency) and not stopped:
-                free = (disk_free or free_bytes)(out)
-                if free < floor:
-                    if not running:
-                        stopped = f"disk: {free / GB:.1f} GB free < {min_free_gb:g} GB floor"
-                        echo(f"replay-judge: stopping: {stopped}")
-                    break
-                head = queue.pop()
-                running[pool.submit(one_head, head)] = head
-            if not running:
-                break
-            done, _ = wait(running, return_when=FIRST_COMPLETED)
-            for fut in done:
-                head = running.pop(fut)
-                try:
-                    ok, failed = fut.result()
-                except Exception as exc:  # one head's checkout failing is that head's failure
-                    ok, failed = 0, len(by_head[head])
-                    echo(f"replay-judge: {head[0]}#{head[1]} {head[2][:12]}: {exc}")
-                counts["judged"] += ok
-                counts["failed"] += failed
-    counts["not_started"] = sum(len(by_head[h]) for h in queue)
+    def finished(head: tuple[str, int, str], res: tuple[int, int] | Exception) -> str:
+        if isinstance(res, Exception):  # one head's checkout failing is that head's failure
+            echo(f"replay-judge: {head[0]}#{head[1]} {head[2][:12]}: {res}")
+            res = (0, len(by_head[head]))
+        counts["judged"] += res[0]
+        counts["failed"] += res[1]
+        return ""
+
+    stopped, left = gated_pool(
+        heads,
+        one_head,
+        concurrency=concurrency,
+        gate=gate or Gate(out),
+        echo=echo,
+        label="replay-judge",
+        finished=finished,
+    )
+    counts["not_started"] = sum(len(by_head[h]) for h in left)
     return {**counts, "stopped": stopped}
 
 
@@ -371,8 +380,10 @@ def main_judge(args: Any, cfg: cfg_mod.Config, lane_runner: LaneRunner | None = 
         effort=args.effort,
         concurrency=args.concurrency,
         seed=args.seed,
-        min_free_gb=args.min_free_gb,
         lane_runner=lane_runner,
+        gate=gate_from_args(args, out, cfg.db_path, cfg.backlog_skip_phase1_above),
+        work_root=Path(args.work_dir).expanduser() if args.work_dir else None,
+        eval_mirrors=Path(args.eval_mirrors).expanduser() if args.eval_mirrors else None,
     )
     res["wall_clock_s"] = round(time.monotonic() - t0, 1)
     result, _ = score_dir(
@@ -382,5 +393,5 @@ def main_judge(args: Any, cfg: cfg_mod.Config, lane_runner: LaneRunner | None = 
     print(render(result), end="")
     if res["stopped"]:
         print(f"replay-judge: stopped early: {res['stopped']}", file=sys.stderr)
-        return EXIT_DISK
+        return stopped_exit(res["stopped"])
     return 1 if res["failed"] else 0

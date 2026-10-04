@@ -15,7 +15,7 @@ from reviewsys import judge as judge_mod
 from reviewsys import replayscore
 from reviewsys.lane import LaneResult, LaneSpec
 from reviewsys.replayscore import LABEL_MATCH, NEW_BLOCKER, score
-from reviewsys.replayset import GB, SetItem
+from reviewsys.replayset import GB, Gate, SetItem
 
 ARMS = ["v11", "v12"]
 
@@ -170,14 +170,18 @@ class JudgeLanes:
 def test_judge_runs_blinded_pinned_lanes_and_resumes(cfg, judged_out):
     out, head = judged_out
     lanes = JudgeLanes()
-    res = judge_mod.judge(cfg, out, lane_runner=lanes, min_free_gb=0, echo=lambda s: None)
+    res = judge_mod.judge(cfg, out, lane_runner=lanes, echo=lambda s: None)
     assert res == {"pending": 2, "heads": 1, "judged": 2, "failed": 0, "not_started": 0,
                    "stopped": ""}  # fmt: skip
     spec = lanes.calls[0]
     assert (spec.model, spec.effort, spec.role) == ("gpt-6.1-sol", "xhigh", "judge")
     assert set(spec.disallowed_tools) == {"WebFetch", "WebSearch"}
     env = dict(spec.env)
-    assert env["GH_TOKEN"] == "" and env["PATH"].startswith(str(out / "judge" / "bin"))
+    work = out.parent / "out.judge-work"  # beside the scored dir, never in it
+    assert env["PATH"].startswith(str(work / "bin"))
+    assert env["GH_TOKEN"] == env["GITHUB_TOKEN"] == env["REVIEWSYS_REPLAY_GH_TOKEN"] == ""
+    assert Path(env["GH_CONFIG_DIR"]).is_dir() and not any(Path(env["GH_CONFIG_DIR"]).iterdir())
+    assert not (out / "judge").exists() and not list(out.glob("*judge-work*"))
     assert spec.json_schema == judge_mod.SCHEMA and spec.isolate_env
     assert lanes.seen["head"] == head
     assert sorted(lanes.seen["refs"].split()) == [
@@ -190,17 +194,17 @@ def test_judge_runs_blinded_pinned_lanes_and_resumes(cfg, judged_out):
     verdicts = {x["id"]: x["verdict"] for x in lines}
     assert verdicts["j-1"]["real"] == "no" and verdicts["j-1"]["matches_label"] is None
     assert verdicts["m-1"]["matches_label"] == "yes"
-    assert not list((out / "judge" / "work" / "worktrees").iterdir())
-    assert not list((out / "judge" / "work" / "mirrors").iterdir())
+    assert not list((work / "work" / "worktrees").iterdir())
+    assert not list((work / "work" / "mirrors").iterdir())
     again = JudgeLanes()
-    res = judge_mod.judge(cfg, out, lane_runner=again, min_free_gb=0, echo=lambda s: None)
+    res = judge_mod.judge(cfg, out, lane_runner=again, echo=lambda s: None)
     assert res["pending"] == 0 and again.calls == []
 
 
 def test_a_failed_lane_leaves_its_item_for_the_next_run(cfg, judged_out):
     out, _ = judged_out
     res = judge_mod.judge(
-        cfg, out, lane_runner=JudgeLanes(fail={"Bad f again"}), min_free_gb=0, echo=lambda s: None
+        cfg, out, lane_runner=JudgeLanes(fail={"Bad f again"}), echo=lambda s: None
     )
     assert res["judged"] == 1 and res["failed"] == 1
     assert [t["id"] for t in judge_mod.pending_items(out, 0)] == ["m-1"]
@@ -209,7 +213,34 @@ def test_a_failed_lane_leaves_its_item_for_the_next_run(cfg, judged_out):
 def test_judge_stops_on_a_short_disk(cfg, judged_out):
     out, _ = judged_out
     lanes = JudgeLanes()
-    res = judge_mod.judge(
-        cfg, out, lane_runner=lanes, min_free_gb=25, disk_free=lambda p: GB, echo=lambda s: None
-    )
+    gate = Gate(out, min_free_gb=25, disk_free=lambda p: GB)
+    res = judge_mod.judge(cfg, out, lane_runner=lanes, gate=gate, echo=lambda s: None)
     assert res["stopped"].startswith("disk:") and res["not_started"] == 2 and lanes.calls == []
+
+
+def test_judge_stops_when_production_degrades(cfg, judged_out):
+    out, _ = judged_out
+    lanes = JudgeLanes()
+    gate = Gate(out, guard=lambda: ("degraded mode is active", True))
+    res = judge_mod.judge(cfg, out, lane_runner=lanes, gate=gate, echo=lambda s: None)
+    assert res["stopped"] == "stopped: degraded mode is active" and lanes.calls == []
+
+
+def test_judge_never_writes_the_production_mirror(cfg, judged_out):
+    import os
+    import stat
+
+    out, _ = judged_out
+    m = cfg.mirrors_dir / "o__r.git"
+    paths = [m, *m.rglob("*")]
+    modes = {p: p.stat().st_mode for p in paths}
+    before = sorted((str(p), p.stat().st_mtime) for p in paths)
+    for p in paths:
+        os.chmod(p, modes[p] & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+    try:
+        res = judge_mod.judge(cfg, out, lane_runner=JudgeLanes(), echo=lambda s: None)
+    finally:
+        for p in reversed(paths):
+            os.chmod(p, modes[p])
+    assert res["judged"] == 2
+    assert sorted((str(p), p.stat().st_mtime) for p in [m, *m.rglob("*")]) == before
