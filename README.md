@@ -479,48 +479,69 @@ beside the production daemon (below); never against the box's database itself.
   replay's broker. They may not run the installed gh, a curl shim refuses GitHub, and
   WebFetch/WebSearch are off. The view serves the diff from git, CI from the source run's
   evidence, and nothing created after the cutoff. Writes and unknown commands are
-  refused. Give it a read-only token in `REVIEWSYS_REPLAY_GH_TOKEN`.
+  refused. Give it a read-only token in `REVIEWSYS_REPLAY_GH_TOKEN`; it stays with the
+  broker (lanes get every token variable blank and an empty `GH_CONFIG_DIR`).
   `--force-phase2` records the gate's decision, then runs Phase 2 anyway. A replay
   exits 75 without running in degraded mode (forced on in the source or the configured
-  database). `report.json` per run.
-  - Git is pinned too: the worktree comes from a per-replay bare clone that borrows the
-    mirror's objects (alternates) and has only the base branch at the base the source
-    run saw and the PR head, so no ref, tag or `--all` shows a later commit. The clone
-    and the worktree are removed when the replay ends.
+  database). `report.json` per run, with `slot_wait_s` (time it only waited for lane
+  slots) and `active_s` beside `wall_clock_s`.
+  - Git is pinned too (`replaygit.py`): the worktree comes from a per-replay bare clone
+    that borrows the production mirror's objects read-only (alternates) and has only the
+    base branch at the base the source run saw and the PR head, so no ref, tag or `--all`
+    shows a later commit. What the mirror lacks is fetched into the clone; a production
+    mirror is never written, and a repository without one is mirrored under
+    `--eval-mirrors`. The clone and the worktree are removed when the replay ends.
   - A v12 arm gets the issue ledger as of the cutoff (the source's events, then
     `ledger backfill` over the seeded history) and the pre-flip reconcile at the cutoff
     (closed from the source database, threads from the pinned view). A v11 arm gets
-    none.
-  - Lanes take slots in the configured work dir's pools at the `replay` rank: only while
-    no production lane waits, never the side-lane slot, at most
-    `[scheduling] replay_pool_share` (0.5) of a pool. The gpt pool is sized from the
-    configured database's account reading. No comparison lanes.
+    none. Thread resolution cannot be rewound: such heads are flagged
+    (`thread_resolution_as_of_now`) and S5/S8 are also scored without them.
+  - Lanes take slots in the configured work dir's pools but wait in `<pool>.replay/`,
+    which production never reads (v0.24 included), so a waiting replay changes nothing for
+    production (its comparison-lane admission and status export read `<pool>.line`). A
+    replay lane takes a slot only while `<pool>.line` holds no production ticket, never the
+    side-lane slot, and at most floor((n - 1) * `[scheduling] replay_pool_share`) (0.5)
+    of a pool, or `replay_pool_slots.<pool>`; a pool of 1 or 2 slots is closed to replays
+    by default (on the box: gpt 5 of 12, gemini and glm 2 of 6, muse 9 of 20, compare 0).
+    The gpt pool is sized from the configured database's account reading. No comparison
+    lanes.
 - `reviewsys replay-set SETFILE --policy NAME=SKILLS_DIR ... --out DIR --concurrency N`
   runs every (head, policy, sample) as its own replay into `OUT/<policy>/run-<id>[-r<k>]/`.
-  It is resumable, alternates which arm goes first, and stops on an exit 75. Replays
-  share the machine's lane pools. SETFILE is eval/set.json (`heads`, `repeats`).
-  It launches a replay only with `--min-free-gb` (25) free, pauses while running ones
-  free their worktrees, and stops with exit 74 when the disk stays short.
-  `--limit N` takes N heads round-robin over the sets.
+  It is resumable, alternates which arm goes first, and stops on an exit 75. SETFILE is
+  eval/set.json (`heads`, `repeats`). Before each launch (`replayset.Gate`) it reads the
+  configured database read-only: degraded mode, or fewer than `--min-usable-accounts` (2)
+  usable OpenAI accounts (or a stale reading), stops launching (exit 75); a live queue at
+  half of `backlog_skip_phase1_above` holds launches up to `--busy-wait-minutes` (60).
+  Free disk under OUT, less `--disk-per-job-gb` (6) per running replay, must stay above
+  `--min-free-gb` (35); short, it holds launches, then stops with exit 74 after
+  `--disk-wait-minutes` (30). `--limit N` takes N heads round-robin over the sets.
 - `reviewsys replay-score SETFILE LABELS --out DIR` writes `score.json`: paired per-set
-  recall, known-FP blockers, re-raises, new blockers, gpt use, wall clock, contract
-  failures, and a noise floor from repeat samples. It also writes `to_judge.jsonl`: new
-  blockers and findings near a label they did not match, blinded, with content ids.
-  LABELS is eval/labels.jsonl.
+  recall, known-FP blockers, re-raises, new blockers, gpt use, wall clock and active time,
+  contract failures, and a noise floor from repeat samples. It also writes
+  `to_judge.jsonl`: new blockers and findings near a label they did not match, blinded,
+  with content ids. LABELS is eval/labels.jsonl.
 - `reviewsys replay-judge OUT --set SETFILE --labels LABELS` asks one blinded lane per
   `to_judge.jsonl` item (gpt-6.1-sol at xhigh, read-only worktree at the replayed head,
-  no GitHub): is it real, and does it match the label. Verdicts go to `judged.jsonl`
+  no GitHub, no token, work dir outside OUT): is it real, and does it match the label.
+  Launches go through the same gate as replay-set. Verdicts go to `judged.jsonl`
   (resumable); the closing score counts confirmed label matches toward recall and gives
   new-blocker and blocker precision per arm and set, plus `spot_check.jsonl` (20 judged
   items for the owner).
 - `deploy/eval-run.sh --v12 SKILLS_COMMIT` on the box: an eval root at
   `~/.reviewsys-eval` with its own venv of this checkout, a `.backup` snapshot of the
-  production database, the two skills arms (v11 = `169fcb8`), then replay-set
-  (concurrency 3), replay-score, replay-judge. It refuses degraded mode, and refuses to
-  start without a read-only token in `REVIEWSYS_REPLAY_GH_TOKEN` unless
-  `--allow-bot-token`. It logs under the root and resumes when re-run. `--limit N` is a
-  small real run; `--dry` runs every step on a fixture with fake lanes and a fake gh.
-  See `deploy/eval-run.sh --help`.
+  production database (after a disk check), the two skills arms (v11 = `169fcb8`), then
+  replay-set (concurrency 3), replay-score, a second preflight, replay-judge. It refuses
+  degraded mode and short accounts, and refuses to start without a read-only token in
+  `REVIEWSYS_REPLAY_GH_TOKEN` (not `gh auth token`, no write scopes, no push on a set
+  repository) unless `--allow-bot-token`. It logs under the root, resumes when re-run,
+  and exits non-zero when replays or verdicts are missing. `--limit N` is a small real
+  run; `--dry` runs every step on a fixture with fake lanes and a fake gh (and refuses the
+  real eval root). See `deploy/eval-run.sh --help`.
+- Stopping an eval: `deploy/eval-run.sh --stop` sends TERM to the eval's own process group
+  (its pgid is in `~/.reviewsys-eval/eval.pgid`; the production daemon is never in it),
+  KILL after `--stop-grace` (60 s), then removes the worktrees and clones the replays and
+  the judge left. Lane slots free themselves (flocks die with their processes). Re-running
+  the eval command resumes: interrupted replays have no report and run again.
 
 ## Final approval after an iterative review
 

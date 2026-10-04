@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -78,7 +79,7 @@ def test_the_fixture_eval_runs_end_to_end_in_process(tmp_path, monkeypatch):
         "new_blocker",
         "label_match",
     }
-    jres = judge_mod.judge(cfg, out, lane_runner=replayfake.FakeLanes(), min_free_gb=0)
+    jres = judge_mod.judge(cfg, out, lane_runner=replayfake.FakeLanes())
     assert jres["judged"] == len(todo) and not jres["failed"]
     final, todo = replayscore.score_dir(Path(fx["set"]), Path(fx["labels"]), out, baseline="v11")
     assert todo == [] and final["judged"] == jres["judged"]
@@ -106,12 +107,28 @@ def test_the_fake_gh_refuses_writes(tmp_path):
 # ---- deploy/eval-run.sh ----
 
 
-def _script(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+FAKE_GH = r"""#!/bin/sh
+# a gh for the script's token checks: `auth token` and the two reads it makes
+perms='{"pull": true}'
+[ -n "$FAKE_GH_PERMS" ] && perms="$FAKE_GH_PERMS"
+case "$1 $2" in
+  "auth token") echo "${FAKE_GH_OWN:-the-bots-own-token}";;
+  "api -i") printf 'HTTP/2.0 200 OK\nX-Oauth-Scopes: %s\n\n{"login": "reader"}\n' "$FAKE_GH_SCOPES";;
+  "api repos/"*) printf '{"permissions": %s}\n' "$perms";;
+  *) echo "fake gh: $*" >&2; exit 1;;
+esac
+"""
+
+
+def _script(args: list[str], env: dict[str, str], path: Path | None = None):
+    full = {**os.environ, "REVIEWSYS_EVAL_PYTHON": sys.executable, **env}
+    if path is not None:
+        full["PATH"] = f"{path}{os.pathsep}{full['PATH']}"
     return subprocess.run(
         ["bash", str(SCRIPT), *args],
         capture_output=True,
         text=True,
-        env={**os.environ, "REVIEWSYS_EVAL_PYTHON": sys.executable, **env},
+        env=full,
         timeout=600,
         check=False,
     )
@@ -119,47 +136,79 @@ def _script(args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess
 
 @pytest.fixture
 def prod(tmp_path) -> dict:
-    """The fixture as the box would see it: a production dir with its config."""
+    """The fixture as the box would see it: a production dir with its config, a gh for the
+    token checks first on PATH."""
     fx = replayfake.build_fixture(tmp_path / "fx")
     p = tmp_path / "prod"
     p.mkdir()
     shutil.copy(fx["config"], p / "config.toml")
-    return {**fx, "prod": str(p), "eval_root": str(tmp_path / "eval")}
+    bin_dir = tmp_path / "fakebin"
+    bin_dir.mkdir()
+    (bin_dir / "gh").write_text(FAKE_GH)
+    (bin_dir / "gh").chmod(0o755)
+    return {**fx, "prod": str(p), "eval_root": str(tmp_path / "eval"), "bin": bin_dir}
 
 
 def _real_args(fx: dict) -> list[str]:
     return [
         "--v12", fx["v12"], "--v11", fx["v11"], "--set", fx["set"], "--labels", fx["labels"],
         "--eval-root", fx["eval_root"], "--skills-repo", fx["skills_repo"],
+        "--min-usable-accounts", "0", "--min-free-gb", "0",
     ]  # fmt: skip
 
 
+def _run(prod: dict, args: list[str], **env: str):
+    return _script(
+        [*_real_args(prod), *args],
+        {"REVIEWSYS_PROD": prod["prod"], "REVIEWSYS_REPLAY_GH_TOKEN": "ro", **env},
+        prod["bin"],
+    )
+
+
 def test_the_script_refuses_without_a_read_only_token(prod):
-    env = {"REVIEWSYS_PROD": prod["prod"], "REVIEWSYS_REPLAY_GH_TOKEN": ""}
-    r = _script(_real_args(prod), env)
+    r = _run(prod, [], REVIEWSYS_REPLAY_GH_TOKEN="")
     assert r.returncode == 1 and "--allow-bot-token" in r.stdout + r.stderr
     assert not (Path(prod["eval_root"]) / "source.db").exists()  # nothing was started
-    r = _script([*_real_args(prod), "--allow-bot-token", "--only", "preflight"], env)
+    r = _run(prod, ["--allow-bot-token", "--only", "preflight"], REVIEWSYS_REPLAY_GH_TOKEN="")
     assert r.returncode == 0, r.stdout + r.stderr
     assert "WARNING: --allow-bot-token" in r.stdout
 
 
-def test_the_script_refuses_in_degraded_mode(prod):
+@pytest.mark.parametrize(
+    ("env", "said"),
+    [
+        ({"REVIEWSYS_REPLAY_GH_TOKEN": "the-bots-own-token"}, "own gh token"),
+        ({"FAKE_GH_SCOPES": "repo, read:org"}, "classic token scopes that can write"),
+        ({"FAKE_GH_PERMS": '{"pull": true, "push": true}'}, "reader has push on"),
+    ],
+)
+def test_the_script_refuses_a_token_that_can_write(prod, env, said):
+    r = _run(prod, ["--only", "preflight"], **env)
+    assert r.returncode == 1 and said in r.stdout + r.stderr, r.stdout + r.stderr
+
+
+def test_the_script_accepts_a_read_only_token(prod):
+    r = _run(prod, ["--only", "preflight"], FAKE_GH_SCOPES="")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert '"login": "reader"' in r.stdout and '"problems": []' in r.stdout
+
+
+def test_the_script_refuses_in_degraded_mode_and_short_of_accounts(prod):
     import sqlite3
 
+    r = _run(prod, ["--min-usable-accounts", "2", "--only", "preflight"])  # the later one wins
+    assert r.returncode == 1 and "no OpenAI account reading" in r.stdout + r.stderr
     c = sqlite3.connect(prod["db"])
     c.execute("INSERT INTO kv (key, value) VALUES ('degraded.force', 'on')")
     c.commit()
     c.close()
-    env = {"REVIEWSYS_PROD": prod["prod"], "REVIEWSYS_REPLAY_GH_TOKEN": "ro"}
-    r = _script([*_real_args(prod), "--only", "preflight"], env)
-    assert r.returncode == 1 and "degraded mode is active" in r.stdout + r.stderr
+    r = _run(prod, ["--only", "preflight"])
+    assert r.returncode == 1 and "degraded mode is forced on" in r.stdout + r.stderr
 
 
 def test_the_script_snapshots_checks_the_set_and_checks_out_the_arms(prod):
     os.remove(Path(prod["runs"]) / f"run-{prod['source_runs'][1]}" / "evidence.json")
-    env = {"REVIEWSYS_PROD": prod["prod"], "REVIEWSYS_REPLAY_GH_TOKEN": "ro"}
-    r = _script([*_real_args(prod), "--only", "preflight,snapshot,arms"], env)
+    r = _run(prod, ["--only", "preflight,snapshot,arms"])
     assert r.returncode == 0, r.stdout + r.stderr
     root = Path(prod["eval_root"])
     assert (root / "source.db").exists()
@@ -173,6 +222,68 @@ def test_the_script_snapshots_checks_the_set_and_checks_out_the_arms(prod):
         ).stdout.strip()
         assert head == prod[arm]
     assert list((root / "logs").glob("eval-run-*.log"))
+    # the eval ran in a process group of its own, which --stop signals
+    pg = int(r.stdout.split("process group ")[1].split()[0])
+    assert pg != os.getpgrp()
+    assert not (root / "eval.pgid").exists()  # removed on exit
+
+
+def test_the_script_snapshot_needs_room_on_disk(prod):
+    r = _run(prod, ["--min-free-gb", "100000000", "--only", "snapshot"])
+    assert r.returncode == 1 and "not enough disk for the snapshot" in r.stdout + r.stderr
+    assert not (Path(prod["eval_root"]) / "source.db").exists()
+
+
+def test_the_script_exits_non_zero_when_replays_failed(prod):
+    """L7: a head whose commit cannot be had fails its replays; the run says so and exits 1."""
+    import sqlite3
+
+    c = sqlite3.connect(prod["db"])
+    hid = c.execute(
+        "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at) "
+        "VALUES ('dashpay/platform', 3, ?, 'new_push', 'done', ?, ?)",
+        ("d" * 40, "2026-09-22T00:00:00Z", "2026-09-22T00:00:00Z"),
+    ).lastrowid
+    rid = c.execute(
+        "INSERT INTO runs (head_id, attempt, status, token, started_at, finished_at, "
+        "deadline_at) VALUES (?, 1, 'done', 't', ?, ?, ?)",
+        (hid, "2026-09-22T00:00:00Z", "2026-09-22T01:00:00Z", "2026-09-22T00:00:00Z"),
+    ).lastrowid
+    c.commit()
+    c.close()
+    one = Path(prod["root"]) / "one.json"
+    one.write_text(json.dumps({"heads": [{"id": "bad", "source_run_id": rid, "set": "S1"}]}))
+    r = _run(prod, ["--set", str(one), "--only", "preflight,snapshot,arms,replay"])
+    assert r.returncode == 1, r.stdout + r.stderr
+    assert '"failed": 2' in r.stdout and "finished with failures in: replay-set" in r.stdout
+
+
+def test_stop_signals_the_eval_group_and_cleans_up(tmp_path):
+    root = tmp_path / "eval"
+    left = root / "out" / "v11" / "run-1" / "work"
+    (left / "worktrees" / "w").mkdir(parents=True)
+    (left / "mirrors" / "m.git").mkdir(parents=True)
+    (left / "runs").mkdir()
+    (root / "judge-work" / "work" / "worktrees" / "x").mkdir(parents=True)
+    group = subprocess.Popen(
+        ["perl", "-e", "setpgrp(0, 0); exec 'sleep', '300'"], start_new_session=False
+    )
+    time.sleep(0.3)
+    (root / "eval.pgid").write_text(f"{group.pid}\n")
+    r = _script(["--stop", "--eval-root", str(root), "--stop-grace", "5"], {})
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert group.wait(timeout=10) != 0  # terminated
+    assert not (left / "worktrees").exists() and not (left / "mirrors").exists()
+    assert (left / "runs").exists()  # artifacts stay
+    assert not (root / "judge-work" / "work" / "worktrees").exists()
+    assert not (root / "eval.pgid").exists() and "removed 3" in r.stdout
+
+
+def test_a_dry_run_refuses_the_real_eval_root(tmp_path):
+    real = tmp_path / "real"
+    r = _script(["--dry", "--eval-root", str(real) + "/"], {"REVIEWSYS_EVAL_ROOT": str(real)})
+    assert r.returncode == 1 and "refuses the real eval root" in r.stderr
+    assert not real.exists()
 
 
 def _can_run_the_broker_and_sandbox() -> str:
