@@ -4,6 +4,7 @@ behavior, absent from every v11 config, and covered by the policy fingerprint.""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -112,3 +113,20 @@ def test_a_pipeline_under_a_stale_fingerprint_fails_the_load(cfg, skills_dir):
         load_with(cfg, skills_dir, {"version": "v12"}, refingerprint=False)
     # v11 configs keep loading whatever their fingerprint (the fixture's is a placeholder)
     assert load_with(cfg, skills_dir, None, refingerprint=False).policy.pipeline is None
+
+
+V11_FINGERPRINT = "a380fabd843567dc632efd5def3c80cd27d72c48d260c79ef8155694e624d16c"
+
+
+def test_fingerprint_reproduces_the_live_v11_policy():
+    """`review_model_policy` of skills 169fcb8 (policy v11, live), copied as is: the hash
+    must match the one the skills repo stored. Its text has non-ASCII ("—"), which only the
+    default `ensure_ascii=True` encoding reproduces."""
+    pol = json.loads(
+        (Path(__file__).parent / "golden" / "skills-v11-policy.json").read_text(encoding="utf-8")
+    )
+    assert pol["version"] == 11 and pol["fingerprint"] == V11_FINGERPRINT
+    assert cfg_mod.policy_fingerprint(pol) == V11_FINGERPRINT
+    body = {k: v for k, v in pol.items() if k != "fingerprint"}
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    assert not raw.isascii(), "the pin exercises the non-ASCII encoding"
