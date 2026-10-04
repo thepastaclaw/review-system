@@ -1490,6 +1490,12 @@ def _pending_statuses(
     return out
 
 
+def _projected_lifted(outs: dict[str, converse.ThreadOutcome], corroborated: set[str]) -> set[str]:
+    """The hashes this round's thread outcomes would close were every one delivered: what a
+    replay, which delivers nothing, decides on in place of `_record_thread_answers`' set."""
+    return {h for h, st in _pending_statuses(outs, corroborated).items() if st in ledger.CLOSED}
+
+
 def _run_lane(
     ctx: RunContext,
     *,
@@ -4189,11 +4195,15 @@ def _review_strength(ctx: RunContext, run_id: int | None) -> str:
     return "needs_fresh" if row["later"] and row["fresh_phase2"] != "ok" else "ok"
 
 
+def _fresh_audit_guard(ctx: RunContext) -> str:
+    return f"converse.fresh_audit:{ctx.repo}#{ctx.number}:{ctx.sha}"
+
+
 def _request_fresh_audit(ctx: RunContext) -> bool:
     """Ask for one same-sha re-review once this conversation run ends, so the fresh Phase-2
     audit the standing review skipped can run and approve. Once per commit: a re-review that
     re-raises a finding is answered in its threads like any other. True if requested now."""
-    guard = f"converse.fresh_audit:{ctx.repo}#{ctx.number}:{ctx.sha}"
+    guard = _fresh_audit_guard(ctx)
     with tx(ctx.conn):
         if kv_get(ctx.conn, guard):
             return False
@@ -4582,7 +4592,9 @@ def _apply_thread_outcomes(ctx: RunContext, verified: VerifierOutput, phase: str
     issue a finder just restated suppressed (it stays open, unanswered), and book them."""
     outs = _thread_outcomes(ctx)
     if ctx.dry_run:
-        return set()  # nothing goes on a thread, nothing is booked
+        # nothing goes on a thread, nothing is booked; a replay still decides on what the
+        # outcomes would lift (the titles of a same-sha verdict follow-up)
+        return _projected_lifted(outs, _refound(verified)) if ctx.replay else set()
     corroborated = _refound(verified)
     answered: list[dict[str, Any]] = []
     deliver: dict[str, converse.ThreadOutcome] = {}
@@ -4888,14 +4900,23 @@ def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     stand = _stand12(ctx, issues, out.outcomes)
     blockers = _blockers(stand)
     update = None
+    replayed: dict[str, Any] = {}
     if not ctx.dry_run:
         update = _conversation_verdict12(ctx, phase, lm, stand, lifted=lifted, before=before)
+    elif ctx.replay:
+        # a replay delivers nothing (its gh is read-only), so it decides on what the outcomes
+        # would lift and records the follow-up it would post (the eval's S8 reads it)
+        lifted = _projected_lifted(out.outcomes, set())
+        replayed["would_post"] = _would_post12(ctx, phase, lm, stand, lifted=lifted, before=before)
+        path = ctx.run_dir / "conversation.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), **replayed}, indent=1))
     _gate_comment(ctx, "done", phase=phase, blocker_count=blockers)
     return {
         "answered": sum(1 for a in answered if a.get("action") == "replied"),
         "outcomes": {h: o.status for h, o in out.outcomes.items()},
         "blockers_remaining": blockers,
         "verdict_updated": bool(update and update.posted),
+        **replayed,
     }
 
 
@@ -4939,6 +4960,18 @@ def _review_strength12(ctx: RunContext, run_id: int | None) -> tuple[str, str]:
     return "needs_fresh", why
 
 
+@dataclass(slots=True)
+class _Verdict12:
+    """What a v12 conversation's #38 follow-up would say (`_decide_conversation12`)."""
+
+    state: str  # the bot's standing verdict it moves from
+    event: str  # the canonical event (`publish.verdict_event`)
+    verified: VerifierOutput
+    prov: publish.Provenance
+    titles: list[str]
+    note: str
+
+
 def _conversation_verdict12(
     ctx: RunContext,
     phase: str,
@@ -4948,11 +4981,76 @@ def _conversation_verdict12(
     lifted: set[str],
     before: dict[str, ledger.Issue],
 ) -> publish.PublishResult | None:
+    """#38 restated over the ledger (`_decide_conversation12`), posted: nothing is when the
+    verdict would not move, or a human overrode it."""
+    d = _decide_conversation12(
+        ctx, phase, lm, stand, lifted=lifted, before=before, queue=lambda: _request_fresh_audit(ctx)
+    )
+    if d is None:
+        return None
+    return _post_conversation_update(
+        ctx,
+        phase,
+        d.verified,
+        d.prov,
+        state=d.state,
+        new_event=d.event,
+        titles=d.titles,
+        note=d.note,
+    )
+
+
+def _would_post12(
+    ctx: RunContext,
+    phase: str,
+    lm: LaneModel,
+    stand: list[ledger.Issue],
+    *,
+    lifted: set[str],
+    before: dict[str, ledger.Issue],
+) -> dict[str, Any] | None:
+    """A replay's account of the #38 follow-up a live run would post (it posts nothing,
+    queues nothing and records no verdict): its event, note and the lifted set it stands on;
+    `posts` is False when GitHub would record the state it already shows. None: no follow-up."""
+    guard = _fresh_audit_guard(ctx)
+    d = _decide_conversation12(
+        ctx,
+        phase,
+        lm,
+        stand,
+        lifted=lifted,
+        before=before,
+        queue=lambda: not kv_get(ctx.conn, guard),
+    )
+    if d is None:
+        return None
+    assert ctx.meta
+    own = ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
+    return {
+        "event": d.event,
+        "note": d.note,
+        "lifted": sorted(lifted),
+        "titles": d.titles,
+        "from": d.state,
+        "posts": publish.EVENT_STATE[publish.transport_event(d.event, own_pr=own)] != d.state,
+    }
+
+
+def _decide_conversation12(
+    ctx: RunContext,
+    phase: str,
+    lm: LaneModel,
+    stand: list[ledger.Issue],
+    *,
+    lifted: set[str],
+    before: dict[str, ledger.Issue],
+    queue: Callable[[], bool],
+) -> _Verdict12 | None:
     """#38 restated over the ledger: after a same-sha thread pass lifted something above a
     nitpick, with no blocker left standing, APPROVE when nothing above a nitpick stands and
     the standing review ran at full strength with its confirmation pass; COMMENT otherwise,
-    queuing one same-sha re-review when only the confirmation pass is missing. Nothing is
-    posted when the verdict would not move, or a human overrode it."""
+    queuing one same-sha re-review (`queue`: True if queued now) when only the confirmation
+    pass is missing. None when there is nothing to say, or a human overrode the verdict."""
     lifted_any = any(h in before and before[h].severity != "nitpick" for h in lifted)
     if _blockers(stand) or not lifted_any:
         return None
@@ -4982,7 +5080,7 @@ def _conversation_verdict12(
     elif prov.degraded:
         note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
     elif strength == "needs_fresh":
-        queued = _request_fresh_audit(ctx)
+        queued = queue()
         note = (
             "Not approved yet: an approval needs the confirmation pass over the whole change, "
             f"which the review of this commit did not run ({why}). "
@@ -4997,13 +5095,11 @@ def _conversation_verdict12(
             "Not approved: the standing review of this commit did not run at full strength "
             f"({why}), so it cannot carry an approval."
         )
-    return _post_conversation_update(
-        ctx,
-        phase,
-        verified,
-        prov,
+    return _Verdict12(
         state=state,
-        new_event=new_event,
+        event=new_event,
+        verified=verified,
+        prov=prov,
         titles=_lifted_blocker_titles(before, lifted),
         note=note,
     )

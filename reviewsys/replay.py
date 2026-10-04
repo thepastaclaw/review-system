@@ -98,7 +98,9 @@ CAVEATS = (
     "cannot rewind them (counted under gh_shim.rewind)",
     "converse silence memory (kv) is not seeded: a reply the bot chose not to answer may be "
     "considered again",
-    "a conversation run's replies are not posted, so its verdict follow-up sees nothing lifted",
+    "a conversation run's replies are not posted: under policy v11 its verdict follow-up sees "
+    "nothing lifted; under v12 it decides on what the outcomes would lift and records the "
+    "follow-up it would post (conversation.json `would_post`) without posting it",
 )
 
 

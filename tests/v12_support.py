@@ -94,19 +94,22 @@ def cand(title: str, *, severity: str = "blocking", file: str = "f.rs", line: in
     }
 
 
-def try_round(cfg, conn, gh, lanes, sha: str, trigger=Trigger.MENTION) -> tuple[int, RunStatus]:
-    """Queue `sha` (the PR's live head now) and run its review: (run id, status)."""
+def try_round(
+    cfg, conn, gh, lanes, sha: str, trigger=Trigger.MENTION, **main: Any
+) -> tuple[int, RunStatus]:
+    """Queue `sha` (the PR's live head now) and run its review: (run id, status). `main`:
+    more `worker.main` options (`dry_run`, `replay`)."""
     lanes.head = sha
     gh.pr["head"]["sha"] = sha
     with tx(conn):
         enqueue_head(conn, cfg, REPO, 1, sha, trigger)
     (rid,) = schedule(conn, cfg, spawn=False)
-    return rid, worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False)
+    return rid, worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False, **main)
 
 
-def run_round(cfg, conn, gh, lanes, sha: str, trigger=Trigger.MENTION) -> int:
+def run_round(cfg, conn, gh, lanes, sha: str, trigger=Trigger.MENTION, **main: Any) -> int:
     """`try_round`, which must end DONE: the run id."""
-    rid, status = try_round(cfg, conn, gh, lanes, sha, trigger)
+    rid, status = try_round(cfg, conn, gh, lanes, sha, trigger, **main)
     assert status == RunStatus.DONE, conn.execute(
         "SELECT reason FROM runs WHERE id=?", (rid,)
     ).fetchone()["reason"]

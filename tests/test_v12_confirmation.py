@@ -4,6 +4,8 @@ incomplete verification), and the #38 same-sha approval that needs it."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from reviewsys import worker
@@ -239,3 +241,83 @@ def test_an_unchecked_blocker_in_the_confirmation_pass_fails_the_run(
     row = conn.execute("SELECT reason, fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
     assert row["fail_kind"] == "infra" and "blocking candidates unchecked" in row["reason"]
     assert not gh.posted_reviews
+
+
+def _withdrawn_blocker(cfg, conn, gh, lanes) -> str:
+    """A full review of A raising one blocker, then a maintainer's reply the thread lane
+    answers WITHDRAWN: the finding hash."""
+    lanes.verify12 = confirm_matches
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
+    run_round(cfg, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
+    reply(gh, ids[fee], "The caller adds it.", rid=903)
+    lanes.thread_out[fee] = {"status": "WITHDRAWN", "reply": "Agreed, the caller adds it."}
+    return fee
+
+
+def _converse_detail(conn, rid: int) -> dict:
+    row = conn.execute("SELECT detail FROM steps WHERE run_id=? AND name='converse'", (rid,))
+    return json.loads(row.fetchone()["detail"])
+
+
+@pytest.mark.parametrize(
+    ("trigger", "event", "note"),
+    [
+        ("off", "APPROVE", "Approved: the discussion withdrew or deferred every finding"),
+        ("no_blockers", "COMMENT", "It is queued for this commit and approves if it finds"),
+    ],
+)
+def test_a_replayed_same_sha_reply_records_the_follow_up_it_would_post(
+    cfg, skills_dir, conn, gh, lanes, git, trigger, event, note
+):
+    """A replay delivers nothing (its gh is read-only), yet decides on what the outcomes
+    would lift: the maintainer's withdrawal lifts the only blocker, so the follow-up is an
+    APPROVE over a full-strength standing review, or a COMMENT queuing the confirmation pass
+    the standing review skipped. It is recorded (conversation.json and the step), and nothing
+    is posted, queued or moved in the ledger."""
+    v12 = v12_cfg(cfg, skills_dir, confirmation={"trigger": trigger})
+    fee = _withdrawn_blocker(v12, conn, gh, lanes)
+    posted, replies = len(gh.posted_reviews), len(gh.replies)
+    reviews = conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
+    rid = run_round(v12, conn, gh, lanes, A, Trigger.REVIEW_REPLY, dry_run=True, replay=True)
+    conv = json.loads((v12.runs_dir / f"run-{rid}" / "conversation.json").read_text())
+    wp = conv["would_post"]
+    assert wp["event"] == event and note in wp["note"]
+    assert wp["lifted"] == [fee] and wp["titles"] == ["Fee estimate omits drainage"]
+    assert wp["from"] == "CHANGES_REQUESTED" and wp["posts"] is True
+    assert conv["outcomes"][fee]["status"] == "WITHDRAWN"  # the lane's outcomes stay as written
+    detail = _converse_detail(conn, rid)
+    assert detail["would_post"] == wp and detail["verdict_updated"] is False
+    assert len(gh.posted_reviews) == posted and len(gh.replies) == replies
+    assert conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0] == reviews
+    assert not conn.execute("SELECT 1 FROM kv WHERE key LIKE 'converse.fresh_audit:%'").fetchone()
+    assert not conn.execute("SELECT 1 FROM kv WHERE key LIKE 'rereview.after_run:%'").fetchone()
+    assert issues(conn)[fee].status == "open"  # never delivered, never booked
+
+
+def test_a_plain_dry_run_of_a_same_sha_reply_records_no_follow_up(v12, conn, gh, lanes, git):
+    fee = _withdrawn_blocker(v12, conn, gh, lanes)
+    posted = len(gh.posted_reviews)
+    rid = run_round(v12, conn, gh, lanes, A, Trigger.REVIEW_REPLY, dry_run=True)
+    conv = json.loads((v12.runs_dir / f"run-{rid}" / "conversation.json").read_text())
+    assert "would_post" not in conv and conv["outcomes"][fee]["status"] == "WITHDRAWN"
+    assert "would_post" not in _converse_detail(conn, rid)
+    assert len(gh.posted_reviews) == posted
+    assert issues(conn)[fee].status == "open"
+
+
+def test_a_replayed_same_sha_rereview_names_the_blocker_its_threads_would_lift(
+    v12, conn, gh, lanes, git
+):
+    """The full path's thread lane (a same-sha re-review) delivers nothing in a replay either:
+    the verdict follow-up it would post still lists the blocker the withdrawal would lift."""
+    _withdrawn_blocker(v12, conn, gh, lanes)
+    lanes.candidates["general"] = []
+    posted = len(gh.posted_reviews)
+    rid = run_round(v12, conn, gh, lanes, A, Trigger.MANUAL, dry_run=True, replay=True)
+    pub = json.loads((v12.runs_dir / f"run-{rid}" / "publication-final.json").read_text())
+    assert pub["verdict_update"] is True
+    assert "No longer blocking:\n- Fee estimate omits drainage" in pub["body"]
+    assert len(gh.posted_reviews) == posted
