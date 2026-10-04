@@ -5,6 +5,7 @@ incomplete verification), and the #38 same-sha approval that needs it."""
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +18,7 @@ from tests.test_worker_e2e import (
     fake_git,  # noqa: F401  (autouse: fake mirror/worktree)
 )
 from tests.v12_support import (
+    REPO,
     A,
     B,
     by_title,
@@ -321,3 +323,50 @@ def test_a_replayed_same_sha_rereview_names_the_blocker_its_threads_would_lift(
     assert pub["verdict_update"] is True
     assert "No longer blocking:\n- Fee estimate omits drainage" in pub["body"]
     assert len(gh.posted_reviews) == posted
+
+
+def test_no_same_sha_approval_over_a_round_that_had_a_conflict(v12, conn, gh, lanes, git):
+    """The standing round refused to approve because a concession and the verifier disagreed
+    (`threads.conflict`): a same-sha reply lifting the last finding comments, saying why."""
+    lanes.verify12 = confirm_matches
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [
+        cand("Add a regression test", severity="suggestion", line=12),
+        cand("Name the constant", severity="suggestion", line=14),
+    ]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    test_ = by_title(conn)["Add a regression test"].hash
+    name = by_title(conn)["Name the constant"].hash
+    reply(gh, ids[test_], "tests/fee.rs covers it.", rid=911)
+    lanes.thread_out[test_] = {"status": "WITHDRAWN", "reply": "Right."}
+    lanes.candidates["general"] = [cand(f"Add a regression test [open:{test_}]", line=12)]
+    rid = run_round(v12, conn, gh, lanes, B)
+    assert conn.execute(
+        "SELECT 1 FROM events WHERE kind='threads.conflict' AND run_id=?", (rid,)
+    ).fetchone()
+    reply(
+        gh, ids[name], "The constant is named in the next PR.", rid=912, at="2026-10-05T00:00:00Z"
+    )
+    lanes.thread_out = {name: {"status": "WITHDRAWN", "reply": "Fine, then it goes there."}}
+    lanes.candidates["general"] = []
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, B, Trigger.REVIEW_REPLY)
+    assert len(gh.posted_reviews) == before  # no approval: it stays COMMENT
+    assert by_title(conn)["Name the constant"].status == "withdrawn"
+    ctx = worker.RunContext(
+        cfg=v12,
+        main_conn=conn,
+        gh=gh,
+        run_id=0,
+        head_id=0,
+        repo=REPO,
+        number=1,
+        sha=B,
+        token="t",
+        run_dir=Path("."),
+    )
+    assert worker._review_strength12(ctx, rid) == (
+        "weak",
+        "a finding the discussion withdrew was confirmed again by the verifier",
+    )

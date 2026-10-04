@@ -4168,6 +4168,8 @@ def _strength_row(ctx: RunContext, run_id: int) -> sqlite3.Row | None:
         "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later, "
         "EXISTS (SELECT 1 FROM events WHERE run_id=r.id AND kind='verify.shard_dropped') "
         "AS dropped, "
+        "EXISTS (SELECT 1 FROM events WHERE run_id=r.id AND kind='threads.conflict') "
+        "AS conflict, "
         "(SELECT kind || ':' || detail FROM events WHERE run_id=r.id AND kind IN "
         "('confirmation.skipped', 'confirmation.failed') ORDER BY id DESC LIMIT 1) AS skipped "
         "FROM runs r WHERE r.id=?",
@@ -5006,8 +5008,8 @@ _SKIP_WORDS = {"blockers stand": "it had found a blocker"}
 
 def _review_strength12(ctx: RunContext, run_id: int | None) -> tuple[str, str]:
     """`_review_strength` under policy v12, with why: ("ok", ""), ("weak", reason) when the
-    run cannot carry an approval (Phase 2 missing, stand-in models, or candidates it dropped
-    unverified, whatever the confirmation trigger), or ("needs_fresh", reason) when the policy
+    run cannot carry an approval (Phase 2 missing, stand-in models, candidates it dropped
+    unverified, or a concession its verifier contradicted, whatever the confirmation trigger), or ("needs_fresh", reason) when the policy
     asked that run for a confirmation pass and it did not run, `reason` being why it did not."""
     if run_id is None:
         return "weak", "no full review of this commit is on record"
@@ -5016,6 +5018,9 @@ def _review_strength12(ctx: RunContext, run_id: int | None) -> tuple[str, str]:
         return "weak", "Phase 2 or the primary models were missing"
     if row["dropped"]:
         return "weak", "some of its candidates were never verified"
+    if row["conflict"]:
+        # that run refused to approve over it (`_verdict12`); a reply must not approve either
+        return "weak", "a finding the discussion withdrew was confirmed again by the verifier"
     trigger = ctx.cfg.policy.confirmation_trigger
     required = trigger == "no_blockers" or (trigger == "rereview" and bool(row["later"]))
     if not required or row["fresh_verify2"] == "ok":
