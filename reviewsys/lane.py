@@ -57,6 +57,8 @@ class LaneSpec:
     pool: str | None = None
     # macOS sandbox profile the lane runs under ("" = none); see `exec_deny_profile`
     sandbox_profile: str = ""
+    # set in the lane's environment on top of the worker's own (see `with_env`)
+    env: tuple[tuple[str, str], ...] = ()
     # Correction turns (see `run_with_corrections`). `session_id` (a UUID) makes the lane keep
     # its Claude Code session under that id instead of `--no-session-persistence`; with
     # `resume` the lane continues that session, `prompt` being the next user turn. `check` looks
@@ -172,6 +174,19 @@ def sandboxed(runner: LaneRunner, profile: str) -> LaneRunner:
         if checked[0]:
             raise ReviewError(FailKind.INFRA, f"lane sandbox cannot start: {checked[0]}")
         return runner(dataclasses.replace(spec, sandbox_profile=profile), artifact_dir, worktree)
+
+    return run
+
+
+def with_env(runner: LaneRunner, env: dict[str, str]) -> LaneRunner:
+    """`runner`, with `env` set in every lane's environment on top of the worker's own (no
+    change when it is empty). `reviewsys replay` puts its pinned `gh` first on PATH this way."""
+    if not env:
+        return runner
+    pairs = tuple(env.items())
+
+    def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
+        return runner(dataclasses.replace(spec, env=(*spec.env, *pairs)), artifact_dir, worktree)
 
     return run
 
@@ -324,7 +339,12 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
     so a group kill takes the lane down with us."""
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "prompt.md").write_text(spec.prompt, encoding="utf-8")
-    env = {**os.environ, "GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+    env = {
+        **os.environ,
+        "GODEBUG": "netdns=go",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+        **dict(spec.env),
+    }
     t0 = time.monotonic()
     proc = subprocess.Popen(
         argv_for(spec),
