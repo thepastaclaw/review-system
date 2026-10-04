@@ -7,9 +7,12 @@ compare what each finds with labels and with each other.
 The replay sees the PR as it was when the source run started (the cutoff):
 
 - History: the scratch database is seeded with this PR's runs that finished before the cutoff
-  (their posted, conceded and verified findings, steps and reviews), the `posted_findings`
-  rows, reviews and `thread.answered` events from before it, and (hook, see `seed_ledger`)
-  the issue ledger as of it.
+  (their posted, conceded and verified findings, steps and reviews, under their source run
+  ids), the `posted_findings` rows, reviews and `thread.answered` events from before it. For
+  a policy that reads the issue ledger (v12), also the ledger as of the cutoff
+  (`seed_ledger`), reconciled as `ledger reconcile` would have at that moment
+  (`reconcile_as_of`: closed from the source database, threads from the pinned view, code
+  from the pinned repository). A v11 arm gets no ledger: it never reads one.
 - GitHub: the harness and every lane read the PR through the pinned view in `ghshim` (the
   replayed head and base, CI from the source run's evidence, nothing created after the
   cutoff, edits rewound where they can be); every write is refused. Lanes reach it through a
@@ -20,8 +23,16 @@ The replay sees the PR as it was when the source run started (the cutoff):
   GH_TOKEN/GITHUB_TOKEN are set to it (blank without one).
 - Range: the review covers `merge-base(base the source run saw, head)..head`, not the merge
   base with today's base branch (for a PR merged since, that would be the head itself).
+- Git: the worktree comes from a per-replay bare repository (`pinned_clone`) that borrows the
+  mirror's objects (alternates: nothing is copied) and has no refs but the base branch at the
+  base the source run saw and the PR head at the replayed sha, so `git log origin/<base>`,
+  `refs/pull/N/head` and `--all` show nothing pushed after the cutoff. Its `origin` is
+  itself; missing blobs of a partial mirror are fetched into it, never into the mirror.
 - Machine: lanes take slots in the configured work dir's `lane-slots` (the same pools as the
-  box config), so concurrent replays share the model caps instead of multiplying them.
+  box config, the gpt pool sized from the configured database's account reading), at the
+  `replay` rank: behind every production lane, never the side-lane slot, at most
+  `replay_pool_share` of a pool (lanepool.py). Concurrent replays and the production daemon
+  share the model caps instead of multiplying them.
 
 Eval switches: `force_phase2` runs Phase 2 whatever the gate decides (recording what the gate
 would have published), `pin_phase1_model` puts one model on every Phase-1 lane in both arms,
@@ -34,8 +45,9 @@ so after the run their answers and stderr are searched for the replayed reposito
 raw-content URLs, and refused gh and curl attempts are listed. A hit marks the report invalid.
 
 Safety: a scratch SQLite database under `--out`, the worker's dry-run mode, and a read-only gh.
-The production work directory's bare mirrors are shared (read + fetch only); worktrees and
-run directories live under `--out` and the worktrees are removed when the replay ends.
+The production work directory's bare mirrors are shared (read + fetch only); the pinned clone,
+worktrees and run directories live under `--out`, and the clone and worktrees are removed when
+the replay ends (the run artifacts and report stay).
 """
 
 from __future__ import annotations
@@ -54,7 +66,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg_mod
-from . import degraded, worker
+from . import degraded, github, ledger, worker
 from .db import connect, now, tx
 from .degraded import Prober
 from .gh import Gh, GhRunner, _default_runner, env_runner, read_only_runner
@@ -100,12 +112,136 @@ def seed_ledger(
     repo: str,
     number: int,
     cutoff: str,
-) -> None:
-    """HOOK (ledger seeding, wired when the ledger lands): copy this PR's issue ledger
-    (`issues` and `issue_events`, schema v6) from the source database into the scratch one as
-    of `cutoff` (ISO-8601 Z, the source run's start): the issues opened before it, each with
-    the status of its last event before it, and those events. A no-op until then."""
-    return None
+) -> dict[str, Any]:
+    """This PR's issue ledger as of `cutoff` (ISO-8601 Z, the source run's start), in the
+    scratch database: the source's `issue_events` from before it, folded (when the source has
+    the ledger), then `ledger.backfill` over the scratch history `seed_history` left (runs,
+    reviews, answers and concessions from before the cutoff). The backfill derives the same
+    event key for the same fact as the write-through, and the scratch runs keep their source
+    ids, so it only fills what the source lacks; on a source without a ledger (the box before
+    its backfill) it is the whole ledger. Must be called outside a transaction."""
+    copied = 0
+    if _has_table(source_db, "issue_events"):
+        events = [
+            ledger.Event(
+                hash=str(r["hash"]),
+                key=str(r["key"]),
+                kind=str(r["kind"]),
+                source=str(r["source"]),
+                run_id=r["run_id"],
+                sha=r["sha"],
+                detail=json.loads(r["detail"] or "{}"),
+                ts=str(r["ts"]),
+            )
+            for r in source_db.execute(
+                "SELECT * FROM issue_events WHERE repo=? AND number=? AND ts < ? ORDER BY ts, id",
+                (repo, number, cutoff),
+            )
+        ]
+        with tx(scratch_db):
+            copied = ledger.append(scratch_db, repo, number, events)
+    filled = ledger.backfill(scratch_db, repo=repo, number=number)
+    return {
+        "events_copied": copied,
+        "events_backfilled": int(filled["events_added"]),
+        "issues": int(filled["issues"]),
+        "by_status": filled["by_status"],
+    }
+
+
+def reconcile_as_of(
+    scratch_db: sqlite3.Connection,
+    source_db: sqlite3.Connection,
+    *,
+    pin: Pin,
+    gh: Gh,
+    bot_login: str,
+    git_dir: Path,
+) -> dict[str, Any]:
+    """`ledger reconcile` (the one-shot before a PR's first policy v12 round) for this PR, at
+    the cutoff, as if v12 had been switched on then: whether the PR was closed comes from the
+    source database (`closed_before`), its threads from the pinned view, and whether an
+    issue's code moved from git in the pinned repository against the replayed head. No
+    network beyond the pinned view's reads. Records the reconcile in the scratch kv, where
+    the worker (which skips it in a dry run) reads its pending list."""
+    repo, number, head = pin.repo, pin.number, pin.sha
+    keep = ledger.STANDING | {"resolved"}
+    before = {h for h, i in ledger.load(scratch_db, repo, number).items() if i.status in keep}
+    closed = closed_before(source_db, repo, number, pin.cutoff)
+    if closed:
+        with tx(scratch_db):
+            ledger.reconcile(
+                scratch_db, repo, number, pr_open=False, open_threads=(), moved=lambda i: None
+            )
+        return {"pr_open": False, "closed": closed, "standing": len(before), "pending": 0}
+    threads = github.review_threads(gh, repo, number)
+    open_ = set(github.finding_threads(threads, bot_login))
+
+    def changed(a: str, b: str, file: str, ls: int | None, le: int | None) -> bool | None:
+        return ledger.lines_changed(git_dir, a, b, file, ls, le) if file else None
+
+    moved = {
+        h: ledger.anchor_moved(i, head, changed)
+        for h, i in ledger.load(scratch_db, repo, number).items()
+        if h in before and h not in open_
+    }
+    with tx(scratch_db):
+        ledger.sync_threads(
+            scratch_db,
+            repo,
+            number,
+            run_id=None,
+            sha=None,
+            threads=threads,
+            bot_login=bot_login,
+            source="backfill",
+        )
+        pending = ledger.reconcile(
+            scratch_db,
+            repo,
+            number,
+            pr_open=True,
+            open_threads=open_,
+            moved=lambda i: moved.get(i.hash),
+            sha=head,
+        )
+    return {
+        "pr_open": True,
+        "open_threads": len(open_),
+        "standing": len(before),
+        "outdated": sum(1 for h, m in moved.items() if m is True and h not in pending),
+        "pending": len(pending),
+    }
+
+
+def closed_before(source: sqlite3.Connection, repo: str, number: int, cutoff: str) -> str:
+    """Why the source database says the PR was closed before `cutoff` ("" = open, or not
+    known to be closed): merged before it (its audit row), or closed with no change to its
+    `prs` row since."""
+    if _has_table(source, "audits"):
+        row = source.execute(
+            "SELECT merged_at FROM audits WHERE repo=? AND number=?", (repo, number)
+        ).fetchone()
+        if row is not None and row["merged_at"] and str(row["merged_at"]) < cutoff:
+            return f"merged at {row['merged_at']}"
+    pr = source.execute(
+        "SELECT state, updated_at FROM prs WHERE repo=? AND number=?", (repo, number)
+    ).fetchone()
+    if pr is not None and pr["state"] != "open" and str(pr["updated_at"]) < cutoff:
+        return f"{pr['state']} since {pr['updated_at']}"
+    return ""
+
+
+def reads_ledger(policy: cfg_mod.ModelPolicy) -> bool:
+    """Whether a policy reads the issue ledger (the v12 pieces); under v11 it is write-only."""
+    return policy.verifier_v12 or policy.unanchored or policy.thread_lane
+
+
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone()
+    return row is not None
 
 
 def policy_overrides(rc: cfg_mod.Config, policy_name: str | None) -> cfg_mod.Config:
@@ -216,11 +352,12 @@ def seed_history(
     sha: str,
     cutoff: str,
     exclude_run: int,
-) -> dict[str, int]:
+) -> dict[str, Any]:
     """Copy what the worker reads about this PR's history, as of `cutoff`, into the scratch
     database: every run of the PR that finished before it (as its head, run, steps and
     `SEED_STAGES` findings rows, so per-commit lookups such as the standing verdict still
-    work), its reviews and `thread.answered` events from before it, and `posted_findings`
+    work; under its source id, so a ledger event naming a run means the same run), its
+    reviews and `thread.answered` events from before it, and `posted_findings`
     as they stood (a row re-posted after the cutoff is rebuilt from the earlier run that
     posted it). A finding posted before the cutoff by a run that finished after it gets its
     `posted` findings row under a placeholder run at its commit (without one the worker's
@@ -252,6 +389,7 @@ def seed_history(
                 scratch,
                 "runs",
                 {
+                    "id": int(r["id"]),
                     "head_id": hid,
                     "token": "seed",
                     **{
@@ -458,9 +596,11 @@ def _ensure_head(conn: sqlite3.Connection, repo: str, number: int, sha: str, tri
 
 def replay_policy(policy: cfg_mod.ModelPolicy, pin_phase1_model: str | None) -> cfg_mod.ModelPolicy:
     """The policy a replay runs: never on degraded-mode stand-ins (a quota failure fails the
-    run instead), and with `pin_phase1_model` that one model on every Phase-1 lane, ungated
-    by quota, so both arms of an eval run Phase 1 on the same rung."""
-    pol = dataclasses.replace(policy, degraded=None)
+    run instead), without comparison lanes (a second model's findings feed the compare report,
+    never the review: in an eval they are spend for nothing), and with `pin_phase1_model` that
+    one model on every Phase-1 lane, ungated by quota, so both arms of an eval run Phase 1 on
+    the same rung."""
+    pol = dataclasses.replace(policy, degraded=None, comparison=None)
     if not pin_phase1_model:
         return pol
     rung = next((c for c in policy.phase1_candidates if c.model == pin_phase1_model), None)
@@ -479,11 +619,15 @@ def replay_policy(policy: cfg_mod.ModelPolicy, pin_phase1_model: str | None) -> 
 
 
 def degraded_problem(
-    policy: cfg_mod.ModelPolicy, source: sqlite3.Connection, prober: Prober | None
+    policy: cfg_mod.ModelPolicy,
+    source: sqlite3.Connection,
+    prober: Prober | None,
+    live: sqlite3.Connection | None = None,
 ) -> str:
     """Why degraded mode is active right now ("" = it is not): forced on in the source
-    database, or the policy's sentinel model answers with a quota error."""
-    if degraded.forced(source) == "on":
+    database or in the live one (the box's, when the source is a snapshot of it), or the
+    policy's sentinel model answers with a quota error."""
+    if any(degraded.forced(c) == "on" for c in (source, live) if c is not None):
         return "degraded mode is forced on (reviewsys degraded on)"
     if policy.degraded is None:
         return ""
@@ -542,11 +686,68 @@ def check_shim(shim: Path, profile: str) -> str:
     return "" if r.returncode == 0 else (r.stderr.strip() or f"exit {r.returncode}")[:300]
 
 
-def _prune_worktrees(mirrors_dir: Path) -> None:
-    """Forget worktrees whose directories are gone: a removed replay leaves its worktree
-    registered in the shared mirror, and a re-run reuses the same worktree name."""
-    for m in mirrors_dir.glob("*.git"):
-        subprocess.run(["git", "-C", str(m), "worktree", "prune"], capture_output=True, check=False)
+PROMISOR = "replay-promisor"
+
+
+def _git_ok(git_dir: Path, *args: str) -> None:
+    proc = subprocess.run(
+        ["git", "-C", str(git_dir), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+    )
+    if proc.returncode != 0:
+        raise SystemExit(f"git {' '.join(args[:2])} in {git_dir}: {proc.stderr.strip()[:300]}")
+
+
+def pinned_refs(*, number: int, sha: str, base_ref: str, base_sha: str) -> dict[str, str]:
+    """The only refs a replay's repository has: the PR head at the replayed sha, and the base
+    branch (also as `origin/<base>`) at the base the source run saw."""
+    refs = {f"refs/pull/{number}/head": sha, "refs/heads/replay-head": sha}
+    if base_ref and base_sha:
+        refs |= {f"refs/heads/{base_ref}": base_sha, f"refs/remotes/origin/{base_ref}": base_sha}
+    return refs
+
+
+def pinned_clone(mirror: Path, dest: Path, refs: dict[str, str], *, head_branch: str) -> Path:
+    """A bare repository at `dest` that sees `mirror`'s objects (alternates: nothing is
+    copied) and has only `refs` (full ref name -> sha), HEAD on `refs/heads/<head_branch>`.
+    The replay's worktree is checked out from it, so the lanes' git shows no ref, tag or
+    reflog of the live repository. Its `origin` is itself: a lane's fetch from origin changes
+    nothing. When the mirror is a partial clone, missing objects come from the mirror's own
+    remote into `dest` (through a remote with no ref anyone can fetch), never into the mirror,
+    and deleting `dest` frees them."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    _git_ok(dest.parent, "init", "-q", "--bare", str(dest))
+    (dest / "objects" / "info" / "alternates").write_text(f"{(mirror / 'objects').resolve()}\n")
+    settings = {
+        "remote.origin.url": str(dest.resolve()),
+        "remote.origin.fetch": "+refs/heads/*:refs/heads/*",
+        "gc.auto": "0",
+    }
+    promisor = _git_out(mirror, "config", "--get", "extensions.partialclone")
+    if not promisor and _git_out(mirror, "config", "--get", "remote.origin.promisor") == "true":
+        promisor = "origin"
+    url = _git_out(mirror, "config", "--get", f"remote.{promisor}.url") if promisor else ""
+    if url:
+        flt = _git_out(mirror, "config", "--get", f"remote.{promisor}.partialclonefilter")
+        settings |= {
+            "core.repositoryformatversion": "1",
+            "extensions.partialClone": PROMISOR,
+            f"remote.{PROMISOR}.url": url,
+            f"remote.{PROMISOR}.promisor": "true",
+            f"remote.{PROMISOR}.partialclonefilter": flt or "blob:none",
+            f"remote.{PROMISOR}.fetch": "+refs/replay-pinned/none:refs/replay-pinned/none",
+        }
+    for key, value in settings.items():
+        _git_ok(dest, "config", key, value)
+    for name, sha in refs.items():
+        _git_ok(dest, "update-ref", name, sha)
+    _git_ok(dest, "symbolic-ref", "HEAD", f"refs/heads/{head_branch}")
+    return dest
 
 
 def _link(path: Path, target: Path) -> None:
@@ -592,9 +793,16 @@ def replay(
             file=sys.stderr,
         )
     prod = open_source(source_db or cfg.db_path)
+    live = None
+    if (
+        source_db is not None
+        and cfg.db_path.exists()
+        and cfg.db_path.resolve() != source_db.resolve()
+    ):
+        live = open_source(cfg.db_path)  # the source is a snapshot: degraded mode is set here
     try:
         src = _source_run(prod, run_id)
-        problem = degraded_problem(policy, prod, prober)
+        problem = degraded_problem(policy, prod, prober, live)
         if problem:
             raise ReplayAborted(f"not replaying run {run_id}: {problem}")
         return _replay(
@@ -613,6 +821,8 @@ def replay(
         )
     finally:
         prod.close()
+        if live is not None:
+            live.close()
 
 
 def _replay(
@@ -640,9 +850,7 @@ def _replay(
     work = out / run_dir_name(run_id, sample)
     if work.exists():
         shutil.rmtree(work)
-    _prune_worktrees(arm.mirrors_dir)
     (work / "work").mkdir(parents=True)
-    _link(work / "work" / "mirrors", arm.mirrors_dir)  # shared, fetch-only
     _link(work / "work" / "lane-slots", arm.work_dir / "lane-slots")  # the machine's pools
     installed_gh = shutil.which(arm.gh_bin) or arm.gh_bin
     # lanes get no gh of their own: the shim's broker is the only way to GitHub
@@ -656,6 +864,8 @@ def _replay(
         policy=replay_policy(arm.policy, pin_phase1_model),
         backlog_skip_phase1_above=0,
         lane_deny_exec=(*arm.lane_deny_exec, *deny_gh),
+        # the gpt pool is sized from the configured (production) database's account reading
+        lane_capacity_db=arm.db_path,
     )
     rc = policy_overrides(rc, policy_name)
     token_env = {"GH_TOKEN": gh_token or "", "GITHUB_TOKEN": gh_token or ""}
@@ -665,11 +875,11 @@ def _replay(
         seeded = seed_history(
             scratch, prod, repo=repo, number=number, sha=sha, cutoff=cutoff, exclude_run=run_id
         )
-        seed_ledger(scratch, prod, repo, number, cutoff)
         evidence = source_evidence(source_runs, run_id)
         ev_pr = (evidence.get("evidence") or {}).get("pr") or {}
         ci = (evidence.get("evidence") or {}).get("ci")
-        mirror = wt.ensure_mirror(rc.mirrors_dir, repo)
+        # the production mirror (shared: read and fetch only), then the replay's own view of it
+        mirror = wt.ensure_mirror(arm.mirrors_dir, repo)
         wt.fetch_head(mirror, number, sha)
         base_ref = str(ev_pr.get("baseRefName") or "")
         if not base_ref:  # no evidence on disk: the live base ref (refs are rarely renamed)
@@ -684,6 +894,12 @@ def _replay(
             base_sha=str(ev_pr.get("baseRefOid") or ""),
             cutoff=cutoff,
         )
+        pinned = pinned_clone(
+            mirror,
+            rc.mirrors_dir / mirror.name,
+            pinned_refs(number=number, sha=sha, base_ref=base_ref, base_sha=base_sha),
+            head_branch=base_ref if base_ref and base_sha else "replay-head",
+        )
         pin = Pin(
             repo=repo,
             number=number,
@@ -692,7 +908,7 @@ def _replay(
             merge_base=merge_base,
             base_ref=base_ref,
             base_sha=base_sha,
-            git_dir=str(mirror),
+            git_dir=str(pinned),
             real_gh=installed_gh,
             # a snapshot that failed to read is no snapshot: CI is then "unavailable"
             ci=ci if isinstance(ci, dict) and isinstance(ci.get("checks"), list) else None,
@@ -722,6 +938,11 @@ def _replay(
                 },
             )
         gh = Gh(installed_gh, runner=read_only_runner(pinned_runner(pin, inner)))
+        if reads_ledger(rc.policy):
+            seeded["ledger"] = seed_ledger(scratch, prod, repo, number, cutoff)
+            seeded["reconcile"] = reconcile_as_of(
+                scratch, prod, pin=pin, gh=gh, bot_login=rc.bot_login, git_dir=pinned
+            )
         bin_dir = work / "bin"
         with Broker(pin, real_gh(pin, inner)) as broker:
             shim = install_shim(broker.path, bin_dir, curl_log=work / "curl-refused.log")
@@ -780,9 +1001,10 @@ def _replay(
     finally:
         scratch.close()
         # the worker keeps a failed run's worktree for debugging; a replay's is disposable (a
-        # Rust repo's can reach tens of GB) and the lane artifacts are what the report needs
+        # Rust repo's can reach tens of GB) and the lane artifacts are what the report needs.
+        # The pinned clone goes with it (with any blobs fetched into it)
         shutil.rmtree(rc.worktrees_dir, ignore_errors=True)
-        _prune_worktrees(arm.mirrors_dir)
+        shutil.rmtree(rc.mirrors_dir, ignore_errors=True)
     return report
 
 
@@ -838,7 +1060,7 @@ def build_report(
     wall_clock_s: float,
     options: dict[str, Any],
     pin: Pin,
-    seeded: dict[str, int],
+    seeded: dict[str, Any],
     trigger: Trigger,
     work: Path,
 ) -> dict[str, Any]:

@@ -202,16 +202,363 @@ def test_a_finding_reposted_after_the_cutoff_keeps_its_earlier_posting(conn, his
     assert (row["sha"], row["posted_at"]) == (history["old_sha"], BEFORE)
 
 
-def test_ledger_seeding_hook_is_called_with_the_cutoff(cfg, conn, history, tmp_path, monkeypatch):
+def test_a_v11_arm_gets_no_ledger(cfg, conn, history, tmp_path, monkeypatch):
+    """Under v11 nothing reads the ledger: the arm runs exactly as before it existed."""
     calls: list[tuple[str, int, str]] = []
     monkeypatch.setattr(
         replay,
         "seed_ledger",
-        lambda s, p, repo, number, cutoff: calls.append((repo, number, cutoff)),
+        lambda s, p, repo, number, cutoff: calls.append((repo, number, cutoff)) or {},
     )
     _evidence(cfg, history["src"], history["base"])
-    _replay(cfg, history, tmp_path, FakeLanes(history["head"]))
-    assert calls == [(REPO, NUMBER, CUTOFF)]
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [])
+    report = _replay(cfg, history, tmp_path, lanes)
+    assert report["status"] == "done", report["reason"]
+    assert calls == [] and "ledger" not in report["seeded"]
+
+
+def test_a_v12_arm_gets_the_ledger_as_of_the_cutoff_reconciled(
+    cfg, conn, history, tmp_path, skills_dir
+):
+    from v12_support import v12_cfg
+
+    v12 = v12_cfg(cfg, skills_dir)
+    with tx(conn):  # the early finding was withdrawn before the cutoff; the later one is not seen
+        conn.execute(
+            "INSERT INTO events (ts, kind, repo, number, run_id, detail) VALUES (?,?,?,?,?,?)",
+            (
+                BEFORE,
+                "thread.answered",
+                REPO,
+                NUMBER,
+                history["early"],
+                json.dumps({"finding_hash": "h-early", "status": "WITHDRAWN", "action": "replied"}),
+            ),
+        )
+    _evidence(v12, history["src"], history["base"])
+    lanes = FakeLanes(history["head"])
+    report = replay.replay(
+        v12,
+        run_id=history["src"],
+        out=tmp_path / "out",
+        gh_runner=FakeGh().runner,
+        lane_runner=lanes,
+    )
+    assert report["status"] == "done", report["reason"]
+    led = report["seeded"]["ledger"]
+    assert led["events_copied"] == 0 and led["events_backfilled"] >= 1  # no source ledger
+    assert led["by_status"] == {"withdrawn": 1}
+    assert report["seeded"]["reconcile"]["pr_open"] is True
+    scratch = connect_ro(tmp_path / "out" / f"run-{history['src']}" / "replay.db")
+    issues = {r["hash"]: r["status"] for r in scratch.execute("SELECT hash, status FROM issues")}
+    assert issues == {"h-early": "withdrawn"}  # nothing from after the cutoff
+    rec = scratch.execute(
+        "SELECT value FROM kv WHERE key=?", (f"ledger.reconciled:{REPO}#{NUMBER}",)
+    )
+    assert json.loads(rec.fetchone()[0])["sha"] == history["head"]
+
+
+def connect_ro(path: Path):
+    import sqlite3
+
+    c = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    c.row_factory = sqlite3.Row
+    return c
+
+
+# ---- the ledger as of the cutoff ----
+
+
+def _scratch(conn, history, tmp_path):
+    from reviewsys.db import connect
+
+    scratch = connect(tmp_path / "scratch.db")
+    replay.seed_history(
+        scratch,
+        conn,
+        repo=REPO,
+        number=NUMBER,
+        sha=history["head"],
+        cutoff=CUTOFF,
+        exclude_run=history["src"],
+    )
+    return scratch
+
+
+def test_seed_ledger_folds_the_source_events_before_the_cutoff(conn, history, tmp_path):
+    from reviewsys import ledger
+
+    early = ledger.Event(
+        hash="h-early",
+        key=f"posted:{history['early']}:h-early",
+        kind="posted",
+        source="verifier",
+        run_id=history["early"],
+        sha=history["old_sha"],
+        detail={"file": "f.rs", "line_start": 3, "line_end": 4, "severity": "blocking",
+                "category": "logic", "title": "Early blocker"},
+        ts=BEFORE,
+    )  # fmt: skip
+    withdrawn_late = ledger.Event(
+        hash="h-early",
+        key="status:late:h-early",
+        kind="status",
+        source="manual",
+        run_id=history["later"],
+        sha="2" * 40,
+        detail={"status": "withdrawn"},
+        ts=AFTER,
+    )
+    with tx(conn):
+        ledger.append(conn, REPO, NUMBER, [early, withdrawn_late])
+    scratch = _scratch(conn, history, tmp_path)
+    got = replay.seed_ledger(scratch, conn, REPO, NUMBER, CUTOFF)
+    assert got["events_copied"] == 1
+    # the backfill derives the same key for the same posting, so it is not doubled; it only
+    # adds the thread answer the source ledger lacks
+    assert got["events_backfilled"] == 1
+    kinds = [r[0] for r in scratch.execute("SELECT kind FROM issue_events ORDER BY id")]
+    assert kinds == ["posted", "outcome"]
+    issue = ledger.get(scratch, REPO, NUMBER, "h-early")
+    assert issue is not None and issue.status == "open" and issue.opened_run == history["early"]
+
+
+def test_seed_ledger_on_a_source_without_the_ledger_tables(conn, history, tmp_path):
+    import shutil
+    import sqlite3
+
+    from reviewsys import ledger
+
+    conn.execute("PRAGMA wal_checkpoint(FULL)")
+    old = tmp_path / "old.db"
+    shutil.copy(tmp_path / "review.db", old)
+    c = sqlite3.connect(old)
+    c.executescript("DROP TABLE issue_events; DROP TABLE issues;")
+    c.close()
+    source = replay.open_source(old)
+    scratch = _scratch(source, history, tmp_path)
+    got = replay.seed_ledger(scratch, source, REPO, NUMBER, CUTOFF)
+    assert got["events_copied"] == 0 and got["issues"] == 1
+    assert ledger.get(scratch, REPO, NUMBER, "h-early").status == "open"  # type: ignore[union-attr]
+
+
+def _thread(h: str, title: str) -> dict[str, Any]:
+    return {
+        "thread_id": f"PRRT_{h}",
+        "is_resolved": False,
+        "is_outdated": False,
+        "path": "f.rs",
+        "line": 3,
+        "comments": [
+            {
+                "id": 7,
+                "author": "thepastaclaw",
+                "body": f"<!-- thepastaclaw-review v1 finding={h} dedupe=x -->\n"
+                f"**🔴 Blocking: {title}**\n\nbody",
+                "created_at": BEFORE,
+                "association": "NONE",
+            }
+        ],
+    }
+
+
+def _pin(history, git_dir: str) -> replay.Pin:
+    return replay.Pin(
+        repo=REPO,
+        number=NUMBER,
+        sha=history["head"],
+        cutoff=CUTOFF,
+        merge_base=history["base"],
+        base_ref="main",
+        base_sha=history["base"],
+        git_dir=git_dir,
+        real_gh="gh",
+    )
+
+
+def _two_issues(conn, history):
+    """h-early (anchored where the code then changed) and 0e0e0e (an open thread)."""
+    _finding(conn, history["early"], "0e0e0e", "posted", "Open thread blocker")
+    with tx(conn):
+        conn.execute(  # the early round's commit is the PR's base, before f.rs changed
+            "UPDATE heads SET sha=? WHERE id=(SELECT head_id FROM runs WHERE id=?)",
+            (history["base"], history["early"]),
+        )
+        conn.execute("UPDATE posted_findings SET sha=?", (history["base"],))
+
+
+def test_reconcile_as_of_outdates_moved_issues_and_leaves_open_threads_pending(
+    cfg, conn, history, tmp_path, monkeypatch
+):
+    from reviewsys import ledger
+
+    _two_issues(conn, history)
+    scratch = _scratch(conn, history, tmp_path)
+    replay.seed_ledger(scratch, conn, REPO, NUMBER, CUTOFF)
+    mirror = cfg.mirrors_dir / "dashpay__platform.git"
+    monkeypatch.setattr(
+        replay.github, "review_threads", lambda gh, r, n: [_thread("0e0e0e", "Open thread blocker")]
+    )
+    got = replay.reconcile_as_of(
+        scratch, conn, pin=_pin(history, str(mirror)), gh=FakeGh(), bot_login="thepastaclaw",
+        git_dir=mirror,
+    )  # fmt: skip
+    assert got == {"pr_open": True, "open_threads": 1, "standing": 2, "outdated": 1, "pending": 1}
+    issues = ledger.load(scratch, REPO, NUMBER)
+    assert issues["h-early"].status == "outdated" and issues["0e0e0e"].status == "open"
+    assert issues["0e0e0e"].thread_id == "PRRT_0e0e0e"  # the thread sync ran
+    assert ledger.reconciled(scratch, REPO, NUMBER) == {
+        "run": None,
+        "sha": history["head"],
+        "pending": ["0e0e0e"],
+    }
+
+
+def test_reconcile_as_of_a_pr_merged_before_the_cutoff(cfg, conn, history, tmp_path, monkeypatch):
+    from reviewsys import ledger
+
+    _two_issues(conn, history)
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO audits (repo, number, sha, source, mode, merged_at, queued_at) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (REPO, NUMBER, history["head"], "sync", "full", BEFORE, BEFORE),
+        )
+    assert replay.closed_before(conn, REPO, NUMBER, CUTOFF) == f"merged at {BEFORE}"
+    assert replay.closed_before(conn, REPO, NUMBER, BEFORE) == ""  # not yet merged then
+    scratch = _scratch(conn, history, tmp_path)
+    replay.seed_ledger(scratch, conn, REPO, NUMBER, CUTOFF)
+    monkeypatch.setattr(replay.github, "review_threads", lambda *a: pytest.fail("no threads read"))
+    mirror = cfg.mirrors_dir / "dashpay__platform.git"
+    got = replay.reconcile_as_of(
+        scratch, conn, pin=_pin(history, str(mirror)), gh=FakeGh(), bot_login="thepastaclaw",
+        git_dir=mirror,
+    )  # fmt: skip
+    assert got["pr_open"] is False
+    assert {i.status for i in ledger.load(scratch, REPO, NUMBER).values()} == {"outdated"}
+
+
+# ---- git pinned to the cutoff ----
+
+
+def test_lanes_see_only_the_pinned_refs(cfg, conn, history, tmp_path):
+    """The mirror moved on after the cutoff (main, the PR ref, a tag): the lanes' worktree
+    has none of it, and the production mirror is left as it was."""
+    m = cfg.mirrors_dir / "dashpay__platform.git"
+    ident = ("-c", "user.name=T", "-c", "user.email=t@example.com")
+    later = _git(
+        m, *ident, "commit-tree", f"{history['head']}^{{tree}}", "-p", history["head"], "-m", "x"
+    )
+    _git(m, "update-ref", "refs/heads/main", later)
+    _git(m, "update-ref", "refs/pull/1/head", later)
+    _git(m, "tag", "v99", later)
+    before = _git(m, "for-each-ref")
+    seen: dict[str, str] = {}
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [])
+
+    def spy(spec, art, wt_):
+        if not seen:
+            seen["refs"] = _git(spec.cwd, "for-each-ref", "--format=%(refname) %(objectname)")
+            seen["all"] = _git(spec.cwd, "log", "--all", "--format=%H")
+            seen["origin_main"] = _git(spec.cwd, "rev-parse", "origin/main")
+            seen["remote"] = _git(spec.cwd, "remote", "get-url", "origin")
+        return lanes(spec, art, wt_)
+
+    _evidence(cfg, history["src"], history["base"])
+    report = _replay(cfg, history, tmp_path, spy)
+    assert report["status"] == "done", report["reason"]
+    refs = dict(line.split(" ") for line in seen["refs"].splitlines())
+    assert refs == {
+        "refs/heads/main": history["base"],
+        "refs/heads/replay-head": history["head"],
+        "refs/pull/1/head": history["head"],
+        "refs/remotes/origin/main": history["base"],
+    }
+    assert later not in seen["all"] and seen["origin_main"] == history["base"]
+    pinned = tmp_path / "out" / f"run-{history['src']}" / "work" / "mirrors"
+    assert seen["remote"] == str((pinned / "dashpay__platform.git").resolve())
+    assert not pinned.exists()  # removed with the worktree when the replay ended
+    assert _git(m, "for-each-ref") == before  # the mirror's refs are untouched
+    assert len(_git(m, "worktree", "list").splitlines()) == 1  # nothing registered there
+
+
+def test_a_pinned_clone_of_a_partial_mirror_fetches_into_itself(tmp_path):
+    src = tmp_path / "src"
+    src.mkdir()
+    _git(src, "init", "-q", "-b", "main")
+    _git(src, "config", "user.email", "t@example.com")
+    _git(src, "config", "user.name", "T")
+    _git(src, "config", "uploadpack.allowFilter", "true")
+    (src / "a.txt").write_text("hello\n")
+    _git(src, "add", ".")
+    _git(src, "commit", "-qm", "one")
+    head = _git(src, "rev-parse", "HEAD")
+    mirror = tmp_path / "m.git"
+    subprocess.run(
+        ["git", "clone", "-q", "--bare", "--filter=blob:none", f"file://{src}", str(mirror)],
+        check=True,
+    )
+    packs_before = sorted(p.name for p in (mirror / "objects" / "pack").iterdir())
+    clone = replay.pinned_clone(
+        mirror,
+        tmp_path / "pinned.git",
+        replay.pinned_refs(number=1, sha=head, base_ref="main", base_sha=head),
+        head_branch="main",
+    )
+    assert _git(clone, "config", "extensions.partialClone") == replay.PROMISOR
+    tree = wt.create_worktree(clone, tmp_path / "wts", "w", head)
+    assert (tree / "a.txt").read_text() == "hello\n"  # the blob came in lazily
+    assert sorted(p.name for p in (mirror / "objects" / "pack").iterdir()) == packs_before
+    assert any(p.suffix == ".promisor" for p in (clone / "objects" / "pack").iterdir())
+
+
+def test_a_snapshot_source_still_sees_degraded_mode_on_the_live_database(
+    cfg, conn, history, tmp_path
+):
+    import shutil
+
+    conn.execute("PRAGMA wal_checkpoint(FULL)")
+    snap = tmp_path / "snap.db"
+    shutil.copy(tmp_path / "review.db", snap)
+    with tx(conn):  # forced on the live database after the snapshot was taken
+        kv_set(conn, degraded.KV_FORCE, "on")
+    with pytest.raises(replay.ReplayAborted, match="forced on"):
+        replay.replay(cfg, run_id=history["src"], out=tmp_path / "out", source_db=snap,
+                      lane_runner=FakeLanes(history["head"]), gh_runner=FakeGh().runner)  # fmt: skip
+
+
+def test_replay_lanes_line_up_at_the_replay_rank_and_size_gpt_from_the_live_db(
+    cfg, conn, history, tmp_path, monkeypatch
+):
+    from reviewsys import lanepool
+
+    seen: list[tuple[str, Any]] = []
+    real = lanepool.gated
+
+    def spy(runner, conn_, cfg_, run_stopped, queue, run_id, **kw):
+        seen.append((queue, cfg_.lane_capacity_db))
+        return real(runner, conn_, cfg_, run_stopped, queue, run_id, **kw)
+
+    monkeypatch.setattr(lanepool, "gated", spy)
+    _evidence(cfg, history["src"], history["base"])
+    lanes = FakeLanes(history["head"])
+    _lanes_ok(lanes, [])
+    _replay(cfg, history, tmp_path, lanes)
+    assert seen == [("replay", cfg.db_path)]
+
+
+def test_replay_policy_runs_no_comparison_lanes(cfg):
+    import dataclasses
+
+    from reviewsys.config import ComparisonPolicy
+
+    pol = dataclasses.replace(
+        cfg.policy,
+        comparison=ComparisonPolicy(model="gpt-6-astra", tiers=("critical",), fraction=1),
+    )
+    assert replay.replay_policy(pol, None).comparison is None
 
 
 # ---- the replay ----
