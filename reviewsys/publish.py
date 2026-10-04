@@ -210,6 +210,8 @@ class Provenance:
     compare_model: str | None = None
     # Phase 1 ran beside Phase 2 with no blocker gate (a `single_stage` tier)
     single_stage: bool = False
+    # policy v12: the confirmation pass that ran on this head {roles, new}
+    confirmation: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -391,6 +393,12 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     if p.fresh_final:
         lines.append(
             "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"
+        )
+    if p.confirmation:
+        roles = ", ".join(f"`{r}`" for r in p.confirmation.get("roles") or [])
+        lines.append(
+            f"- Confirmation pass: {roles} reviewed the whole change again, independently, "
+            f"after the review found no blocker ({p.confirmation.get('new', 0)} new finding(s))"
         )
     lines += [
         f"- Fresh verifier: {_model_label(p.verifier)} — {p.verifier['role']}; agent `{p.verifier['agent']}`",

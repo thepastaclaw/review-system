@@ -196,7 +196,8 @@ class ConfirmationPolicy:
     §2.5). `trigger`: "rereview" = today's fresh-final (re-reviews whose verified set has no
     blocker), "no_blockers" = every round with no standing blocker on a full-strength run,
     "off" = never. `roles`: the reviewer roles it reruns; None = every selected role (today).
-    Not read yet (piece B4)."""
+    Under verifier contract "v11" only "rereview" runs (today's fresh-final, `roles` ignored);
+    under "v12" `worker._confirm12` runs it on the trigger's rounds."""
 
     roles: tuple[str, ...] | None = None
     trigger: str = "rereview"
@@ -839,13 +840,18 @@ def _pipeline(node: Any, specialists: tuple[Specialist, ...]) -> PipelinePolicy 
 def _check_pipeline(p: PipelinePolicy) -> None:
     """Switches that only work together: the v12 verifier matches candidate ids (unanchored
     finders) and leaves open issues to the thread lane, which in turn needs the v12 verifier to
-    stop reconciling them. A half-switched arm would run a pipeline nobody designed, so it fails
-    the load."""
+    stop reconciling them; the confirmation trigger "no_blockers" reads the ledger verdict,
+    which only the v12 verifier computes. A half-switched arm would run a pipeline nobody
+    designed, so it fails the load."""
     v12 = p.verifier.contract == "v12"
     if v12 and p.finders.anchoring != "unanchored":
         raise ValueError('pipeline.verifier.contract "v12" needs finders.anchoring "unanchored"')
     if v12 != p.threads.lane:
         raise ValueError('pipeline.threads.lane and verifier.contract "v12" go together')
+    if not v12 and p.confirmation.trigger == "no_blockers":
+        raise ValueError(
+            'pipeline.confirmation.trigger "no_blockers" needs verifier.contract "v12"'
+        )
 
 
 def load_skills_config(

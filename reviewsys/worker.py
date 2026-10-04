@@ -3,8 +3,8 @@
 Steps: worktree -> select + triage (one prep lane) -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
 Policy v12 (`review_model_policy.pipeline`) runs inside the same steps: finder lanes on the
 candidate contract, a thread lane beside them (`_start_thread_lane`), verify+match with the code
-rules (`_verify12`) and a verdict from the issue ledger (`_publish12`); a reply on a reviewed
-commit goes to `step_threads`.
+rules (`_verify12`), a confirmation pass (`_confirm12`) and a verdict from the issue ledger
+(`_publish12`); a reply on a reviewed commit goes to `step_threads`.
 Every step is recorded in `steps`. Any ReviewError ends the run as failed with
 its classification; the scheduler decides on retry. Cooperative cancellation
 is checked on every heartbeat.
@@ -325,6 +325,9 @@ class RunContext:
     thread_lane: _ThreadLane | None = None
     thread_failed: bool = False
     verify_incomplete: bool = False  # a verifier shard without blockers was dropped
+    # the confirmation pass on this round: {required, ran, roles, new, skipped}; None when the
+    # policy does not ask for one here
+    confirmation: dict[str, Any] | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -1824,8 +1827,10 @@ def _reviewer_lanes(
     expected_phase: str,
     fresh: bool = False,
     abort: StopSignal | None = None,
+    roles: list[str] | None = None,
 ) -> dict[str, ReviewerOutput]:
-    """The general reviewer and the phase's specialists (`_phase_roles`), side by side (at
+    """The general reviewer and the phase's specialists (`_phase_roles`; `roles` instead, for
+    the policy v12 confirmation pass), side by side (at
     most `phase_parallelism` at once, all of them when it is 0; each lane also waits for a
     slot in its model's pool, see lanepool.py). The reviewers of a phase never read each
     other's output, so only the verifier after them has to wait for all of them. `abort`,
@@ -1847,7 +1852,7 @@ def _reviewer_lanes(
     meta = ctx.meta.as_dict()
     if abort is None:
         abort = StopSignal()
-    roles = _phase_roles(ctx, phase)
+    roles = roles if roles is not None else _phase_roles(ctx, phase)
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
@@ -2765,6 +2770,7 @@ def _verdict_update(
         adhoc=ctx.adhoc,
         fresh_final=ctx.fresh_final,
         degraded=_degraded_provenance(ctx),
+        confirmation=_confirmation_provenance(ctx),
     )
     state = publish.standing_verdict(
         github.reviews(ctx.gh, ctx.repo, ctx.number), ctx.sha, phase, ctx.cfg.bot_login
@@ -2904,6 +2910,7 @@ def _build_review(
         degraded=_degraded_provenance(ctx),
         compare_model=ctx.compare_model if compared else None,
         single_stage=ctx.single_stage and not ctx.phase1_skipped,
+        confirmation=_confirmation_provenance(ctx),
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -2934,6 +2941,12 @@ def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
         "role": role,
         "substitute_for": lm.substitute_for,
     }
+
+
+def _confirmation_provenance(ctx: RunContext) -> dict[str, Any] | None:
+    """The policy v12 confirmation pass, disclosed when it ran on this head."""
+    c = ctx.confirmation
+    return {"roles": c["roles"], "new": c["new"]} if c and c.get("ran") else None
 
 
 def _degraded_provenance(ctx: RunContext) -> dict[str, Any] | None:
@@ -3149,13 +3162,20 @@ def _reviewer_step(
     expected_phase: str,
     fresh: bool = False,
     abort: StopSignal | None = None,
+    roles: list[str] | None = None,
 ) -> dict[str, ReviewerOutput]:
     # the planned lanes, so a phase that is still going can say how many of them are done
-    _step_start(ctx, step, {"roles": _phase_roles(ctx, phase)})
+    _step_start(ctx, step, {"roles": roles if roles is not None else _phase_roles(ctx, phase)})
     if callable(lm):
         lm = lm()  # Phase 1 picks its model inside the step, so a slow lookup shows there
     outputs = _reviewer_lanes(
-        ctx, phase=phase, lm=lm, expected_phase=expected_phase, fresh=fresh, abort=abort
+        ctx,
+        phase=phase,
+        lm=lm,
+        expected_phase=expected_phase,
+        fresh=fresh,
+        abort=abort,
+        roles=roles,
     )
     _step_end(ctx, step, "ok", {"roles": list(outputs)})
     return outputs
@@ -4030,16 +4050,114 @@ def _post_conversation_update(
     return result
 
 
-# ---- policy v12: publishing from the ledger, same-sha thread lane ----
+# ---- policy v12: confirmation pass, publishing from the ledger, same-sha thread lane ----
+
+
+def _confirmation_due(ctx: RunContext) -> bool:
+    """Whether the policy asks for a confirmation pass on this round (v12 design §2.5):
+    "no_blockers" on every round, "rereview" on re-reviews only (today's fresh-final rounds),
+    "off" never, and never on an audit."""
+    pipe = ctx.cfg.policy.pipeline
+    trigger = pipe.confirmation.trigger if pipe else "off"
+    if trigger == "off" or ctx.is_audit:
+        return False
+    return trigger == "no_blockers" or ctx.has_prior_review
+
+
+def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) -> VerifierOutput:
+    """The confirmation pass (replaces fresh-final under the v12 verifier): when no blocker
+    stands after the code rules on a full-strength run, the confirmation roles (general and
+    security-auditor in policy v12) review the whole change once more, unanchored, and only
+    their candidates are verified, against everything already verified this round. Skipped
+    while blockers stand, in degraded mode (which never approves) or when verification was
+    incomplete. Recorded on the run (`ctx.confirmation`); an approval needs it when the policy
+    asks for it. Its lanes failing for good costs the approval, never the review."""
+    if not _confirmation_due(ctx):
+        return verified
+    pol = ctx.cfg.policy
+    assert pol.pipeline is not None
+    wanted = pol.pipeline.confirmation.roles
+    roles = [r for r in _phase_roles(ctx, "phase2") if wanted is None or r in wanted]
+    conf: dict[str, Any] = {
+        "required": True,
+        "ran": False,
+        "roles": roles,
+        "new": 0,
+        "skipped": None,
+    }
+    ctx.confirmation = conf
+    if verified.blocker_count:
+        conf["skipped"] = "blockers stand"
+    elif ctx.is_degraded:
+        conf["skipped"] = "degraded mode"
+    elif not pol.phase2_enabled or effort.phase2 is None:
+        conf["skipped"] = "no Phase 2"
+    elif ctx.verify_incomplete:
+        conf["skipped"] = "verification incomplete"
+    elif not roles:
+        conf["skipped"] = "no confirmation role selected"
+    if conf["skipped"]:
+        _lane_event(ctx, "confirmation.skipped", str(conf["skipped"]))
+        return verified
+    step = StepName.FRESH_PHASE2
+    try:
+        outs = _reviewer_step(
+            ctx,
+            step=step,
+            phase="phase2",
+            lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
+            expected_phase="final",
+            fresh=True,
+            roles=roles,
+        )
+        step = StepName.FRESH_VERIFY2
+        _step_start(ctx, step)
+        delta = _verify12(
+            ctx,
+            phase="verify2",
+            lm=ctx.lane_model(pol.phase2_verifier),
+            expected_phase="final",
+            candidates=_candidates_of(outs),
+            note=(
+                "These candidates (`cf-*`) come from a second, independent pass over the same "
+                "head, run because the first found no blocker. The ledger's open list includes "
+                "the issues this round already raised (status `raised this round`): a candidate "
+                "restating one of them matches it as `open:<hash>`."
+            ),
+            raised_now=verified.findings,
+            stage="verified-fresh",
+        )
+        _step_end(ctx, step, "ok", {"blockers": delta.blocker_count, "new": len(delta.findings)})
+    except ReviewError as exc:
+        ctx.check_cancel()
+        _step_end(ctx, step, "failed", {"error": exc.message[:1000]})
+        conf["skipped"] = f"failed: {exc.message[:200]}"
+        _lane_event(ctx, "confirmation.failed", exc.message)
+        return verified
+    conf.update(ran=True, new=len(delta.findings))
+    r, d = verified.rules, delta.rules
+    verified.findings += delta.findings
+    verified.dropped += delta.dropped
+    have = {x["comment_id"] for x in verified.coderabbit_reactions}
+    verified.coderabbit_reactions += [
+        x for x in delta.coderabbit_reactions if x["comment_id"] not in have
+    ]
+    if r is not None and d is not None:
+        for h, ms in d.corroborated.items():
+            r.corroborated.setdefault(h, []).extend(ms)
+        for h, f in d.upgrades.items():
+            r.upgrades.setdefault(h, f)
+    return verified
 
 
 def _verdict12(
     ctx: RunContext, phase: str, verified: VerifierOutput, phase2_skipped: str | None
 ) -> str:
     """The round's verdict from the ledger (v12 design §3): any standing blocker requests
-    changes; APPROVE needs nothing above a nitpick standing and a final review on the full
-    pipeline (Phase 2 ran, primary models, every candidate verified, the thread lane read);
-    otherwise COMMENT. The model's own `review_action` is never asked for."""
+    changes; APPROVE needs nothing above a nitpick standing, a final review on the full
+    pipeline (Phase 2 ran, primary models, every candidate verified) and the confirmation pass
+    when the policy asks for one; otherwise COMMENT. The model's own `review_action` is never
+    asked for."""
     blockers = verified.blocker_count
     suggestions = sum(
         1 for f in (*verified.findings, *verified.carried) if f.severity == "suggestion"
@@ -4052,8 +4170,9 @@ def _verdict12(
         and not ctx.thread_failed  # someone may be waiting on a thread nobody read
         and not ctx.is_audit
     )
+    confirmed = ctx.confirmation is None or bool(ctx.confirmation.get("ran"))
     return rules.verdict(
-        blockers=blockers, suggestions=suggestions, full_strength=full, confirmed=True
+        blockers=blockers, suggestions=suggestions, full_strength=full, confirmed=confirmed
     )
 
 
@@ -4408,16 +4527,24 @@ def _standing_run12(ctx: RunContext, phase: str) -> int | None:
 
 
 def _review_strength12(ctx: RunContext, run_id: int | None) -> str:
-    """Whether the run whose review of this commit stands is one an APPROVE may rest on:
-    Phase 2 completed on the primary models. "ok" or "weak"."""
+    """`_review_strength` under the v12 confirmation pass: "needs_fresh" when the policy asked
+    that run for a confirmation pass and it did not run (it had blockers then)."""
     if run_id is None:
         return "weak"
     row = ctx.conn.execute(
-        "SELECT r.degraded, (SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2 "
+        "SELECT r.degraded, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh, "
+        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later "
         "FROM runs r WHERE r.id=?",
-        (StepName.PHASE2.value, run_id),
+        (StepName.PHASE2.value, StepName.FRESH_VERIFY2.value, ctx.repo, ctx.number, run_id),
     ).fetchone()
-    return "weak" if not row or row["degraded"] or row["phase2"] != "ok" else "ok"
+    if not row or row["degraded"] or row["phase2"] != "ok":
+        return "weak"
+    pipe = ctx.cfg.policy.pipeline
+    trigger = pipe.confirmation.trigger if pipe else "off"
+    required = trigger == "no_blockers" or (trigger == "rereview" and bool(row["later"]))
+    return "needs_fresh" if required and row["fresh"] != "ok" else "ok"
 
 
 def _conversation_verdict12(
@@ -4431,8 +4558,9 @@ def _conversation_verdict12(
 ) -> publish.PublishResult | None:
     """#38 restated over the ledger: after a same-sha thread pass lifted something above a
     nitpick, with no blocker left standing, APPROVE when nothing above a nitpick stands and
-    the standing review ran at full strength; COMMENT otherwise. Nothing is posted when the
-    verdict would not move, or a human overrode it."""
+    the standing review ran at full strength with its confirmation pass; COMMENT otherwise,
+    queuing one same-sha re-review when only the confirmation pass is missing. Nothing is
+    posted when the verdict would not move, or a human overrode it."""
     lifted_any = any(h in before and before[h].severity != "nitpick" for h in lifted)
     if any(i.severity == "blocking" for i in stand) or not lifted_any:
         return None
@@ -4475,6 +4603,17 @@ def _conversation_verdict12(
         note = f"Not approved: {left} non-blocking finding(s) still stand on this PR."
     elif prov.degraded:
         note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
+    elif strength == "needs_fresh":
+        queued = _request_fresh_audit(ctx)
+        note = (
+            "Not approved yet: an approval needs the confirmation pass over the whole change, "
+            "which the review of this commit skipped because it had found a blocker. "
+            + (
+                "It is queued for this commit and approves if it finds nothing."
+                if queued
+                else "It was already requested once for this commit; push or ask for a re-review."
+            )
+        )
     else:
         note = (
             "Not approved: the standing review of this commit did not run at full strength "
@@ -4636,7 +4775,9 @@ def _final_review(ctx: RunContext, effort: TierEffort) -> RunStatus:
         lm=ctx.lane_model(pol.phase2_verifier),
         expected_phase="final",
     )
-    if not pol.verifier_v12:  # the v12 verifier's second pass is its own (piece B4)
+    if pol.verifier_v12:
+        ctx.verify2 = _confirm12(ctx, ctx.verify2, effort)
+    else:
         ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
     _publish_step(
         ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
