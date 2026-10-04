@@ -45,22 +45,36 @@ def v12_cfg(cfg, skills_dir: Path, *, tiers: dict[str, Any] | None = None, **pip
 
 
 class Git:
-    """`worker._lines_changed` answered from a table: (file, line) -> changed; anything else
-    unchanged. `unknown` makes every answer None (git cannot tell)."""
+    """`worker._lines_changed` answered from a linear history: `change(file, line, at=sha)`
+    records that commit `sha` changed that line (None: the file somewhere). A question about
+    (a, b) sees the changes of the commits after the older and up to the newer one, on the
+    anchor's lines ± 3 (any line for a None anchor). A sha outside `history` is one git does
+    not have (None); so is every question while `unknown` is set."""
 
-    def __init__(self) -> None:
-        self.changed: set[tuple[str, int | None]] = set()
-        self.files: set[str] = set()  # files with any change (a None anchor)
+    HISTORY = ("0" * 40, "a" * 40, "c" * 40, "d" * 40, "e" * 40, "f" * 40)
+
+    def __init__(self, history: tuple[str, ...] = HISTORY) -> None:
+        self.history = list(history)
+        self.changes: set[tuple[str, str, int | None]] = set()
         self.unknown = False
         self.asked: list[tuple[str, str, str, int | None]] = []
 
+    def change(self, file: str, line: int | None, *, at: str) -> None:
+        assert at in self.history, at
+        self.changes.add((at, file, line))
+
     def __call__(self, ctx, a: str, b: str, file: str, ls: int | None, le: int | None):
         self.asked.append((a, b, file, ls))
-        if self.unknown:
+        if self.unknown or a not in self.history or b not in self.history:
             return None
-        if ls is None:
-            return file in self.files or any(f == file for f, _ in self.changed)
-        return (file, ls) in self.changed
+        lo, hi = sorted((self.history.index(a), self.history.index(b)))
+        between = set(self.history[lo + 1 : hi + 1])
+        for at, f, line in self.changes:
+            if at not in between or f != file:
+                continue
+            if ls is None or line is None or ls - 3 <= line <= (le or ls) + 3:
+                return True
+        return False
 
 
 def cand(title: str, *, severity: str = "blocking", file: str = "f.rs", line: int = 11, **kw):

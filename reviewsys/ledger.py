@@ -1002,13 +1002,18 @@ def anchor_moved(
     issue: Issue,
     head: str,
     changed: Callable[[str, str, str, int | None, int | None], bool | None],
+    *,
+    since: str | None = None,
 ) -> bool | None:
-    """Whether the code an issue points at changed since it was last judged (policy v12: the
-    thread lane's work set, the reconcile): its anchored lines (± 3, in the numbering of the
-    commit it was anchored on) changed by `head`, and its file changed since it was last seen
-    standing. `changed` is `lines_changed` in some repository (`(from, to, file, ls, le)`; a
-    None anchor asks whether the file changed at all). None when git cannot tell."""
-    if issue.last_seen_sha == head:
+    """Whether the code an issue points at changed since a commit (policy v12): its anchored
+    lines (± 3, read in the numbering of the commit it was anchored on, the only one they are
+    valid in) changed by `head`, and its file changed since `since` (default: the commit it
+    was last seen standing at; the revival rule passes the one it was closed at). The thread
+    lane's work set, the reconcile and the revival of settled issues all ask this. `changed` is
+    `lines_changed` in some repository (`(from, to, file, ls, le)`; a None anchor asks whether
+    the file changed at all). None when git cannot tell."""
+    since = since or issue.last_seen_sha
+    if since == head:
         return False
     anchor = issue.anchor_sha or issue.opened_sha
     if anchor == head:
@@ -1018,7 +1023,6 @@ def anchor_moved(
     )
     if touched is False:
         return False
-    since = issue.last_seen_sha
     if since and since != anchor and changed(since, head, issue.file, None, None) is False:
         return False
     return touched

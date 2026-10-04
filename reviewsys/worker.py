@@ -1081,11 +1081,14 @@ def _issue_moved(ctx: RunContext, i: ledger.Issue) -> bool | None:
 
 def _closed_changed(ctx: RunContext, i: ledger.Issue) -> bool | None:
     """Whether the code at a settled issue's anchor changed since it was closed (the revival
-    rule). The anchor is read in the closing commit's numbering."""
-    since = i.closed_sha or i.last_seen_sha or i.anchor_sha
-    if not since:
-        return None
-    return _lines_changed(ctx, since, ctx.sha, i.file, i.line_start, i.line_end)
+    rule): its lines changed from the commit they are numbered in (`anchor_sha`), and its file
+    changed since the commit it was closed at."""
+    return ledger.anchor_moved(
+        i,
+        ctx.sha,
+        lambda a, b, file, ls, le: _lines_changed(ctx, a, b, file, ls, le),
+        since=i.closed_sha or i.last_seen_sha,
+    )
 
 
 def _issue_url(ctx: RunContext, i: ledger.Issue) -> str:

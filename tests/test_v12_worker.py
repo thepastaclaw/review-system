@@ -145,7 +145,7 @@ def test_the_first_v12_round_reconciles_the_backfilled_ledger(
     gone = _backfilled(conn, "Vanished blocker", line=5)
     kept = _backfilled(conn, "Unchanged blocker", line=40)
     threaded = _backfilled(conn, "Threaded blocker", line=50)
-    git.changed.add(("f.rs", 5))
+    git.change("f.rs", 5, at=A)
     gh.threads = [
         {
             "id": "PRRT_1",
@@ -349,3 +349,90 @@ def test_outdated_on_the_reviewed_commit_lifts_nothing(cfg, skills_dir, conn, gh
     assert len(gh.posted_reviews) == before  # nothing lifted: no follow-up review
     (answer,) = [r for r in gh.replies if f"finding={fee}" in r["body"]]
     assert "the push gets a full review" in answer["body"]
+
+
+def _git_repo(path):
+    """A real repository: commit(lines) -> sha of f.rs holding `lines`."""
+    import subprocess
+
+    def git(*args):
+        return subprocess.run(
+            [
+                "git",
+                "-C",
+                str(path),
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+                *args,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+
+    git("init", "-q")
+
+    def commit(lines):
+        (path / "f.rs").write_text("\n".join(lines) + "\n")
+        git("add", "f.rs")
+        git("commit", "-q", "-m", "c")
+        return git("rev-parse", "HEAD")
+
+    return commit
+
+
+def test_a_settled_issue_is_revived_by_its_own_lines_after_a_shift(cfg, conn, tmp_path):
+    """The ledger's lines are numbered in the commit the issue was anchored on. 40 lines land
+    above it before it is withdrawn; afterwards, a change to the line now sitting where it
+    used to be does not revive it, and a change to its code (40 lines lower) does."""
+    from tests.test_v12_rules import issue
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    commit = _git_repo(repo)
+    base = [f"line {n}" for n in range(1, 101)]
+    a = commit(base)
+    shifted = [f"new {n}" for n in range(1, 41)] + base
+    b = commit(shifted)  # withdrawn here; its code is at lines 51-52 now
+    elsewhere = list(shifted)
+    elsewhere[10] = "changed: unrelated, at the old line number"
+    c1 = commit(elsewhere)
+    commit(shifted)  # back to b's content, then change the issue's own code
+    own = list(shifted)
+    own[50] = "changed: the issue's own line"
+    c2 = commit(own)
+    w = issue(
+        "a" * 12,
+        "withdrawn",
+        line_start=11,
+        line_end=12,
+        anchor_sha=a,
+        opened_sha=a,
+        last_seen_sha=a,
+        closed_sha=b,
+    )
+    ctx = worker.RunContext(
+        cfg=cfg,
+        main_conn=conn,
+        gh=None,
+        run_id=1,
+        head_id=1,
+        repo=REPO,
+        number=1,
+        sha=c1,
+        token="t",
+        run_dir=tmp_path,
+        worktree=repo,
+    )
+    assert worker._closed_changed(ctx, w) is False
+    ctx.sha = c2
+    assert worker._closed_changed(ctx, w) is True
+    # what the anchor-blind check (closing commit, anchor lines) would have said instead
+    from reviewsys import ledger as ledger_mod
+
+    assert ledger_mod.lines_changed(repo, b, c1, "f.rs", 11, 12) is True
+    assert ledger_mod.lines_changed(repo, b, c2, "f.rs", 11, 12) is False

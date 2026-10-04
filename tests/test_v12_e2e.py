@@ -157,7 +157,7 @@ def test_rereview_after_a_maintainer_withdrawal(v12, conn, gh, lanes, git):
     # never re-posted; the finders were told it is settled. The suggestion's code changed
     # and the thread lane says it is fixed.
     resolve(gh, ids[fee])  # the bot resolved it with its answer
-    git.changed.add(("f.rs", 20))
+    git.change("f.rs", 20, at="d" * 40)
     lanes.thread_out = {test_: {"status": "FIXED", "reply": "The test now covers it."}}
     lanes.candidates["general"] = [
         cand(f"Fee estimate omits drainage [settled:{fee}]"),
@@ -189,7 +189,7 @@ def test_a_refound_issue_is_not_fixed_by_the_thread_lane(v12, conn, gh, lanes, g
     run_round(v12, conn, gh, lanes, A)
     publish_threads(gh)
     fee = _hash_of(conn, "Fee estimate omits drainage")
-    git.changed.add(("f.rs", 11))
+    git.change("f.rs", 11, at=B)
     lanes.thread_out[fee] = {"status": "FIXED", "reply": "Fixed by the new branch."}
     lanes.candidates["general"] = [cand(f"Fee estimate omits drainage [open:{fee}]")]
     before = len(gh.posted_reviews)
@@ -269,7 +269,7 @@ def test_a_settled_issue_comes_back_only_when_its_code_changed(v12, conn, gh, la
     resolve(gh, ids[fee])
     assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
     # the lines under it changed, and a finder raises it again: it stands again
-    git.changed.add(("f.rs", 11))
+    git.change("f.rs", 11, at="d" * 40)
     lanes.thread_out = {}
     lanes.candidates["general"] = [cand(f"Fee estimate omits drainage [settled:{fee}]")]
     before = len(gh.posted_reviews)
@@ -321,7 +321,7 @@ def _fixed_blocker(v12, conn, gh, lanes, git, *, status="FIXED"):
     ids = publish_threads(gh)
     fee = _hash_of(conn, "Fee estimate omits drainage")
     reply(gh, ids[fee], "Changed it.", rid=907)
-    git.changed.add(("f.rs", 11))
+    git.change("f.rs", 11, at=B)
     lanes.thread_out[fee] = {"status": status, "reply": "Agreed."}
     lanes.candidates["general"] = []
     run_round(v12, conn, gh, lanes, B)
@@ -333,7 +333,6 @@ def _fixed_blocker(v12, conn, gh, lanes, git, *, status="FIXED"):
 def test_a_regression_gets_a_thread_of_its_own(v12, conn, gh, lanes, git):
     fee, _ = _fixed_blocker(v12, conn, gh, lanes, git)
     assert by_title(conn)["Fee estimate omits drainage"].status == "fixed"
-    git.changed.clear()
     lanes.candidates["general"] = [cand(f"Fee estimate omits drainage [fixed:{fee}]")]
     before = len(gh.posted_reviews)
     run_round(v12, conn, gh, lanes, "d" * 40)
@@ -350,6 +349,7 @@ def test_a_regression_gets_a_thread_of_its_own(v12, conn, gh, lanes, git):
 def test_a_revival_under_a_new_title_gets_a_thread_of_its_own(v12, conn, gh, lanes, git):
     fee, _ = _fixed_blocker(v12, conn, gh, lanes, git, status="WITHDRAWN")
     assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
+    git.change("f.rs", 11, at="d" * 40)  # its code changed again after it was withdrawn
     lanes.candidates["general"] = [
         cand(f"Fee estimate still omits the drainage cost [settled:{fee}]")
     ]
@@ -368,7 +368,6 @@ def test_a_new_issue_folded_onto_a_closed_thread_reopens_that_issue(v12, conn, g
     title): the review requests changes without an inline comment, so the folded issue must
     be the ledger's, open on that thread, where it can be judged and withdrawn."""
     _, root = _fixed_blocker(v12, conn, gh, lanes, git)
-    git.changed.clear()
     lanes.candidates["general"] = [cand("Fee estimate still omits the drainage cost")]
     before = len(gh.posted_reviews)
     run_round(v12, conn, gh, lanes, "d" * 40)
