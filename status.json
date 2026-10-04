@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-04T10:59:00Z",
-  "generated_at": "2026-10-04T10:59:00Z",
+  "data_as_of": "2026-10-04T11:00:01Z",
+  "generated_at": "2026-10-04T11:00:01Z",
   "history": {
     "daily": [
       {
@@ -194,6 +194,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7216,
+        "repo": "dashpay/dash",
+        "run_id": 3310,
+        "ts": "2026-10-04T10:59:08Z"
+      },
       {
         "detail": "attempt 1 sha=7a29ebb8",
         "kind": "run.spawned",
@@ -505,14 +513,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 3304,
         "ts": "2026-10-04T09:37:06Z"
-      },
-      {
-        "detail": "ok in 350s",
-        "kind": "run.done",
-        "number": 682,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 3305,
-        "ts": "2026-10-04T09:35:01Z"
       }
     ],
     "tokens_by_effort": [
@@ -1118,35 +1118,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-04T16:58:49Z",
-        "deadline_in_seconds": 21589,
+        "deadline_in_seconds": 21528,
         "degraded": false,
-        "elapsed_seconds": 11,
+        "elapsed_seconds": 72,
         "findings": null,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-04T10:58:50Z",
+        "heartbeat_at": "2026-10-04T10:59:51Z",
         "id": 3310,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 3,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 53,
             "state": "running"
           }
         ],
         "number": 7216,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7216",
         "priority": false,
-        "progress": 0.009,
+        "progress": 0.05,
         "queue": "live",
         "queued_at": "2026-10-04T10:28:36Z",
-        "remaining_seconds": 1190,
+        "remaining_seconds": 1373,
         "repo": "dashpay/dash",
         "sha": "7a29ebb8699781013e03ba1fdb8b1a62c0690d25",
         "started_at": "2026-10-04T10:58:49Z",
@@ -1160,28 +1160,57 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
             "name": "select",
-            "seconds": 4,
+            "seconds": 7,
             "started_at": "2026-10-04T10:58:56Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change spans Qt shortcut routing, font-scale validation and persistence, UI bounds, and regression tests without changing a critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 7,
+            "started_at": "2026-10-04T10:58:56Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
+            "name": "context",
             "seconds": 4,
-            "started_at": "2026-10-04T10:58:56Z",
+            "started_at": "2026-10-04T10:59:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 53,
+            "started_at": "2026-10-04T10:59:08Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat(qt): add global zoom shortcuts",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
           "verify1",
           "gate",
           "phase2",
@@ -1220,7 +1249,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-04T10:56:50Z",
+        "at": "2026-10-04T10:59:12Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1266,13 +1295,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
@@ -1291,7 +1320,7 @@
       "reviews": 78,
       "tokens": 523336735
     },
-    "ts": "2026-10-04T10:59:00Z",
+    "ts": "2026-10-04T11:00:01Z",
     "typical_minutes_by_tier": {
       "critical": 54.9,
       "low": 29.4,
@@ -1302,7 +1331,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.18333333333333332,
+      "idle_minutes": 1.2,
       "ingest_stale": false,
       "stuck": false
     }
