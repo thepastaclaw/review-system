@@ -62,7 +62,16 @@ from .lane import (
 from .lanepool import gated
 from .models import ReviewError
 from .replay import LANE_DISALLOWED_TOOLS, TOKEN_VARS
-from .replayscore import JUDGED, LABEL_MATCH, NEW_BLOCKER, TO_JUDGE, render, score_dir
+from .replayscore import (
+    JUDGED,
+    LABEL_MATCH,
+    NEW_BLOCKER,
+    TO_JUDGE,
+    neutral_body,
+    neutral_title,
+    render,
+    score_dir,
+)
 from .replayset import Gate, gate_from_args, gated_pool, stopped_exit
 from .steps import worktree as wt
 
@@ -106,9 +115,9 @@ log`, `git show`, `git diff`). Do not build, run tests, or change any file.
 - File: `{item.get("file")}`, lines {lines}
 - Severity claimed: {item.get("severity") or "blocking"}
 - Category: {item.get("category") or "-"}
-- Title: {item.get("title")}
+- Title: {neutral_title(str(item.get("title") or ""))}
 
-{item.get("body") or "(no body)"}
+{neutral_body(str(item.get("body") or "")) or "(no body)"}
 
 ## Question 1: is it real?
 
@@ -124,7 +133,7 @@ preference, not something the code already handles elsewhere, not a misreading)?
 Another review of this commit reported this issue:
 
 - File: `{lab.get("file")}`, lines {lab.get("line_start")}-{lab.get("line_end")}
-- Title: {lab.get("title")}
+- Title: {neutral_title(str(lab.get("title") or ""))}
 
 Does the finding above describe the same underlying defect (the same broken behaviour at the
 same place, however differently worded)? Answer `yes`, `no` or `unsure`.

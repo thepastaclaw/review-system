@@ -265,7 +265,12 @@ class Sample:
 
     @property
     def usable(self) -> bool:
-        return self.report.get("status") == "done" and not self.report.get("invalid")
+        """Done, valid, and not degraded for scoring (a v12 thread-lane shard failed, so some
+        issues were never judged: `report.degraded_for_scoring`)."""
+        r = self.report
+        return (
+            r.get("status") == "done" and not r.get("invalid") and not r.get("degraded_for_scoring")
+        )
 
     @property
     def head(self) -> tuple[str, int, str]:
@@ -309,13 +314,52 @@ def _label_key(lab: dict[str, Any]) -> list[Any]:
     ]
 
 
+# ---- blinding: what only one arm writes around a finding ----
+
+# phrases only one policy puts in a finding's title or body (rules.apply_rules under v12:
+# revivals, regressions, unconfirmed blockers, merged groups' suggestions; links to the bot's
+# earlier threads): never shown to the judge. tests/test_judge.py checks them against rules.py
+ARM_PHRASES = (
+    "This was raised before",
+    "looks like a regression",
+    "(regression)",
+    "Not confirmed as blocking",
+    "offered as a one-click suggestion",
+    "#discussion_r",
+)
+_ARM_LINES = re.compile(
+    r"\n*(?:_This was raised before and[^\n]*|_This looks like a regression of[^\n]*"
+    r"|\*\*Not confirmed as blocking\.\*\*[^\n]*)"
+)
+_SUGGESTION_HEAD = re.compile(
+    r"\*\*Suggested change\*\* \(the reports point at different lines, so it is not offered as "
+    r"a one-click suggestion\):"
+)
+_THREAD_LINK = re.compile(r"\s*\(?https://github\.com/[^\s)]+#discussion_r\d+\)?")
+_REGRESSION = re.compile(r"\s*\(regression\)\s*$")
+
+
+def neutral_title(title: str) -> str:
+    return _REGRESSION.sub("", title or "")
+
+
+def neutral_body(body: str) -> str:
+    """The defect claim without the bot-history framing one arm adds (the sentences about an
+    earlier, withdrawn or fixed finding and links to its thread, the unconfirmed-blocker note,
+    the merged-group suggestion header)."""
+    text = _ARM_LINES.sub("", body or "")
+    text = _SUGGESTION_HEAD.sub("**Suggested change**:", text)
+    return _THREAD_LINK.sub("", text).strip()
+
+
 def _brief(f: dict[str, Any]) -> dict[str, Any]:
-    """A finding's identity for the judge's bookkeeping (absent text fields read as "")."""
+    """A finding's identity for the judge's bookkeeping (absent text fields read as ""), its
+    title as the judge sees it (`neutral_title`)."""
     return {
         "file": f.get("file") or "",
         "line_start": _int(f.get("line_start")),
         "line_end": _int(f.get("line_end")),
-        "title": f.get("title") or "",
+        "title": neutral_title(str(f.get("title") or "")),
         "category": f.get("category") or "",
     }
 
@@ -418,6 +462,7 @@ class _Acc:
     fp_blockers: float = 0.0
     reraised: float = 0.0
     new_blockers: float = 0.0
+    duplicate_threads: float = 0.0  # new threads on issues with an open thread (S5 gate: 0)
     outcomes: list[float] = field(default_factory=list)  # per S8 label: share reaching it
     # per conversation (S8) head: the #38 follow-up its samples decide on (`would_post`)
     would_post: dict[str, float] = field(default_factory=dict)
@@ -438,6 +483,7 @@ class _Acc:
             "reraised_unchanged": round(self.reraised, 3),
             "heads_with_blocker_rate": _mean(self.blocker_heads),
             "new_blockers": round(self.new_blockers, 3),
+            "duplicate_threads": round(self.duplicate_threads, 3),
             "new_blockers_judged": {k: round(v, 3) for k, v in j.items()},
             "new_blocker_precision": _ratio(j["yes"], j["yes"] + j["no"]),
             "blocker_precision": _ratio(
@@ -482,6 +528,20 @@ def _mean(xs: list[float], digits: int = 4) -> float | None:
 
 def _frac(xs: list[bool]) -> float:
     return sum(xs) / len(xs)
+
+
+def duplicate_threads(sample: Sample) -> int:
+    """New threads (inline comments) the run would open on an issue that already had an open
+    bot thread when it started (`report.prior_open_threads`): same hash, or the matcher's
+    same-defect rule."""
+    prior = [p for p in sample.report.get("prior_open_threads") or [] if isinstance(p, dict)]
+    n = 0
+    for c in sample.report.get("inline") or []:
+        if isinstance(c, dict) and any(
+            (c.get("hash") and c.get("hash") == p.get("hash")) or matches(c, p) for p in prior
+        ):
+            n += 1
+    return n
 
 
 def duplicates(published: list[dict[str, Any]]) -> int:
@@ -608,6 +668,7 @@ def score(
                 acc.new_blockers += statistics.fmean(
                     sum(f.get("severity") == "blocking" for f in rest) for _, rest in assigned
                 )
+                acc.duplicate_threads += statistics.fmean(duplicate_threads(r) for r in runs)
                 _count_precision(acc, verdicts, head, scored, assigned)
                 if item.set == "S8":
                     for r in runs:
@@ -756,8 +817,15 @@ def _arm(samples: list[Sample], paired: list[SetItem]) -> dict[str, Any]:
     every = [s for s in samples if s.item.run_id in ids]
     runs = [s for s in every if s.usable]
 
-    def gpt(s: Sample, *keys: str) -> float:
-        return sum(float((s.report.get("gpt") or {}).get(k) or 0) for k in keys)
+    def gpt(s: Sample, *keys: str, block: str = "gpt") -> float:
+        got = s.report.get(block) or s.report.get("gpt") or {}
+        return sum(float(got.get(k) or 0) for k in keys)
+
+    def sig(s: Sample, key: str) -> float:
+        return float((s.report.get("v12") or {}).get(key) or 0)
+
+    candidates = sum(sig(s, "candidates") for s in runs)
+    matched = sum(sig(s, "candidates_matched_open") for s in runs)
 
     walls = [float(s.report.get("wall_clock_s") or 0) for s in runs]
     # wall clock less the time the run only waited for lane slots (shared with production)
@@ -769,8 +837,21 @@ def _arm(samples: list[Sample], paired: list[SetItem]) -> dict[str, Any]:
         "usable": len(runs),
         "failed": sum(s.report.get("status") == "failed" for s in every),
         "invalid": sum(bool(s.report.get("invalid")) for s in every),
+        # every sample of the arm, paired head or not (such a sample unpairs its head)
+        "degraded_for_scoring": sum(bool(s.report.get("degraded_for_scoring")) for s in samples),
         "gpt_lanes_per_run": _mean([gpt(s, "lanes") for s in runs], 1),
         "gpt_tokens_per_run": _mean([gpt(s, "tokens_in", "tokens_out") for s in runs], 1),
+        # without the thread-lane work only the replay's own one-shot reconcile added
+        # (production reconciles a PR once): what the 1.15x cost gate reads
+        "gpt_lanes_per_run_excl_reconcile": _mean(
+            [gpt(s, "lanes", block="gpt_excl_reconcile") for s in runs], 1
+        ),
+        "gpt_tokens_per_run_excl_reconcile": _mean(
+            [gpt(s, "tokens_in", "tokens_out", block="gpt_excl_reconcile") for s in runs], 1
+        ),
+        "reconcile_issues_per_run": _mean(
+            [float((s.report.get("reconcile_work") or {}).get("issues") or 0) for s in runs], 2
+        ),
         "tokens_per_run": _mean(
             [
                 float(s.report.get("tokens_in") or 0) + float(s.report.get("tokens_out") or 0)
@@ -789,6 +870,12 @@ def _arm(samples: list[Sample], paired: list[SetItem]) -> dict[str, Any]:
             ),
         },
         "duplicates_per_run": _mean([float(duplicates(s.published)) for s in runs], 3),
+        # v12 signals (zero under v11)
+        "conflicts_per_run": _mean([sig(s, "threads_conflict") for s in runs], 3),
+        "late_nonblocking_per_run": _mean([sig(s, "late_nonblocking") for s in runs], 3),
+        "settled_refolds_per_run": _mean([sig(s, "settled_refold") for s in runs], 3),
+        "match_share": round(matched / candidates, 4) if candidates else None,
+        "duplicate_threads_per_run": _mean([float(duplicate_threads(s)) for s in runs], 3),
         "forced_phase2_runs": sum(
             bool((s.report.get("gate") or {}).get("forced_phase2")) for s in runs
         ),
@@ -802,7 +889,14 @@ def _ratios(arms: dict[str, dict[str, Any]], baseline: str | None) -> dict[str, 
     return {
         p: {
             k: round(a[k] / base[k], 3) if a.get(k) is not None and base.get(k) else None
-            for k in ("gpt_lanes_per_run", "gpt_tokens_per_run", "wall_clock_p50_s", "active_p50_s")
+            for k in (
+                "gpt_lanes_per_run",
+                "gpt_tokens_per_run",
+                "gpt_lanes_per_run_excl_reconcile",
+                "gpt_tokens_per_run_excl_reconcile",
+                "wall_clock_p50_s",
+                "active_p50_s",
+            )
         }
         for p, a in arms.items()
         if p != baseline
@@ -834,12 +928,13 @@ def _head_fields(head: HeadKey, base: dict[str, Any]) -> dict[str, Any]:
 
 
 def _finding_fields(f: dict[str, Any]) -> dict[str, Any]:
+    """A finding as the judge gets it: the defect claim, blinded (`neutral_body`)."""
     return {
         "file": f.get("file"),
         "line_start": f.get("line_start"),
         "line_end": f.get("line_end"),
-        "title": f.get("title"),
-        "body": f.get("body") or "",
+        "title": neutral_title(str(f.get("title") or "")),
+        "body": neutral_body(str(f.get("body") or "")),
         "category": f.get("category") or "",
         "severity": f.get("severity") or "",
     }
