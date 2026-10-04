@@ -649,15 +649,14 @@ def _lane_row(
         )
 
 
-_FINDINGS_INSERT = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
-_FINDINGS_INSERT_IDS = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body, candidate_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
+_FINDINGS_INSERT = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body, candidate_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
 
 
 def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Finding]) -> None:
     """Write finding rows (with the policy v12 candidate id). The caller must already hold the
     write transaction."""
     ctx.conn.executemany(
-        _FINDINGS_INSERT_IDS,
+        _FINDINGS_INSERT,
         [
             (
                 ctx.run_id,
@@ -1157,12 +1156,12 @@ def _reconcile12(ctx: RunContext) -> None:
     is asked before the write transaction, never inside it."""
     rec = ledger.reconciled(ctx.conn, ctx.repo, ctx.number)
     if rec is None and not ctx.dry_run:
-        issues = ledger.load(ctx.conn, ctx.repo, ctx.number)
-        moved = {
-            h: _issue_moved(ctx, i)
-            for h, i in issues.items()
-            if i.status in rules.VERDICT_STANDING and h not in ctx.open_threads
-        }
+        moved = ledger.moved_anchors(
+            ledger.load(ctx.conn, ctx.repo, ctx.number),
+            ctx.sha,
+            lambda a, b, file, ls, le: _lines_changed(ctx, a, b, file, ls, le),
+            open_threads=ctx.open_threads,
+        )
         ledger.safe_write(
             ctx.conn,
             "reconcile",
@@ -1172,7 +1171,7 @@ def _reconcile12(ctx: RunContext) -> None:
                 ctx.number,
                 pr_open=True,
                 open_threads=set(ctx.open_threads),
-                moved=lambda i: moved.get(i.hash),
+                moved=moved,
                 run_id=ctx.run_id,
                 sha=ctx.sha,
             ),
@@ -3989,6 +3988,7 @@ def _record_conceded(ctx: RunContext, phase: str, lifted: set[str]) -> None:
                 "general",
                 t.get("title") or h,
                 "",
+                None,
             )
         )
     ctx.conn.executemany(_FINDINGS_INSERT, rows)

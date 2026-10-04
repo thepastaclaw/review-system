@@ -29,7 +29,6 @@ the verdict, the thread lane's work set and the verifier's matching read."""
 from __future__ import annotations
 
 import dataclasses
-import functools
 import json
 import logging
 import os
@@ -37,13 +36,13 @@ import sqlite3
 import subprocess
 import uuid
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from . import github
-from .contract import Finding
+from .contract import SEVERITIES, Finding
 from .db import event, kv_get, kv_set, now, tx
 from .dedupe import FINDING_MARKER_RE
 
@@ -53,6 +52,9 @@ OPEN = "open"
 STATUSES = ("open", "fixed", "outdated", "withdrawn", "deferred", "deferral_pending", "resolved")
 # still holds up the verdict (a deferral nobody with the authority made is still pending)
 STANDING = frozenset({OPEN, "deferral_pending"})
+# what a policy v12 verdict counts: a thread a human resolved by hand still counts (only an
+# explicit outcome lifts a finding)
+COUNTING = STANDING | {"resolved"}
 CLOSED = frozenset(STATUSES) - STANDING
 # closed by a call the code has to respect: such an issue only comes back when the code it
 # points at changed since (`lines_changed`); a fixed one that comes back is a regression
@@ -77,7 +79,6 @@ DELIVERED_ACTIONS = frozenset({"replied", "already_answered", "status_cleared", 
 # `no_thread` (policy v12 thread lane): the issue has no open thread to answer on (a human
 # resolved it, or it never had an inline comment), so the outcome stands without a reply
 KINDS = frozenset({"thread", "posted", "seen", "outcome", "status", "severity"})
-SEVERITIES = ("blocking", "suggestion", "nitpick")
 
 _BODY_MAX = 8000
 
@@ -684,7 +685,7 @@ def attach_folded(
         ev = _posted(finding, run_id=run_id, sha=sha, source=source, h=h)
         ev.detail["comment_id"] = cid
         append(conn, repo, number, [ev])
-    elif cur.status in STANDING | {"resolved"}:
+    elif cur.status in COUNTING:
         append(conn, repo, number, [_seen(h, run_id=run_id, sha=sha, source=source)])
     else:
         transition(
@@ -700,7 +701,25 @@ def attach_folded(
         )
 
 
-RECONCILED_KEY = "ledger.reconciled:{repo}#{number}"
+def _reconciled_key(repo: str, number: int) -> str:
+    return f"ledger.reconciled:{repo}#{number}"
+
+
+def moved_anchors(
+    issues: Mapping[str, Issue],
+    head: str,
+    changed: Callable[[str, str, str, int | None, int | None], bool | None],
+    *,
+    open_threads: Iterable[str],
+) -> dict[str, bool | None]:
+    """`anchor_moved` at `head` for every issue the reconcile may outdate: counting, and with
+    no open thread. Asked before the reconcile's write transaction, never inside it."""
+    threads = set(open_threads)
+    return {
+        h: anchor_moved(i, head, changed)
+        for h, i in issues.items()
+        if i.status in COUNTING and h not in threads
+    }
 
 
 def reconcile(
@@ -710,7 +729,7 @@ def reconcile(
     *,
     pr_open: bool,
     open_threads: Iterable[str],
-    moved: Callable[[Issue], bool | None],
+    moved: Mapping[str, bool | None],
     run_id: int | None = None,
     sha: str | None = None,
 ) -> list[str]:
@@ -718,47 +737,37 @@ def reconcile(
     blockers `open` that vanished without an outcome (v11 reconciled them inside model lanes
     and recorded nothing when a lane dropped one). On a closed PR every standing issue is
     `outdated`. On an open PR, an issue with no open thread whose anchored code changed since
-    it was last seen (`moved`) is `outdated`; everything else stays and is returned, for the
-    first round's thread lane to judge. Records RECONCILED_KEY in kv with that list. Caller
-    holds the transaction (after `sync_threads`, so thread facts are current)."""
+    it was last seen (`moved`, from `moved_anchors`) is `outdated`; everything else stays and
+    is returned, for the first round's thread lane to judge. Records the list in kv
+    (`reconciled`). Caller holds the transaction (after `sync_threads`, so thread facts are
+    current)."""
     threads = set(open_threads)
     pending: list[str] = []
-    reason_closed = "the PR closed before policy v12 reconciled its ledger"
-    reason_moved = "reconciled for policy v12: no open thread, and the code at it changed"
     for h, i in load(conn, repo, number).items():
-        if i.status not in STANDING | {"resolved"}:
+        if i.status not in COUNTING:
             continue
         if not pr_open:
-            transition(
-                conn,
-                repo,
-                number,
-                h,
-                "outdated",
-                run_id=run_id,
-                sha=sha,
-                source="backfill",
-                reason=reason_closed,
-                key=f"reconcile:{h}",
-            )
-        elif h not in threads and moved(i) is True:
-            transition(
-                conn,
-                repo,
-                number,
-                h,
-                "outdated",
-                run_id=run_id,
-                sha=sha,
-                source="backfill",
-                reason=reason_moved,
-                key=f"reconcile:{h}",
-            )
+            reason = "the PR closed before policy v12 reconciled its ledger"
+        elif h not in threads and moved.get(h) is True:
+            reason = "reconciled for policy v12: no open thread, and the code at it changed"
         else:
             pending.append(h)
+            continue
+        transition(
+            conn,
+            repo,
+            number,
+            h,
+            "outdated",
+            run_id=run_id,
+            sha=sha,
+            source="backfill",
+            reason=reason,
+            key=f"reconcile:{h}",
+        )
     kv_set(
         conn,
-        RECONCILED_KEY.format(repo=repo, number=number),
+        _reconciled_key(repo, number),
         json.dumps({"run": run_id, "sha": sha, "pending": pending}),
     )
     return pending
@@ -779,7 +788,7 @@ def reconcile_all(
     synced and its issues reconciled against its live head (git in the repo's mirror,
     `mirror_for`; without one, nothing is outdated for a code change). A PR whose first v12
     round already reconciled it is left alone. Needs the network."""
-    keep = ",".join(f"'{s}'" for s in sorted(STANDING | {"resolved"}))
+    keep = ",".join(f"'{s}'" for s in sorted(COUNTING))
     prs = conn.execute(
         f"SELECT DISTINCT repo, number FROM issues WHERE status IN ({keep}) "
         "AND (?1 IS NULL OR repo=?1) AND (?2 IS NULL OR number=?2) ORDER BY 1, 2",
@@ -792,11 +801,11 @@ def reconcile_all(
             out["skipped"] += 1
             continue
         out["prs"] += 1
-        before = {h for h, i in load(conn, r, n).items() if i.status in STANDING | {"resolved"}}
+        before = {h for h, i in load(conn, r, n).items() if i.status in COUNTING}
         meta = github.pr_meta(gh, r, n)
         if meta.state != "open" or meta.merged:
             with tx(conn):
-                reconcile(conn, r, n, pr_open=False, open_threads=(), moved=lambda i: None)
+                reconcile(conn, r, n, pr_open=False, open_threads=(), moved={})
             out["closed"] += 1
             out["outdated"] += len(before)
             continue
@@ -810,11 +819,7 @@ def reconcile_all(
         ) -> bool | None:
             return lines_changed(path, a, b, file, ls, le) if path is not None and file else None
 
-        moved = {
-            h: anchor_moved(i, head, changed)
-            for h, i in load(conn, r, n).items()
-            if h in before and h not in open_
-        }
+        moved = moved_anchors(load(conn, r, n), head, changed, open_threads=open_)
         with tx(conn):
             sync_threads(
                 conn,
@@ -832,7 +837,7 @@ def reconcile_all(
                 n,
                 pr_open=True,
                 open_threads=open_,
-                moved=functools.partial(_moved_of, moved),
+                moved=moved,
                 sha=head,
             )
         out["open"] += 1
@@ -841,13 +846,9 @@ def reconcile_all(
     return out
 
 
-def _moved_of(moved: dict[str, bool | None], issue: Issue) -> bool | None:
-    return moved.get(issue.hash)
-
-
 def reconciled(conn: sqlite3.Connection, repo: str, number: int) -> dict[str, Any] | None:
     """The PR's reconcile record ({run, sha, pending}), or None before it ran."""
-    raw = kv_get(conn, RECONCILED_KEY.format(repo=repo, number=number))
+    raw = kv_get(conn, _reconciled_key(repo, number))
     if raw is None:
         return None
     try:
@@ -865,7 +866,7 @@ def settle_pending(conn: sqlite3.Connection, repo: str, number: int, judged: Ite
         return
     done = set(judged)
     rec["pending"] = [h for h in rec.get("pending") or [] if h not in done]
-    kv_set(conn, RECONCILED_KEY.format(repo=repo, number=number), json.dumps(rec))
+    kv_set(conn, _reconciled_key(repo, number), json.dumps(rec))
 
 
 def safe_write(

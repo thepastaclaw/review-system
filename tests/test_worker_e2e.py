@@ -1662,6 +1662,7 @@ def _full_strength_prior(conn, *, extra_verified=()):
                     f.category,
                     f.title,
                     f.body,
+                    f.candidate_id,
                 ),
             )
     return rid
@@ -3061,7 +3062,7 @@ def test_a_later_full_review_voids_older_concessions(conn):
         for rid, stage, h in rows:
             conn.execute(
                 worker._FINDINGS_INSERT,
-                (rid, "final", stage, h, "f.rs", 1, 1, "blocking", None, "general", h, ""),
+                (rid, "final", stage, h, "f.rs", 1, 1, "blocking", None, "general", h, "", None),
             )
     ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1, sha=HEAD, open_threads={})
     assert worker._open_blockers(ctx, "final", lifted={"yyy"}) == 1  # type: ignore[arg-type]
@@ -3073,7 +3074,21 @@ def test_a_later_full_review_voids_older_concessions(conn):
         ).lastrowid
         conn.execute(
             worker._FINDINGS_INSERT,
-            (rid, "final", "conceded", "xxx", "f.rs", 1, 1, "blocking", None, "general", "x", ""),
+            (
+                rid,
+                "final",
+                "conceded",
+                "xxx",
+                "f.rs",
+                1,
+                1,
+                "blocking",
+                None,
+                "general",
+                "x",
+                "",
+                None,
+            ),
         )
     assert worker._open_blockers(ctx, "final", lifted={"yyy"}) == 0  # type: ignore[arg-type]
 

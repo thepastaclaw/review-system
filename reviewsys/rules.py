@@ -9,6 +9,7 @@ Identity is the harness's, never a model's: finder candidates get ids at parse t
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import math
 from collections.abc import Callable, Iterable
@@ -37,7 +38,7 @@ THREAD_SHARD_CHARS = 60_000
 SETTLED_LIST_MAX = 10  # withdrawn / deferred issues the finders are told about
 # statuses as v12 reads them. A thread a human resolved by hand still counts toward the verdict
 # (only an explicit outcome lifts a finding), so a candidate restating it corroborates it
-VERDICT_STANDING = ledger.STANDING | {"resolved"}
+VERDICT_STANDING = ledger.COUNTING
 MATCH_SETTLED = frozenset({"withdrawn", "deferred", "outdated"})
 MATCH_FIXED = frozenset({"fixed"})
 _SEV_RANK = {"blocking": 3, "suggestion": 2, "nitpick": 1}
@@ -311,7 +312,7 @@ def parse_verify(
     notes: list[str] = []
     groups: list[Group] = []
     for gi, r in enumerate(rows, 1):
-        label = f"group {gi}"
+        label, before = f"group {gi}", len(problems)
         if not isinstance(r, dict):
             problems.append(f"{label} is not an object")
             continue
@@ -353,15 +354,8 @@ def parse_verify(
         title = _str(r.get("title")) or (f"refuted {', '.join(ids)}" if refuted else "")
         if not title:
             problems.append(f"{label}: no title")
-        if (
-            not ids
-            or match is None
-            or verdict not in VERDICTS
-            or not evidence
-            or sev is None
-            or not title
-        ):
-            continue
+        if len(problems) > before or match is None or sev is None:
+            continue  # every problem of the group is listed; it is read again once fixed
         groups.append(
             Group(
                 members=ids,
@@ -403,6 +397,10 @@ class Outcome:
     groups: list[Group] = field(default_factory=list)  # every group, as answered
     # groups that were not REFUTED, each with the finding the code composed from it
     kept: list[tuple[Group, Finding]] = field(default_factory=list)
+
+
+def _dropped(g: Group, reason: str) -> dict[str, Any]:
+    return {"original_title": g.title, "members": g.members, "reason": reason}
 
 
 def _representative(members: list[Finding]) -> Finding:
@@ -448,13 +446,7 @@ def apply_rules(
         members = [candidates[m] for m in g.members if m in candidates]
         rep = _representative(members) if members else None
         if g.verdict == "REFUTED":
-            out.dropped.append(
-                {
-                    "original_title": g.title,
-                    "members": g.members,
-                    "reason": f"REFUTED: {g.evidence}",
-                }
-            )
+            out.dropped.append(_dropped(g, f"REFUTED: {g.evidence}"))
             if g.kind == "coderabbit":
                 out.reactions.append(
                     {"comment_id": int(g.target), "action": "disagree", "reply": g.evidence}
@@ -496,13 +488,7 @@ def apply_rules(
             out.reactions.append({"comment_id": int(target), "action": "agree"})
             kind = "new"
         if kind == "open" and target in xo:
-            out.dropped.append(
-                {
-                    "original_title": g.title,
-                    "members": g.members,
-                    "reason": f"DUPLICATE: raised this round as {target}",
-                }
-            )
+            out.dropped.append(_dropped(g, f"DUPLICATE: raised this round as {target}"))
             continue
         if kind == "open":
             out.corroborated.setdefault(target, []).extend(g.members)
@@ -516,11 +502,10 @@ def apply_rules(
             h = issues[target]
             if changed_since_closed(h) is not True:
                 out.dropped.append(
-                    {
-                        "original_title": g.title,
-                        "members": g.members,
-                        "reason": f"SETTLED: matches {h.status} issue {target}; the code at it has not changed since",
-                    }
+                    _dropped(
+                        g,
+                        f"SETTLED: matches {h.status} issue {target}; the code at it has not changed since",
+                    )
                 )
                 continue
             f.body += (
@@ -539,13 +524,7 @@ def apply_rules(
             )
             f.extra["regression_of"] = target
         if f.hash in posted:
-            out.dropped.append(
-                {
-                    "original_title": g.title,
-                    "members": g.members,
-                    "reason": f"DUPLICATE: same title as another group ({f.hash})",
-                }
-            )
+            out.dropped.append(_dropped(g, f"DUPLICATE: same title as another group ({f.hash})"))
             continue
         posted.add(f.hash)
         out.new.append(f)
@@ -564,7 +543,7 @@ def within_budget(new: list[Finding], budget: int) -> tuple[list[Finding], list[
         confirmed = f.extra.get("verdict") == "CONFIRMED"
         return (-_SEV_RANK.get(f.severity, 0), -int(confirmed), -len(f.extra.get("members") or []))
 
-    keep = {id(f) for f in [f for f in new if f.severity == "blocking"]}
+    keep = {id(f) for f in new if f.severity == "blocking"}
     for f in sorted((f for f in new if f.severity != "blocking"), key=rank):
         if len(keep) >= budget:
             break
@@ -712,8 +691,6 @@ def project(
     """`issues` with this round's pending status changes (`statuses`: hash -> ledger status)
     and severity upgrades applied, for decisions taken before they are recorded (the gate, a
     dry run). Copies; the ledger rows are untouched."""
-    import dataclasses
-
     out = dict(issues)
     for h, st in statuses.items():
         if h in out:

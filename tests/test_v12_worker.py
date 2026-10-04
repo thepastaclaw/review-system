@@ -190,7 +190,7 @@ def test_unknown_git_puts_open_issues_in_the_work_set(cfg, skills_dir, conn, gh,
     v12 = v12_cfg(cfg, skills_dir)
     h = _backfilled(conn, "Some blocker", line=5)
     with tx(conn):
-        ledger.reconcile(conn, REPO, 1, pr_open=True, open_threads=set(), moved=lambda i: False)
+        ledger.reconcile(conn, REPO, 1, pr_open=True, open_threads=set(), moved={})
         ledger.settle_pending(conn, REPO, 1, [h])
     git.unknown = True
     lanes.candidates["default"] = []
@@ -460,7 +460,7 @@ def _judged_backfill(conn, n):
     once (nothing pending): from here on only replies and code changes bring them back."""
     hs = [_backfilled(conn, f"Old blocker {i}", line=10 * (i + 1)) for i in range(n)]
     with tx(conn):
-        ledger.reconcile(conn, REPO, 1, pr_open=True, open_threads=set(), moved=lambda i: False)
+        ledger.reconcile(conn, REPO, 1, pr_open=True, open_threads=set(), moved={})
         ledger.settle_pending(conn, REPO, 1, hs)
     return hs
 

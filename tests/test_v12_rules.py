@@ -500,7 +500,7 @@ def test_reconcile_outdates_what_cannot_stand_and_leaves_the_rest_to_the_thread_
             1,
             pr_open=True,
             open_threads={"a" * 12},
-            moved=lambda i: {"b" * 12: True, "c" * 12: None}.get(i.hash, True),
+            moved={"a" * 12: True, "b" * 12: True, "c" * 12: None},
             run_id=9,
             sha="head",
         )
@@ -519,10 +519,7 @@ def test_reconcile_on_a_closed_pr_outdates_every_standing_issue(conn):
     _seed(conn, "a" * 12)
     with tx(conn):
         assert (
-            ledger.reconcile(
-                conn, "r/x", 1, pr_open=False, open_threads={"a" * 12}, moved=lambda i: False
-            )
-            == []
+            ledger.reconcile(conn, "r/x", 1, pr_open=False, open_threads={"a" * 12}, moved={}) == []
         )
     assert ledger.load(conn, "r/x", 1)["a" * 12].status == "outdated"
 
