@@ -31,6 +31,9 @@ from .schemas import VERDICTS
 # the verifier's batch: above this many candidates a phase's verify+match is split into shards
 SHARD_SIZE = 12
 MAX_SHARDS = 3
+# the thread lane's batch: issues, and characters of their inputs (thread, code, diff)
+THREAD_SHARD_SIZE = 12
+THREAD_SHARD_CHARS = 60_000
 SETTLED_LIST_MAX = 10  # withdrawn / deferred issues the finders are told about
 # statuses as v12 reads them. A thread a human resolved by hand still counts toward the verdict
 # (only an explicit outcome lifts a finding), so a candidate restating it corroborates it
@@ -174,6 +177,29 @@ def shards(
     for idx in sorted(by_file.values(), key=len, reverse=True):
         min(bins, key=len).extend(idx)
     return [[cands[i] for i in sorted(b)] for b in bins if b]
+
+
+def thread_shards(
+    sizes: dict[str, int],
+    size: int = THREAD_SHARD_SIZE,
+    chars: int = THREAD_SHARD_CHARS,
+    most: int = MAX_SHARDS,
+) -> list[list[str]]:
+    """The thread lane's work set (hash -> characters of its input) in at most `most`
+    batches: one unless it holds more than `size` issues or `chars` characters; the biggest
+    issues first onto the lightest batch; each batch keeps the work set's order."""
+    order = list(sizes)
+    total = sum(sizes.values())
+    n = min(most, max(math.ceil(len(order) / size), math.ceil(total / chars), 1))
+    if n <= 1:
+        return [order] if order else []
+    bins: list[list[str]] = [[] for _ in range(n)]
+    load = [0] * n
+    for h in sorted(order, key=lambda h: sizes[h], reverse=True):
+        k = min(range(n), key=lambda i: (load[i], len(bins[i])))
+        bins[k].append(h)
+        load[k] += sizes[h]
+    return [sorted(b, key=order.index) for b in bins if b]
 
 
 # ---- the verifier's answer (§2.2) ----

@@ -1192,7 +1192,12 @@ def _thread_work(ctx: RunContext) -> dict[str, list[str]]:
             continue
         if h in ctx.reconcile_pending:
             work.setdefault(h, []).append("reconcile")
-        elif _issue_moved(ctx, i) is not False:
+            continue
+        moved = _issue_moved(ctx, i)
+        # an issue git cannot place (no file, line or anchor commit) waits for a reply:
+        # "unknown" would otherwise send it again on every push
+        anchored = bool(i.file and i.line_start and (i.anchor_sha or i.opened_sha))
+        if moved is True or (moved is None and anchored):
             work.setdefault(h, []).append("code_changed")
     return work
 
@@ -1272,14 +1277,20 @@ def _run_thread_lane(
     standing_verdict: str | None = None,
     should_stop: Callable[[], bool] | None = None,
 ) -> tuple[converse.ConversationOutput, LaneModel]:
-    """One thread-lane call over `work` (hash -> why): its outcomes after the code's own rules
-    (`converse.parse_threads`: every hash exactly once, FIXED where nothing changed is
-    FIX_PENDING; `converse.guard_deferrals`). `same_sha`: a reply to the reviewed commit."""
+    """The thread lane over `work` (hash -> why), in at most three shards by issue count and
+    input size (`rules.thread_shards`), side by side: their outcomes after the code's own
+    rules (`converse.parse_threads`: every hash exactly once, FIXED / OUTDATED where nothing
+    changed is FIX_PENDING; `converse.accept_deferrals`). A shard that fails for good leaves
+    only its own issues as they were (`threads.failed`) and the round cannot approve
+    (`ctx.thread_failed`); when every shard fails the error is raised. `same_sha`: a reply
+    to the reviewed commit."""
     assert ctx.meta
     pol = ctx.cfg.policy
     hashes = list(work)
     facts = {h: ctx.open_threads.get(h) or ctx.thread_index.get(h) or {} for h in hashes}
-    fetched, unfetched = _fetch_linked_commits(ctx, {h: t for h, t in facts.items() if t})
+    fetched, unfetched = _fetch_linked_commits(
+        ctx, {h: t for h, t in facts.items() if t}, should_stop=should_stop
+    )
     linked = "\n".join(
         [
             *(
@@ -1301,41 +1312,96 @@ def _run_thread_lane(
             h for h in hashes if (i := ctx.issues.get(h)) is not None and i.last_seen_sha == ctx.sha
         }
     )
-    prompt = thread_prompt(
-        ctx.cfg,
-        repo=ctx.repo,
-        number=ctx.number,
-        head_sha=ctx.sha,
-        meta=ctx.meta.as_dict(),
-        issues=[_thread_item(ctx, h, work[h], same_sha) for h in hashes],
-        linked_commits=linked,
-        evidence=ctx.evidence,
-        standing_verdict=standing_verdict,
-        same_sha=same_sha,
-        structured=pol.structured_output,
-    )
+    items = {h: _thread_item(ctx, h, work[h], same_sha) for h in hashes}
+    shards = rules.thread_shards({h: len(json.dumps(items[h])) for h in hashes})
     lm = ctx.lane_model(pol.conversation_lane)
-    out = _run_checked_lane(
-        ctx,
-        phase="converse" if same_sha else "threads",
-        role="conversation" if same_sha else "thread",
-        lm=lm,
-        prompt=prompt,
-        is_verifier=True,
-        check=OutputCheck(
-            validate=lambda raw: converse.parse_threads(
-                raw, hashes=hashes, fix_pending=fix_pending
-            ),
-            kind="thread",
-            ids=hashes,
-        ),
-        should_stop=should_stop,
-        schema=schemas.thread_schema(hashes),
+    base = "conversation" if same_sha else "thread"
+    roles = (
+        [base]
+        if len(shards) == 1
+        else [f"{base}-{n}of{len(shards)}" for n in range(1, len(shards) + 1)]
     )
-    out = converse.guard_deferrals(out, {h: facts[h].get("transcript") or [] for h in hashes})
+
+    def one(n: int) -> converse.ConversationOutput:
+        batch = shards[n]
+        prompt = thread_prompt(
+            ctx.cfg,
+            repo=ctx.repo,
+            number=ctx.number,
+            head_sha=ctx.sha,
+            meta=meta,
+            issues=[items[h] for h in batch],
+            linked_commits=linked,
+            evidence=ctx.evidence,
+            standing_verdict=standing_verdict,
+            same_sha=same_sha,
+            structured=pol.structured_output,
+        )
+        try:
+            return _run_checked_lane(
+                ctx,
+                phase="converse" if same_sha else "threads",
+                role=roles[n],
+                lm=lm,
+                prompt=prompt,
+                is_verifier=True,
+                check=OutputCheck(
+                    validate=lambda raw: converse.parse_threads(
+                        raw, hashes=batch, fix_pending=fix_pending
+                    ),
+                    kind="thread",
+                    ids=batch,
+                ),
+                should_stop=should_stop,
+                schema=schemas.thread_schema(batch),
+            )
+        finally:
+            if len(shards) > 1:
+                ctx.close_lane_conn()
+
+    meta = ctx.meta.as_dict()
+    results: list[converse.ConversationOutput | BaseException] = []
+    if len(shards) == 1:
+        results = [one(0)]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=len(shards), thread_name_prefix=f"{base}-shard"
+        ) as pool:
+            futures = [pool.submit(one, n) for n in range(len(shards))]
+            for fut in futures:
+                try:
+                    results.append(fut.result())
+                except BaseException as exc:  # sorted out below, after every shard ended
+                    results.append(exc)
+    errors = [r for r in results if isinstance(r, BaseException)]
+    fatal = next((e for e in errors if not isinstance(e, ReviewError)), None)
+    if fatal is not None:
+        raise fatal  # Cancelled, a stopped lane, a crash: not a shard's contract
+    if errors and len(errors) == len(results):
+        raise errors[0]
+    outcomes: dict[str, converse.ThreadOutcome] = {}
+    for n, r in enumerate(results):
+        if isinstance(r, BaseException):
+            ctx.thread_failed = True
+            _lane_event(
+                ctx,
+                "threads.failed",
+                f"{roles[n]} ({len(shards[n])} issue(s) left as they were): "
+                + _failure_text(r)[:800],
+            )
+        else:
+            outcomes.update(r.outcomes)
+    out = converse.accept_deferrals(
+        converse.ConversationOutput(outcomes=outcomes),
+        {h: {"transcript": facts[h].get("transcript") or []} for h in outcomes},
+    )
     (ctx.run_dir / ("conversation.json" if same_sha else "threads.json")).write_text(
         json.dumps(
-            {"work": work, "outcomes": {h: dataclasses.asdict(o) for h, o in out.outcomes.items()}},
+            {
+                "work": work,
+                "shards": shards,
+                "outcomes": {h: dataclasses.asdict(o) for h, o in out.outcomes.items()},
+            },
             indent=1,
         )
     )
@@ -3693,19 +3759,25 @@ def _standing_review(ctx: RunContext) -> dict[str, Any] | None:
 
 
 def _fetch_linked_commits(
-    ctx: RunContext, threads: dict[str, dict[str, Any]]
+    ctx: RunContext,
+    threads: dict[str, dict[str, Any]],
+    *,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """(fetched, unfetched) commits humans linked in the replied threads. Only commits from a
     fork of this repository are fetched (the delta against the mirror is small); anything else
     is reported to the model as unavailable with the reason. Fetched ones land in the shared
-    object store, so `git show <sha>` works inside the run's worktree."""
+    object store, so `git show <sha>` works inside the run's worktree. `should_stop` (the
+    policy v12 thread lane) is polled between fetches."""
     fetched: list[dict[str, str]] = []
     unfetched: list[dict[str, str]] = []
     if not ctx.mirror:
         return fetched, unfetched
     own_name = ctx.repo.split("/", 1)[1].lower()
     for i, c in enumerate(converse.linked_commits(threads)):
-        if i >= LINKED_COMMIT_LIMIT:
+        if should_stop is not None and should_stop():
+            unfetched.append({**c, "reason": "not fetched: the run is stopping"})
+        elif i >= LINKED_COMMIT_LIMIT:
             unfetched.append({**c, "reason": f"more than {LINKED_COMMIT_LIMIT} commits linked"})
         elif c["repo"].lower() != own_name:
             unfetched.append({**c, "reason": "not a fork of this repository"})
@@ -4753,7 +4825,9 @@ def _conversation_verdict12(
     )
     verified = VerifierOutput(
         summary="",
-        review_action="APPROVE" if not left and strength == "ok" else "COMMENT",
+        review_action="APPROVE"
+        if not left and strength == "ok" and not ctx.thread_failed
+        else "COMMENT",
         findings=[],
         dropped=[],
         out_of_scope=[],
@@ -4772,6 +4846,11 @@ def _conversation_verdict12(
         )
     elif left:
         note = f"Not approved: {left} non-blocking finding(s) still stand on this PR."
+    elif ctx.thread_failed:
+        note = (
+            "Not approved: some of the threads could not be read this round; they are read "
+            "again on the next reply or push."
+        )
     elif prov.degraded:
         note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
     elif strength == "needs_fresh":

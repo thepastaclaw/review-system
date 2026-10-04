@@ -453,3 +453,56 @@ def test_a_reconcile_leftover_does_not_count_until_judged(cfg, skills_dir, conn,
     assert issues(conn)[h].status == "open"
     assert ledger.reconciled(conn, REPO, 1)["pending"] == [h]  # still to judge
     assert gh.posted_reviews[-1]["event"] == "COMMENT"
+
+
+def _judged_backfill(conn, n):
+    """`n` backfilled blockers the reconcile already handed over and the lane already judged
+    once (nothing pending): from here on only replies and code changes bring them back."""
+    hs = [_backfilled(conn, f"Old blocker {i}", line=10 * (i + 1)) for i in range(n)]
+    with tx(conn):
+        ledger.reconcile(conn, REPO, 1, pr_open=True, open_threads=set(), moved=lambda i: False)
+        ledger.settle_pending(conn, REPO, 1, hs)
+    return hs
+
+
+def test_a_failed_thread_shard_leaves_only_its_own_issues(cfg, skills_dir, conn, gh, lanes, git):
+    v12 = v12_cfg(cfg, skills_dir)
+    hs = _judged_backfill(conn, 14)
+    git.unknown = True  # every anchored issue is judged: git cannot tell
+    bad = hs[0]
+    lanes.thread_out = {h: {"status": "FIXED", "reply": "Gone."} for h in hs}
+    lanes.thread_out[bad] = {"status": "WITHDRAWN", "reply": "NO_REPLY"}  # never valid
+    lanes.candidates["default"] = []
+    rid = run_round(v12, conn, gh, lanes, A)
+    shards = [i for k, _, i in lanes.v12_calls if k == "thread"]
+    assert sorted(len(s) for s in {tuple(s) for s in shards}) == [7, 7]
+    failed = next(s for s in shards if bad in s)
+    led = issues(conn)
+    assert {h for h in hs if led[h].status == "open"} == set(failed)
+    assert {h for h in hs if led[h].status == "fixed"} == set(hs) - set(failed)
+    roles = {
+        r[0]
+        for r in conn.execute("SELECT role FROM lanes WHERE run_id=? AND phase='threads'", (rid,))
+    }
+    assert roles == {"thread-1of2", "thread-2of2"}
+    ev = conn.execute(
+        "SELECT detail FROM events WHERE kind='threads.failed' AND run_id=?", (rid,)
+    ).fetchone()
+    assert "7 issue(s) left as they were" in ev["detail"]
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"  # the unread blockers stand
+
+
+def test_an_issue_git_cannot_place_waits_for_a_reply(cfg, skills_dir, conn, gh, lanes, git):
+    v12 = v12_cfg(cfg, skills_dir)
+    f = Finding(file="", title="Design concern", body="b", severity="suggestion")
+    with tx(conn):
+        ledger.append(
+            conn, REPO, 1, [ledger._posted(f, run_id=None, sha="0" * 40, source="backfill")]
+        )
+    anchorless = f.hash
+    git.unknown = True
+    lanes.candidates["default"] = []
+    run_round(v12, conn, gh, lanes, A)
+    run_round(v12, conn, gh, lanes, B)
+    judged = [i for k, _, i in lanes.v12_calls if k == "thread"]
+    assert judged == [[anchorless]]  # the first round's reconcile handed it over, once

@@ -718,3 +718,16 @@ def test_outdated_where_nothing_changed_is_a_pending_fix_too():
         fix_pending={"a"},
     )
     assert {h: o.status for h, o in out.outcomes.items()} == {"a": "FIX_PENDING", "b": "OUTDATED"}
+
+
+def test_thread_shards_split_by_count_and_size_into_at_most_three():
+    assert rules.thread_shards({}) == []
+    small = {f"h{i}": 100 for i in range(12)}
+    assert rules.thread_shards(small) == [list(small)]
+    many = {f"h{i}": 100 for i in range(14)}
+    batches = rules.thread_shards(many)
+    assert len(batches) == 2 and sorted(map(len, batches)) == [7, 7]
+    assert sorted(h for b in batches for h in b) == sorted(many)
+    big = {"a": 50_000, "b": 50_000, "c": 10}  # few issues, but too much to read at once
+    assert len(rules.thread_shards(big)) == 2
+    assert len(rules.thread_shards({f"h{i}": 100 for i in range(100)})) == 3
