@@ -91,6 +91,14 @@ TOKEN_VARS = (TOKEN_ENV, "GH_TOKEN", "GITHUB_TOKEN")
 LANE_DISALLOWED_TOOLS = ("WebFetch", "WebSearch")
 # findings stages a later run reads from earlier ones (prior findings, standing verdicts)
 SEED_STAGES = ("posted", "conceded", "verified", "verified-fresh")
+# events the worker reads about an earlier run (besides each PR's `thread.answered`): what
+# makes the standing review strong enough to approve over under v12 (`worker._strength_row`)
+RUN_EVENT_KINDS = (
+    "verify.shard_dropped",
+    "threads.conflict",
+    "confirmation.skipped",
+    "confirmation.failed",
+)
 # thread answers that put a status line on the finding's root comment (publish.py)
 LIFTING = frozenset({"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED"})
 CAVEATS = (
@@ -101,6 +109,13 @@ CAVEATS = (
     "a conversation run's replies are not posted: under policy v11 its verdict follow-up sees "
     "nothing lifted; under v12 it decides on what the outcomes would lift and records the "
     "follow-up it would post (conversation.json `would_post`) without posting it",
+)
+
+
+V12_GATE_NOTE = (
+    "not recorded under policy v12: its preliminary publication comes from the post-rules "
+    "pass of _publish12 (budget, settled re-folds, thread outcomes, ledger verdict), which "
+    "cannot be rerun for a publication that never happens"
 )
 
 
@@ -168,15 +183,42 @@ def reconcile_as_of(
     source database (`closed_before`), its threads from the pinned view, and whether an
     issue's code moved from git in the pinned repository against the replayed head. No
     network beyond the pinned view's reads. Records the reconcile in the scratch kv, where
-    the worker (which skips it in a dry run) reads its pending list."""
+    the worker (which skips it in a dry run) reads its pending list.
+
+    Production reconciles a PR once. When the source database recorded that reconcile before
+    the cutoff (`recorded_reconcile`), its record as of the cutoff is copied and nothing runs
+    (`source: recorded`); only a PR v12 had not reconciled by then is reconciled here
+    (`source: replayed`), and the thread-lane work only that adds is counted apart in the
+    report (`reconcile_work`)."""
     repo, number, head = pin.repo, pin.number, pin.sha
+    rec = recorded_reconcile(source_db, repo, number, pin.cutoff)
+    if rec is not None:
+        with tx(scratch_db):
+            ledger.record_reconciled(
+                scratch_db,
+                repo,
+                number,
+                {k: rec[k] for k in ("run", "sha", "pending", "at")},
+            )
+        return {
+            "source": "recorded",
+            "at": rec["at"],
+            "pending": len(rec["pending"]),
+            "pending_exact": rec["exact"],
+        }
     issues = ledger.load(scratch_db, repo, number)
     before = {h for h, i in issues.items() if i.status in ledger.COUNTING}
     closed = closed_before(source_db, repo, number, pin.cutoff)
     if closed:
         with tx(scratch_db):
             ledger.reconcile(scratch_db, repo, number, pr_open=False, open_threads=(), moved={})
-        return {"pr_open": False, "closed": closed, "standing": len(before), "pending": 0}
+        return {
+            "source": "replayed",
+            "pr_open": False,
+            "closed": closed,
+            "standing": len(before),
+            "pending": 0,
+        }
     threads = github.review_threads(gh, repo, number)
     open_ = set(github.finding_threads(threads, bot_login))
     # a thread's resolved state is as of now (the view cannot rewind it): what the sync below
@@ -208,6 +250,7 @@ def reconcile_as_of(
             sha=head,
         )
     return {
+        "source": "replayed",
         "pr_open": True,
         "resolution_as_of_now": as_of_now,
         "open_threads": len(open_),
@@ -215,6 +258,50 @@ def reconcile_as_of(
         "outdated": sum(1 for h, m in moved.items() if m is True and h not in pending),
         "pending": len(pending),
     }
+
+
+def recorded_reconcile(
+    source: sqlite3.Connection, repo: str, number: int, cutoff: str
+) -> dict[str, Any] | None:
+    """The PR's v12 reconcile as the source database had it at `cutoff`, or None when it had
+    not run by then: {run, sha, at, pending, exact}. When it ran is the record's `at`, else
+    (an older record) its run's start, else its earliest `reconcile:` ledger event. The
+    pending list at the cutoff is the one the reconcile left (`pending_at_reconcile`) less the
+    hashes a thread answer judged between it and the cutoff (`exact`), or, for an older
+    record, its pending list now (`exact` False: hashes judged after the cutoff are missing
+    from it)."""
+    if not _has_table(source, "kv"):
+        return None
+    rec = ledger.reconciled(source, repo, number)
+    if rec is None:
+        return None
+    at = str(rec.get("at") or "")
+    if not at and rec.get("run") is not None:
+        row = source.execute("SELECT started_at FROM runs WHERE id=?", (rec["run"],)).fetchone()
+        at = str(row["started_at"]) if row else ""
+    if not at and _has_table(source, "issue_events"):
+        row = source.execute(
+            "SELECT MIN(ts) AS ts FROM issue_events WHERE repo=? AND number=? "
+            "AND key LIKE 'reconcile:%'",
+            (repo, number),
+        ).fetchone()
+        at = str(row["ts"] or "") if row else ""
+    if not at or at >= cutoff:
+        return None
+    exact = isinstance(rec.get("pending_at_reconcile"), list)
+    pending = [str(h) for h in rec.get("pending_at_reconcile" if exact else "pending") or []]
+    if exact:
+        judged = set()
+        for e in _answered(source, repo, number, cutoff):
+            if str(e["ts"]) < at:
+                continue
+            try:
+                judged.add(str(json.loads(e["detail"] or "{}").get("finding_hash") or ""))
+            except ValueError:
+                continue
+        pending = [h for h in pending if h not in judged]
+    return {"run": rec.get("run"), "sha": rec.get("sha"), "at": at, "pending": pending,
+            "exact": exact}  # fmt: skip
 
 
 def closed_before(source: sqlite3.Connection, repo: str, number: int, cutoff: str) -> str:
@@ -541,6 +628,28 @@ def seed_history(
                 },
             )
             counts["thread_answered"] += 1
+        # the events the worker reads about an earlier run of the PR (the v12 review strength
+        # of the standing run: `worker._strength_row`), as of the cutoff
+        if ids:
+            kinds = ",".join("?" * len(RUN_EVENT_KINDS))
+            for e in source.execute(
+                f"SELECT * FROM events WHERE kind IN ({kinds}) AND run_id IN ({marks}) "
+                "AND ts < ? ORDER BY id",
+                (*RUN_EVENT_KINDS, *ids, cutoff),
+            ).fetchall():
+                _insert(
+                    scratch,
+                    "events",
+                    {
+                        "ts": e["ts"],
+                        "kind": e["kind"],
+                        "repo": repo,
+                        "number": number,
+                        "run_id": ids[int(e["run_id"])],
+                        "detail": e["detail"],
+                    },
+                )
+                counts["run_events"] += 1
     return dict(counts)
 
 
@@ -556,7 +665,8 @@ def lifted_before(
     source: sqlite3.Connection, repo: str, number: int, cutoff: str
 ) -> dict[str, str]:
     """finding hash -> the lifting status its thread showed at the cutoff: the last thread
-    answer before it that reached the thread (anything but a silent or skipped one)."""
+    answer before it that reached the thread (`ledger.DELIVERED_ACTIONS`, as the ledger reads
+    them: a silent, skipped, suppressed or failed answer put nothing there)."""
     out: dict[str, str] = {}
     for e in _answered(source, repo, number, cutoff):
         try:
@@ -564,7 +674,7 @@ def lifted_before(
         except ValueError:
             continue
         h, status = str(d.get("finding_hash") or ""), str(d.get("status") or "")
-        if not h or d.get("action") in ("no_reply", "suppressed_reply", "duplicate_thread_skipped"):
+        if not h or d.get("action") not in ledger.DELIVERED_ACTIONS:
             continue
         if status in LIFTING:
             out[h] = status
@@ -941,6 +1051,114 @@ def _finding(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def v12_signals(scratch: sqlite3.Connection, run_id: int, run_dir: Path) -> dict[str, Any]:
+    """What a v12 round records for the eval (all zero under v11): concessions a finder
+    contradicted (`threads.conflict`), thread-lane shards that failed (`threads.failed`),
+    late non-blocking findings (`v12.late_nonblocking`), new issues dropped as settled
+    re-folds (`v12.settled_refold`), and the share of verify+match candidates matched to an
+    open ledger issue (every verify pass pooled, from its `<phase>.json`)."""
+    counts: Counter[str] = Counter()
+    late = 0
+    for e in scratch.execute(
+        "SELECT kind, detail FROM events WHERE run_id=? AND kind IN "
+        "('threads.conflict', 'threads.failed', 'v12.late_nonblocking', 'v12.settled_refold')",
+        (run_id,),
+    ):
+        counts[str(e["kind"])] += 1
+        if e["kind"] == "v12.late_nonblocking":
+            m = re.match(r"(\d+)", str(e["detail"] or ""))
+            late += int(m.group(1)) if m else 0
+    candidates = matched = 0
+    for f in sorted(run_dir.glob("*.json")) if run_dir.is_dir() else []:
+        data = read_json(f)
+        if not isinstance(data, dict) or "candidates" not in data or "corroborated" not in data:
+            continue
+        candidates += len(data.get("candidates") or [])
+        matched += sum(len(v or []) for v in (data.get("corroborated") or {}).values())
+    return {
+        "threads_conflict": counts["threads.conflict"],
+        "threads_failed": counts["threads.failed"],
+        "late_nonblocking": late,
+        "settled_refold": counts["v12.settled_refold"],
+        "candidates": candidates,
+        "candidates_matched_open": matched,
+        "match_share": round(matched / candidates, 4) if candidates else None,
+    }
+
+
+def _prior_open_threads(
+    scratch: sqlite3.Connection, rc: cfg_mod.Config, run_id: int, run_dir: Path, pin: Pin
+) -> list[dict[str, Any]]:
+    """The bot's finding threads open when the run started: under v12 the ledger's standing
+    issues with a thread (`ledger.json`), else the posted findings seeded as of the cutoff
+    less those a thread answer lifted."""
+    keys = ("file", "line_start", "line_end", "title")
+    led = read_json(run_dir / "ledger.json")
+    if isinstance(led, dict) and isinstance(led.get("issues"), dict):
+        return [
+            {"hash": h, **{k: i.get(k) for k in keys}}
+            for h, i in led["issues"].items()
+            if i.get("status") in ledger.STANDING and (i.get("comment_id") or i.get("thread_id"))
+        ]
+    rows = scratch.execute(
+        "SELECT pf.hash, f.file, f.line_start, f.line_end, f.title FROM posted_findings pf "
+        "JOIN findings f ON f.hash=pf.hash AND f.stage='posted' AND f.run_id<>? "
+        "WHERE pf.repo=? AND pf.number=? GROUP BY pf.hash",
+        (run_id, pin.repo, pin.number),
+    ).fetchall()
+    return [
+        {"hash": str(r["hash"]), **{k: r[k] for k in keys}}
+        for r in rows
+        if str(r["hash"]) not in pin.lifted
+    ]
+
+
+def reconcile_work(threads: Any, lanes: list[dict[str, Any]], *, counted: bool) -> dict[str, Any]:
+    """The thread lane's work that only the reconcile asked for (issues whose every reason is
+    `reconcile`), from `threads.json`: how many, the shards made of nothing else, and each
+    shard's lanes and tokens in proportion to its reconcile-only issues (all, and on gpt).
+    Zero unless `counted` (the replay ran the reconcile itself)."""
+    out: dict[str, Any] = {
+        "counted": counted,
+        "issues": 0,
+        "shards": 0,
+        "lanes": 0.0,
+        "gpt_lanes": 0.0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "gpt_tokens_in": 0,
+        "gpt_tokens_out": 0,
+    }
+    if not counted or not isinstance(threads, dict):
+        return out
+    work = threads.get("work") or {}
+    shards = [list(s) for s in threads.get("shards") or []]
+    only = {h for h, why in work.items() if set(why or []) == {"reconcile"}}
+    out["issues"] = len(only)
+    for n, shard in enumerate(shards):
+        if not shard:
+            continue
+        share = len(only.intersection(shard)) / len(shard)
+        if share == 1:
+            out["shards"] += 1
+        role = "thread" if len(shards) == 1 else f"thread-{n + 1}of{len(shards)}"
+        for x in lanes:
+            if x.get("role") != role:
+                continue
+            gpt = pool_of(str(x.get("model") or "")) == "gpt"
+            tin = round(int(x.get("tokens_in") or 0) * share)
+            tout = round(int(x.get("tokens_out") or 0) * share)
+            out["lanes"] += share
+            out["tokens_in"] += tin
+            out["tokens_out"] += tout
+            if gpt:
+                out["gpt_lanes"] += share
+                out["gpt_tokens_in"] += tin
+                out["gpt_tokens_out"] += tout
+    out["lanes"], out["gpt_lanes"] = round(out["lanes"], 3), round(out["gpt_lanes"], 3)
+    return out
+
+
 def live_github_hits(lanes: list[dict[str, Any]], repo: str) -> list[str]:
     """Lane answers and stderr that show the replayed repository read from GitHub directly
     (its API or raw-content URLs): `artifact:pattern`, at most 20."""
@@ -1026,6 +1244,14 @@ def build_report(
         published_from = f"{phase} verified" if published else ""
     gate = steps.get(StepName.GATE.value)
     gpt = [x for x in lanes if pool_of(str(x["model"])) == "gpt"]
+    signals = v12_signals(scratch, new_run, run_dir)
+    degraded_for_scoring = (
+        "a thread-lane shard failed (threads.failed): some issues were never judged"
+        if signals["threads_failed"]
+        else None
+    )
+    replayed = (seeded.get("reconcile") or {}).get("source") == "replayed"
+    rw = reconcile_work(read_json(run_dir / "threads.json"), lanes, counted=replayed)
     contract = {
         "corrected": sum(x["status"] == "corrected" for x in lanes),
         "repaired": sum(x["status"] == "repaired" for x in lanes),
@@ -1093,6 +1319,7 @@ def build_report(
             "decision": (gate or {}).get("detail"),
             "forced_phase2": bool(((gate or {}).get("detail") or {}).get("forced_phase2")),
             "would_publish": read_json(run_dir / "gate-would-publish.json"),
+            **({"would_publish_note": V12_GATE_NOTE} if rc.policy.pipeline is not None else {}),
         },
         "steps": steps,
         "lanes": lanes,
@@ -1100,6 +1327,14 @@ def build_report(
             "lanes": len(gpt),
             "tokens_in": sum(int(x["tokens_in"] or 0) for x in gpt),
             "tokens_out": sum(int(x["tokens_out"] or 0) for x in gpt),
+        },
+        # the thread-lane work only the replay's own one-shot reconcile adds (production did
+        # it once, at some earlier round): counted apart so cost gates can leave it out
+        "reconcile_work": rw,
+        "gpt_excl_reconcile": {
+            "lanes": round(len(gpt) - rw["gpt_lanes"], 3),
+            "tokens_in": sum(int(x["tokens_in"] or 0) for x in gpt) - rw["gpt_tokens_in"],
+            "tokens_out": sum(int(x["tokens_out"] or 0) for x in gpt) - rw["gpt_tokens_out"],
         },
         "tokens_in": sum(int(x["tokens_in"] or 0) for x in lanes),
         "tokens_out": sum(int(x["tokens_out"] or 0) for x in lanes),
@@ -1114,6 +1349,13 @@ def build_report(
             for k, v in publications.items()
         },
         "review_body": (last or {}).get("body") or "",
+        # the inline comments (new threads) the last publication would open
+        "inline": (last or {}).get("inline") or [],
+        # bot finding threads open at the run's start: an inline comment on one of these
+        # issues is a duplicate thread (the S5 gate is zero)
+        "prior_open_threads": _prior_open_threads(scratch, rc, new_run, run_dir, pin),
+        "v12": signals,
+        "degraded_for_scoring": degraded_for_scoring,
         "conversation": read_json(run_dir / "conversation.json"),
         "historical_posted": _historical(prod, int(src["id"])),
         "seeded": seeded,

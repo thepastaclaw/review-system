@@ -790,7 +790,17 @@ def reconcile(
     kv_set(
         conn,
         _reconciled_key(repo, number),
-        json.dumps({"run": run_id, "sha": sha, "pending": pending}),
+        # `at` and the first `pending` (`pending_at_reconcile`; `pending` shrinks as the thread
+        # lane judges) let a replay tell what the record said at an earlier moment
+        json.dumps(
+            {
+                "run": run_id,
+                "sha": sha,
+                "pending": pending,
+                "at": now(),
+                "pending_at_reconcile": pending,
+            }
+        ),
     )
     return pending
 
@@ -868,8 +878,17 @@ def reconcile_all(
     return out
 
 
+def record_reconciled(
+    conn: sqlite3.Connection, repo: str, number: int, rec: dict[str, Any]
+) -> None:
+    """Write a PR's reconcile record as given (a replay copying the source's, as of its
+    cutoff). Caller holds the transaction."""
+    kv_set(conn, _reconciled_key(repo, number), json.dumps(rec))
+
+
 def reconciled(conn: sqlite3.Connection, repo: str, number: int) -> dict[str, Any] | None:
-    """The PR's reconcile record ({run, sha, pending}), or None before it ran."""
+    """The PR's reconcile record ({run, sha, pending, at, pending_at_reconcile}; records
+    written before `at` have only the first three), or None before it ran."""
     raw = kv_get(conn, _reconciled_key(repo, number))
     if raw is None:
         return None

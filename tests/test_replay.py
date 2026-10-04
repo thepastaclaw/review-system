@@ -405,6 +405,7 @@ def test_reconcile_as_of_outdates_moved_issues_and_leaves_open_threads_pending(
         git_dir=mirror,
     )  # fmt: skip
     assert got == {
+        "source": "replayed",
         "pr_open": True,
         "resolution_as_of_now": 0,
         "open_threads": 1,
@@ -415,10 +416,13 @@ def test_reconcile_as_of_outdates_moved_issues_and_leaves_open_threads_pending(
     issues = ledger.load(scratch, REPO, NUMBER)
     assert issues["h-early"].status == "outdated" and issues["0e0e0e"].status == "open"
     assert issues["0e0e0e"].thread_id == "PRRT_0e0e0e"  # the thread sync ran
-    assert ledger.reconciled(scratch, REPO, NUMBER) == {
+    rec = ledger.reconciled(scratch, REPO, NUMBER)
+    assert rec is not None and rec["at"]
+    assert {k: rec[k] for k in ("run", "sha", "pending", "pending_at_reconcile")} == {
         "run": None,
         "sha": history["head"],
         "pending": ["0e0e0e"],
+        "pending_at_reconcile": ["0e0e0e"],
     }
 
 

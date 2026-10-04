@@ -509,10 +509,16 @@ def test_reconcile_outdates_what_cannot_stand_and_leaves_the_rest_to_the_thread_
     assert led["b" * 12].status == "outdated" and led["b" * 12].status_source == "backfill"
     assert led["d" * 12].status == "withdrawn"
     rec = json.loads(kv_get(conn, "ledger.reconciled:r/x#1"))
-    assert rec == {"run": 9, "sha": "head", "pending": pending}
+    assert rec["at"] and {k: rec[k] for k in ("run", "sha", "pending")} == {
+        "run": 9,
+        "sha": "head",
+        "pending": pending,
+    }
     with tx(conn):
         ledger.settle_pending(conn, "r/x", 1, ["a" * 12])
-    assert ledger.reconciled(conn, "r/x", 1)["pending"] == ["c" * 12]
+    after = ledger.reconciled(conn, "r/x", 1)
+    assert after["pending"] == ["c" * 12]
+    assert after["pending_at_reconcile"] == pending  # what the reconcile left, kept
 
 
 def test_reconcile_on_a_closed_pr_outdates_every_standing_issue(conn):
