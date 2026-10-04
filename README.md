@@ -492,19 +492,33 @@ beside the production daemon (below); never against the box's database itself.
     mirror is never written, and a repository without one is mirrored under
     `--eval-mirrors`. The clone and the worktree are removed when the replay ends.
   - A v12 arm gets the issue ledger as of the cutoff (the source's events, then
-    `ledger backfill` over the seeded history) and the pre-flip reconcile at the cutoff
-    (closed from the source database, threads from the pinned view). A v11 arm gets
-    none. Thread resolution cannot be rewound: such heads are flagged
-    (`thread_resolution_as_of_now`) and S5/S8 are also scored without them.
+    `ledger backfill` over the seeded history). Production reconciles a PR once: a
+    reconcile the source recorded before the cutoff is copied as it stood then
+    (`seeded.reconcile.source: recorded`); otherwise the replay runs it at the cutoff
+    (closed from the source database, threads from the pinned view; `replayed`), and the
+    thread-lane work only that reconcile adds is reported apart (`reconcile_work`,
+    `gpt_excl_reconcile`). A v11 arm gets none. Thread resolution cannot be rewound: such
+    heads are flagged (`thread_resolution_as_of_now`) and S5/S8 are also scored without
+    them. The events an earlier run's strength is read from (dropped verifier shards,
+    conflicts, skipped or failed confirmation passes) are seeded with it.
+  - The report carries the v12 signals (`v12`: conflicts, failed thread-lane shards,
+    late non-blocking findings, settled re-folds, the share of candidates matched to an
+    open issue), the inline comments the run would open and the bot threads open at its
+    start (duplicate threads; the S5 gate is zero). A run whose thread-lane shard failed is
+    `degraded_for_scoring` and not scored. Under v12 no `gate-would-publish.json` is
+    recorded (`gate.would_publish_note` says why).
   - Lanes take slots in the configured work dir's pools but wait in `<pool>.replay/`,
     which production never reads (v0.24 included), so a waiting replay changes nothing for
     production (its comparison-lane admission and status export read `<pool>.line`). A
     replay lane takes a slot only while `<pool>.line` holds no production ticket, never the
     side-lane slot, and at most floor((n - 1) * `[scheduling] replay_pool_share`) (0.5)
     of a pool, or `replay_pool_slots.<pool>`; a pool of 1 or 2 slots is closed to replays
-    by default (on the box: gpt 5 of 12, gemini and glm 2 of 6, muse 9 of 20, compare 0).
-    The gpt pool is sized from the configured database's account reading. No comparison
-    lanes.
+    by default (on the box: gpt 5 of 12, gemini and glm 2 of 6, muse 9 of 20, compare 0);
+    `--replay-pool-slots POOL=N` caps a pool for one eval (eval-run.sh: `gpt=2`). The gpt
+    pool is sized from the configured database's account reading, read again once a slot is
+    locked and before every correction turn that keeps it: a slot the share no longer covers
+    (the box parked an OpenAI account) is let go and the lane waits for one it does. No
+    comparison lanes.
 - `reviewsys replay-set SETFILE --policy NAME=SKILLS_DIR ... --out DIR --concurrency N`
   runs every (head, policy, sample) as its own replay into `OUT/<policy>/run-<id>[-r<k>]/`.
   It is resumable, alternates which arm goes first, and stops on an exit 75. SETFILE is
@@ -519,7 +533,11 @@ beside the production daemon (below); never against the box's database itself.
   recall, known-FP blockers, re-raises, new blockers, gpt use, wall clock and active time,
   contract failures, and a noise floor from repeat samples. It also writes
   `to_judge.jsonl`: new blockers and findings near a label they did not match, blinded,
-  with content ids. LABELS is eval/labels.jsonl.
+  with content ids, the claim only: what one arm writes around a finding (revival and
+  regression sentences, links to earlier threads, the `(regression)` suffix, the
+  unconfirmed-blocker note) is stripped. The gpt cost ratios come with and without the
+  reconcile-only work (the 1.15x gate reads `*_excl_reconcile`). LABELS is
+  eval/labels.jsonl.
 - `reviewsys replay-judge OUT --set SETFILE --labels LABELS` asks one blinded lane per
   `to_judge.jsonl` item (gpt-6.1-sol at xhigh, read-only worktree at the replayed head,
   no GitHub, no token, work dir outside OUT): is it real, and does it match the label.
