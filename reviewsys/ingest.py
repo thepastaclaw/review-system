@@ -155,14 +155,31 @@ def enqueue_head(
     return "created"
 
 
+# heads the ingest pass creates on its own; every other trigger is someone asking for a review
+AUTOMATIC_TRIGGERS = frozenset({Trigger.NEW_PR.value, Trigger.NEW_PUSH.value})
+
+
 def close_pr_heads(
-    conn: sqlite3.Connection, repo: str, number: int, reason: str, *, ts: str | None = None
+    conn: sqlite3.Connection,
+    repo: str,
+    number: int,
+    reason: str,
+    *,
+    ts: str | None = None,
+    keep_requested_sha: str | None = None,
 ) -> int:
+    """Close the PR's queued and running heads. A head for `keep_requested_sha` that someone
+    asked for (not a new PR/push head) stays open."""
     ts = ts or now()
     rows = conn.execute(
-        "SELECT id FROM heads WHERE repo=? AND number=? AND status IN ('queued','running') AND queue='live'",
+        "SELECT id, sha, trigger FROM heads WHERE repo=? AND number=? AND status IN ('queued','running') AND queue='live'",
         (repo, number),
     ).fetchall()
+    rows = [
+        r
+        for r in rows
+        if not (r["sha"] == keep_requested_sha and r["trigger"] not in AUTOMATIC_TRIGGERS)
+    ]
     for row in rows:
         conn.execute(
             "UPDATE heads SET status='closed', finished_at=?, reason=? WHERE id=?",
@@ -199,7 +216,12 @@ def ingest_repo(
                 stats["ignored"] += 1
                 continue
             if p.is_draft:
-                if close_pr_heads(conn, repo, p.number, "pr_draft", ts=ts):
+                # drafts are not reviewed on their own, but a review requested on the draft's
+                # current commit (its gate comment's boxes) runs to the end: closing it here
+                # cancelled it minutes after it started (dashpay/platform#5285, 2026-10-05)
+                if close_pr_heads(
+                    conn, repo, p.number, "pr_draft", ts=ts, keep_requested_sha=p.head_sha
+                ):
                     stats["draft"] += 1
                 continue
             prior = conn.execute(
