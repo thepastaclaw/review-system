@@ -25,7 +25,7 @@ from . import github
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
-from .models import Trigger
+from .models import HeadStatus, Trigger
 from .status import median_run_minutes
 
 log = logging.getLogger(__name__)
@@ -215,7 +215,9 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     # an explicit request and is converted into a normal or priority queue entry. This pass is
     # the only writer for the heads it selects; the queue pass below leaves them alone. A head
     # waiting out a retry backoff (attempts > 0) or a priority head is not in debounce: it
-    # keeps the queue body, whose ETA counts the wait.
+    # keeps the queue body, whose ETA counts the wait. A draft whose commit is being or has
+    # been reviewed keeps the worker's body, but a box ticked on an older draft body still
+    # counts; after a failed review the draft body's boxes are the only way to retry.
     deferred = conn.execute(
         "SELECT p.repo,p.number,p.head_sha,p.is_draft,h.id,h.priority,h.status FROM prs p "
         "LEFT JOIN heads h ON h.repo=p.repo AND h.number=p.number AND h.sha=p.head_sha "
@@ -234,6 +236,8 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
 
                 with tx(conn):
                     enqueue_head(conn, cfg, p["repo"], p["number"], p["head_sha"], trigger, ts=ts)
+                continue
+            if p["status"] in (HeadStatus.RUNNING, HeadStatus.DONE):
                 continue
             rendered = deferred_body(
                 p["head_sha"], draft=bool(p["is_draft"]), debounce_minutes=cfg.debounce_minutes

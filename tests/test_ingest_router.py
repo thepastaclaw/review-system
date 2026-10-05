@@ -417,6 +417,90 @@ def test_debounced_head_boxes_still_work(cfg, conn, gh):
     assert "Priority review" in gh.routes[ep]["body"]
 
 
+def test_review_requested_on_a_draft_runs_to_the_end(cfg, conn, gh):
+    """dashpay/platform#5285 (2026-10-05): ticking a box on a draft queued a head, and the next
+    ingest pass closed it as `pr_draft`, cancelling the run minutes after it started, then
+    put the draft body back with the box unticked."""
+    from reviewsys.queue_status import DEFERRED_MARKER, deferred_body
+
+    sha = "5" * 40
+    gh.open_prs["dashpay/platform"] = [pr(5285, sha, isDraft=True)]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        kv_set(conn, "queue.comment_id:dashpay/platform#5285", "5285")
+    ep = "repos/dashpay/platform/issues/comments/5285"
+    gh.routes[ep] = {
+        "id": 5285,
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-gate v1 -->",
+    }
+    update_queue_comments(conn, cfg, gh)
+    assert DEFERRED_MARKER in gh.routes[ep]["body"]
+    gh.routes[ep]["body"] = gh.routes[ep]["body"].replace(
+        "- [ ] **Request normal", "- [x] **Request normal"
+    )
+    update_queue_comments(conn, cfg, gh)
+    head = conn.execute("SELECT id, trigger, status FROM heads WHERE number=5285").fetchone()
+    assert (head["trigger"], head["status"]) == ("manual", "queued")
+    update_queue_comments(conn, cfg, gh)
+    assert "Priority review" in gh.routes[ep]["body"]
+
+    # still a draft: the requested head survives ingest while queued and while running
+    ingest_prs(conn, cfg, gh)
+    assert (
+        conn.execute("SELECT status FROM heads WHERE id=?", (head["id"],)).fetchone()[0] == "queued"
+    )
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='running' WHERE id=?", (head["id"],))
+    ingest_prs(conn, cfg, gh)
+    assert (
+        conn.execute("SELECT status FROM heads WHERE id=?", (head["id"],)).fetchone()[0]
+        == "running"
+    )
+    # the worker's progress body is left alone, and so is its final body
+    gh.routes[ep]["body"] = "<!-- thepastaclaw-gate v1 -->\n🔍 Review in progress (commit 55555555)"
+    assert update_queue_comments(conn, cfg, gh)["written"] == 0
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE id=?", (head["id"],))
+    gh.routes[ep]["body"] = (
+        "<!-- thepastaclaw-gate v1 -->\n✅ Final review complete (commit 55555555)"
+    )
+    ingest_prs(conn, cfg, gh)
+    assert update_queue_comments(conn, cfg, gh)["written"] == 0
+    assert DEFERRED_MARKER not in gh.routes[ep]["body"]
+    # a failed review gets the draft body back, so its boxes can retry it
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE id=?", (head["id"],))
+    update_queue_comments(conn, cfg, gh)
+    assert DEFERRED_MARKER in gh.routes[ep]["body"]
+    # a box ticked on a draft body written before the fix still requests a review
+    gh.routes[ep]["body"] = deferred_body(sha, draft=True, debounce_minutes=30).replace(
+        "- [ ] **Request normal", "- [x] **Request normal"
+    )
+    update_queue_comments(conn, cfg, gh)
+    assert (
+        conn.execute("SELECT status FROM heads WHERE id=?", (head["id"],)).fetchone()[0] == "queued"
+    )
+
+    # a push to the draft: the requested head is for an old commit and the new one waits again
+    gh.open_prs["dashpay/platform"] = [pr(5285, "6" * 40, isDraft=True)]
+    ingest_prs(conn, cfg, gh)
+    assert (
+        conn.execute("SELECT status FROM heads WHERE id=?", (head["id"],)).fetchone()[0] == "closed"
+    )
+    update_queue_comments(conn, cfg, gh)
+    assert DEFERRED_MARKER in gh.routes[ep]["body"]
+
+
+def test_automatic_head_on_a_pr_turned_draft_is_closed(cfg, conn, gh):
+    gh.open_prs["dashpay/platform"] = [pr(7, "7" * 40)]
+    ingest_prs(conn, cfg, gh)
+    gh.open_prs["dashpay/platform"] = [pr(7, "7" * 40, isDraft=True)]
+    assert ingest_prs(conn, cfg, gh)["dashpay/platform"]["draft"] == 1
+    row = conn.execute("SELECT status, reason FROM heads WHERE number=7").fetchone()
+    assert tuple(row) == ("closed", "pr_draft")
+
+
 def test_head_in_retry_backoff_keeps_the_queue_body(cfg, conn, gh):
     """A retry backoff is not the push debounce: the queue body's ETA counts the wait."""
     ep = _debounced(conn, cfg, gh, 403, attempts=1)
