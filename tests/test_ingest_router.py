@@ -468,6 +468,11 @@ def test_review_requested_on_a_draft_runs_to_the_end(cfg, conn, gh):
     ingest_prs(conn, cfg, gh)
     assert update_queue_comments(conn, cfg, gh)["written"] == 0
     assert DEFERRED_MARKER not in gh.routes[ep]["body"]
+    # a failed review gets the draft body back, so its boxes can retry it
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE id=?", (head["id"],))
+    update_queue_comments(conn, cfg, gh)
+    assert DEFERRED_MARKER in gh.routes[ep]["body"]
     # a box ticked on a draft body written before the fix still requests a review
     gh.routes[ep]["body"] = deferred_body(sha, draft=True, debounce_minutes=30).replace(
         "- [ ] **Request normal", "- [x] **Request normal"
