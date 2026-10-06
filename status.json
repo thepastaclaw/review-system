@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-06T22:50:01Z",
-  "generated_at": "2026-10-06T22:50:01Z",
+  "data_as_of": "2026-10-06T22:51:01Z",
+  "generated_at": "2026-10-06T22:51:01Z",
   "history": {
     "daily": [
       {
@@ -204,6 +204,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7806,
+        "repo": "dashpay/dash",
+        "run_id": 3745,
+        "ts": "2026-10-06T22:50:06Z"
+      },
       {
         "detail": "attempt 1 sha=57982c01",
         "kind": "run.spawned",
@@ -515,14 +523,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-06T20:48:05Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 1602,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 3738,
-        "ts": "2026-10-06T20:41:02Z"
       }
     ],
     "tokens_by_effort": [
@@ -1128,35 +1128,35 @@
         "attempt": 1,
         "author": "DCG-Claude",
         "deadline_at": "2026-10-07T04:49:41Z",
-        "deadline_in_seconds": 21580,
+        "deadline_in_seconds": 21520,
         "degraded": false,
-        "elapsed_seconds": 20,
+        "elapsed_seconds": 80,
         "findings": null,
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-06T22:49:56Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-06T22:50:57Z",
         "id": 3745,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 15,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 55,
             "state": "running"
           }
         ],
         "number": 7806,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7806",
         "priority": true,
-        "progress": null,
+        "progress": 0.068,
         "queue": "live",
         "queued_at": "2026-10-06T22:48:03Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1092,
         "repo": "dashpay/dash",
         "sha": "57982c011eefaa6b3b5d1cabc83790efbfe91098",
         "started_at": "2026-10-06T22:49:41Z",
@@ -1170,26 +1170,66 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "backport-reviewer",
+                "dash-core-commit-history"
+              ]
+            },
             "name": "select",
-            "seconds": 15,
+            "seconds": 16,
             "started_at": "2026-10-06T22:49:46Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large cross-cutting refactor relocates chain parameters and separates argument parsing from their construction in src/chainparams.cpp and src/kernel/chainparams.cpp, without clearly changing consensus rules or another qualifying critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 16,
+            "started_at": "2026-10-06T22:49:46Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 15,
-            "started_at": "2026-10-06T22:49:46Z",
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-06T22:50:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 56,
+            "started_at": "2026-10-06T22:50:05Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "backport: bitcoin#26177",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 98
       }
     ],
@@ -1268,13 +1308,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
@@ -1293,7 +1333,7 @@
       "reviews": 118,
       "tokens": 1521486340
     },
-    "ts": "2026-10-06T22:50:01Z",
+    "ts": "2026-10-06T22:51:01Z",
     "typical_minutes_by_tier": {
       "critical": 30.3,
       "low": 29.6,
@@ -1304,7 +1344,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.3333333333333333,
+      "idle_minutes": 1.3333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
