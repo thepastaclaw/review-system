@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-06T03:14:00Z",
-  "generated_at": "2026-10-06T03:14:00Z",
+  "data_as_of": "2026-10-06T03:15:01Z",
+  "generated_at": "2026-10-06T03:15:01Z",
   "history": {
     "daily": [
       {
@@ -178,7 +178,7 @@
           },
           "wait": {
             "median_seconds": 1821,
-            "n": 518,
+            "n": 519,
             "p90_seconds": 6640
           }
         },
@@ -204,6 +204,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 1012,
+        "repo": "dashpay/grovedb",
+        "run_id": 3635,
+        "ts": "2026-10-06T03:14:22Z"
+      },
+      {
+        "detail": "attempt 1 sha=f574d927",
+        "kind": "run.spawned",
+        "number": 1012,
+        "repo": "dashpay/grovedb",
+        "run_id": 3635,
+        "ts": "2026-10-06T03:14:09Z"
+      },
       {
         "detail": "ok in 1760s",
         "kind": "run.done",
@@ -507,22 +523,6 @@
         "repo": "dashpay/platform",
         "run_id": 3627,
         "ts": "2026-10-06T01:29:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 5285,
-        "repo": "dashpay/platform",
-        "run_id": 3627,
-        "ts": "2026-10-06T01:29:49Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 5285,
-        "repo": "dashpay/platform",
-        "run_id": 3627,
-        "ts": "2026-10-06T01:29:49Z"
       }
     ],
     "tokens_by_effort": [
@@ -1116,14 +1116,165 @@
       "findings_posted": 2883,
       "reviews": 4372,
       "reviews_imported": 2245,
-      "runs": 3634,
+      "runs": 3635,
       "tokens_in": 26390084726,
       "tokens_out": 381920619,
       "tokens_total": 26772005345
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-06T09:14:09Z",
+        "deadline_in_seconds": 21548,
+        "degraded": false,
+        "elapsed_seconds": 52,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-06T03:14:55Z",
+        "id": 3635,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "architecture-layering",
+            "since_seconds": 35,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 36,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 37,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 35,
+            "state": "running"
+          }
+        ],
+        "number": 1012,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/grovedb/pull/1012",
+        "priority": false,
+        "progress": 0.102,
+        "queue": "live",
+        "queued_at": "2026-10-06T02:44:07Z",
+        "remaining_seconds": 456,
+        "repo": "dashpay/grovedb",
+        "sha": "f574d927c034ae0605479a98ee22ee9e811e69a3",
+        "started_at": "2026-10-06T03:14:09Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-06T03:14:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-06T03:14:13Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change modifies version-dependent proof generation in merk/src/proofs/query/mod.rs, but its narrowly scoped limit-exhaustion fix is not large or intricate enough to meet the critical tier despite touching cryptographic proofs.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-06T03:14:13Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-06T03:14:20Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-06T03:14:22Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "platform-versioning",
+              "rust-quality"
+            ],
+            "lanes_total": 4,
+            "name": "phase2",
+            "seconds": 37,
+            "started_at": "2026-10-06T03:14:24Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(proof): hide a range bound a V1 proof passes after its limit",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1802
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1139,7 +1290,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1153,7 +1304,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-06T03:12:29Z",
+        "at": "2026-10-06T03:14:33Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1173,11 +1324,12 @@
       "closed": 305,
       "done": 4326,
       "failed": 72,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 1824
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-06T03:10:40Z",
+    "ingest_last_at": "2026-10-06T03:14:09Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1199,7 +1351,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 4,
         "slots": 12,
         "waiting": 0
       },
@@ -1211,40 +1363,21 @@
       }
     ],
     "last_run_done_at": "2026-10-06T03:02:02Z",
-    "last_run_started_at": "2026-10-06T02:32:42Z",
+    "last_run_started_at": "2026-10-06T03:14:09Z",
     "median_run_minutes": 22.966666666666665,
     "notify_last_at": "2026-10-06T03:12:50Z",
-    "oldest_queued_at": "2026-10-06T02:44:07Z",
+    "oldest_queued_at": "2026-10-06T02:51:39Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1793,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": false,
-        "eligible_at": "2026-10-06T03:14:07Z",
-        "eligible_in_seconds": 7,
-        "number": 1012,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/grovedb/pull/1012",
-        "prioritize_url": "https://github.com/dashpay/grovedb/issues/1012#issuecomment-6008012865",
-        "priority": false,
-        "queued_at": "2026-10-06T02:44:07Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/grovedb",
-        "sha": "f574d927c034ae0605479a98ee22ee9e811e69a3",
-        "title": "fix(proof): hide a range bound a V1 proof passes after its limit",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1341,
+        "age_seconds": 1402,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-06T03:21:39Z",
-        "eligible_in_seconds": 459,
+        "eligible_in_seconds": 398,
         "number": 5250,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5250",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5250#issuecomment-5945322126",
         "priority": false,
@@ -1263,7 +1396,7 @@
       "reviews": 17,
       "tokens": 332590085
     },
-    "ts": "2026-10-06T03:14:00Z",
+    "ts": "2026-10-06T03:15:01Z",
     "typical_minutes_by_tier": {
       "critical": 36.5,
       "low": 26.6,
@@ -1272,9 +1405,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 41.3,
+      "idle_minutes": 0.8666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
