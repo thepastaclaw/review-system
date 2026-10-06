@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-06T11:53:00Z",
-  "generated_at": "2026-10-06T11:53:00Z",
+  "data_as_of": "2026-10-06T11:54:01Z",
+  "generated_at": "2026-10-06T11:54:01Z",
   "history": {
     "daily": [
       {
@@ -178,8 +178,8 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 500,
-            "p90_seconds": 6403
+            "n": 501,
+            "p90_seconds": 6377
           }
         },
         "priority": {
@@ -204,6 +204,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=baf17390",
+        "kind": "run.spawned",
+        "number": 901,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 3666,
+        "ts": "2026-10-06T11:53:39Z"
+      },
       {
         "detail": "ok in 1204s",
         "kind": "run.done",
@@ -514,14 +522,6 @@
         "number": 901,
         "repo": "dashpay/dash-evo-tool",
         "run_id": 3663,
-        "ts": "2026-10-06T11:04:36Z"
-      },
-      {
-        "detail": "attempt 1 sha=6ed23aa9",
-        "kind": "run.spawned",
-        "number": 5305,
-        "repo": "dashpay/platform",
-        "run_id": 3662,
         "ts": "2026-10-06T11:04:36Z"
       }
     ],
@@ -1116,14 +1116,94 @@
       "findings_posted": 2918,
       "reviews": 4400,
       "reviews_imported": 2245,
-      "runs": 3665,
+      "runs": 3666,
       "tokens_in": 26983810776,
       "tokens_out": 386552046,
       "tokens_total": 27370362822
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "lklimek",
+        "deadline_at": "2026-10-06T17:53:39Z",
+        "deadline_in_seconds": 21578,
+        "degraded": false,
+        "elapsed_seconds": 22,
+        "findings": null,
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-06T11:53:54Z",
+        "id": 3666,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 901,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/901",
+        "priority": false,
+        "progress": 0.011,
+        "queue": "live",
+        "queued_at": "2026-10-06T11:23:05Z",
+        "remaining_seconds": 2028,
+        "repo": "dashpay/dash-evo-tool",
+        "sha": "baf173905db7306c5c5d78381e0fcf0fbf8e5a5f",
+        "started_at": "2026-10-06T11:53:39Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-10-06T11:53:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-10-06T11:53:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff changes storage migration behavior in src/backend_task/migration/finish_unwire.rs by removing legacy scheduled-vote importing and its durable warning handling, alongside introducing a persistent vote-operation journal.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-06T11:53:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 5,
+            "started_at": "2026-10-06T11:53:56Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(dpns): operator-first masternode voting and usernames in identities",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1834
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1139,7 +1219,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1173,11 +1253,11 @@
       "closed": 308,
       "done": 4354,
       "failed": 72,
-      "queued": 1,
+      "running": 1,
       "superseded": 1828
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-06T11:49:47Z",
+    "ingest_last_at": "2026-10-06T11:53:39Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1211,32 +1291,12 @@
       }
     ],
     "last_run_done_at": "2026-10-06T11:47:37Z",
-    "last_run_started_at": "2026-10-06T11:27:32Z",
+    "last_run_started_at": "2026-10-06T11:53:39Z",
     "median_run_minutes": 20.083333333333332,
     "notify_last_at": "2026-10-06T11:52:38Z",
-    "oldest_queued_at": "2026-10-06T11:23:05Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1795,
-        "attempts": 0,
-        "author": "lklimek",
-        "eligible": false,
-        "eligible_at": "2026-10-06T11:53:05Z",
-        "eligible_in_seconds": 5,
-        "number": 901,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/901",
-        "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/901#issuecomment-4992535363",
-        "priority": false,
-        "queued_at": "2026-10-06T11:23:05Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-evo-tool",
-        "sha": "baf173905db7306c5c5d78381e0fcf0fbf8e5a5f",
-        "title": "feat(dpns): operator-first masternode voting and usernames in identities",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-06",
       "failed": 0,
@@ -1244,7 +1304,7 @@
       "reviews": 45,
       "tokens": 899787849
     },
-    "ts": "2026-10-06T11:53:00Z",
+    "ts": "2026-10-06T11:54:01Z",
     "typical_minutes_by_tier": {
       "critical": 34.2,
       "low": 26.7,
@@ -1253,9 +1313,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 25.466666666666665,
+      "idle_minutes": 0.36666666666666664,
       "ingest_stale": false,
       "stuck": false
     }
