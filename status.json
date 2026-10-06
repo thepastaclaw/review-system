@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-06T10:34:00Z",
-  "generated_at": "2026-10-06T10:34:00Z",
+  "data_as_of": "2026-10-06T10:35:01Z",
+  "generated_at": "2026-10-06T10:35:01Z",
   "history": {
     "daily": [
       {
@@ -178,8 +178,8 @@
           },
           "wait": {
             "median_seconds": 1820,
-            "n": 506,
-            "p90_seconds": 6364
+            "n": 507,
+            "p90_seconds": 6361
           }
         },
         "priority": {
@@ -204,6 +204,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5293,
+        "repo": "dashpay/platform",
+        "run_id": 3661,
+        "ts": "2026-10-06T10:34:56Z"
+      },
+      {
+        "detail": "attempt 1 sha=0f6a0fc0",
+        "kind": "run.spawned",
+        "number": 5293,
+        "repo": "dashpay/platform",
+        "run_id": 3661,
+        "ts": "2026-10-06T10:34:24Z"
+      },
+      {
+        "detail": "9a54a4ae trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 901,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": null,
+        "ts": "2026-10-06T10:34:22Z"
+      },
+      {
+        "detail": "6ed23aa9 trigger=new_pr priority=0",
+        "kind": "head.queued",
+        "number": 5305,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-06T10:34:21Z"
+      },
       {
         "detail": "ok in 1608s",
         "kind": "run.done",
@@ -491,38 +523,6 @@
         "repo": "dashpay/platform",
         "run_id": 3657,
         "ts": "2026-10-06T09:11:09Z"
-      },
-      {
-        "detail": "fe84359a trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 1141,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": null,
-        "ts": "2026-10-06T09:07:13Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.corrected",
-        "number": 901,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 3656,
-        "ts": "2026-10-06T09:05:38Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 901,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 3656,
-        "ts": "2026-10-06T08:57:12Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 1001,
-        "repo": "dashpay/grovedb",
-        "run_id": 3655,
-        "ts": "2026-10-06T08:56:58Z"
       }
     ],
     "tokens_by_effort": [
@@ -1116,14 +1116,121 @@
       "findings_posted": 2913,
       "reviews": 4396,
       "reviews_imported": 2245,
-      "runs": 3660,
+      "runs": 3661,
       "tokens_in": 26938727038,
       "tokens_out": 386210399,
       "tokens_total": 27324937437
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "llbartekll",
+        "deadline_at": "2026-10-06T16:34:24Z",
+        "deadline_in_seconds": 21563,
+        "degraded": false,
+        "elapsed_seconds": 37,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-06T10:34:55Z",
+        "id": 3661,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 5,
+            "state": "running"
+          }
+        ],
+        "number": 5293,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5293",
+        "priority": false,
+        "progress": 0.02,
+        "queue": "live",
+        "queued_at": "2026-10-06T10:04:16Z",
+        "remaining_seconds": 1781,
+        "repo": "dashpay/platform",
+        "sha": "0f6a0fc02b1c867b14de4f5bd705f36d3423ff12",
+        "started_at": "2026-10-06T10:34:24Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 10,
+            "started_at": "2026-10-06T10:34:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 15,
+            "started_at": "2026-10-06T10:34:35Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a small, contained CI and Python tooling change that replaces a hardcoded base branch with validated repository metadata without changing schema or runtime behavior.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 15,
+            "started_at": "2026-10-06T10:34:35Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-06T10:34:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 7,
+            "started_at": "2026-10-06T10:34:54Z",
+            "status": "running"
+          }
+        ],
+        "tier": "low",
+        "title": "ci(swift-sdk): take the schema freeze base from the default branch",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1808
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1139,7 +1246,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1153,9 +1260,9 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-06T10:32:42Z",
+        "at": "2026-10-06T10:35:00Z",
         "quota_exhausted": false,
-        "reason": "gpt-6.1-sol answered"
+        "reason": "gpt-6.1-sol: probe failed (timed out); not treated as exhausted"
       },
       "phase1_effort_cap": "high",
       "sentinel": "gpt-6.1-sol",
@@ -1173,11 +1280,12 @@
       "closed": 308,
       "done": 4350,
       "failed": 72,
-      "queued": 1,
+      "queued": 2,
+      "running": 1,
       "superseded": 1827
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-06T10:30:55Z",
+    "ingest_last_at": "2026-10-06T10:34:24Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1193,7 +1301,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1211,29 +1319,48 @@
       }
     ],
     "last_run_done_at": "2026-10-06T10:31:08Z",
-    "last_run_started_at": "2026-10-06T10:04:20Z",
+    "last_run_started_at": "2026-10-06T10:34:24Z",
     "median_run_minutes": 23.7,
     "notify_last_at": "2026-10-06T10:33:02Z",
-    "oldest_queued_at": "2026-10-06T10:04:16Z",
+    "oldest_queued_at": "2026-10-06T10:34:21Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1784,
+        "age_seconds": 40,
         "attempts": 0,
-        "author": "llbartekll",
+        "author": "QuantumExplorer",
         "eligible": false,
-        "eligible_at": "2026-10-06T10:34:16Z",
-        "eligible_in_seconds": 16,
-        "number": 5293,
+        "eligible_at": "2026-10-06T11:04:21Z",
+        "eligible_in_seconds": 1760,
+        "number": 5305,
         "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5293",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5293#issuecomment-5996522843",
+        "pr_url": "https://github.com/dashpay/platform/pull/5305",
+        "prioritize_url": "https://github.com/dashpay/platform/pull/5305#issuecomment-new",
         "priority": false,
-        "queued_at": "2026-10-06T10:04:16Z",
+        "queued_at": "2026-10-06T10:34:21Z",
         "reason": "debounce (more pushes may follow)",
         "repo": "dashpay/platform",
-        "sha": "0f6a0fc02b1c867b14de4f5bd705f36d3423ff12",
-        "title": "ci(swift-sdk): take the schema freeze base from the default branch",
+        "sha": "6ed23aa9e07cbf54404217b13a750491b108eae5",
+        "title": "build: bump grovedb so a limit-cut V1 proof hides its range bound",
+        "trigger": "new_pr"
+      },
+      {
+        "age_seconds": 39,
+        "attempts": 0,
+        "author": "lklimek",
+        "eligible": false,
+        "eligible_at": "2026-10-06T11:04:22Z",
+        "eligible_in_seconds": 1761,
+        "number": 901,
+        "position": 2,
+        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/901",
+        "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/901#issuecomment-4992535363",
+        "priority": false,
+        "queued_at": "2026-10-06T10:34:22Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/dash-evo-tool",
+        "sha": "9a54a4ae8ddb2a999cb1e9497d4464badccd2f6d",
+        "title": "feat(dpns): operator-first masternode voting and usernames in identities",
         "trigger": "new_push"
       }
     ],
@@ -1244,7 +1371,7 @@
       "reviews": 41,
       "tokens": 865365083
     },
-    "ts": "2026-10-06T10:34:00Z",
+    "ts": "2026-10-06T10:35:01Z",
     "typical_minutes_by_tier": {
       "critical": 34.5,
       "low": 26.7,
@@ -1253,9 +1380,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 29.666666666666668,
+      "idle_minutes": 0.6166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
