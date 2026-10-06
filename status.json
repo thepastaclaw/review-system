@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-06T10:46:00Z",
-  "generated_at": "2026-10-06T10:46:00Z",
+  "data_as_of": "2026-10-06T10:47:01Z",
+  "generated_at": "2026-10-06T10:47:01Z",
   "history": {
     "daily": [
       {
@@ -546,15 +546,15 @@
       },
       {
         "effort": "medium",
-        "lanes": 2738,
-        "tokens_in": 408839810,
-        "tokens_out": 4994321
+        "lanes": 2741,
+        "tokens_in": 409211360,
+        "tokens_out": 4996001
       },
       {
         "effort": "high",
-        "lanes": 8535,
-        "tokens_in": 8577272312,
-        "tokens_out": 86294334
+        "lanes": 8536,
+        "tokens_in": 8577374733,
+        "tokens_out": 86295317
       },
       {
         "effort": "low",
@@ -600,18 +600,18 @@
         "tokens_out": 32382214
       },
       {
-        "avg_tokens_per_lane": 1259554.0,
-        "lanes": 5322,
+        "avg_tokens_per_lane": 1258697.0,
+        "lanes": 5326,
         "model": "gpt-6.1-sol",
-        "tokens_in": 6670688780,
-        "tokens_out": 32657335
+        "tokens_in": 6671162751,
+        "tokens_out": 32659998
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 3661,
-        "tokens_in": 865254,
-        "tokens_out": 27182
+        "tokens_in": 1339225,
+        "tokens_out": 29845
       },
       {
         "run_id": 3660,
@@ -1110,16 +1110,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11737899,
+      "avg_tokens_per_completed_review": 11738104,
       "completed_reviews": 2328,
       "findings": 16791,
       "findings_posted": 2913,
       "reviews": 4396,
       "reviews_imported": 2245,
       "runs": 3661,
-      "tokens_in": 26939592292,
-      "tokens_out": 386237581,
-      "tokens_total": 27325829873
+      "tokens_in": 26940066263,
+      "tokens_out": 386240244,
+      "tokens_total": 27326306507
     }
   },
   "live": {
@@ -1128,16 +1128,16 @@
         "attempt": 1,
         "author": "llbartekll",
         "deadline_at": "2026-10-06T16:34:24Z",
-        "deadline_in_seconds": 20904,
+        "deadline_in_seconds": 20843,
         "degraded": false,
-        "elapsed_seconds": 696,
+        "elapsed_seconds": 757,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-10-06T10:45:58Z",
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-10-06T10:47:00Z",
         "id": 3661,
         "lanes": [
           {
@@ -1189,6 +1189,46 @@
             "status": "completed",
             "tokens_in": 121253,
             "tokens_out": 691
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 102421,
+            "tokens_out": 983
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "security-auditor",
+            "status": "completed",
+            "tokens_in": 89780,
+            "tokens_out": 470
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 127305,
+            "tokens_out": 556
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "architecture-layering",
+            "status": "completed",
+            "tokens_in": 154465,
+            "tokens_out": 654
           }
         ],
         "live_lanes": [
@@ -1199,19 +1239,19 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 26,
+            "since_seconds": 24,
             "state": "running"
           }
         ],
         "number": 5293,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_verify2",
         "pr_url": "https://github.com/dashpay/platform/pull/5293",
         "priority": false,
-        "progress": 0.877,
+        "progress": 0.915,
         "queue": "live",
         "queued_at": "2026-10-06T10:04:16Z",
-        "remaining_seconds": 97,
+        "remaining_seconds": 70,
         "repo": "dashpay/platform",
         "sha": "0f6a0fc02b1c867b14de4f5bd705f36d3423ff12",
         "started_at": "2026-10-06T10:34:24Z",
@@ -1307,17 +1347,43 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify2",
-            "seconds": 26,
+            "seconds": 30,
             "started_at": "2026-10-06T10:45:34Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 3,
+            "lanes_left": [],
+            "lanes_total": 3,
+            "name": "fresh_phase2",
+            "seconds": 33,
+            "started_at": "2026-10-06T10:46:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "fresh_verify2",
+            "seconds": 24,
+            "started_at": "2026-10-06T10:46:37Z",
             "status": "running"
           }
         ],
         "tier": "low",
         "title": "ci(swift-sdk): take the schema freeze base from the default branch",
-        "tokens_in": 865254,
-        "tokens_out": 27182,
+        "tokens_in": 1339225,
+        "tokens_out": 29845,
         "trigger": "new_push",
         "upcoming": [
           "publish"
@@ -1354,7 +1420,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-06T10:44:06Z",
+        "at": "2026-10-06T10:46:18Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1415,17 +1481,17 @@
     "last_run_done_at": "2026-10-06T10:31:08Z",
     "last_run_started_at": "2026-10-06T10:34:24Z",
     "median_run_minutes": 23.7,
-    "notify_last_at": "2026-10-06T10:44:33Z",
+    "notify_last_at": "2026-10-06T10:46:59Z",
     "oldest_queued_at": "2026-10-06T10:34:21Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 699,
+        "age_seconds": 760,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-06T11:04:21Z",
-        "eligible_in_seconds": 1101,
+        "eligible_in_seconds": 1040,
         "number": 5305,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5305",
@@ -1439,12 +1505,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 698,
+        "age_seconds": 759,
         "attempts": 0,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-10-06T11:04:22Z",
-        "eligible_in_seconds": 1102,
+        "eligible_in_seconds": 1041,
         "number": 901,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/901",
@@ -1465,7 +1531,7 @@
       "reviews": 41,
       "tokens": 865365083
     },
-    "ts": "2026-10-06T10:46:00Z",
+    "ts": "2026-10-06T10:47:01Z",
     "typical_minutes_by_tier": {
       "critical": 34.5,
       "low": 26.7,
@@ -1476,7 +1542,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 11.6,
+      "idle_minutes": 12.616666666666667,
       "ingest_stale": false,
       "stuck": false
     }
