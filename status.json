@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-06T11:05:01Z",
-  "generated_at": "2026-10-06T11:05:01Z",
+  "data_as_of": "2026-10-06T11:06:01Z",
+  "generated_at": "2026-10-06T11:06:01Z",
   "history": {
     "daily": [
       {
@@ -204,6 +204,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 901,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 3663,
+        "ts": "2026-10-06T11:05:02Z"
+      },
       {
         "detail": null,
         "kind": "phase1.model_selected",
@@ -515,14 +523,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-06T09:43:48Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 1141,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 3658,
-        "ts": "2026-10-06T09:38:12Z"
       }
     ],
     "tokens_by_effort": [
@@ -1128,12 +1128,12 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-06T17:04:36Z",
-        "deadline_in_seconds": 21575,
+        "deadline_in_seconds": 21515,
         "degraded": false,
-        "elapsed_seconds": 25,
+        "elapsed_seconds": 85,
         "findings": null,
-        "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-06T11:04:51Z",
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-06T11:05:52Z",
         "id": 3662,
         "lanes": [],
         "live_lanes": [
@@ -1144,7 +1144,7 @@
             "phase": "phase1",
             "pool": "glm",
             "role": "general",
-            "since_seconds": 3,
+            "since_seconds": 63,
             "state": "running"
           }
         ],
@@ -1153,10 +1153,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5305",
         "priority": false,
-        "progress": 0.015,
+        "progress": 0.05,
         "queue": "live",
         "queued_at": "2026-10-06T10:34:21Z",
-        "remaining_seconds": 1666,
+        "remaining_seconds": 1606,
         "repo": "dashpay/platform",
         "sha": "6ed23aa9e07cbf54404217b13a750491b108eae5",
         "started_at": "2026-10-06T11:04:36Z",
@@ -1212,7 +1212,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 4,
+            "seconds": 64,
             "started_at": "2026-10-06T11:04:57Z",
             "status": "running"
           }
@@ -1235,24 +1235,45 @@
         "attempt": 1,
         "author": "lklimek",
         "deadline_at": "2026-10-06T17:04:36Z",
-        "deadline_in_seconds": 21575,
+        "deadline_in_seconds": 21515,
         "degraded": false,
-        "elapsed_seconds": 25,
+        "elapsed_seconds": 85,
         "findings": null,
-        "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-06T11:04:51Z",
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-06T11:05:52Z",
         "id": 3663,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 56,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 57,
+            "state": "running"
+          }
+        ],
         "number": 901,
         "overdue": false,
-        "phase": "context",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/901",
         "priority": false,
-        "progress": 0.012,
+        "progress": 0.067,
         "queue": "live",
         "queued_at": "2026-10-06T10:34:22Z",
-        "remaining_seconds": 2028,
+        "remaining_seconds": 1179,
         "repo": "dashpay/dash-evo-tool",
         "sha": "9a54a4ae8ddb2a999cb1e9497d4464badccd2f6d",
         "started_at": "2026-10-06T11:04:36Z",
@@ -1290,8 +1311,36 @@
           {
             "info": {},
             "name": "context",
-            "seconds": 5,
+            "seconds": 6,
             "started_at": "2026-10-06T11:04:56Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-06T11:05:02Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 57,
+            "started_at": "2026-10-06T11:05:04Z",
             "status": "running"
           }
         ],
@@ -1301,8 +1350,6 @@
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "phase1",
-          "phase2",
           "verify2",
           "fresh_phase2",
           "fresh_verify2",
@@ -1386,7 +1433,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1400,7 +1447,7 @@
     "last_run_done_at": "2026-10-06T10:47:10Z",
     "last_run_started_at": "2026-10-06T11:04:36Z",
     "median_run_minutes": 23.383333333333333,
-    "notify_last_at": "2026-10-06T11:02:53Z",
+    "notify_last_at": "2026-10-06T11:05:18Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1411,7 +1458,7 @@
       "reviews": 42,
       "tokens": 866838819
     },
-    "ts": "2026-10-06T11:05:01Z",
+    "ts": "2026-10-06T11:06:01Z",
     "typical_minutes_by_tier": {
       "critical": 34.5,
       "low": 26.6,
@@ -1422,7 +1469,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.4166666666666667,
+      "idle_minutes": 1.4166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
