@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-06T23:30:00Z",
-  "generated_at": "2026-10-06T23:30:00Z",
+  "data_as_of": "2026-10-06T23:31:01Z",
+  "generated_at": "2026-10-06T23:31:01Z",
   "history": {
     "daily": [
       {
@@ -204,6 +204,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1533,
+        "repo": "dashpay/tenderdash",
+        "run_id": 3747,
+        "ts": "2026-10-06T23:30:18Z"
+      },
       {
         "detail": "attempt 1 sha=fc8b88ac",
         "kind": "run.spawned",
@@ -515,14 +523,6 @@
         "repo": "dashpay/dash-platform-website",
         "run_id": 3740,
         "ts": "2026-10-06T21:16:43Z"
-      },
-      {
-        "detail": "ok in 636s",
-        "kind": "run.done",
-        "number": 5026,
-        "repo": "dashpay/platform",
-        "run_id": 3739,
-        "ts": "2026-10-06T21:02:38Z"
       }
     ],
     "tokens_by_effort": [
@@ -1128,24 +1128,35 @@
         "attempt": 1,
         "author": "dependabot",
         "deadline_at": "2026-10-07T05:30:00Z",
-        "deadline_in_seconds": 21600,
+        "deadline_in_seconds": 21539,
         "degraded": false,
-        "elapsed_seconds": 0,
+        "elapsed_seconds": 61,
         "findings": null,
-        "heartbeat_age_seconds": 0,
-        "heartbeat_at": "2026-10-06T23:30:00Z",
+        "heartbeat_age_seconds": 16,
+        "heartbeat_at": "2026-10-06T23:30:45Z",
         "id": 3747,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 43,
+            "state": "running"
+          }
+        ],
         "number": 1533,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1533",
         "priority": true,
-        "progress": 0.0,
+        "progress": 0.08,
         "queue": "live",
         "queued_at": "2026-10-06T23:29:58Z",
-        "remaining_seconds": 1139,
+        "remaining_seconds": 700,
         "repo": "dashpay/tenderdash",
         "sha": "fc8b88ac97c5f2cf31ce9ceeca56a19bfbf6fe10",
         "started_at": "2026-10-06T23:30:00Z",
@@ -1154,25 +1165,66 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 0,
+            "seconds": 4,
             "started_at": "2026-10-06T23:30:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 9,
+            "started_at": "2026-10-06T23:30:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff is a single pinned-action version bump in the Markdown lint workflow, with potential linting behavior changes but a small, contained CI-only scope.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-06T23:30:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-06T23:30:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 44,
+            "started_at": "2026-10-06T23:30:17Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "low",
         "title": "build(deps): Bump super-linter/super-linter from 8.7.0 to 9.0.0",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "mention",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase1",
           "verify1",
           "gate",
           "phase2",
           "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 2
@@ -1207,7 +1259,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-06T23:28:38Z",
+        "at": "2026-10-06T23:30:43Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1247,7 +1299,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1278,7 +1330,7 @@
       "reviews": 120,
       "tokens": 1533513843
     },
-    "ts": "2026-10-06T23:30:00Z",
+    "ts": "2026-10-06T23:31:01Z",
     "typical_minutes_by_tier": {
       "critical": 30.3,
       "low": 29.6,
@@ -1289,7 +1341,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.0,
+      "idle_minutes": 1.0166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
