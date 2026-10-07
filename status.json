@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-07T03:47:00Z",
-  "generated_at": "2026-10-07T03:47:01Z",
+  "data_as_of": "2026-10-07T03:48:01Z",
+  "generated_at": "2026-10-07T03:48:01Z",
   "history": {
     "daily": [
       {
@@ -200,8 +200,8 @@
           },
           "wait": {
             "median_seconds": 20,
-            "n": 521,
-            "p90_seconds": 821
+            "n": 522,
+            "p90_seconds": 818
           }
         }
       },
@@ -209,6 +209,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 691,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 3774,
+        "ts": "2026-10-07T03:47:33Z"
+      },
+      {
+        "detail": "attempt 1 sha=81ccd102",
+        "kind": "run.spawned",
+        "number": 691,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 3774,
+        "ts": "2026-10-07T03:47:22Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 691,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-07T03:47:21Z"
+      },
       {
         "detail": "81ccd102 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -504,30 +528,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 3769,
         "ts": "2026-10-07T03:12:13Z"
-      },
-      {
-        "detail": "ok in 271s",
-        "kind": "run.done",
-        "number": 690,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 3768,
-        "ts": "2026-10-07T03:09:10Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 691,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 3769,
-        "ts": "2026-10-07T03:08:42Z"
-      },
-      {
-        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
-        "kind": "compare.selected",
-        "number": 691,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 3769,
-        "ts": "2026-10-07T03:08:42Z"
       }
     ],
     "tokens_by_effort": [
@@ -1121,14 +1121,127 @@
       "findings_posted": 3030,
       "reviews": 4496,
       "reviews_imported": 2245,
-      "runs": 3773,
+      "runs": 3774,
       "tokens_in": 27723071666,
       "tokens_out": 398346743,
       "tokens_total": 28121418409
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-07T09:47:22Z",
+        "deadline_in_seconds": 21561,
+        "degraded": false,
+        "elapsed_seconds": 39,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-07T03:47:52Z",
+        "id": 3774,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 26,
+            "state": "running"
+          }
+        ],
+        "number": 691,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/691",
+        "priority": true,
+        "progress": 0.045,
+        "queue": "live",
+        "queued_at": "2026-10-07T03:45:52Z",
+        "remaining_seconds": 833,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "81ccd102e40ddaaa039126fff27a187dea5344e4",
+        "started_at": "2026-10-07T03:47:22Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-07T03:47:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-07T03:47:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff changes consensus-enforced document validation rules in contracts/pollr-contract.json, including immutable ballot fields, permanent-document references, unique ballot indexing, and creation/update deadlines, alongside the client ballot-write lifecycle.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-07T03:47:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-07T03:47:31Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-07T03:47:33Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 27,
+            "started_at": "2026-10-07T03:47:34Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(pollr): pollr v5 contract and client (editable ballots until close)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 90
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1144,7 +1257,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1178,7 +1291,8 @@
       "closed": 310,
       "done": 4450,
       "failed": 72,
-      "queued": 4,
+      "queued": 3,
+      "running": 1,
       "superseded": 1843
     },
     "ingest_error_streak": 0,
@@ -1204,7 +1318,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1216,19 +1330,19 @@
       }
     ],
     "last_run_done_at": "2026-10-07T03:43:35Z",
-    "last_run_started_at": "2026-10-07T03:29:15Z",
+    "last_run_started_at": "2026-10-07T03:47:22Z",
     "median_run_minutes": 8.7,
     "notify_last_at": "2026-10-07T03:46:55Z",
     "oldest_queued_at": "2026-10-07T03:26:54Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1206,
+        "age_seconds": 1267,
         "attempts": 0,
         "author": "bfoss765",
         "eligible": false,
         "eligible_at": "2026-10-07T03:56:54Z",
-        "eligible_in_seconds": 594,
+        "eligible_in_seconds": 533,
         "number": 197,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/197",
@@ -1242,12 +1356,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1205,
+        "age_seconds": 1266,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-07T03:56:55Z",
-        "eligible_in_seconds": 595,
+        "eligible_in_seconds": 534,
         "number": 692,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/692",
@@ -1261,12 +1375,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 988,
+        "age_seconds": 1049,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-10-07T04:00:32Z",
-        "eligible_in_seconds": 812,
+        "eligible_in_seconds": 751,
         "number": 5314,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5314",
@@ -1278,25 +1392,6 @@
         "sha": "0c8c238bed24f75cd72a607e856b039c1dc03ce6",
         "title": "fix: verify actions in mixed active and closed groups",
         "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 68,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-07T04:15:52Z",
-        "eligible_in_seconds": 1732,
-        "number": 691,
-        "position": 4,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/691",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/691#issuecomment-6029768019",
-        "priority": false,
-        "queued_at": "2026-10-07T03:45:52Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "81ccd102e40ddaaa039126fff27a187dea5344e4",
-        "title": "feat(pollr): pollr v5 contract and client (editable ballots until close)",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1306,7 +1401,7 @@
       "reviews": 21,
       "tokens": 85024956
     },
-    "ts": "2026-10-07T03:47:00Z",
+    "ts": "2026-10-07T03:48:01Z",
     "typical_minutes_by_tier": {
       "critical": 29.7,
       "low": 28.4,
@@ -1315,9 +1410,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 17.75,
+      "idle_minutes": 0.65,
       "ingest_stale": false,
       "stuck": false
     }
