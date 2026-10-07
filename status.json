@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-07T19:34:01Z",
-  "generated_at": "2026-10-07T19:34:01Z",
+  "data_as_of": "2026-10-07T19:35:00Z",
+  "generated_at": "2026-10-07T19:35:00Z",
   "history": {
     "daily": [
       {
@@ -209,6 +209,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 1053,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 3975,
+        "ts": "2026-10-07T19:34:04Z"
+      },
       {
         "detail": "attempt 1 sha=3597be4c",
         "kind": "run.spawned",
@@ -519,14 +527,6 @@
         "number": 7005,
         "repo": "dashpay/dash",
         "run_id": 3969,
-        "ts": "2026-10-07T18:30:20Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 7005,
-        "repo": "dashpay/dash",
-        "run_id": null,
         "ts": "2026-10-07T18:30:20Z"
       }
     ],
@@ -1133,16 +1133,16 @@
         "attempt": 1,
         "author": "bfoss765",
         "deadline_at": "2026-10-08T01:04:53Z",
-        "deadline_in_seconds": 19852,
+        "deadline_in_seconds": 19793,
         "degraded": false,
-        "elapsed_seconds": 1748,
+        "elapsed_seconds": 1807,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-07T19:34:00Z",
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-10-07T19:34:45Z",
         "id": 3973,
         "lanes": [
           {
@@ -1194,7 +1194,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 144,
+            "since_seconds": 203,
             "state": "running"
           }
         ],
@@ -1203,7 +1203,7 @@
         "phase": "verify2",
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/197",
         "priority": true,
-        "progress": 0.951,
+        "progress": 0.953,
         "queue": "live",
         "queued_at": "2026-10-07T19:04:05Z",
         "remaining_seconds": 90,
@@ -1302,7 +1302,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 144,
+            "seconds": 203,
             "started_at": "2026-10-07T19:31:37Z",
             "status": "running"
           }
@@ -1321,24 +1321,45 @@
         "attempt": 1,
         "author": "Claudius-Maginificent",
         "deadline_at": "2026-10-08T01:33:45Z",
-        "deadline_in_seconds": 21584,
+        "deadline_in_seconds": 21525,
         "degraded": false,
-        "elapsed_seconds": 16,
+        "elapsed_seconds": 75,
         "findings": null,
-        "heartbeat_age_seconds": 0,
-        "heartbeat_at": "2026-10-07T19:34:01Z",
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-10-07T19:34:46Z",
         "id": 3975,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 54,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 55,
+            "state": "running"
+          }
+        ],
         "number": 1053,
         "overdue": false,
-        "phase": "context",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1053",
         "priority": true,
-        "progress": 0.02,
+        "progress": 0.202,
         "queue": "live",
         "queued_at": "2026-10-07T19:33:43Z",
-        "remaining_seconds": 792,
+        "remaining_seconds": 296,
         "repo": "dashpay/dash-evo-tool",
         "sha": "3597be4ccc9429fd7b225bd4a03c8ceb425701ee",
         "started_at": "2026-10-07T19:33:45Z",
@@ -1376,8 +1397,36 @@
           {
             "info": {},
             "name": "context",
-            "seconds": 0,
+            "seconds": 3,
             "started_at": "2026-10-07T19:34:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-07T19:34:04Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 55,
+            "started_at": "2026-10-07T19:34:05Z",
             "status": "running"
           }
         ],
@@ -1387,10 +1436,6 @@
         "tokens_out": 0,
         "trigger": "review_reply",
         "upcoming": [
-          "phase1",
-          "verify1",
-          "gate",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1473,7 +1518,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 3,
         "slots": 12,
         "waiting": 0
       },
@@ -1492,12 +1537,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1326,
+        "age_seconds": 1385,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-07T19:41:55Z",
-        "eligible_in_seconds": 474,
+        "eligible_in_seconds": 415,
         "number": 5322,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5322",
@@ -1511,12 +1556,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1091,
+        "age_seconds": 1150,
         "attempts": 0,
         "author": "bfoss765",
         "eligible": false,
         "eligible_at": "2026-10-07T19:45:50Z",
-        "eligible_in_seconds": 709,
+        "eligible_in_seconds": 650,
         "number": 212,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/212",
@@ -1537,18 +1582,18 @@
       "reviews": 205,
       "tokens": 1046579326
     },
-    "ts": "2026-10-07T19:34:01Z",
+    "ts": "2026-10-07T19:35:00Z",
     "typical_minutes_by_tier": {
       "critical": 25.9,
       "low": 26.7,
-      "normal": 23.1,
+      "normal": 22.9,
       "trivial": 8.0,
       "unknown": 0.9
     },
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.26666666666666666,
+      "idle_minutes": 1.25,
       "ingest_stale": false,
       "stuck": false
     }
