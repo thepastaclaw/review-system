@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-07T02:07:00Z",
-  "generated_at": "2026-10-07T02:07:00Z",
+  "data_as_of": "2026-10-07T02:08:01Z",
+  "generated_at": "2026-10-07T02:08:01Z",
   "history": {
     "daily": [
       {
@@ -156,7 +156,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 6659,
+        "count": 6663,
         "severity": "blocking"
       },
       {
@@ -557,9 +557,9 @@
       },
       {
         "effort": "high",
-        "lanes": 8823,
-        "tokens_in": 8785011547,
-        "tokens_out": 87881825
+        "lanes": 8825,
+        "tokens_in": 8786676832,
+        "tokens_out": 87895030
       },
       {
         "effort": "low",
@@ -605,18 +605,23 @@
         "tokens_out": 32535864
       },
       {
-        "avg_tokens_per_lane": 1235316.0,
-        "lanes": 5824,
+        "avg_tokens_per_lane": 1235180.0,
+        "lanes": 5826,
         "model": "gpt-6.1-sol",
-        "tokens_in": 7159147965,
-        "tokens_out": 35331467
+        "tokens_in": 7160813250,
+        "tokens_out": 35344672
       }
     ],
     "tokens_by_run": [
       {
+        "run_id": 3758,
+        "tokens_in": 1036937,
+        "tokens_out": 5850
+      },
+      {
         "run_id": 3757,
-        "tokens_in": 1433188,
-        "tokens_out": 9957
+        "tokens_in": 2061536,
+        "tokens_out": 17312
       },
       {
         "run_id": 3756,
@@ -1107,24 +1112,19 @@
         "run_id": 3659,
         "tokens_in": 18864887,
         "tokens_out": 73004
-      },
-      {
-        "run_id": 3658,
-        "tokens_in": 14095807,
-        "tokens_out": 100584
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11615568,
+      "avg_tokens_per_completed_review": 11616263,
       "completed_reviews": 2416,
-      "findings": 17325,
+      "findings": 17329,
       "findings_posted": 3007,
       "reviews": 4482,
       "reviews_imported": 2245,
       "runs": 3758,
-      "tokens_in": 27665664827,
-      "tokens_out": 397547450,
-      "tokens_total": 28063212277
+      "tokens_in": 27667330112,
+      "tokens_out": 397560655,
+      "tokens_total": 28064890767
     }
   },
   "live": {
@@ -1133,12 +1133,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-07T08:00:40Z",
-        "deadline_in_seconds": 21220,
+        "deadline_in_seconds": 21159,
         "degraded": false,
-        "elapsed_seconds": 380,
-        "findings": null,
+        "elapsed_seconds": 441,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 0
+        },
         "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-10-07T02:06:57Z",
+        "heartbeat_at": "2026-10-07T02:07:58Z",
         "id": 3757,
         "lanes": [
           {
@@ -1150,29 +1154,39 @@
             "status": "completed",
             "tokens_in": 1433188,
             "tokens_out": 9957
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 628348,
+            "tokens_out": 7355
           }
         ],
         "live_lanes": [
           {
-            "effort": "high",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify2",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 111,
+            "role": "general",
+            "since_seconds": 29,
             "state": "running"
           }
         ],
         "number": 638,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/638",
         "priority": true,
-        "progress": 0.46,
+        "progress": 0.454,
         "queue": "live",
         "queued_at": "2026-10-07T01:59:49Z",
-        "remaining_seconds": 446,
+        "remaining_seconds": 531,
         "repo": "PastaPastaPasta/yappr",
         "sha": "c32df34e40a444daa1bcc43911e57c9eb299259e",
         "started_at": "2026-10-07T02:00:40Z",
@@ -1237,20 +1251,38 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify2",
-            "seconds": 111,
+            "seconds": 143,
             "started_at": "2026-10-07T02:05:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "fresh_phase2",
+            "seconds": 29,
+            "started_at": "2026-10-07T02:07:32Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat(store): sell digital products with encrypted on-chain delivery",
-        "tokens_in": 1433188,
-        "tokens_out": 9957,
+        "tokens_in": 2061536,
+        "tokens_out": 17312,
         "trigger": "review_reply",
         "upcoming": [
-          "fresh_phase2",
           "fresh_verify2",
           "publish"
         ],
@@ -1260,35 +1292,46 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-07T08:04:04Z",
-        "deadline_in_seconds": 21424,
+        "deadline_in_seconds": 21363,
         "degraded": false,
-        "elapsed_seconds": 176,
+        "elapsed_seconds": 237,
         "findings": null,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-07T02:06:50Z",
+        "heartbeat_at": "2026-10-07T02:07:51Z",
         "id": 3758,
-        "lanes": [],
+        "lanes": [
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 1036937,
+            "tokens_out": 5850
+          }
+        ],
         "live_lanes": [
           {
             "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "general",
-            "since_seconds": 163,
+            "role": "verifier",
+            "since_seconds": 45,
             "state": "running"
           }
         ],
         "number": 689,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/689",
         "priority": false,
-        "progress": 0.397,
+        "progress": 0.583,
         "queue": "live",
         "queued_at": "2026-10-07T01:33:49Z",
-        "remaining_seconds": 266,
+        "remaining_seconds": 169,
         "repo": "PastaPastaPasta/yappr",
         "sha": "02a5eb2e0542757983365143166f085ac2d8c521",
         "started_at": "2026-10-07T02:04:04Z",
@@ -1344,24 +1387,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 163,
+            "seconds": 179,
             "started_at": "2026-10-07T02:04:17Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 45,
+            "started_at": "2026-10-07T02:07:16Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "fix: chunk the following new-posts poll, end silent list caps, rebuild blockFilter on unblock",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 1036937,
+        "tokens_out": 5850,
         "trigger": "new_pr",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1815
@@ -1421,7 +1468,7 @@
       "superseded": 1840
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-07T02:03:44Z",
+    "ingest_last_at": "2026-10-07T02:07:29Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1457,17 +1504,17 @@
     "last_run_done_at": "2026-10-07T01:56:05Z",
     "last_run_started_at": "2026-10-07T02:04:04Z",
     "median_run_minutes": 14.766666666666667,
-    "notify_last_at": "2026-10-07T02:05:06Z",
+    "notify_last_at": "2026-10-07T02:07:30Z",
     "oldest_queued_at": "2026-10-07T01:45:05Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1315,
+        "age_seconds": 1376,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-10-07T02:15:05Z",
-        "eligible_in_seconds": 485,
+        "eligible_in_seconds": 424,
         "number": 5313,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5313",
@@ -1481,12 +1528,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 197,
+        "age_seconds": 258,
         "attempts": 0,
         "author": "bfoss765",
         "eligible": false,
         "eligible_at": "2026-10-07T02:33:43Z",
-        "eligible_in_seconds": 1603,
+        "eligible_in_seconds": 1542,
         "number": 197,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/197",
@@ -1507,7 +1554,7 @@
       "reviews": 7,
       "tokens": 30043115
     },
-    "ts": "2026-10-07T02:07:00Z",
+    "ts": "2026-10-07T02:08:01Z",
     "typical_minutes_by_tier": {
       "critical": 30.3,
       "low": 28.4,
@@ -1518,7 +1565,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 2.933333333333333,
+      "idle_minutes": 3.95,
       "ingest_stale": false,
       "stuck": false
     }
