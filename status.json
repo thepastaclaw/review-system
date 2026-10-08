@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T22:51:01Z",
-  "generated_at": "2026-10-08T22:51:02Z",
+  "data_as_of": "2026-10-08T22:52:03Z",
+  "generated_at": "2026-10-08T22:52:03Z",
   "history": {
     "daily": [
       {
@@ -188,7 +188,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 541,
+            "n": 542,
             "p90_seconds": 1856
           }
         },
@@ -214,6 +214,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1603,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4148,
+        "ts": "2026-10-08T22:51:23Z"
+      },
+      {
+        "detail": "attempt 1 sha=ebfa0b07",
+        "kind": "run.spawned",
+        "number": 1603,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4148,
+        "ts": "2026-10-08T22:51:08Z"
+      },
       {
         "detail": "ok in 431s",
         "kind": "run.done",
@@ -517,22 +533,6 @@
         "repo": "dashpay/platform",
         "run_id": 4136,
         "ts": "2026-10-08T22:13:00Z"
-      },
-      {
-        "detail": null,
-        "kind": "run.cancelled",
-        "number": 1606,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 4137,
-        "ts": "2026-10-08T22:11:19Z"
-      },
-      {
-        "detail": "obsolete assigned head ad52c5fb: live head 4fd8dd18 != assigned ad52c5fb",
-        "kind": "head.superseded",
-        "number": 1606,
-        "repo": "dashpay/dash-wallet",
-        "run_id": null,
-        "ts": "2026-10-08T22:11:19Z"
       }
     ],
     "tokens_by_effort": [
@@ -1126,14 +1126,118 @@
       "findings_posted": 3323,
       "reviews": 4828,
       "reviews_imported": 2245,
-      "runs": 4147,
+      "runs": 4148,
       "tokens_in": 29982092316,
       "tokens_out": 432373958,
       "tokens_total": 30414466274
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-09T04:51:08Z",
+        "deadline_in_seconds": 21545,
+        "degraded": false,
+        "elapsed_seconds": 55,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-08T22:51:53Z",
+        "id": 4148,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 40,
+            "state": "running"
+          }
+        ],
+        "number": 1603,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1603",
+        "priority": false,
+        "progress": 0.062,
+        "queue": "live",
+        "queued_at": "2026-10-08T22:20:44Z",
+        "remaining_seconds": 835,
+        "repo": "dashpay/dash-wallet",
+        "sha": "ebfa0b07ce3d6653ef5d477d5d93edbd7e756a7f",
+        "started_at": "2026-10-08T22:51:08Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-08T22:51:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-08T22:51:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds cross-provider metadata lookup, source precedence, dependency injection and tests, but does not alter consensus, funds movement, cryptography, key handling, peer-facing deserialization or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-08T22:51:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-08T22:51:20Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 40,
+            "started_at": "2026-10-08T22:51:23Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(metadata): keep metadata for transactions only the SDK store holds",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1824
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1149,7 +1253,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1163,7 +1267,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-08T22:49:04Z",
+        "at": "2026-10-08T22:51:30Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1183,11 +1287,11 @@
       "closed": 327,
       "done": 4773,
       "failed": 70,
-      "queued": 1,
+      "running": 1,
       "superseded": 1907
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-08T22:47:17Z",
+    "ingest_last_at": "2026-10-08T22:51:08Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1197,7 +1301,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1221,32 +1325,12 @@
       }
     ],
     "last_run_done_at": "2026-10-08T22:50:40Z",
-    "last_run_started_at": "2026-10-08T22:43:28Z",
+    "last_run_started_at": "2026-10-08T22:51:08Z",
     "median_run_minutes": 11.266666666666667,
-    "notify_last_at": "2026-10-08T22:49:24Z",
-    "oldest_queued_at": "2026-10-08T22:20:44Z",
+    "notify_last_at": "2026-10-08T22:51:50Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1817,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": true,
-        "eligible_at": "2026-10-08T22:50:44Z",
-        "eligible_in_seconds": 0,
-        "number": 1603,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1603",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1603#issuecomment-6046294423",
-        "priority": false,
-        "queued_at": "2026-10-08T22:20:44Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash-wallet",
-        "sha": "ebfa0b07ce3d6653ef5d477d5d93edbd7e756a7f",
-        "title": "fix(metadata): keep metadata for transactions only the SDK store holds",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-08",
       "failed": 1,
@@ -1254,18 +1338,18 @@
       "reviews": 128,
       "tokens": 924012064
     },
-    "ts": "2026-10-08T22:51:01Z",
+    "ts": "2026-10-08T22:52:03Z",
     "typical_minutes_by_tier": {
       "critical": 22.8,
       "low": 20.3,
-      "normal": 19.8,
+      "normal": 19.6,
       "trivial": 6.8,
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 7.55,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.9166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
