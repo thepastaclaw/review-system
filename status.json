@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T21:24:00Z",
-  "generated_at": "2026-10-08T21:24:00Z",
+  "data_as_of": "2026-10-08T21:25:01Z",
+  "generated_at": "2026-10-08T21:25:01Z",
   "history": {
     "daily": [
       {
@@ -205,7 +205,7 @@
           },
           "wait": {
             "median_seconds": 13,
-            "n": 620,
+            "n": 621,
             "p90_seconds": 464
           }
         }
@@ -214,6 +214,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 1063,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 4131,
+        "ts": "2026-10-08T21:24:42Z"
+      },
+      {
+        "detail": "attempt 1 sha=0b63da2c",
+        "kind": "run.spawned",
+        "number": 1063,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 4131,
+        "ts": "2026-10-08T21:24:22Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 1063,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": null,
+        "ts": "2026-10-08T21:24:21Z"
+      },
       {
         "detail": "dff70b9a trigger=new_pr priority=0",
         "kind": "head.queued",
@@ -509,30 +533,6 @@
         "repo": "dashpay/platform",
         "run_id": 4126,
         "ts": "2026-10-08T20:44:31Z"
-      },
-      {
-        "detail": "ok in 352s",
-        "kind": "run.done",
-        "number": 1063,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 4124,
-        "ts": "2026-10-08T20:38:54Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 701,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 4125,
-        "ts": "2026-10-08T20:38:51Z"
-      },
-      {
-        "detail": "attempt 1 sha=21dc752f",
-        "kind": "run.spawned",
-        "number": 701,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 4125,
-        "ts": "2026-10-08T20:38:29Z"
       }
     ],
     "tokens_by_effort": [
@@ -1126,14 +1126,139 @@
       "findings_posted": 3309,
       "reviews": 4812,
       "reviews_imported": 2245,
-      "runs": 4130,
+      "runs": 4131,
       "tokens_in": 29869511577,
       "tokens_out": 431595411,
       "tokens_total": 30301106988
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "Claudius-Maginificent",
+        "deadline_at": "2026-10-09T03:24:22Z",
+        "deadline_in_seconds": 21561,
+        "degraded": false,
+        "elapsed_seconds": 39,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-08T21:24:52Z",
+        "id": 4131,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 17,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 18,
+            "state": "running"
+          }
+        ],
+        "number": 1063,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1063",
+        "priority": true,
+        "progress": 0.042,
+        "queue": "live",
+        "queued_at": "2026-10-08T21:22:50Z",
+        "remaining_seconds": 891,
+        "repo": "dashpay/dash-evo-tool",
+        "sha": "0b63da2c676740c73aa9a33818b3806b9cbd9f8d",
+        "started_at": "2026-10-08T21:24:22Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-08T21:24:23Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-10-08T21:24:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, cross-cutting change modifies funds-movement eligibility before wallet funding in register_identity.rs and fund_platform_address_from_wallet_utxos.rs, with intricate fee, Max, and deposit-amount calculations in fee_estimation.rs and the funding screens.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 10,
+            "started_at": "2026-10-08T21:24:28Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-08T21:24:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-08T21:24:42Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 18,
+            "started_at": "2026-10-08T21:24:43Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(wallet): refuse fundings too small to cover the network fee on the remaining screens",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 92
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1149,7 +1274,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1183,7 +1308,8 @@
       "closed": 326,
       "done": 4757,
       "failed": 70,
-      "queued": 6,
+      "queued": 5,
+      "running": 1,
       "superseded": 1901
     },
     "ingest_error_streak": 0,
@@ -1209,7 +1335,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1221,19 +1347,19 @@
       }
     ],
     "last_run_done_at": "2026-10-08T21:09:04Z",
-    "last_run_started_at": "2026-10-08T20:56:42Z",
+    "last_run_started_at": "2026-10-08T21:24:22Z",
     "median_run_minutes": 10.566666666666666,
     "notify_last_at": "2026-10-08T21:23:55Z",
     "oldest_queued_at": "2026-10-08T20:55:49Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1691,
+        "age_seconds": 1752,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-08T21:25:49Z",
-        "eligible_in_seconds": 109,
+        "eligible_in_seconds": 48,
         "number": 1065,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1065",
@@ -1247,12 +1373,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1691,
+        "age_seconds": 1752,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-08T21:25:49Z",
-        "eligible_in_seconds": 109,
+        "eligible_in_seconds": 48,
         "number": 1064,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1064",
@@ -1266,12 +1392,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1450,
+        "age_seconds": 1511,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-08T21:29:50Z",
-        "eligible_in_seconds": 350,
+        "eligible_in_seconds": 289,
         "number": 701,
         "position": 3,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/701",
@@ -1285,12 +1411,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 72,
+        "age_seconds": 133,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-08T21:52:48Z",
-        "eligible_in_seconds": 1728,
+        "eligible_in_seconds": 1667,
         "number": 1605,
         "position": 4,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1605",
@@ -1304,33 +1430,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 70,
-        "attempts": 0,
-        "author": "Claudius-Maginificent",
-        "eligible": false,
-        "eligible_at": "2026-10-08T21:52:50Z",
-        "eligible_in_seconds": 1730,
-        "number": 1063,
-        "position": 5,
-        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1063",
-        "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/1063#issuecomment-6067827609",
-        "priority": false,
-        "queued_at": "2026-10-08T21:22:50Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-evo-tool",
-        "sha": "0b63da2c676740c73aa9a33818b3806b9cbd9f8d",
-        "title": "fix(wallet): refuse fundings too small to cover the network fee on the remaining screens",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 69,
+        "age_seconds": 130,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-08T21:52:51Z",
-        "eligible_in_seconds": 1731,
+        "eligible_in_seconds": 1670,
         "number": 704,
-        "position": 6,
+        "position": 5,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/704",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/pull/704#issuecomment-new",
         "priority": false,
@@ -1349,7 +1456,7 @@
       "reviews": 112,
       "tokens": 813680432
     },
-    "ts": "2026-10-08T21:24:00Z",
+    "ts": "2026-10-08T21:25:01Z",
     "typical_minutes_by_tier": {
       "critical": 23.4,
       "low": 20.3,
@@ -1358,9 +1465,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 27.3,
+      "idle_minutes": 0.65,
       "ingest_stale": false,
       "stuck": false
     }
