@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T10:07:01Z",
-  "generated_at": "2026-10-08T10:07:01Z",
+  "data_as_of": "2026-10-08T10:08:01Z",
+  "generated_at": "2026-10-08T10:08:01Z",
   "history": {
     "daily": [
       {
@@ -188,7 +188,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 532,
+            "n": 533,
             "p90_seconds": 1862
           }
         },
@@ -214,6 +214,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=3a6d304f",
+        "kind": "run.spawned",
+        "number": 1054,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 4024,
+        "ts": "2026-10-08T10:07:48Z"
+      },
       {
         "detail": "ok in 147s",
         "kind": "run.done",
@@ -524,14 +532,6 @@
         "number": 1141,
         "repo": "dashpay/dashwallet-ios",
         "run_id": 4022,
-        "ts": "2026-10-08T08:46:06Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1141,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": null,
         "ts": "2026-10-08T08:46:06Z"
       }
     ],
@@ -1126,14 +1126,94 @@
       "findings_posted": 3220,
       "reviews": 4721,
       "reviews_imported": 2245,
-      "runs": 4023,
+      "runs": 4024,
       "tokens_in": 29176264496,
       "tokens_out": 423867884,
       "tokens_total": 29600132380
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "Claudius-Maginificent",
+        "deadline_at": "2026-10-08T16:07:48Z",
+        "deadline_in_seconds": 21587,
+        "degraded": false,
+        "elapsed_seconds": 13,
+        "findings": null,
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-08T10:07:48Z",
+        "id": 4024,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1054,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1054",
+        "priority": false,
+        "progress": 0.02,
+        "queue": "live",
+        "queued_at": "2026-10-08T09:37:42Z",
+        "remaining_seconds": 650,
+        "repo": "dashpay/dash-evo-tool",
+        "sha": "3a6d304f76c03f37aeddf59492870ab50c2cbfb7",
+        "started_at": "2026-10-08T10:07:48Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-08T10:07:50Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-08T10:07:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds cross-cutting UI progress state and dispatch-specific result handling, but does not itself alter funds movement, coin selection, or another critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-08T10:07:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 0,
+            "started_at": "2026-10-08T10:08:01Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(identity): block the app with a progress dialog while a top-up runs",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1806
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1149,7 +1229,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1163,7 +1243,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-08T10:05:43Z",
+        "at": "2026-10-08T10:07:50Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1183,7 +1263,7 @@
       "closed": 318,
       "done": 4666,
       "failed": 70,
-      "queued": 1,
+      "running": 1,
       "superseded": 1880
     },
     "ingest_error_streak": 0,
@@ -1221,32 +1301,12 @@
       }
     ],
     "last_run_done_at": "2026-10-08T09:59:41Z",
-    "last_run_started_at": "2026-10-08T09:57:13Z",
+    "last_run_started_at": "2026-10-08T10:07:48Z",
     "median_run_minutes": 21.366666666666667,
-    "notify_last_at": "2026-10-08T10:05:16Z",
-    "oldest_queued_at": "2026-10-08T09:37:42Z",
+    "notify_last_at": "2026-10-08T10:07:23Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1759,
-        "attempts": 0,
-        "author": "Claudius-Maginificent",
-        "eligible": false,
-        "eligible_at": "2026-10-08T10:07:42Z",
-        "eligible_in_seconds": 41,
-        "number": 1054,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1054",
-        "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/1054#issuecomment-6044831196",
-        "priority": false,
-        "queued_at": "2026-10-08T09:37:42Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-evo-tool",
-        "sha": "3a6d304f76c03f37aeddf59492870ab50c2cbfb7",
-        "title": "fix(identity): block the app with a progress dialog while a top-up runs",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-08",
       "failed": 0,
@@ -1254,7 +1314,7 @@
       "reviews": 15,
       "tokens": 180979186
     },
-    "ts": "2026-10-08T10:07:01Z",
+    "ts": "2026-10-08T10:08:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.8,
       "low": 26.1,
@@ -1263,9 +1323,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 9.8,
+      "idle_minutes": 0.21666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
