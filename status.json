@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T14:39:01Z",
-  "generated_at": "2026-10-08T14:39:01Z",
+  "data_as_of": "2026-10-08T14:40:02Z",
+  "generated_at": "2026-10-08T14:40:02Z",
   "history": {
     "daily": [
       {
@@ -188,7 +188,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 540,
+            "n": 541,
             "p90_seconds": 1859
           }
         },
@@ -214,6 +214,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1605,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4054,
+        "ts": "2026-10-08T14:39:45Z"
+      },
+      {
+        "detail": "attempt 1 sha=7252c2bc",
+        "kind": "run.spawned",
+        "number": 1605,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4054,
+        "ts": "2026-10-08T14:39:29Z"
+      },
       {
         "detail": "ok in 506s",
         "kind": "run.done",
@@ -517,22 +533,6 @@
         "repo": "dashpay/platform",
         "run_id": 4044,
         "ts": "2026-10-08T13:45:50Z"
-      },
-      {
-        "detail": "266e79de trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 1056,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": null,
-        "ts": "2026-10-08T13:45:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 1150,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 4046,
-        "ts": "2026-10-08T13:44:17Z"
       }
     ],
     "tokens_by_effort": [
@@ -1126,14 +1126,118 @@
       "findings_posted": 3248,
       "reviews": 4748,
       "reviews_imported": 2245,
-      "runs": 4053,
+      "runs": 4054,
       "tokens_in": 29372043837,
       "tokens_out": 426522185,
       "tokens_total": 29798566022
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-08T20:39:29Z",
+        "deadline_in_seconds": 21567,
+        "degraded": false,
+        "elapsed_seconds": 33,
+        "findings": null,
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-10-08T14:39:59Z",
+        "id": 4054,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 17,
+            "state": "running"
+          }
+        ],
+        "number": 1605,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1605",
+        "priority": false,
+        "progress": 0.035,
+        "queue": "live",
+        "queued_at": "2026-10-08T14:09:26Z",
+        "remaining_seconds": 905,
+        "repo": "dashpay/dash-wallet",
+        "sha": "7252c2bcff1ca5cb7270d62a513d1dfbf95fc734",
+        "started_at": "2026-10-08T14:39:29Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-08T14:39:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 7,
+            "started_at": "2026-10-08T14:39:33Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds nontrivial cross-file diagnostic value comparisons, unknown-value handling, synchronization gating, and tests, but does not change funds movement, consensus, cryptography, key handling, network deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-08T14:39:34Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-08T14:39:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 18,
+            "started_at": "2026-10-08T14:39:44Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(parity): compare values for shared txids, not just set membership",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1803
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1149,7 +1253,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1163,7 +1267,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-08T14:36:58Z",
+        "at": "2026-10-08T14:39:09Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1183,7 +1287,8 @@
       "closed": 320,
       "done": 4693,
       "failed": 70,
-      "queued": 6,
+      "queued": 5,
+      "running": 1,
       "superseded": 1883
     },
     "ingest_error_streak": 0,
@@ -1215,46 +1320,27 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-10-08T14:34:17Z",
-    "last_run_started_at": "2026-10-08T14:25:51Z",
+    "last_run_started_at": "2026-10-08T14:39:29Z",
     "median_run_minutes": 16.416666666666668,
     "notify_last_at": "2026-10-08T14:37:39Z",
-    "oldest_queued_at": "2026-10-08T14:09:26Z",
+    "oldest_queued_at": "2026-10-08T14:13:06Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1775,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-10-08T14:39:26Z",
-        "eligible_in_seconds": 25,
-        "number": 1605,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1605",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1605#issuecomment-6053133751",
-        "priority": false,
-        "queued_at": "2026-10-08T14:09:26Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-wallet",
-        "sha": "7252c2bcff1ca5cb7270d62a513d1dfbf95fc734",
-        "title": "fix(parity): compare values for shared txids, not just set membership",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1555,
+        "age_seconds": 1616,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-08T14:43:06Z",
-        "eligible_in_seconds": 245,
+        "eligible_in_seconds": 184,
         "number": 5336,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5336",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5336#issuecomment-6061851333",
         "priority": false,
@@ -1266,14 +1352,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1555,
+        "age_seconds": 1616,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-08T14:43:06Z",
-        "eligible_in_seconds": 245,
+        "eligible_in_seconds": 184,
         "number": 5333,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5333",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5333#issuecomment-6059912262",
         "priority": false,
@@ -1285,14 +1371,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1307,
+        "age_seconds": 1368,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-08T14:47:14Z",
-        "eligible_in_seconds": 493,
+        "eligible_in_seconds": 432,
         "number": 5334,
-        "position": 4,
+        "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5334",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5334#issuecomment-6059911853",
         "priority": false,
@@ -1304,14 +1390,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1069,
+        "age_seconds": 1130,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-10-08T14:51:12Z",
-        "eligible_in_seconds": 731,
+        "eligible_in_seconds": 670,
         "number": 1195,
-        "position": 5,
+        "position": 4,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1195",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1195#issuecomment-6057861292",
         "priority": false,
@@ -1323,14 +1409,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1068,
+        "age_seconds": 1129,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-08T14:51:13Z",
-        "eligible_in_seconds": 732,
+        "eligible_in_seconds": 671,
         "number": 5337,
-        "position": 6,
+        "position": 5,
         "pr_url": "https://github.com/dashpay/platform/pull/5337",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5337#issuecomment-6062007964",
         "priority": false,
@@ -1349,7 +1435,7 @@
       "reviews": 44,
       "tokens": 376000001
     },
-    "ts": "2026-10-08T14:39:01Z",
+    "ts": "2026-10-08T14:40:02Z",
     "typical_minutes_by_tier": {
       "critical": 24.7,
       "low": 23.1,
@@ -1358,9 +1444,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 13.166666666666666,
+      "idle_minutes": 0.55,
       "ingest_stale": false,
       "stuck": false
     }
