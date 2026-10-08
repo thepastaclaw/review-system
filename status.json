@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T01:41:01Z",
-  "generated_at": "2026-10-08T01:41:01Z",
+  "data_as_of": "2026-10-08T01:42:00Z",
+  "generated_at": "2026-10-08T01:42:00Z",
   "history": {
     "daily": [
       {
@@ -205,7 +205,7 @@
           },
           "wait": {
             "median_seconds": 13,
-            "n": 597,
+            "n": 598,
             "p90_seconds": 605
           }
         }
@@ -214,6 +214,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=4d3ba634",
+        "kind": "run.spawned",
+        "number": 197,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": 4014,
+        "ts": "2026-10-08T01:41:36Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 197,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": null,
+        "ts": "2026-10-08T01:41:36Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 197,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": null,
+        "ts": "2026-10-08T01:41:35Z"
+      },
+      {
+        "detail": "4d3ba634 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 197,
+        "repo": "dashpay/dash-platform-website",
+        "run_id": null,
+        "ts": "2026-10-08T01:41:28Z"
+      },
       {
         "detail": "ok in 2127s",
         "kind": "run.done",
@@ -501,38 +533,6 @@
         "repo": "dashpay/dash-platform-website",
         "run_id": 4009,
         "ts": "2026-10-08T00:03:08Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 197,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": null,
-        "ts": "2026-10-08T00:03:08Z"
-      },
-      {
-        "detail": "8bcad222 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 197,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": null,
-        "ts": "2026-10-08T00:02:16Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-08T00:01:00Z"
-      },
-      {
-        "detail": "ok in 1413s",
-        "kind": "run.done",
-        "number": 197,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": 4008,
-        "ts": "2026-10-07T23:47:49Z"
       }
     ],
     "tokens_by_effort": [
@@ -1126,14 +1126,92 @@
       "findings_posted": 3208,
       "reviews": 4711,
       "reviews_imported": 2245,
-      "runs": 4013,
+      "runs": 4014,
       "tokens_in": 29071101777,
       "tokens_out": 422209665,
       "tokens_total": 29493311442
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "bfoss765",
+        "deadline_at": "2026-10-08T07:41:36Z",
+        "deadline_in_seconds": 21576,
+        "degraded": false,
+        "elapsed_seconds": 24,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-08T01:41:51Z",
+        "id": 4014,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 197,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dash-platform-website/pull/197",
+        "priority": true,
+        "progress": 0.015,
+        "queue": "live",
+        "queued_at": "2026-10-08T01:41:28Z",
+        "remaining_seconds": 1627,
+        "repo": "dashpay/dash-platform-website",
+        "sha": "4d3ba634bdd3bfd020b70c745bf2944ea942f411",
+        "started_at": "2026-10-08T01:41:36Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 9,
+            "started_at": "2026-10-08T01:41:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 12,
+            "started_at": "2026-10-08T01:41:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff directly changes SSH private-key handling in server/routes/config.ts, server/profile-folders.ts and server/routes/gateway.ts, including profile-specific key storage, key-path resolution and protections against copying or serving keys through aliases and links.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 12,
+            "started_at": "2026-10-08T01:41:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 1,
+            "started_at": "2026-10-08T01:41:59Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(dwt): profiles keep several organisations' DWT settings apart",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 8
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1149,7 +1227,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1163,7 +1241,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-08T01:39:52Z",
+        "at": "2026-10-08T01:41:58Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1183,10 +1261,11 @@
       "closed": 318,
       "done": 4656,
       "failed": 70,
+      "running": 1,
       "superseded": 1879
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-08T01:37:40Z",
+    "ingest_last_at": "2026-10-08T01:41:29Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1220,9 +1299,9 @@
       }
     ],
     "last_run_done_at": "2026-10-08T01:26:20Z",
-    "last_run_started_at": "2026-10-08T00:50:52Z",
+    "last_run_started_at": "2026-10-08T01:41:36Z",
     "median_run_minutes": 24.2,
-    "notify_last_at": "2026-10-08T01:39:03Z",
+    "notify_last_at": "2026-10-08T01:41:30Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1233,7 +1312,7 @@
       "reviews": 5,
       "tokens": 74158248
     },
-    "ts": "2026-10-08T01:41:01Z",
+    "ts": "2026-10-08T01:42:00Z",
     "typical_minutes_by_tier": {
       "critical": 25.3,
       "low": 26.1,
@@ -1242,9 +1321,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 50.15,
+      "idle_minutes": 0.4,
       "ingest_stale": false,
       "stuck": false
     }
