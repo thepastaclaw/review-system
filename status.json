@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T12:26:02Z",
-  "generated_at": "2026-10-08T12:26:02Z",
+  "data_as_of": "2026-10-08T12:27:02Z",
+  "generated_at": "2026-10-08T12:27:02Z",
   "history": {
     "daily": [
       {
@@ -205,8 +205,8 @@
           },
           "wait": {
             "median_seconds": 13,
-            "n": 591,
-            "p90_seconds": 605
+            "n": 592,
+            "p90_seconds": 598
           }
         }
       },
@@ -214,6 +214,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 1054,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 4031,
+        "ts": "2026-10-08T12:27:02Z"
+      },
+      {
+        "detail": "attempt 1 sha=69838978",
+        "kind": "run.spawned",
+        "number": 1054,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 4031,
+        "ts": "2026-10-08T12:26:44Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 1054,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": null,
+        "ts": "2026-10-08T12:26:44Z"
+      },
       {
         "detail": "69838978 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -509,30 +533,6 @@
         "repo": "dashpay/dash-evo-tool",
         "run_id": 4025,
         "ts": "2026-10-08T10:28:13Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1055,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": null,
-        "ts": "2026-10-08T10:28:12Z"
-      },
-      {
-        "detail": "5e0296ba trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 1055,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": null,
-        "ts": "2026-10-08T10:28:02Z"
-      },
-      {
-        "detail": "5f48a3f2 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 1054,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": null,
-        "ts": "2026-10-08T10:24:09Z"
       }
     ],
     "tokens_by_effort": [
@@ -1126,14 +1126,103 @@
       "findings_posted": 3231,
       "reviews": 4728,
       "reviews_imported": 2245,
-      "runs": 4030,
+      "runs": 4031,
       "tokens_in": 29240316279,
       "tokens_out": 424504202,
       "tokens_total": 29664820481
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "Claudius-Maginificent",
+        "deadline_at": "2026-10-08T18:26:44Z",
+        "deadline_in_seconds": 21582,
+        "degraded": false,
+        "elapsed_seconds": 18,
+        "findings": null,
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-10-08T12:26:59Z",
+        "id": 4031,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1054,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1054",
+        "priority": true,
+        "progress": 0.05,
+        "queue": "live",
+        "queued_at": "2026-10-08T12:23:40Z",
+        "remaining_seconds": 345,
+        "repo": "dashpay/dash-evo-tool",
+        "sha": "69838978105d42de9a0fd2d223189f1f4d216767",
+        "started_at": "2026-10-08T12:26:44Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-10-08T12:26:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 7,
+            "started_at": "2026-10-08T12:26:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a substantial cross-cutting UI and asynchronous task-lifecycle change, but the diff changes progress blocking and result correlation rather than funds movement, coin selection, or another critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 7,
+            "started_at": "2026-10-08T12:26:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-08T12:26:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-08T12:27:02Z",
+            "status": "skipped"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(identity): block the app with a progress dialog while a top-up runs",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 184
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1149,7 +1238,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1163,7 +1252,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-08T12:24:05Z",
+        "at": "2026-10-08T12:26:17Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1183,7 +1272,8 @@
       "closed": 320,
       "done": 4673,
       "failed": 70,
-      "queued": 3,
+      "queued": 2,
+      "running": 1,
       "superseded": 1881
     },
     "ingest_error_streak": 0,
@@ -1221,19 +1311,19 @@
       }
     ],
     "last_run_done_at": "2026-10-08T12:22:49Z",
-    "last_run_started_at": "2026-10-08T12:14:43Z",
+    "last_run_started_at": "2026-10-08T12:26:44Z",
     "median_run_minutes": 16.133333333333333,
-    "notify_last_at": "2026-10-08T12:24:26Z",
+    "notify_last_at": "2026-10-08T12:26:38Z",
     "oldest_queued_at": "2026-10-08T12:00:12Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1550,
+        "age_seconds": 1610,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-10-08T12:30:12Z",
-        "eligible_in_seconds": 250,
+        "eligible_in_seconds": 190,
         "number": 5331,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5331",
@@ -1247,12 +1337,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 143,
+        "age_seconds": 203,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-08T12:53:39Z",
-        "eligible_in_seconds": 1657,
+        "eligible_in_seconds": 1597,
         "number": 5332,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5332",
@@ -1264,25 +1354,6 @@
         "sha": "dedd2fd18981c1b7ab536a36c77853962751d9f6",
         "title": "feat(dpp)!: count how many of a group of properties a document sets (countPresent, PV14)",
         "trigger": "new_push"
-      },
-      {
-        "age_seconds": 142,
-        "attempts": 0,
-        "author": "Claudius-Maginificent",
-        "eligible": false,
-        "eligible_at": "2026-10-08T12:53:40Z",
-        "eligible_in_seconds": 1658,
-        "number": 1054,
-        "position": 3,
-        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1054",
-        "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/1054#issuecomment-6044831196",
-        "priority": false,
-        "queued_at": "2026-10-08T12:23:40Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-evo-tool",
-        "sha": "69838978105d42de9a0fd2d223189f1f4d216767",
-        "title": "fix(identity): block the app with a progress dialog while a top-up runs",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1292,7 +1363,7 @@
       "reviews": 22,
       "tokens": 245667287
     },
-    "ts": "2026-10-08T12:26:02Z",
+    "ts": "2026-10-08T12:27:02Z",
     "typical_minutes_by_tier": {
       "critical": 24.7,
       "low": 26.1,
@@ -1301,9 +1372,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 11.316666666666666,
+      "idle_minutes": 0.3,
       "ingest_stale": false,
       "stuck": false
     }
