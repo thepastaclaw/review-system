@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T22:43:01Z",
-  "generated_at": "2026-10-08T22:43:02Z",
+  "data_as_of": "2026-10-08T22:44:02Z",
+  "generated_at": "2026-10-08T22:44:02Z",
   "history": {
     "daily": [
       {
@@ -177,18 +177,18 @@
       "paths": {
         "normal": {
           "duration": {
-            "median_seconds": 1184,
-            "n": 454,
-            "p90_seconds": 3133
+            "median_seconds": 1190,
+            "n": 452,
+            "p90_seconds": 3134
           },
           "slot_wait": {
             "median_seconds": 0,
-            "n": 454,
-            "p90_seconds": 271
+            "n": 452,
+            "p90_seconds": 276
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 543,
+            "n": 542,
             "p90_seconds": 1856
           }
         },
@@ -214,6 +214,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1606,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4147,
+        "ts": "2026-10-08T22:43:42Z"
+      },
+      {
+        "detail": "attempt 1 sha=4fd8dd18",
+        "kind": "run.spawned",
+        "number": 1606,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4147,
+        "ts": "2026-10-08T22:43:28Z"
+      },
       {
         "detail": "ok in 166s",
         "kind": "run.done",
@@ -517,22 +533,6 @@
         "repo": "dashpay/platform",
         "run_id": 4138,
         "ts": "2026-10-08T22:09:40Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 5337,
-        "repo": "dashpay/platform",
-        "run_id": 4139,
-        "ts": "2026-10-08T22:09:38Z"
-      },
-      {
-        "detail": "attempt 1 sha=bdc9d9e7",
-        "kind": "run.spawned",
-        "number": 5337,
-        "repo": "dashpay/platform",
-        "run_id": 4139,
-        "ts": "2026-10-08T22:09:15Z"
       }
     ],
     "tokens_by_effort": [
@@ -1126,14 +1126,118 @@
       "findings_posted": 3322,
       "reviews": 4827,
       "reviews_imported": 2245,
-      "runs": 4146,
+      "runs": 4147,
       "tokens_in": 29979106157,
       "tokens_out": 432344825,
       "tokens_total": 30411450982
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-09T04:43:28Z",
+        "deadline_in_seconds": 21566,
+        "degraded": false,
+        "elapsed_seconds": 34,
+        "findings": null,
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-08T22:43:58Z",
+        "id": 4147,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 20,
+            "state": "running"
+          }
+        ],
+        "number": 1606,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1606",
+        "priority": false,
+        "progress": 0.038,
+        "queue": "live",
+        "queued_at": "2026-10-08T22:13:02Z",
+        "remaining_seconds": 854,
+        "repo": "dashpay/dash-wallet",
+        "sha": "4fd8dd18d7275bb2ddaedb078e411ee0c3744717",
+        "started_at": "2026-10-08T22:43:28Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-08T22:43:28Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-08T22:43:31Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This cross-cutting change updates analytics gating, preference persistence, event payloads, shared UI components, and tests without changing funds movement, cryptography, consensus, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-08T22:43:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-08T22:43:38Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 21,
+            "started_at": "2026-10-08T22:43:41Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat: let users turn off usage analytics; stop logging amounts (MO-1065)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1826
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1149,7 +1253,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1183,11 +1287,12 @@
       "closed": 327,
       "done": 4772,
       "failed": 70,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 1907
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-08T22:39:34Z",
+    "ingest_last_at": "2026-10-08T22:43:28Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1197,7 +1302,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1221,40 +1326,21 @@
       }
     ],
     "last_run_done_at": "2026-10-08T22:33:57Z",
-    "last_run_started_at": "2026-10-08T22:31:10Z",
+    "last_run_started_at": "2026-10-08T22:43:28Z",
     "median_run_minutes": 11.266666666666667,
     "notify_last_at": "2026-10-08T22:42:23Z",
-    "oldest_queued_at": "2026-10-08T22:13:02Z",
+    "oldest_queued_at": "2026-10-08T22:20:44Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1799,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-10-08T22:43:02Z",
-        "eligible_in_seconds": 1,
-        "number": 1606,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1606",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1606#issuecomment-6065214432",
-        "priority": false,
-        "queued_at": "2026-10-08T22:13:02Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-wallet",
-        "sha": "4fd8dd18d7275bb2ddaedb078e411ee0c3744717",
-        "title": "feat: let users turn off usage analytics; stop logging amounts (MO-1065)",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1337,
+        "age_seconds": 1398,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-08T22:50:44Z",
-        "eligible_in_seconds": 463,
+        "eligible_in_seconds": 402,
         "number": 1603,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1603",
         "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1603#issuecomment-6046294423",
         "priority": false,
@@ -1273,18 +1359,18 @@
       "reviews": 127,
       "tokens": 920996772
     },
-    "ts": "2026-10-08T22:43:01Z",
+    "ts": "2026-10-08T22:44:02Z",
     "typical_minutes_by_tier": {
       "critical": 22.8,
-      "low": 19.5,
+      "low": 20.3,
       "normal": 19.6,
       "trivial": 6.8,
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 11.85,
+      "idle_minutes": 0.5666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
