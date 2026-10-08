@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T18:34:01Z",
-  "generated_at": "2026-10-08T18:34:02Z",
+  "data_as_of": "2026-10-08T18:35:01Z",
+  "generated_at": "2026-10-08T18:35:01Z",
   "history": {
     "daily": [
       {
@@ -214,6 +214,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5313,
+        "repo": "dashpay/platform",
+        "run_id": 4102,
+        "ts": "2026-10-08T18:34:11Z"
+      },
       {
         "detail": "attempt 1 sha=2955d5f6",
         "kind": "run.spawned",
@@ -525,14 +533,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-08T18:12:58Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 7852,
-        "repo": "dashpay/dash",
-        "run_id": 4097,
-        "ts": "2026-10-08T18:12:31Z"
       }
     ],
     "tokens_by_effort": [
@@ -1138,35 +1138,95 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-10-09T00:33:41Z",
-        "deadline_in_seconds": 21580,
+        "deadline_in_seconds": 21520,
         "degraded": false,
-        "elapsed_seconds": 20,
+        "elapsed_seconds": 80,
         "findings": null,
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-08T18:33:56Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-08T18:34:57Z",
         "id": 4102,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 49,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 7,
+            "role": "architecture-layering",
+            "since_seconds": 49,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 49,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 48,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 51,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 50,
             "state": "running"
           }
         ],
         "number": 5313,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5313",
         "priority": true,
-        "progress": null,
+        "progress": 0.077,
         "queue": "live",
         "queued_at": "2026-10-08T18:33:33Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 957,
         "repo": "dashpay/platform",
         "sha": "2955d5f6f2cc2de085177e0af5c8be26f0b6b660",
         "started_at": "2026-10-08T18:33:41Z",
@@ -1180,26 +1240,89 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 7,
+            "seconds": 12,
             "started_at": "2026-10-08T18:33:54Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate asynchronous quorum refresh and proof-reverification changes in packages/rs-sdk-trusted-context-provider/src/quorum_refresh.rs and packages/rs-sdk/src/sdk/quorum_key.rs directly alter trusted public-key handling and signature-verification recovery.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 12,
+            "started_at": "2026-10-08T18:33:54Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 7,
-            "started_at": "2026-10-08T18:33:54Z",
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-08T18:34:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "ffi-engineer",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 5,
+            "name": "phase2",
+            "seconds": 51,
+            "started_at": "2026-10-08T18:34:10Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 51,
+            "started_at": "2026-10-08T18:34:10Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(sdk)!: fetch missing quorum keys instead of banning every node",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 8
       }
     ],
@@ -1257,7 +1380,7 @@
       "superseded": 1896
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-08T18:30:36Z",
+    "ingest_last_at": "2026-10-08T18:34:42Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1279,13 +1402,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 5,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1298,12 +1421,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1363,
+        "age_seconds": 1423,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-08T18:41:18Z",
-        "eligible_in_seconds": 437,
+        "eligible_in_seconds": 377,
         "number": 5344,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5344",
@@ -1317,12 +1440,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1133,
+        "age_seconds": 1193,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-08T18:45:08Z",
-        "eligible_in_seconds": 667,
+        "eligible_in_seconds": 607,
         "number": 701,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/701",
@@ -1336,12 +1459,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 914,
+        "age_seconds": 974,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-10-08T18:48:47Z",
-        "eligible_in_seconds": 886,
+        "eligible_in_seconds": 826,
         "number": 7805,
         "position": 3,
         "pr_url": "https://github.com/dashpay/dash/pull/7805",
@@ -1355,12 +1478,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 429,
+        "age_seconds": 489,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-10-08T18:56:52Z",
-        "eligible_in_seconds": 1371,
+        "eligible_in_seconds": 1311,
         "number": 7856,
         "position": 4,
         "pr_url": "https://github.com/dashpay/dash/pull/7856",
@@ -1381,7 +1504,7 @@
       "reviews": 85,
       "tokens": 694315747
     },
-    "ts": "2026-10-08T18:34:01Z",
+    "ts": "2026-10-08T18:35:01Z",
     "typical_minutes_by_tier": {
       "critical": 23.9,
       "low": 22.1,
@@ -1392,7 +1515,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.3333333333333333,
+      "idle_minutes": 1.3333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
