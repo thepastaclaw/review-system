@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T15:48:01Z",
-  "generated_at": "2026-10-08T15:48:01Z",
+  "data_as_of": "2026-10-08T15:49:01Z",
+  "generated_at": "2026-10-08T15:49:01Z",
   "history": {
     "daily": [
       {
@@ -214,6 +214,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1195,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": 4064,
+        "ts": "2026-10-08T15:48:13Z"
+      },
       {
         "detail": "attempt 1 sha=982065c9",
         "kind": "run.spawned",
@@ -525,14 +533,6 @@
         "repo": "dashpay/dashwallet-ios",
         "run_id": null,
         "ts": "2026-10-08T14:51:32Z"
-      },
-      {
-        "detail": "attempt 1 sha=9de6dacf",
-        "kind": "run.spawned",
-        "number": 5337,
-        "repo": "dashpay/platform",
-        "run_id": 4059,
-        "ts": "2026-10-08T14:51:31Z"
       }
     ],
     "tokens_by_effort": [
@@ -1138,12 +1138,12 @@
         "attempt": 1,
         "author": "knst",
         "deadline_at": "2026-10-08T21:26:51Z",
-        "deadline_in_seconds": 20330,
+        "deadline_in_seconds": 20270,
         "degraded": false,
-        "elapsed_seconds": 1270,
+        "elapsed_seconds": 1330,
         "findings": null,
-        "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-10-08T15:47:54Z",
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-08T15:48:55Z",
         "id": 4063,
         "lanes": [],
         "live_lanes": [
@@ -1154,7 +1154,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 1246,
+            "since_seconds": 1306,
             "state": "running"
           }
         ],
@@ -1163,7 +1163,7 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7855",
         "priority": false,
-        "progress": 0.782,
+        "progress": 0.79,
         "queue": "live",
         "queued_at": "2026-10-08T14:56:45Z",
         "remaining_seconds": 354,
@@ -1221,7 +1221,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 1247,
+            "seconds": 1307,
             "started_at": "2026-10-08T15:27:14Z",
             "status": "running"
           }
@@ -1244,35 +1244,65 @@
         "attempt": 1,
         "author": "llbartekll",
         "deadline_at": "2026-10-08T21:47:51Z",
-        "deadline_in_seconds": 21590,
+        "deadline_in_seconds": 21530,
         "degraded": false,
-        "elapsed_seconds": 10,
+        "elapsed_seconds": 70,
         "findings": null,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-08T15:47:51Z",
+        "heartbeat_at": "2026-10-08T15:48:51Z",
         "id": 4064,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 48,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 5,
+            "role": "ffi-engineer",
+            "since_seconds": 47,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 49,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 48,
             "state": "running"
           }
         ],
         "number": 1195,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1195",
         "priority": true,
-        "progress": 0.008,
+        "progress": 0.059,
         "queue": "live",
         "queued_at": "2026-10-08T15:32:06Z",
-        "remaining_seconds": 1176,
+        "remaining_seconds": 1114,
         "repo": "dashpay/dashwallet-ios",
         "sha": "982065c9ce5ad82c2d00c4d1682791f7fcf37fcf",
         "started_at": "2026-10-08T15:47:51Z",
@@ -1286,32 +1316,79 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "ffi-engineer",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 6,
+            "seconds": 12,
             "started_at": "2026-10-08T15:47:55Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate changes in WalletLocalStoreResetter.swift, SwiftDashSDKWalletRuntime.resetLocalStoresAndRetry, and SwiftDashSDKHost.swift implement destructive store recovery and keychain-backed wallet restoration, directly changing storage migration/recovery and key handling.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 11,
+            "started_at": "2026-10-08T15:47:56Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 5,
-            "started_at": "2026-10-08T15:47:56Z",
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-08T15:48:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "ffi-engineer",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "ffi-engineer",
+              "security-auditor"
+            ],
+            "lanes_total": 3,
+            "name": "phase2",
+            "seconds": 49,
+            "started_at": "2026-10-08T15:48:12Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 49,
+            "started_at": "2026-10-08T15:48:12Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(wallet): back up the phrase or reset-and-rescan from the wallet-open failure card",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "manual",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
-          "fresh_phase2",
-          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 945
@@ -1346,7 +1423,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-08T15:46:24Z",
+        "at": "2026-10-08T15:48:34Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1381,7 +1458,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1393,7 +1470,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 3,
         "slots": 12,
         "waiting": 0
       },
@@ -1412,12 +1489,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1408,
+        "age_seconds": 1468,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-08T15:54:33Z",
-        "eligible_in_seconds": 392,
+        "eligible_in_seconds": 332,
         "number": 1058,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1058",
@@ -1431,12 +1508,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1408,
+        "age_seconds": 1468,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-08T15:54:33Z",
-        "eligible_in_seconds": 392,
+        "eligible_in_seconds": 332,
         "number": 1056,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1056",
@@ -1457,7 +1534,7 @@
       "reviews": 51,
       "tokens": 458626119
     },
-    "ts": "2026-10-08T15:48:01Z",
+    "ts": "2026-10-08T15:49:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.7,
       "low": 22.9,
@@ -1468,7 +1545,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.16666666666666666,
+      "idle_minutes": 1.1666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
