@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-08T21:50:03Z",
-  "generated_at": "2026-10-08T21:50:03Z",
+  "data_as_of": "2026-10-08T21:51:01Z",
+  "generated_at": "2026-10-08T21:51:01Z",
   "history": {
     "daily": [
       {
@@ -562,9 +562,9 @@
       },
       {
         "effort": "high",
-        "lanes": 9881,
-        "tokens_in": 9508143158,
-        "tokens_out": 96266005
+        "lanes": 9882,
+        "tokens_in": 9508519304,
+        "tokens_out": 96267926
       },
       {
         "effort": "low",
@@ -610,18 +610,18 @@
         "tokens_out": 33079142
       },
       {
-        "avg_tokens_per_lane": 1127315.0,
-        "lanes": 7671,
+        "avg_tokens_per_lane": 1127217.0,
+        "lanes": 7672,
         "model": "gpt-6.1-sol",
-        "tokens_in": 8604178984,
-        "tokens_out": 43453639
+        "tokens_in": 8604555130,
+        "tokens_out": 43455560
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 4134,
-        "tokens_in": 2622571,
-        "tokens_out": 12681
+        "tokens_in": 2998717,
+        "tokens_out": 14602
       },
       {
         "run_id": 4133,
@@ -1120,16 +1120,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10983170,
+      "avg_tokens_per_completed_review": 10983307,
       "completed_reviews": 2760,
       "findings": 18856,
       "findings_posted": 3312,
       "reviews": 4815,
       "reviews_imported": 2245,
       "runs": 4134,
-      "tokens_in": 29881883585,
-      "tokens_out": 431665145,
-      "tokens_total": 30313548730
+      "tokens_in": 29882259731,
+      "tokens_out": 431667066,
+      "tokens_total": 30313926797
     }
   },
   "live": {
@@ -1138,12 +1138,16 @@
         "attempt": 1,
         "author": "Claudius-Maginificent",
         "deadline_at": "2026-10-09T03:44:58Z",
-        "deadline_in_seconds": 21295,
+        "deadline_in_seconds": 21237,
         "degraded": false,
-        "elapsed_seconds": 305,
-        "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-08T21:50:02Z",
+        "elapsed_seconds": 363,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 0
+        },
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-10-08T21:50:47Z",
         "id": 4134,
         "lanes": [
           {
@@ -1165,29 +1169,49 @@
             "status": "completed",
             "tokens_in": 1323541,
             "tokens_out": 7125
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 376146,
+            "tokens_out": 1921
           }
         ],
         "live_lanes": [
           {
-            "effort": "high",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify2",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
+            "role": "general",
             "since_seconds": 26,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 27,
             "state": "running"
           }
         ],
         "number": 1063,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1063",
         "priority": true,
-        "progress": 0.428,
+        "progress": 0.47,
         "queue": "live",
         "queued_at": "2026-10-08T21:44:56Z",
-        "remaining_seconds": 407,
+        "remaining_seconds": 409,
         "repo": "dashpay/dash-evo-tool",
         "sha": "c878bf9cfe74d64ca8ed15ed41563e8efe9291a3",
         "started_at": "2026-10-08T21:44:58Z",
@@ -1255,17 +1279,38 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify2",
-            "seconds": 26,
+            "seconds": 57,
             "started_at": "2026-10-08T21:49:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "fresh_phase2",
+            "seconds": 27,
+            "started_at": "2026-10-08T21:50:34Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "fix(wallet): refuse fundings too small to cover the network fee on the remaining screens",
-        "tokens_in": 2622571,
-        "tokens_out": 12681,
+        "tokens_in": 2998717,
+        "tokens_out": 14602,
         "trigger": "review_reply",
         "upcoming": [
           "publish"
@@ -1349,7 +1394,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1368,12 +1413,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1635,
+        "age_seconds": 1693,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-08T21:52:48Z",
-        "eligible_in_seconds": 165,
+        "eligible_in_seconds": 107,
         "number": 1605,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1605",
@@ -1387,12 +1432,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1632,
+        "age_seconds": 1690,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-08T21:52:51Z",
-        "eligible_in_seconds": 168,
+        "eligible_in_seconds": 110,
         "number": 704,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/704",
@@ -1406,12 +1451,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 710,
+        "age_seconds": 768,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-08T22:08:13Z",
-        "eligible_in_seconds": 1090,
+        "eligible_in_seconds": 1032,
         "number": 5337,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5337",
@@ -1425,12 +1470,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 248,
+        "age_seconds": 306,
         "attempts": 0,
         "author": "UdjinM6",
         "eligible": false,
         "eligible_at": "2026-10-08T22:15:55Z",
-        "eligible_in_seconds": 1552,
+        "eligible_in_seconds": 1494,
         "number": 7857,
         "position": 4,
         "pr_url": "https://github.com/dashpay/dash/pull/7857",
@@ -1444,12 +1489,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 247,
+        "age_seconds": 305,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-08T22:15:56Z",
-        "eligible_in_seconds": 1553,
+        "eligible_in_seconds": 1495,
         "number": 5350,
         "position": 5,
         "pr_url": "https://github.com/dashpay/platform/pull/5350",
@@ -1463,12 +1508,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 245,
+        "age_seconds": 303,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-08T22:15:58Z",
-        "eligible_in_seconds": 1555,
+        "eligible_in_seconds": 1497,
         "number": 1065,
         "position": 6,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1065",
@@ -1482,12 +1527,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 245,
+        "age_seconds": 303,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-08T22:15:58Z",
-        "eligible_in_seconds": 1555,
+        "eligible_in_seconds": 1497,
         "number": 1064,
         "position": 7,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1064",
@@ -1508,7 +1553,7 @@
       "reviews": 115,
       "tokens": 823486922
     },
-    "ts": "2026-10-08T21:50:03Z",
+    "ts": "2026-10-08T21:51:01Z",
     "typical_minutes_by_tier": {
       "critical": 23.2,
       "low": 20.3,
@@ -1519,7 +1564,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 5.083333333333333,
+      "idle_minutes": 6.05,
       "ingest_stale": false,
       "stuck": false
     }
