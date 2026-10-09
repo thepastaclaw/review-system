@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T09:54:01Z",
-  "generated_at": "2026-10-09T09:54:01Z",
+  "data_as_of": "2026-10-09T09:55:00Z",
+  "generated_at": "2026-10-09T09:55:01Z",
   "history": {
     "daily": [
       {
@@ -219,6 +219,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 707,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4218,
+        "ts": "2026-10-09T09:54:18Z"
+      },
       {
         "detail": "attempt 1 sha=08ee1bf9",
         "kind": "run.spawned",
@@ -530,14 +538,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 4210,
         "ts": "2026-10-09T09:29:40Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 707,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 4210,
-        "ts": "2026-10-09T09:29:38Z"
       }
     ],
     "tokens_by_effort": [
@@ -1143,24 +1143,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T15:53:59Z",
-        "deadline_in_seconds": 21598,
+        "deadline_in_seconds": 21539,
         "degraded": false,
-        "elapsed_seconds": 2,
+        "elapsed_seconds": 61,
         "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-10-09T09:53:59Z",
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-10-09T09:54:59Z",
         "id": 4218,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 41,
+            "state": "running"
+          }
+        ],
         "number": 707,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/707",
         "priority": true,
-        "progress": null,
+        "progress": 0.078,
         "queue": "live",
         "queued_at": "2026-10-09T09:53:56Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 717,
         "repo": "PastaPastaPasta/yappr",
         "sha": "08ee1bf9ee527f5c45d54becb29de43f1c7ab422",
         "started_at": "2026-10-09T09:53:59Z",
@@ -1169,17 +1180,73 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 1,
+            "seconds": 3,
             "started_at": "2026-10-09T09:54:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-09T09:54:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This intricate, cross-cutting change modifies consensus-enforced document validation in contracts/yappr-storefront-contract.json, replacing the persisted variants schema and adding rules governing which storefront state transitions are accepted.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-09T09:54:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-09T09:54:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-09T09:54:18Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 41,
+            "started_at": "2026-10-09T09:54:19Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(storefront): v7 contract with variants as a typed table",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 3
       }
     ],
@@ -1212,7 +1279,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-09T09:52:05Z",
+        "at": "2026-10-09T09:54:22Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1259,7 +1326,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1278,12 +1345,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1036,
+        "age_seconds": 1095,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-09T10:06:45Z",
-        "eligible_in_seconds": 764,
+        "eligible_in_seconds": 705,
         "number": 716,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/716",
@@ -1297,12 +1364,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 337,
+        "age_seconds": 396,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-09T10:18:24Z",
-        "eligible_in_seconds": 1463,
+        "eligible_in_seconds": 1404,
         "number": 1064,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1064",
@@ -1316,12 +1383,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 337,
+        "age_seconds": 396,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-09T10:18:24Z",
-        "eligible_in_seconds": 1463,
+        "eligible_in_seconds": 1404,
         "number": 1065,
         "position": 3,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1065",
@@ -1335,12 +1402,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 93,
+        "age_seconds": 152,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-09T10:22:28Z",
-        "eligible_in_seconds": 1707,
+        "eligible_in_seconds": 1648,
         "number": 1061,
         "position": 4,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1061",
@@ -1354,12 +1421,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 93,
+        "age_seconds": 152,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-09T10:22:28Z",
-        "eligible_in_seconds": 1707,
+        "eligible_in_seconds": 1648,
         "number": 1060,
         "position": 5,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1060",
@@ -1380,7 +1447,7 @@
       "reviews": 59,
       "tokens": 577614081
     },
-    "ts": "2026-10-09T09:54:01Z",
+    "ts": "2026-10-09T09:55:00Z",
     "typical_minutes_by_tier": {
       "critical": 21.2,
       "low": 13.5,
@@ -1391,7 +1458,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.03333333333333333,
+      "idle_minutes": 1.0166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
