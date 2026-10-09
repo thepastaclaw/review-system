@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T04:32:00Z",
-  "generated_at": "2026-10-09T04:32:00Z",
+  "data_as_of": "2026-10-09T04:33:00Z",
+  "generated_at": "2026-10-09T04:33:00Z",
   "history": {
     "daily": [
       {
@@ -219,6 +219,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5354,
+        "repo": "dashpay/platform",
+        "run_id": 4172,
+        "ts": "2026-10-09T04:32:15Z"
+      },
       {
         "detail": "attempt 1 sha=a95b26dd",
         "kind": "run.spawned",
@@ -530,14 +538,6 @@
         "repo": "dashpay/dash",
         "run_id": 4166,
         "ts": "2026-10-09T03:03:16Z"
-      },
-      {
-        "detail": "attempt 1 sha=2f12d5bf",
-        "kind": "run.spawned",
-        "number": 7594,
-        "repo": "dashpay/dash",
-        "run_id": 4166,
-        "ts": "2026-10-09T03:02:58Z"
       }
     ],
     "tokens_by_effort": [
@@ -1143,12 +1143,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T10:24:06Z",
-        "deadline_in_seconds": 21126,
+        "deadline_in_seconds": 21066,
         "degraded": false,
-        "elapsed_seconds": 474,
+        "elapsed_seconds": 534,
         "findings": null,
         "heartbeat_age_seconds": 6,
-        "heartbeat_at": "2026-10-09T04:31:54Z",
+        "heartbeat_at": "2026-10-09T04:32:54Z",
         "id": 4171,
         "lanes": [
           {
@@ -1170,7 +1170,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 51,
+            "since_seconds": 111,
             "state": "running"
           }
         ],
@@ -1179,10 +1179,10 @@
         "phase": "verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/707",
         "priority": false,
-        "progress": 0.64,
+        "progress": 0.721,
         "queue": "live",
         "queued_at": "2026-10-09T03:53:10Z",
-        "remaining_seconds": 266,
+        "remaining_seconds": 206,
         "repo": "PastaPastaPasta/yappr",
         "sha": "26a1cf3af05258b08e0a00d719164274a5240d63",
         "started_at": "2026-10-09T04:24:06Z",
@@ -1249,7 +1249,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 51,
+            "seconds": 111,
             "started_at": "2026-10-09T04:31:09Z",
             "status": "running"
           }
@@ -1268,24 +1268,35 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-09T10:31:52Z",
-        "deadline_in_seconds": 21592,
+        "deadline_in_seconds": 21532,
         "degraded": false,
-        "elapsed_seconds": 8,
+        "elapsed_seconds": 68,
         "findings": null,
         "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-09T04:31:52Z",
+        "heartbeat_at": "2026-10-09T04:32:52Z",
         "id": 4172,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 45,
+            "state": "running"
+          }
+        ],
         "number": 5354,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5354",
         "priority": false,
-        "progress": 0.014,
+        "progress": 0.102,
         "queue": "live",
         "queued_at": "2026-10-09T04:00:54Z",
-        "remaining_seconds": 564,
+        "remaining_seconds": 595,
         "repo": "dashpay/platform",
         "sha": "a95b26ddf4b4b91d522278719ad5f67e349a24c2",
         "started_at": "2026-10-09T04:31:52Z",
@@ -1294,25 +1305,68 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 8,
+            "seconds": 13,
             "started_at": "2026-10-09T04:31:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-09T04:32:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff is a small, contained Dashmate configuration change that adds a quorum-list refresh interval, wires it into Docker Compose, and supplies migration coverage without changing proof verification or consensus logic.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-09T04:32:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-09T04:32:12Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 46,
+            "started_at": "2026-10-09T04:32:14Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "low",
         "title": "fix(dashmate): reload the local quorum list every second",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_pr",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase1",
           "verify1",
           "gate",
           "phase2",
           "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 1858
@@ -1382,7 +1436,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1408,17 +1462,17 @@
     "last_run_done_at": "2026-10-09T04:21:32Z",
     "last_run_started_at": "2026-10-09T04:31:52Z",
     "median_run_minutes": 12.3,
-    "notify_last_at": "2026-10-09T04:30:04Z",
+    "notify_last_at": "2026-10-09T04:32:12Z",
     "oldest_queued_at": "2026-10-09T04:04:42Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1638,
+        "age_seconds": 1698,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-09T04:34:42Z",
-        "eligible_in_seconds": 162,
+        "eligible_in_seconds": 102,
         "number": 1607,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1607",
@@ -1432,12 +1486,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1419,
+        "age_seconds": 1479,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-09T04:38:21Z",
-        "eligible_in_seconds": 381,
+        "eligible_in_seconds": 321,
         "number": 685,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/685",
@@ -1451,12 +1505,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 936,
+        "age_seconds": 996,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-09T04:46:24Z",
-        "eligible_in_seconds": 864,
+        "eligible_in_seconds": 804,
         "number": 5337,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5337",
@@ -1477,7 +1531,7 @@
       "reviews": 21,
       "tokens": 166271848
     },
-    "ts": "2026-10-09T04:32:00Z",
+    "ts": "2026-10-09T04:33:00Z",
     "typical_minutes_by_tier": {
       "critical": 22.4,
       "low": 18.6,
@@ -1488,7 +1542,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.13333333333333333,
+      "idle_minutes": 1.1333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
