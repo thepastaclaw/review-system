@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T10:15:01Z",
-  "generated_at": "2026-10-09T10:15:01Z",
+  "data_as_of": "2026-10-09T10:16:00Z",
+  "generated_at": "2026-10-09T10:16:01Z",
   "history": {
     "daily": [
       {
@@ -219,6 +219,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 1064,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 4221,
+        "ts": "2026-10-09T10:15:21Z"
+      },
       {
         "detail": "attempt 1 sha=b486464e",
         "kind": "run.spawned",
@@ -530,14 +538,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-09T09:36:45Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 707,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 4215,
-        "ts": "2026-10-09T09:36:01Z"
       }
     ],
     "tokens_by_effort": [
@@ -1143,12 +1143,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T16:12:47Z",
-        "deadline_in_seconds": 21466,
+        "deadline_in_seconds": 21407,
         "degraded": false,
-        "elapsed_seconds": 134,
+        "elapsed_seconds": 193,
         "findings": null,
-        "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-10-09T10:14:48Z",
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-09T10:15:48Z",
         "id": 4220,
         "lanes": [],
         "live_lanes": [
@@ -1159,7 +1159,7 @@
             "phase": "phase2",
             "pool": "compare",
             "role": "general",
-            "since_seconds": 113,
+            "since_seconds": 172,
             "state": "running"
           },
           {
@@ -1169,7 +1169,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 114,
+            "since_seconds": 173,
             "state": "running"
           }
         ],
@@ -1178,10 +1178,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/707",
         "priority": true,
-        "progress": 0.172,
+        "progress": 0.248,
         "queue": "live",
         "queued_at": "2026-10-09T10:12:01Z",
-        "remaining_seconds": 644,
+        "remaining_seconds": 585,
         "repo": "PastaPastaPasta/yappr",
         "sha": "6b7e7c21904608f54fe72a3744594a9ffe442b30",
         "started_at": "2026-10-09T10:12:47Z",
@@ -1244,7 +1244,7 @@
             ],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 114,
+            "seconds": 173,
             "started_at": "2026-10-09T10:13:07Z",
             "status": "running"
           }
@@ -1264,24 +1264,45 @@
         "attempt": 1,
         "author": "Claudius-Maginificent",
         "deadline_at": "2026-10-09T16:14:57Z",
-        "deadline_in_seconds": 21596,
+        "deadline_in_seconds": 21537,
         "degraded": false,
-        "elapsed_seconds": 4,
+        "elapsed_seconds": 63,
         "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-10-09T10:14:57Z",
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-10-09T10:15:57Z",
         "id": 4221,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 36,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 37,
+            "state": "running"
+          }
+        ],
         "number": 1064,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1064",
         "priority": true,
-        "progress": null,
+        "progress": 0.08,
         "queue": "live",
         "queued_at": "2026-10-09T10:14:55Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 721,
         "repo": "dashpay/dash-evo-tool",
         "sha": "b486464ed8ff690579bb587e251ff12924b4670d",
         "started_at": "2026-10-09T10:14:57Z",
@@ -1290,17 +1311,77 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 1,
+            "seconds": 6,
             "started_at": "2026-10-09T10:15:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-10-09T10:15:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The cross-layer change intricately modifies funds movement through shield_from_core_funding in src/model/fee_estimation.rs and plan_shield_from_core in src/backend_task/shielded/mod.rs, including protocol-dependent funding amounts, rounding, version-change uncertainty, and Max fee reservations.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 11,
+            "started_at": "2026-10-09T10:15:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-09T10:15:18Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-09T10:15:21Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 37,
+            "started_at": "2026-10-09T10:15:23Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(shielded): pay the real pool fee when shielding from Core",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1333,7 +1414,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-09T10:15:00Z",
+        "at": "2026-10-09T10:15:45Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1380,7 +1461,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 3,
         "slots": 12,
         "waiting": 0
       },
@@ -1399,12 +1480,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1597,
+        "age_seconds": 1656,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-09T10:18:24Z",
-        "eligible_in_seconds": 203,
+        "eligible_in_seconds": 144,
         "number": 1065,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1065",
@@ -1418,12 +1499,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1353,
+        "age_seconds": 1412,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-09T10:22:28Z",
-        "eligible_in_seconds": 447,
+        "eligible_in_seconds": 388,
         "number": 1061,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1061",
@@ -1437,12 +1518,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1353,
+        "age_seconds": 1412,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-09T10:22:28Z",
-        "eligible_in_seconds": 447,
+        "eligible_in_seconds": 388,
         "number": 1060,
         "position": 3,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1060",
@@ -1456,12 +1537,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 894,
+        "age_seconds": 953,
         "attempts": 0,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-10-09T10:30:07Z",
-        "eligible_in_seconds": 906,
+        "eligible_in_seconds": 847,
         "number": 5307,
         "position": 4,
         "pr_url": "https://github.com/dashpay/platform/pull/5307",
@@ -1482,7 +1563,7 @@
       "reviews": 61,
       "tokens": 581633427
     },
-    "ts": "2026-10-09T10:15:01Z",
+    "ts": "2026-10-09T10:16:00Z",
     "typical_minutes_by_tier": {
       "critical": 21.2,
       "low": 13.5,
@@ -1493,7 +1574,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.06666666666666667,
+      "idle_minutes": 1.05,
       "ingest_stale": false,
       "stuck": false
     }
