@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T06:11:03Z",
-  "generated_at": "2026-10-09T06:11:03Z",
+  "data_as_of": "2026-10-09T06:12:03Z",
+  "generated_at": "2026-10-09T06:12:04Z",
   "history": {
     "daily": [
       {
@@ -219,6 +219,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 707,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4185,
+        "ts": "2026-10-09T06:11:14Z"
+      },
       {
         "detail": "attempt 1 sha=0a9e3c42",
         "kind": "run.spawned",
@@ -530,14 +538,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 4181,
         "ts": "2026-10-09T05:38:48Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.requeued",
-        "number": 5353,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-10-09T05:37:20Z"
       }
     ],
     "tokens_by_effort": [
@@ -1143,12 +1143,12 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-09T11:57:07Z",
-        "deadline_in_seconds": 20764,
+        "deadline_in_seconds": 20704,
         "degraded": false,
-        "elapsed_seconds": 836,
+        "elapsed_seconds": 896,
         "findings": null,
         "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-09T06:11:02Z",
+        "heartbeat_at": "2026-10-09T06:12:02Z",
         "id": 4183,
         "lanes": [
           {
@@ -1280,7 +1280,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 113,
+            "since_seconds": 173,
             "state": "running"
           }
         ],
@@ -1289,10 +1289,10 @@
         "phase": "verify2",
         "pr_url": "https://github.com/dashpay/platform/pull/5350",
         "priority": true,
-        "progress": 0.774,
+        "progress": 0.809,
         "queue": "live",
         "queued_at": "2026-10-09T05:56:54Z",
-        "remaining_seconds": 244,
+        "remaining_seconds": 212,
         "repo": "dashpay/platform",
         "sha": "05de508d82313129208a42f659e896d2fd06e517",
         "started_at": "2026-10-09T05:57:07Z",
@@ -1385,7 +1385,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 113,
+            "seconds": 173,
             "started_at": "2026-10-09T06:09:10Z",
             "status": "running"
           }
@@ -1404,35 +1404,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T12:10:56Z",
-        "deadline_in_seconds": 21593,
+        "deadline_in_seconds": 21533,
         "degraded": false,
-        "elapsed_seconds": 7,
+        "elapsed_seconds": 67,
         "findings": null,
         "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-10-09T06:10:56Z",
+        "heartbeat_at": "2026-10-09T06:11:56Z",
         "id": 4185,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 2,
+            "role": "general",
+            "since_seconds": 48,
             "state": "running"
           }
         ],
         "number": 707,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/707",
         "priority": true,
-        "progress": null,
+        "progress": 0.082,
         "queue": "live",
         "queued_at": "2026-10-09T06:10:54Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 746,
         "repo": "PastaPastaPasta/yappr",
         "sha": "0a9e3c425e25305e2e1935d987d81baad600846d",
         "started_at": "2026-10-09T06:10:56Z",
@@ -1455,19 +1455,59 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This intricate, cross-cutting change modifies consensus-enforced document validation in contracts/yappr-storefront-contract.json, replacing persisted variants with a typed table and adding nine rules alongside legacy-format compatibility changes.",
+              "tier": "critical"
+            },
             "name": "triage",
-            "seconds": 2,
+            "seconds": 8,
             "started_at": "2026-10-09T06:11:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-09T06:11:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-09T06:11:14Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 48,
+            "started_at": "2026-10-09T06:11:15Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(storefront): v7 contract with variants as a typed table",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1566,12 +1606,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1093,
+        "age_seconds": 1153,
         "attempts": 0,
         "author": "abaranouski",
         "eligible": false,
         "eligible_at": "2026-10-09T06:22:50Z",
-        "eligible_in_seconds": 707,
+        "eligible_in_seconds": 647,
         "number": 1584,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1584",
@@ -1585,12 +1625,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 147,
+        "age_seconds": 207,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-09T06:38:36Z",
-        "eligible_in_seconds": 1653,
+        "eligible_in_seconds": 1593,
         "number": 5355,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5355",
@@ -1604,12 +1644,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 147,
+        "age_seconds": 207,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-09T06:38:36Z",
-        "eligible_in_seconds": 1653,
+        "eligible_in_seconds": 1593,
         "number": 5337,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5337",
@@ -1630,7 +1670,7 @@
       "reviews": 30,
       "tokens": 214552155
     },
-    "ts": "2026-10-09T06:11:03Z",
+    "ts": "2026-10-09T06:12:03Z",
     "typical_minutes_by_tier": {
       "critical": 21.7,
       "low": 15.6,
@@ -1641,7 +1681,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.11666666666666667,
+      "idle_minutes": 1.1166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
