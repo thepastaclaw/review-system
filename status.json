@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T21:50:01Z",
-  "generated_at": "2026-10-09T21:50:01Z",
+  "data_as_of": "2026-10-09T21:51:01Z",
+  "generated_at": "2026-10-09T21:51:01Z",
   "history": {
     "daily": [
       {
@@ -174,7 +174,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 10400,
+        "count": 10403,
         "severity": "suggestion"
       }
     ],
@@ -555,15 +555,15 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 9278,
-        "tokens_in": 18933957276,
-        "tokens_out": 318341737
+        "lanes": 9279,
+        "tokens_in": 18937242914,
+        "tokens_out": 318430786
       },
       {
         "effort": "medium",
-        "lanes": 3249,
-        "tokens_in": 475370069,
-        "tokens_out": 5522310
+        "lanes": 3250,
+        "tokens_in": 475478768,
+        "tokens_out": 5523838
       },
       {
         "effort": "high",
@@ -580,11 +580,11 @@
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 1696832.0,
-        "lanes": 4745,
+        "avg_tokens_per_lane": 1697186.0,
+        "lanes": 4746,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 7767205618,
-        "tokens_out": 284262988
+        "tokens_in": 7770491256,
+        "tokens_out": 284352037
       },
       {
         "avg_tokens_per_lane": 5240290.0,
@@ -615,14 +615,19 @@
         "tokens_out": 33572061
       },
       {
-        "avg_tokens_per_lane": 1101351.0,
-        "lanes": 8823,
+        "avg_tokens_per_lane": 1101239.0,
+        "lanes": 8824,
         "model": "gpt-6.1-sol",
-        "tokens_in": 9667910874,
-        "tokens_out": 49313150
+        "tokens_in": 9668019573,
+        "tokens_out": 49314678
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 4360,
+        "tokens_in": 3394337,
+        "tokens_out": 90577
+      },
       {
         "run_id": 4359,
         "tokens_in": 10568187,
@@ -1117,24 +1122,19 @@
         "run_id": 4258,
         "tokens_in": 1623809,
         "tokens_out": 12067
-      },
-      {
-        "run_id": 4257,
-        "tokens_in": 7350460,
-        "tokens_out": 34213
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10856791,
+      "avg_tokens_per_completed_review": 10857967,
       "completed_reviews": 2963,
-      "findings": 19848,
+      "findings": 19851,
       "findings_posted": 3509,
       "reviews": 5011,
       "reviews_imported": 2245,
       "runs": 4360,
-      "tokens_in": 31722864143,
-      "tokens_out": 445806392,
-      "tokens_total": 32168670535
+      "tokens_in": 31726258480,
+      "tokens_out": 445896969,
+      "tokens_total": 32172155449
     }
   },
   "live": {
@@ -1143,35 +1143,60 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-10T03:35:51Z",
-        "deadline_in_seconds": 20750,
+        "deadline_in_seconds": 20690,
         "degraded": false,
-        "elapsed_seconds": 850,
-        "findings": null,
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-09T21:49:53Z",
+        "elapsed_seconds": 910,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 1
+        },
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-09T21:50:54Z",
         "id": 4360,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "xhigh",
-            "line_position": null,
             "model": "muse-spark-1.3-contributor",
             "phase": "phase1",
-            "pool": "muse",
             "role": "general",
-            "since_seconds": 834,
+            "status": "completed",
+            "tokens_in": 3285638,
+            "tokens_out": 89049
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 108699,
+            "tokens_out": 1528
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 3,
             "state": "running"
           }
         ],
         "number": 1603,
-        "overdue": true,
-        "phase": "phase1",
+        "overdue": false,
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1603",
         "priority": false,
-        "progress": 0.742,
+        "progress": 0.767,
         "queue": "live",
         "queued_at": "2026-10-09T21:05:38Z",
-        "remaining_seconds": 296,
+        "remaining_seconds": 276,
         "repo": "dashpay/dash-wallet",
         "sha": "cb905463b8ffe82f79b6dc6b3c855cdb59cb35ae",
         "started_at": "2026-10-09T21:35:51Z",
@@ -1217,26 +1242,59 @@
                 "general"
               ]
             },
+            "lanes_done": 1,
+            "lanes_left": [],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 843,
+            "started_at": "2026-10-09T21:36:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "blockers": 0,
+              "findings": 1
+            },
+            "name": "verify1",
+            "seconds": 49,
+            "started_at": "2026-10-09T21:50:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "admit_phase2": true,
+              "blockers": 0,
+              "phase2_effort": "high",
+              "tier": "normal"
+            },
+            "name": "gate",
+            "seconds": 0,
+            "started_at": "2026-10-09T21:50:58Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
             "lanes_done": 0,
             "lanes_left": [
               "general"
             ],
             "lanes_total": 1,
-            "name": "phase1",
-            "seconds": 835,
-            "started_at": "2026-10-09T21:36:06Z",
+            "name": "phase2",
+            "seconds": 3,
+            "started_at": "2026-10-09T21:50:58Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "fix(metadata): keep metadata for transactions only the SDK store holds",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 3394337,
+        "tokens_out": 90577,
         "trigger": "new_push",
         "upcoming": [
-          "verify1",
-          "gate",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1318,13 +1376,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 0,
         "slots": 20,
         "waiting": 0
       }
@@ -1332,7 +1390,7 @@
     "last_run_done_at": "2026-10-09T21:43:49Z",
     "last_run_started_at": "2026-10-09T21:35:51Z",
     "median_run_minutes": 13.85,
-    "notify_last_at": "2026-10-09T21:48:39Z",
+    "notify_last_at": "2026-10-09T21:50:45Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1343,7 +1401,7 @@
       "reviews": 188,
       "tokens": 1533470606
     },
-    "ts": "2026-10-09T21:50:01Z",
+    "ts": "2026-10-09T21:51:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.8,
       "low": 12.8,
@@ -1354,7 +1412,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 14.166666666666666,
+      "idle_minutes": 15.166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
