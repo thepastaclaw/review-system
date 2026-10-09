@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T06:23:01Z",
-  "generated_at": "2026-10-09T06:23:01Z",
+  "data_as_of": "2026-10-09T06:24:01Z",
+  "generated_at": "2026-10-09T06:24:01Z",
   "history": {
     "daily": [
       {
@@ -193,7 +193,7 @@
           },
           "wait": {
             "median_seconds": 1815,
-            "n": 535,
+            "n": 536,
             "p90_seconds": 1856
           }
         },
@@ -219,6 +219,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=72984f57",
+        "kind": "run.spawned",
+        "number": 1584,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4186,
+        "ts": "2026-10-09T06:23:43Z"
+      },
+      {
+        "detail": "pr_closed",
+        "kind": "head.closed",
+        "number": 715,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-09T06:23:43Z"
+      },
       {
         "detail": "ok in 527s",
         "kind": "run.done",
@@ -522,22 +538,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-10-09T05:52:51Z"
-      },
-      {
-        "detail": "head 8029 superseded by 578cca22",
-        "kind": "head.superseded",
-        "number": 5355,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-10-09T05:52:51Z"
-      },
-      {
-        "detail": "72984f57 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 1584,
-        "repo": "dashpay/dash-wallet",
-        "run_id": null,
-        "ts": "2026-10-09T05:52:50Z"
       }
     ],
     "tokens_by_effort": [
@@ -1131,14 +1131,92 @@
       "findings_posted": 3351,
       "reviews": 4862,
       "reviews_imported": 2245,
-      "runs": 4185,
+      "runs": 4186,
       "tokens_in": 30225565621,
       "tokens_out": 434132581,
       "tokens_total": 30659698202
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "abaranouski",
+        "deadline_at": "2026-10-09T12:23:43Z",
+        "deadline_in_seconds": 21582,
+        "degraded": false,
+        "elapsed_seconds": 18,
+        "findings": null,
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-10-09T06:23:58Z",
+        "id": 4186,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1584,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1584",
+        "priority": false,
+        "progress": 0.013,
+        "queue": "live",
+        "queued_at": "2026-10-09T05:52:50Z",
+        "remaining_seconds": 1413,
+        "repo": "dashpay/dash-wallet",
+        "sha": "72984f57d8e8f5ab4714583dacc1c3637624b276",
+        "started_at": "2026-10-09T06:23:43Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-09T06:23:43Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 10,
+            "started_at": "2026-10-09T06:23:47Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The cross-cutting change directly alters funds movement in TopUpRepositoryImpl.createAssetLockTransaction/createTopupTransaction and SdkTransparentUsernameCreation.createUsernameTransparent by dynamically resolving funding amounts and enforcing approval caps across submission and retry paths.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-09T06:23:48Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-09T06:23:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(MO-1069): gate contested-username fee on the live Platform protocol version",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1853
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1154,7 +1232,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1185,14 +1263,15 @@
     },
     "failed_heads_24h": 0,
     "heads": {
-      "closed": 333,
+      "closed": 334,
       "done": 4807,
       "failed": 70,
-      "queued": 4,
+      "queued": 2,
+      "running": 1,
       "superseded": 1915
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-09T06:20:08Z",
+    "ingest_last_at": "2026-10-09T06:23:43Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1226,40 +1305,21 @@
       }
     ],
     "last_run_done_at": "2026-10-09T06:19:44Z",
-    "last_run_started_at": "2026-10-09T06:10:56Z",
+    "last_run_started_at": "2026-10-09T06:23:43Z",
     "median_run_minutes": 10.5,
     "notify_last_at": "2026-10-09T06:22:16Z",
-    "oldest_queued_at": "2026-10-09T05:52:50Z",
+    "oldest_queued_at": "2026-10-09T06:08:36Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1811,
-        "attempts": 0,
-        "author": "abaranouski",
-        "eligible": true,
-        "eligible_at": "2026-10-09T06:22:50Z",
-        "eligible_in_seconds": 0,
-        "number": 1584,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1584",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1584#issuecomment-5886731486",
-        "priority": false,
-        "queued_at": "2026-10-09T05:52:50Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash-wallet",
-        "sha": "72984f57d8e8f5ab4714583dacc1c3637624b276",
-        "title": "fix(MO-1069): gate contested-username fee on the live Platform protocol version",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 865,
+        "age_seconds": 925,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-09T06:38:36Z",
-        "eligible_in_seconds": 935,
+        "eligible_in_seconds": 875,
         "number": 5355,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5355",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5355#issuecomment-6075093140",
         "priority": false,
@@ -1271,14 +1331,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 865,
+        "age_seconds": 925,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-09T06:38:36Z",
-        "eligible_in_seconds": 935,
+        "eligible_in_seconds": 875,
         "number": 5337,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5337",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5337#issuecomment-6062007964",
         "priority": false,
@@ -1288,25 +1348,6 @@
         "sha": "e6c1911b29a6a01e3024149d05d5e0a863b63fa9",
         "title": "feat(platform)!: dpns contract v3 checks name registration with schema keywords",
         "trigger": "new_push"
-      },
-      {
-        "age_seconds": 408,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-09T06:46:13Z",
-        "eligible_in_seconds": 1392,
-        "number": 715,
-        "position": 4,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/715",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/715#issuecomment-6075537884",
-        "priority": false,
-        "queued_at": "2026-10-09T06:16:13Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "48efad635251649aa6266b8be02f7e605afcf9f1",
-        "title": "fix(mobile-e2e): kill each flow's leftover Maestro iOS driver",
-        "trigger": "new_pr"
       }
     ],
     "today": {
@@ -1316,7 +1357,7 @@
       "reviews": 32,
       "tokens": 239314498
     },
-    "ts": "2026-10-09T06:23:01Z",
+    "ts": "2026-10-09T06:24:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.6,
       "low": 15.6,
@@ -1325,9 +1366,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 12.083333333333334,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.3,
       "ingest_stale": false,
       "stuck": false
     }
