@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T02:09:00Z",
-  "generated_at": "2026-10-09T02:09:00Z",
+  "data_as_of": "2026-10-09T02:10:01Z",
+  "generated_at": "2026-10-09T02:10:02Z",
   "history": {
     "daily": [
       {
@@ -219,6 +219,46 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "59391d53 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 7827,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-10-09T02:09:48Z"
+      },
+      {
+        "detail": "head 8005 superseded by 59391d53",
+        "kind": "head.superseded",
+        "number": 7827,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-10-09T02:09:48Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7594,
+        "repo": "dashpay/dash",
+        "run_id": 4161,
+        "ts": "2026-10-09T02:09:11Z"
+      },
+      {
+        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
+        "kind": "compare.selected",
+        "number": 7594,
+        "repo": "dashpay/dash",
+        "run_id": 4161,
+        "ts": "2026-10-09T02:09:11Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7847,
+        "repo": "dashpay/dash",
+        "run_id": 4162,
+        "ts": "2026-10-09T02:09:08Z"
+      },
       {
         "detail": "attempt 1 sha=302a3fe8",
         "kind": "run.spawned",
@@ -498,46 +538,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 4158,
         "ts": "2026-10-09T00:49:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 7594,
-        "repo": "dashpay/dash",
-        "run_id": 4157,
-        "ts": "2026-10-09T00:49:00Z"
-      },
-      {
-        "detail": "attempt 1 sha=446c337e",
-        "kind": "run.spawned",
-        "number": 7594,
-        "repo": "dashpay/dash",
-        "run_id": 4157,
-        "ts": "2026-10-09T00:48:45Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 7594,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-09T00:48:45Z"
-      },
-      {
-        "detail": "446c337e trigger=review_reply priority=1",
-        "kind": "head.queued",
-        "number": 7594,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-09T00:48:45Z"
-      },
-      {
-        "detail": "ok in 817s",
-        "kind": "run.done",
-        "number": 7594,
-        "repo": "dashpay/dash",
-        "run_id": 4155,
-        "ts": "2026-10-09T00:44:40Z"
       }
     ],
     "tokens_by_effort": [
@@ -1143,24 +1143,75 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T08:08:55Z",
-        "deadline_in_seconds": 21595,
+        "deadline_in_seconds": 21534,
         "degraded": false,
-        "elapsed_seconds": 5,
+        "elapsed_seconds": 66,
         "findings": null,
         "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-09T02:08:55Z",
+        "heartbeat_at": "2026-10-09T02:09:56Z",
         "id": 4161,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "dash-core-commit-history",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6-astra",
+            "phase": "phase2",
+            "pool": "compare",
+            "role": "dash-core-commit-history",
+            "since_seconds": 48,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6-astra",
+            "phase": "phase2",
+            "pool": "compare",
+            "role": "general",
+            "since_seconds": 48,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 49,
+            "state": "running"
+          }
+        ],
         "number": 7594,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/7594",
         "priority": true,
-        "progress": null,
+        "progress": 0.066,
         "queue": "live",
         "queued_at": "2026-10-09T02:08:54Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 926,
         "repo": "dashpay/dash",
         "sha": "e99e126e858c9627d7769eacc0798bbb5ad34c10",
         "started_at": "2026-10-09T02:08:55Z",
@@ -1169,52 +1220,121 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 3,
+            "seconds": 4,
             "started_at": "2026-10-09T02:08:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-09T02:09:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate change directly modifies cryptographic key handling in src/wallet/masternode_operator.cpp and src/wallet/scriptpubkeyman.cpp, including deterministic BLS private-key derivation, issuance, and persisted consumption state.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-09T02:09:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-09T02:09:07Z",
+            "status": "ok"
+          },
+          {
+            "comparison_left": 2,
+            "info": {
+              "roles": [
+                "general",
+                "dash-core-commit-history"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "dash-core-commit-history"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 50,
+            "started_at": "2026-10-09T02:09:11Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 50,
+            "started_at": "2026-10-09T02:09:11Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(wallet): derive masternode operator keys from seed",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 1
       },
       {
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T08:08:55Z",
-        "deadline_in_seconds": 21595,
+        "deadline_in_seconds": 21534,
         "degraded": false,
-        "elapsed_seconds": 5,
+        "elapsed_seconds": 66,
         "findings": null,
         "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-09T02:08:55Z",
+        "heartbeat_at": "2026-10-09T02:09:56Z",
         "id": 4162,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 0,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 53,
             "state": "running"
           }
         ],
         "number": 7847,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7847",
         "priority": false,
-        "progress": 0.009,
+        "progress": 0.076,
         "queue": "live",
         "queued_at": "2026-10-09T01:38:38Z",
-        "remaining_seconds": 582,
+        "remaining_seconds": 807,
         "repo": "dashpay/dash",
         "sha": "302a3fe8842e59a16cc2c4676f5342b10647b4af",
         "started_at": "2026-10-09T02:08:55Z",
@@ -1228,28 +1348,59 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
             "name": "select",
-            "seconds": 0,
+            "seconds": 4,
             "started_at": "2026-10-09T02:09:00Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff changes spork signature verification and mainnet handling across signing, networking, sync and RPC paths, but the changes are straightforward rather than large or intricate enough to qualify as critical.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-09T02:09:00Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 0,
-            "started_at": "2026-10-09T02:09:00Z",
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-09T02:09:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 54,
+            "started_at": "2026-10-09T02:09:07Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix: sign sporks over their serialized fields and stop using sporks on mainnet",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1308,20 +1459,20 @@
       "failed": 70,
       "queued": 2,
       "running": 2,
-      "superseded": 1909
+      "superseded": 1910
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-09T02:06:01Z",
+    "ingest_last_at": "2026-10-09T02:09:52Z",
     "lane_pools": [
       {
         "pool": "compare",
-        "running": 0,
+        "running": 2,
         "slots": 2,
         "waiting": 0
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1333,7 +1484,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1352,12 +1503,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1126,
+        "age_seconds": 1187,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-09T02:20:14Z",
-        "eligible_in_seconds": 674,
+        "eligible_in_seconds": 613,
         "number": 7836,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7836",
@@ -1371,21 +1522,21 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1126,
+        "age_seconds": 13,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
-        "eligible_at": "2026-10-09T02:20:14Z",
-        "eligible_in_seconds": 674,
+        "eligible_at": "2026-10-09T02:39:48Z",
+        "eligible_in_seconds": 1787,
         "number": 7827,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7827",
         "prioritize_url": "https://github.com/dashpay/dash/issues/7827#issuecomment-6032774490",
         "priority": false,
-        "queued_at": "2026-10-09T01:50:14Z",
+        "queued_at": "2026-10-09T02:09:48Z",
         "reason": "debounce (more pushes may follow)",
         "repo": "dashpay/dash",
-        "sha": "b88580cf3715eb666477988050db2ef92d4fd8d8",
+        "sha": "59391d5399eb96164dce3af7958649fe2d3dccca",
         "title": "backport: bitcoin#35984",
         "trigger": "new_push"
       }
@@ -1397,7 +1548,7 @@
       "reviews": 11,
       "tokens": 73832137
     },
-    "ts": "2026-10-09T02:09:00Z",
+    "ts": "2026-10-09T02:10:01Z",
     "typical_minutes_by_tier": {
       "critical": 22.5,
       "low": 19.5,
@@ -1408,7 +1559,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.08333333333333333,
+      "idle_minutes": 1.1166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
