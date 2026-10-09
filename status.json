@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T22:07:04Z",
-  "generated_at": "2026-10-09T22:07:05Z",
+  "data_as_of": "2026-10-09T22:08:04Z",
+  "generated_at": "2026-10-09T22:08:05Z",
   "history": {
     "daily": [
       {
@@ -567,9 +567,9 @@
       },
       {
         "effort": "high",
-        "lanes": 10555,
-        "tokens_in": 10370118892,
-        "tokens_out": 102053217
+        "lanes": 10556,
+        "tokens_in": 10370665208,
+        "tokens_out": 102056899
       },
       {
         "effort": "low",
@@ -615,18 +615,18 @@
         "tokens_out": 33572061
       },
       {
-        "avg_tokens_per_lane": 1101052.0,
-        "lanes": 8831,
+        "avg_tokens_per_lane": 1100990.0,
+        "lanes": 8832,
         "model": "gpt-6.1-sol",
-        "tokens_in": 9674045528,
-        "tokens_out": 49345136
+        "tokens_in": 9674591844,
+        "tokens_out": 49348818
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 4361,
-        "tokens_in": 5825944,
-        "tokens_out": 82358
+        "tokens_in": 6372260,
+        "tokens_out": 86040
       },
       {
         "run_id": 4360,
@@ -1125,16 +1125,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10857007,
+      "avg_tokens_per_completed_review": 10857192,
       "completed_reviews": 2964,
       "findings": 19857,
       "findings_posted": 3510,
       "reviews": 5012,
       "reviews_imported": 2245,
       "runs": 4361,
-      "tokens_in": 31734170063,
-      "tokens_out": 445997476,
-      "tokens_total": 32180167539
+      "tokens_in": 31734716379,
+      "tokens_out": 446001158,
+      "tokens_total": 32180717537
     }
   },
   "live": {
@@ -1143,16 +1143,16 @@
         "attempt": 1,
         "author": "bfoss765",
         "deadline_at": "2026-10-10T03:53:18Z",
-        "deadline_in_seconds": 20774,
+        "deadline_in_seconds": 20714,
         "degraded": false,
-        "elapsed_seconds": 826,
+        "elapsed_seconds": 886,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
         "heartbeat_age_seconds": 11,
-        "heartbeat_at": "2026-10-09T22:06:53Z",
+        "heartbeat_at": "2026-10-09T22:07:53Z",
         "id": 4361,
         "lanes": [
           {
@@ -1194,6 +1194,16 @@
             "status": "completed",
             "tokens_in": 2020822,
             "tokens_out": 5291
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 546316,
+            "tokens_out": 3682
           }
         ],
         "live_lanes": [
@@ -1201,22 +1211,32 @@
             "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify2",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 39,
+            "role": "general",
+            "since_seconds": 8,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 9,
             "state": "running"
           }
         ],
         "number": 219,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/dashpay/dash-platform-website/pull/219",
         "priority": true,
-        "progress": 0.78,
+        "progress": 0.765,
         "queue": "live",
         "queued_at": "2026-10-09T21:51:47Z",
-        "remaining_seconds": 232,
+        "remaining_seconds": 271,
         "repo": "dashpay/dash-platform-website",
         "sha": "c4e518682bd5b310781637cfde033be43439b61d",
         "started_at": "2026-10-09T21:53:18Z",
@@ -1310,20 +1330,40 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify2",
-            "seconds": 39,
+            "seconds": 90,
             "started_at": "2026-10-09T22:06:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "fresh_phase2",
+            "seconds": 9,
+            "started_at": "2026-10-09T22:07:55Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "feat(dwt): select the pages a search found; Publish runs on the server; publishes survive a restart",
-        "tokens_in": 5825944,
-        "tokens_out": 82358,
+        "tokens_in": 6372260,
+        "tokens_out": 86040,
         "trigger": "review_reply",
         "upcoming": [
-          "fresh_phase2",
           "fresh_verify2",
           "publish"
         ],
@@ -1359,7 +1399,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-09T22:05:15Z",
+        "at": "2026-10-09T22:07:42Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1383,7 +1423,7 @@
       "superseded": 1949
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-09T22:03:28Z",
+    "ingest_last_at": "2026-10-09T22:07:20Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1405,7 +1445,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1430,7 +1470,7 @@
       "reviews": 189,
       "tokens": 1539059308
     },
-    "ts": "2026-10-09T22:07:04Z",
+    "ts": "2026-10-09T22:08:04Z",
     "typical_minutes_by_tier": {
       "critical": 20.8,
       "low": 12.8,
@@ -1441,7 +1481,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 13.766666666666667,
+      "idle_minutes": 14.783333333333333,
       "ingest_stale": false,
       "stuck": false
     }
