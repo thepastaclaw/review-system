@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-09T00:19:00Z",
-  "generated_at": "2026-10-09T00:19:00Z",
+  "data_as_of": "2026-10-09T00:20:00Z",
+  "generated_at": "2026-10-09T00:20:00Z",
   "history": {
     "daily": [
       {
@@ -169,7 +169,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 10036,
+        "count": 10037,
         "severity": "suggestion"
       }
     ],
@@ -214,6 +214,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "6c5396c1 trigger=new_pr priority=0",
+        "kind": "head.queued",
+        "number": 703,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-09T00:19:22Z"
+      },
       {
         "detail": null,
         "kind": "phase1.model_selected",
@@ -525,14 +533,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 4144,
         "ts": "2026-10-08T22:25:41Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 1065,
-        "repo": "dashpay/dash-evo-tool",
-        "run_id": 4145,
-        "ts": "2026-10-08T22:25:00Z"
       }
     ],
     "tokens_by_effort": [
@@ -562,9 +562,9 @@
       },
       {
         "effort": "high",
-        "lanes": 9942,
-        "tokens_in": 9585064008,
-        "tokens_out": 96873936
+        "lanes": 9944,
+        "tokens_in": 9591462824,
+        "tokens_out": 96911437
       },
       {
         "effort": "low",
@@ -596,11 +596,11 @@
         "tokens_out": 259385
       },
       {
-        "avg_tokens_per_lane": 2897626.0,
-        "lanes": 856,
+        "avg_tokens_per_lane": 2901478.0,
+        "lanes": 857,
         "model": "gemini-3.8-flash-high",
-        "tokens_in": 2464302573,
-        "tokens_out": 16065236
+        "tokens_in": 2470465520,
+        "tokens_out": 16100771
       },
       {
         "avg_tokens_per_lane": 866024.0,
@@ -610,18 +610,18 @@
         "tokens_out": 33079142
       },
       {
-        "avg_tokens_per_lane": 1122202.0,
-        "lanes": 7748,
+        "avg_tokens_per_lane": 1122088.0,
+        "lanes": 7749,
         "model": "gpt-6.1-sol",
-        "tokens_in": 8651086238,
-        "tokens_out": 43734543
+        "tokens_in": 8651322107,
+        "tokens_out": 43736509
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 4150,
-        "tokens_in": 1738472,
-        "tokens_out": 12665
+        "tokens_in": 8137288,
+        "tokens_out": 50166
       },
       {
         "run_id": 4149,
@@ -1120,16 +1120,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10962931,
+      "avg_tokens_per_completed_review": 10965251,
       "completed_reviews": 2775,
-      "findings": 18918,
+      "findings": 18919,
       "findings_posted": 3324,
       "reviews": 4830,
       "reviews_imported": 2245,
       "runs": 4151,
-      "tokens_in": 29989696171,
-      "tokens_out": 432438670,
-      "tokens_total": 30422134841
+      "tokens_in": 29996094987,
+      "tokens_out": 432476171,
+      "tokens_total": 30428571158
     }
   },
   "live": {
@@ -1138,12 +1138,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T06:11:34Z",
-        "deadline_in_seconds": 21154,
+        "deadline_in_seconds": 21094,
         "degraded": false,
-        "elapsed_seconds": 446,
-        "findings": null,
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-09T00:18:52Z",
+        "elapsed_seconds": 506,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 1
+        },
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-09T00:19:54Z",
         "id": 4150,
         "lanes": [
           {
@@ -1165,29 +1169,59 @@
             "status": "completed",
             "tokens_in": 1445353,
             "tokens_out": 9372
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 6162947,
+            "tokens_out": 35535
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 235869,
+            "tokens_out": 1966
           }
         ],
         "live_lanes": [
           {
-            "effort": "high",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gemini-3.8-flash-high",
-            "phase": "phase1",
-            "pool": "gemini",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "dash-core-commit-history",
+            "since_seconds": 1,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
             "role": "general",
-            "since_seconds": 430,
+            "since_seconds": 2,
             "state": "running"
           }
         ],
         "number": 7594,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/7594",
         "priority": false,
-        "progress": 0.401,
+        "progress": 0.57,
         "queue": "live",
         "queued_at": "2026-10-08T23:40:39Z",
-        "remaining_seconds": 665,
+        "remaining_seconds": 381,
         "repo": "dashpay/dash",
         "sha": "dc9b409e2527f4a7704244fd86cfd5ee54d3fa69",
         "started_at": "2026-10-09T00:11:34Z",
@@ -1250,24 +1284,49 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 430,
+            "seconds": 444,
             "started_at": "2026-10-09T00:11:50Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "blockers": 0,
+              "findings": 1
+            },
+            "name": "verify2",
+            "seconds": 44,
+            "started_at": "2026-10-09T00:19:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "dash-core-commit-history"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "dash-core-commit-history"
+            ],
+            "lanes_total": 2,
+            "name": "fresh_phase2",
+            "seconds": 2,
+            "started_at": "2026-10-09T00:19:58Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat(wallet): derive masternode operator keys from seed",
-        "tokens_in": 1738472,
-        "tokens_out": 12665,
+        "tokens_in": 8137288,
+        "tokens_out": 50166,
         "trigger": "new_push",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1855
@@ -1276,12 +1335,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-09T06:18:21Z",
-        "deadline_in_seconds": 21561,
+        "deadline_in_seconds": 21501,
         "degraded": false,
-        "elapsed_seconds": 39,
+        "elapsed_seconds": 99,
         "findings": null,
-        "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-10-09T00:18:51Z",
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-10-09T00:19:52Z",
         "id": 4151,
         "lanes": [],
         "live_lanes": [
@@ -1292,7 +1351,7 @@
             "phase": "phase1",
             "pool": "gemini",
             "role": "general",
-            "since_seconds": 24,
+            "since_seconds": 84,
             "state": "running"
           }
         ],
@@ -1301,10 +1360,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7018",
         "priority": false,
-        "progress": 0.044,
+        "progress": 0.111,
         "queue": "live",
         "queued_at": "2026-10-08T23:48:21Z",
-        "remaining_seconds": 853,
+        "remaining_seconds": 793,
         "repo": "dashpay/dash",
         "sha": "c4d49bddc2201f99494889dde2ef26901ff6990e",
         "started_at": "2026-10-09T00:18:21Z",
@@ -1358,7 +1417,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 24,
+            "seconds": 84,
             "started_at": "2026-10-09T00:18:36Z",
             "status": "running"
           }
@@ -1427,12 +1486,12 @@
       "closed": 328,
       "done": 4775,
       "failed": 70,
-      "queued": 4,
+      "queued": 5,
       "running": 2,
       "superseded": 1908
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-09T00:15:33Z",
+    "ingest_last_at": "2026-10-09T00:19:23Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1442,7 +1501,7 @@
       },
       {
         "pool": "gemini",
-        "running": 2,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1454,7 +1513,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1468,17 +1527,17 @@
     "last_run_done_at": "2026-10-08T23:34:00Z",
     "last_run_started_at": "2026-10-09T00:18:21Z",
     "median_run_minutes": 8.933333333333334,
-    "notify_last_at": "2026-10-09T00:16:37Z",
+    "notify_last_at": "2026-10-09T00:19:23Z",
     "oldest_queued_at": "2026-10-08T23:52:18Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1602,
+        "age_seconds": 1662,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-09T00:22:18Z",
-        "eligible_in_seconds": 198,
+        "eligible_in_seconds": 138,
         "number": 7827,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7827",
@@ -1492,12 +1551,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1602,
+        "age_seconds": 1662,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-09T00:22:18Z",
-        "eligible_in_seconds": 198,
+        "eligible_in_seconds": 138,
         "number": 7836,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7836",
@@ -1511,12 +1570,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1149,
+        "age_seconds": 1209,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-09T00:29:51Z",
-        "eligible_in_seconds": 651,
+        "eligible_in_seconds": 591,
         "number": 7650,
         "position": 3,
         "pr_url": "https://github.com/dashpay/dash/pull/7650",
@@ -1530,12 +1589,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 450,
+        "age_seconds": 510,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-09T00:41:30Z",
-        "eligible_in_seconds": 1350,
+        "eligible_in_seconds": 1290,
         "number": 7829,
         "position": 4,
         "pr_url": "https://github.com/dashpay/dash/pull/7829",
@@ -1547,6 +1606,25 @@
         "sha": "c4305d07f2806ee51d559ccd53bd24fde247c556",
         "title": "fix: preserve wallet permissions when changing passphrases",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 38,
+        "attempts": 0,
+        "author": "PastaPastaPasta",
+        "eligible": false,
+        "eligible_at": "2026-10-09T00:49:22Z",
+        "eligible_in_seconds": 1762,
+        "number": 703,
+        "position": 5,
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/703",
+        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/703#issuecomment-6066601630",
+        "priority": false,
+        "queued_at": "2026-10-09T00:19:22Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "6c5396c1a5b6c49da728486874d4797d6d6aeb18",
+        "title": "test(e2e): fix the devnet profile Top, reply repost and DM v5 specs; one devnet run at a time",
+        "trigger": "new_pr"
       }
     ],
     "today": {
@@ -1556,7 +1634,7 @@
       "reviews": 0,
       "tokens": 0
     },
-    "ts": "2026-10-09T00:19:00Z",
+    "ts": "2026-10-09T00:20:00Z",
     "typical_minutes_by_tier": {
       "critical": 22.8,
       "low": 21.3,
@@ -1567,7 +1645,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.65,
+      "idle_minutes": 1.65,
       "ingest_stale": false,
       "stuck": false
     }
