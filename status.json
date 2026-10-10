@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-10T12:24:01Z",
-  "generated_at": "2026-10-10T12:24:01Z",
+  "data_as_of": "2026-10-10T12:25:01Z",
+  "generated_at": "2026-10-10T12:25:02Z",
   "history": {
     "daily": [
       {
@@ -572,9 +572,9 @@
       },
       {
         "effort": "high",
-        "lanes": 10586,
-        "tokens_in": 10386265087,
-        "tokens_out": 102147341
+        "lanes": 10587,
+        "tokens_in": 10386340209,
+        "tokens_out": 102149388
       },
       {
         "effort": "low",
@@ -592,11 +592,11 @@
         "tokens_out": 285048813
       },
       {
-        "avg_tokens_per_lane": 5240290.0,
-        "lanes": 867,
+        "avg_tokens_per_lane": 5234342.0,
+        "lanes": 868,
         "model": "glm-5.3-flash",
-        "tokens_in": 4484310008,
-        "tokens_out": 59021506
+        "tokens_in": 4484385130,
+        "tokens_out": 59023553
       },
       {
         "avg_tokens_per_lane": 1019991.0,
@@ -628,6 +628,11 @@
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 4368,
+        "tokens_in": 75122,
+        "tokens_out": 2047
+      },
       {
         "run_id": 4367,
         "tokens_in": 27551721,
@@ -1122,24 +1127,19 @@
         "run_id": 4266,
         "tokens_in": 0,
         "tokens_out": 0
-      },
-      {
-        "run_id": 4265,
-        "tokens_in": 27358658,
-        "tokens_out": 169381
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10854726,
+      "avg_tokens_per_completed_review": 10854752,
       "completed_reviews": 2971,
       "findings": 19941,
       "findings_posted": 3516,
       "reviews": 5019,
       "reviews_imported": 2245,
       "runs": 4368,
-      "tokens_in": 31802482250,
-      "tokens_out": 446908724,
-      "tokens_total": 32249390974
+      "tokens_in": 31802557372,
+      "tokens_out": 446910771,
+      "tokens_total": 32249468143
     }
   },
   "live": {
@@ -1148,35 +1148,46 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-10-10T18:23:38Z",
-        "deadline_in_seconds": 21577,
+        "deadline_in_seconds": 21517,
         "degraded": false,
-        "elapsed_seconds": 23,
+        "elapsed_seconds": 83,
         "findings": null,
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-10T12:23:53Z",
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-10T12:24:54Z",
         "id": 4368,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "high",
-            "line_position": null,
             "model": "glm-5.3-flash",
             "phase": "phase1",
-            "pool": "glm",
             "role": "general",
-            "since_seconds": 6,
+            "status": "completed",
+            "tokens_in": 75122,
+            "tokens_out": 2047
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "medium",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 13,
             "state": "running"
           }
         ],
         "number": 1201,
         "overdue": false,
-        "phase": "phase1",
+        "phase": "verify1",
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1201",
         "priority": false,
-        "progress": 0.058,
+        "progress": 0.672,
         "queue": "live",
         "queued_at": "2026-10-10T11:53:21Z",
-        "remaining_seconds": 376,
+        "remaining_seconds": 40,
         "repo": "dashpay/dashwallet-ios",
         "sha": "4c30cc5490500b41cf2be6710829b5d97ae24f5f",
         "started_at": "2026-10-10T12:23:38Z",
@@ -1222,24 +1233,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 8,
+            "seconds": 55,
             "started_at": "2026-10-10T12:23:53Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify1",
+            "seconds": 13,
+            "started_at": "2026-10-10T12:24:48Z",
             "status": "running"
           }
         ],
         "tier": "trivial",
         "title": "chore: bump MARKETING_VERSION to 9.1.3",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 75122,
+        "tokens_out": 2047,
         "trigger": "new_pr",
         "upcoming": [
-          "verify1",
           "gate",
           "publish"
         ],
@@ -1315,13 +1330,13 @@
       },
       {
         "pool": "glm",
-        "running": 1,
+        "running": 0,
         "slots": 6,
         "waiting": 0
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1346,7 +1361,7 @@
       "reviews": 6,
       "tokens": 64414447
     },
-    "ts": "2026-10-10T12:24:01Z",
+    "ts": "2026-10-10T12:25:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.6,
       "low": 12.9,
@@ -1357,7 +1372,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.38333333333333336,
+      "idle_minutes": 1.4,
       "ingest_stale": false,
       "stuck": false
     }
