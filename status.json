@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-10T03:54:02Z",
-  "generated_at": "2026-10-10T03:54:02Z",
+  "data_as_of": "2026-10-10T03:55:04Z",
+  "generated_at": "2026-10-10T03:55:04Z",
   "history": {
     "daily": [
       {
@@ -224,6 +224,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5256,
+        "repo": "dashpay/platform",
+        "run_id": 4366,
+        "ts": "2026-10-10T03:54:28Z"
+      },
       {
         "detail": "attempt 1 sha=71efbb18",
         "kind": "run.spawned",
@@ -535,14 +543,6 @@
         "repo": "dashpay/dash-platform-website",
         "run_id": 4361,
         "ts": "2026-10-09T22:13:30Z"
-      },
-      {
-        "detail": "ok in 1396s",
-        "kind": "run.done",
-        "number": 1603,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 4360,
-        "ts": "2026-10-09T21:59:07Z"
       }
     ],
     "tokens_by_effort": [
@@ -1148,24 +1148,45 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-10T09:53:58Z",
-        "deadline_in_seconds": 21596,
+        "deadline_in_seconds": 21534,
         "degraded": false,
-        "elapsed_seconds": 4,
+        "elapsed_seconds": 66,
         "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-10-10T03:53:58Z",
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-10T03:54:58Z",
         "id": 4366,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 36,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 35,
+            "state": "running"
+          }
+        ],
         "number": 5256,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5256",
         "priority": false,
-        "progress": 0.005,
+        "progress": 0.086,
         "queue": "live",
         "queued_at": "2026-10-10T03:23:48Z",
-        "remaining_seconds": 875,
+        "remaining_seconds": 704,
         "repo": "dashpay/platform",
         "sha": "71efbb18ee3f18d9010f80805f6d8d655c479fd0",
         "started_at": "2026-10-10T03:53:58Z",
@@ -1174,21 +1195,67 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 4,
+            "seconds": 12,
             "started_at": "2026-10-10T03:53:58Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 14,
+            "started_at": "2026-10-10T03:54:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The production diff adds receiving-account eligibility and deferred registration plus a rescan fallback in contact_requests.rs and payments.rs, but does not change funds movement, coin selection, cryptography, or key derivation itself.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 14,
+            "started_at": "2026-10-10T03:54:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-10T03:54:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 36,
+            "started_at": "2026-10-10T03:54:28Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix(platform-wallet): build our receiving account for one-way DashPay contacts",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1225,7 +1292,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-10T03:52:32Z",
+        "at": "2026-10-10T03:54:40Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1278,7 +1345,7 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1286,17 +1353,17 @@
     "last_run_done_at": "2026-10-10T03:39:16Z",
     "last_run_started_at": "2026-10-10T03:53:58Z",
     "median_run_minutes": 18.633333333333333,
-    "notify_last_at": "2026-10-10T03:52:53Z",
+    "notify_last_at": "2026-10-10T03:55:01Z",
     "oldest_queued_at": "2026-10-10T03:27:42Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1580,
+        "age_seconds": 1642,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-10T03:57:42Z",
-        "eligible_in_seconds": 220,
+        "eligible_in_seconds": 158,
         "number": 5259,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5259",
@@ -1317,7 +1384,7 @@
       "reviews": 4,
       "tokens": 32044275
     },
-    "ts": "2026-10-10T03:54:02Z",
+    "ts": "2026-10-10T03:55:04Z",
     "typical_minutes_by_tier": {
       "critical": 20.8,
       "low": 12.8,
@@ -1328,7 +1395,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.06666666666666667,
+      "idle_minutes": 1.1,
       "ingest_stale": false,
       "stuck": false
     }
