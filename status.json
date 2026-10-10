@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-10T12:23:00Z",
-  "generated_at": "2026-10-10T12:23:01Z",
+  "data_as_of": "2026-10-10T12:24:01Z",
+  "generated_at": "2026-10-10T12:24:01Z",
   "history": {
     "daily": [
       {
@@ -198,7 +198,7 @@
           },
           "wait": {
             "median_seconds": 1815,
-            "n": 529,
+            "n": 530,
             "p90_seconds": 1857
           }
         },
@@ -224,6 +224,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1201,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": 4368,
+        "ts": "2026-10-10T12:23:55Z"
+      },
+      {
+        "detail": "attempt 1 sha=4c30cc54",
+        "kind": "run.spawned",
+        "number": 1201,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": 4368,
+        "ts": "2026-10-10T12:23:38Z"
+      },
       {
         "detail": "4c30cc54 trigger=new_pr priority=0",
         "kind": "head.queued",
@@ -527,22 +543,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-10T01:29:27Z"
-      },
-      {
-        "detail": "ok in 1536s",
-        "kind": "run.done",
-        "number": 7806,
-        "repo": "dashpay/dash",
-        "run_id": 4363,
-        "ts": "2026-10-10T01:28:26Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7806,
-        "repo": "dashpay/dash",
-        "run_id": 4363,
-        "ts": "2026-10-10T01:28:25Z"
       }
     ],
     "tokens_by_effort": [
@@ -1136,14 +1136,116 @@
       "findings_posted": 3516,
       "reviews": 5019,
       "reviews_imported": 2245,
-      "runs": 4367,
+      "runs": 4368,
       "tokens_in": 31802482250,
       "tokens_out": 446908724,
       "tokens_total": 32249390974
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "romchornyi",
+        "deadline_at": "2026-10-10T18:23:38Z",
+        "deadline_in_seconds": 21577,
+        "degraded": false,
+        "elapsed_seconds": 23,
+        "findings": null,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-10-10T12:23:53Z",
+        "id": 4368,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 6,
+            "state": "running"
+          }
+        ],
+        "number": 1201,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1201",
+        "priority": false,
+        "progress": 0.058,
+        "queue": "live",
+        "queued_at": "2026-10-10T11:53:21Z",
+        "remaining_seconds": 376,
+        "repo": "dashpay/dashwallet-ios",
+        "sha": "4c30cc5490500b41cf2be6710829b5d97ae24f5f",
+        "started_at": "2026-10-10T12:23:38Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-10T12:23:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-10T12:23:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff only updates MARKETING_VERSION literals consistently across 20 build configurations, with no runtime logic or build process changes.",
+              "tier": "trivial"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-10T12:23:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-10T12:23:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 8,
+            "started_at": "2026-10-10T12:23:53Z",
+            "status": "running"
+          }
+        ],
+        "tier": "trivial",
+        "title": "chore: bump MARKETING_VERSION to 9.1.3",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "publish"
+        ],
+        "wait_seconds": 1817
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1159,7 +1261,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1173,9 +1275,9 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-10T12:20:51Z",
+        "at": "2026-10-10T12:23:41Z",
         "quota_exhausted": false,
-        "reason": "gpt-6.1-sol: probe failed (timed out); not treated as exhausted"
+        "reason": "gpt-6.1-sol answered"
       },
       "phase1_effort_cap": "high",
       "sentinel": "gpt-6.1-sol",
@@ -1193,11 +1295,11 @@
       "closed": 340,
       "done": 4962,
       "failed": 70,
-      "queued": 1,
+      "running": 1,
       "superseded": 1951
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-10T12:19:56Z",
+    "ingest_last_at": "2026-10-10T12:23:34Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1213,7 +1315,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1231,32 +1333,12 @@
       }
     ],
     "last_run_done_at": "2026-10-10T04:30:15Z",
-    "last_run_started_at": "2026-10-10T03:58:00Z",
+    "last_run_started_at": "2026-10-10T12:23:38Z",
     "median_run_minutes": 18.6,
-    "notify_last_at": "2026-10-10T12:21:11Z",
-    "oldest_queued_at": "2026-10-10T11:53:21Z",
+    "notify_last_at": "2026-10-10T12:23:34Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1779,
-        "attempts": 0,
-        "author": "romchornyi",
-        "eligible": false,
-        "eligible_at": "2026-10-10T12:23:21Z",
-        "eligible_in_seconds": 21,
-        "number": 1201,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1201",
-        "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1201#issuecomment-6097239861",
-        "priority": false,
-        "queued_at": "2026-10-10T11:53:21Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dashwallet-ios",
-        "sha": "4c30cc5490500b41cf2be6710829b5d97ae24f5f",
-        "title": "chore: bump MARKETING_VERSION to 9.1.3",
-        "trigger": "new_pr"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-10",
       "failed": 0,
@@ -1264,7 +1346,7 @@
       "reviews": 6,
       "tokens": 64414447
     },
-    "ts": "2026-10-10T12:23:00Z",
+    "ts": "2026-10-10T12:24:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.6,
       "low": 12.9,
@@ -1273,9 +1355,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 505.0,
+      "idle_minutes": 0.38333333333333336,
       "ingest_stale": false,
       "stuck": false
     }
