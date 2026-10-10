@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-10T02:59:01Z",
-  "generated_at": "2026-10-10T02:59:01Z",
+  "data_as_of": "2026-10-10T03:00:02Z",
+  "generated_at": "2026-10-10T03:00:02Z",
   "history": {
     "daily": [
       {
@@ -171,11 +171,11 @@
     ],
     "findings_by_severity": [
       {
-        "count": 7972,
+        "count": 7975,
         "severity": "blocking"
       },
       {
-        "count": 1476,
+        "count": 1478,
         "severity": "nitpick"
       },
       {
@@ -560,9 +560,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 9282,
-        "tokens_in": 18941365857,
-        "tokens_out": 318663784
+        "lanes": 9283,
+        "tokens_in": 18941908877,
+        "tokens_out": 318716127
       },
       {
         "effort": "medium",
@@ -585,11 +585,11 @@
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 1697031.0,
-        "lanes": 4749,
+        "avg_tokens_per_lane": 1696799.0,
+        "lanes": 4750,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 7774614199,
-        "tokens_out": 284585035
+        "tokens_in": 7775157219,
+        "tokens_out": 284637378
       },
       {
         "avg_tokens_per_lane": 5240290.0,
@@ -628,6 +628,11 @@
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 4364,
+        "tokens_in": 543020,
+        "tokens_out": 52343
+      },
       {
         "run_id": 4363,
         "tokens_in": 4499677,
@@ -1122,24 +1127,19 @@
         "run_id": 4262,
         "tokens_in": 2371649,
         "tokens_out": 11561
-      },
-      {
-        "run_id": 4261,
-        "tokens_in": 10214604,
-        "tokens_out": 77224
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10850266,
+      "avg_tokens_per_completed_review": 10850467,
       "completed_reviews": 2967,
-      "findings": 19859,
+      "findings": 19864,
       "findings_posted": 3510,
       "reviews": 5015,
       "reviews_imported": 2245,
       "runs": 4364,
-      "tokens_in": 31746519702,
-      "tokens_out": 446219585,
-      "tokens_total": 32192739287
+      "tokens_in": 31747062722,
+      "tokens_out": 446271928,
+      "tokens_total": 32193334650
     }
   },
   "live": {
@@ -1148,35 +1148,46 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-10T08:52:47Z",
-        "deadline_in_seconds": 21226,
+        "deadline_in_seconds": 21165,
         "degraded": false,
-        "elapsed_seconds": 374,
+        "elapsed_seconds": 435,
         "findings": null,
-        "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-10-10T02:58:48Z",
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-10-10T02:59:48Z",
         "id": 4364,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "xhigh",
-            "line_position": null,
             "model": "muse-spark-1.3-contributor",
             "phase": "phase1",
-            "pool": "muse",
             "role": "general",
-            "since_seconds": 354,
+            "status": "completed",
+            "tokens_in": 543020,
+            "tokens_out": 52343
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "medium",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 23,
             "state": "running"
           }
         ],
         "number": 1605,
         "overdue": false,
-        "phase": "phase1",
+        "phase": "verify1",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1605",
         "priority": false,
-        "progress": 0.492,
+        "progress": 0.596,
         "queue": "live",
         "queued_at": "2026-10-10T02:22:35Z",
-        "remaining_seconds": 386,
+        "remaining_seconds": 294,
         "repo": "dashpay/dash-wallet",
         "sha": "3a984f8e8e0707144558198a62fb53b103088a7b",
         "started_at": "2026-10-10T02:52:47Z",
@@ -1224,24 +1235,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 354,
+            "seconds": 392,
             "started_at": "2026-10-10T02:53:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify1",
+            "seconds": 23,
+            "started_at": "2026-10-10T02:59:39Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "fix(parity): compare values for shared txids, not just set membership",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 543020,
+        "tokens_out": 52343,
         "trigger": "new_push",
         "upcoming": [
-          "verify1",
           "gate",
           "phase2",
           "verify2",
@@ -1279,7 +1294,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-10T02:57:37Z",
+        "at": "2026-10-10T02:59:45Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1325,13 +1340,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 0,
         "slots": 20,
         "waiting": 0
       }
@@ -1350,7 +1365,7 @@
       "reviews": 2,
       "tokens": 7762760
     },
-    "ts": "2026-10-10T02:59:01Z",
+    "ts": "2026-10-10T03:00:02Z",
     "typical_minutes_by_tier": {
       "critical": 20.8,
       "low": 12.8,
@@ -1361,7 +1376,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 6.233333333333333,
+      "idle_minutes": 7.25,
       "ingest_stale": false,
       "stuck": false
     }
