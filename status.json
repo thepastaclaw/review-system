@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-10T20:58:01Z",
-  "generated_at": "2026-10-10T20:58:01Z",
+  "data_as_of": "2026-10-10T20:59:01Z",
+  "generated_at": "2026-10-10T20:59:01Z",
   "history": {
     "daily": [
       {
@@ -175,11 +175,11 @@
         "severity": "blocking"
       },
       {
-        "count": 1487,
+        "count": 1489,
         "severity": "nitpick"
       },
       {
-        "count": 10496,
+        "count": 10499,
         "severity": "suggestion"
       }
     ],
@@ -572,9 +572,9 @@
       },
       {
         "effort": "high",
-        "lanes": 10643,
-        "tokens_in": 10429203899,
-        "tokens_out": 102800986
+        "lanes": 10644,
+        "tokens_in": 10434426198,
+        "tokens_out": 102976286
       },
       {
         "effort": "low",
@@ -592,11 +592,11 @@
         "tokens_out": 287035499
       },
       {
-        "avg_tokens_per_lane": 5233358.0,
-        "lanes": 872,
+        "avg_tokens_per_lane": 5233547.0,
+        "lanes": 873,
         "model": "glm-5.3-flash",
-        "tokens_in": 4503980275,
-        "tokens_out": 59508312
+        "tokens_in": 4509202574,
+        "tokens_out": 59683612
       },
       {
         "avg_tokens_per_lane": 1019991.0,
@@ -635,8 +635,8 @@
       },
       {
         "run_id": 4393,
-        "tokens_in": 6742832,
-        "tokens_out": 72540
+        "tokens_in": 11965131,
+        "tokens_out": 247840
       },
       {
         "run_id": 4392,
@@ -1130,16 +1130,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10818481,
+      "avg_tokens_per_completed_review": 10820282,
       "completed_reviews": 2997,
-      "findings": 20041,
+      "findings": 20046,
       "findings_posted": 3540,
       "reviews": 5042,
       "reviews_imported": 2245,
       "runs": 4394,
-      "tokens_in": 31972984237,
-      "tokens_out": 450002976,
-      "tokens_total": 32422987213
+      "tokens_in": 31978206536,
+      "tokens_out": 450178276,
+      "tokens_total": 32428384812
     }
   },
   "live": {
@@ -1148,12 +1148,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-11T01:52:34Z",
-        "deadline_in_seconds": 17673,
+        "deadline_in_seconds": 17613,
         "degraded": false,
-        "elapsed_seconds": 3927,
+        "elapsed_seconds": 3987,
         "findings": null,
         "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-10T20:58:00Z",
+        "heartbeat_at": "2026-10-10T20:59:00Z",
         "id": 4393,
         "lanes": [
           {
@@ -1165,29 +1165,39 @@
             "status": "completed",
             "tokens_in": 6742832,
             "tokens_out": 72540
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "role": "rust-quality",
+            "status": "completed",
+            "tokens_in": 5222299,
+            "tokens_out": 175300
           }
         ],
         "live_lanes": [
           {
-            "effort": "high",
+            "effort": "medium",
             "line_position": null,
-            "model": "glm-5.3-flash",
-            "phase": "phase1",
-            "pool": "glm",
-            "role": "rust-quality",
-            "since_seconds": 3901,
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 52,
             "state": "running"
           }
         ],
         "number": 5366,
-        "overdue": true,
-        "phase": "phase1",
+        "overdue": false,
+        "phase": "verify1",
         "pr_url": "https://github.com/dashpay/platform/pull/5366",
         "priority": false,
-        "progress": 0.959,
+        "progress": 0.963,
         "queue": "live",
         "queued_at": "2026-10-10T19:21:52Z",
-        "remaining_seconds": 167,
+        "remaining_seconds": 151,
         "repo": "dashpay/platform",
         "sha": "738f83395d3c7e5a2f34a8714a4e9525d0432d9b",
         "started_at": "2026-10-10T19:52:34Z",
@@ -1238,24 +1248,28 @@
                 "rust-quality"
               ]
             },
-            "lanes_done": 1,
-            "lanes_left": [
-              "rust-quality"
-            ],
+            "lanes_done": 2,
+            "lanes_left": [],
             "lanes_total": 2,
             "name": "phase1",
-            "seconds": 3904,
+            "seconds": 3912,
             "started_at": "2026-10-10T19:52:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify1",
+            "seconds": 52,
+            "started_at": "2026-10-10T20:58:09Z",
             "status": "running"
           }
         ],
         "tier": "low",
         "title": "feat(platform-wallet): return dash-spv's verification status with an SPV quorum key",
-        "tokens_in": 6742832,
-        "tokens_out": 72540,
+        "tokens_in": 11965131,
+        "tokens_out": 247840,
         "trigger": "new_pr",
         "upcoming": [
-          "verify1",
           "gate",
           "phase2",
           "verify2",
@@ -1335,13 +1349,13 @@
       },
       {
         "pool": "glm",
-        "running": 1,
+        "running": 0,
         "slots": 6,
         "waiting": 0
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1355,7 +1369,7 @@
     "last_run_done_at": "2026-10-10T20:47:45Z",
     "last_run_started_at": "2026-10-10T20:19:22Z",
     "median_run_minutes": 15.95,
-    "notify_last_at": "2026-10-10T20:56:46Z",
+    "notify_last_at": "2026-10-10T20:58:53Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1366,7 +1380,7 @@
       "reviews": 32,
       "tokens": 231195314
     },
-    "ts": "2026-10-10T20:58:01Z",
+    "ts": "2026-10-10T20:59:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.1,
       "low": 13.4,
@@ -1377,7 +1391,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 38.65,
+      "idle_minutes": 39.65,
       "ingest_stale": false,
       "stuck": false
     }
