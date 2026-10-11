@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-11T19:03:02Z",
-  "generated_at": "2026-10-11T19:03:03Z",
+  "data_as_of": "2026-10-11T19:04:02Z",
+  "generated_at": "2026-10-11T19:04:02Z",
   "history": {
     "daily": [
       {
@@ -229,6 +229,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5361,
+        "repo": "dashpay/platform",
+        "run_id": 4470,
+        "ts": "2026-10-11T19:03:20Z"
+      },
+      {
+        "detail": null,
+        "kind": "triage.degraded",
+        "number": 5361,
+        "repo": "dashpay/platform",
+        "run_id": 4470,
+        "ts": "2026-10-11T19:03:14Z"
+      },
+      {
+        "detail": null,
+        "kind": "select.degraded",
+        "number": 5361,
+        "repo": "dashpay/platform",
+        "run_id": 4470,
+        "ts": "2026-10-11T19:03:14Z"
+      },
       {
         "detail": "attempt 1 sha=be70a485",
         "kind": "run.spawned",
@@ -524,30 +548,6 @@
         "repo": "dashpay/platform",
         "run_id": 4463,
         "ts": "2026-10-11T18:27:28Z"
-      },
-      {
-        "detail": null,
-        "kind": "triage.degraded",
-        "number": 5371,
-        "repo": "dashpay/platform",
-        "run_id": 4463,
-        "ts": "2026-10-11T18:27:23Z"
-      },
-      {
-        "detail": null,
-        "kind": "select.degraded",
-        "number": 5371,
-        "repo": "dashpay/platform",
-        "run_id": 4463,
-        "ts": "2026-10-11T18:27:23Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 7005,
-        "repo": "dashpay/dash",
-        "run_id": 4464,
-        "ts": "2026-10-11T18:26:35Z"
       }
     ],
     "tokens_by_effort": [
@@ -1153,24 +1153,45 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-10-12T01:02:18Z",
-        "deadline_in_seconds": 21556,
+        "deadline_in_seconds": 21496,
         "degraded": false,
-        "elapsed_seconds": 44,
+        "elapsed_seconds": 104,
         "findings": null,
-        "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-10-11T19:02:49Z",
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-11T19:03:51Z",
         "id": 4470,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 42,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 41,
+            "state": "running"
+          }
+        ],
         "number": 5361,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5361",
         "priority": false,
-        "progress": 0.029,
+        "progress": 0.105,
         "queue": "live",
         "queued_at": "2026-10-11T18:31:14Z",
-        "remaining_seconds": 1479,
+        "remaining_seconds": 886,
         "repo": "dashpay/platform",
         "sha": "be70a485671e250ddac20b1427e61ec4e3b61429",
         "started_at": "2026-10-11T19:02:18Z",
@@ -1179,23 +1200,74 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 43,
+            "seconds": 45,
             "started_at": "2026-10-11T19:02:19Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 10,
+            "started_at": "2026-10-11T19:03:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "fallback",
+              "reasoning": "",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-11T19:03:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-11T19:03:16Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 42,
+            "started_at": "2026-10-11T19:03:20Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix(platform): verify signed protocol versions and use one identity proof",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 1864
@@ -1283,7 +1355,7 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1291,36 +1363,36 @@
     "last_run_done_at": "2026-10-11T18:11:00Z",
     "last_run_started_at": "2026-10-11T19:02:18Z",
     "median_run_minutes": 34.416666666666664,
-    "notify_last_at": "2026-10-11T19:00:33Z",
+    "notify_last_at": "2026-10-11T19:03:17Z",
     "oldest_queued_at": "2026-10-11T17:29:52Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 5590,
+        "age_seconds": 5650,
         "attempts": 2,
         "author": "QuantumExplorer",
-        "eligible": false,
+        "eligible": true,
         "eligible_at": "2026-10-11T19:03:50Z",
-        "eligible_in_seconds": 48,
+        "eligible_in_seconds": 0,
         "number": 5371,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5371",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5371#issuecomment-6109835998",
         "priority": false,
         "queued_at": "2026-10-11T17:29:52Z",
-        "reason": "retry backoff after attempt 2",
+        "reason": "waiting for a review slot",
         "repo": "dashpay/platform",
         "sha": "aa2967e1b0f0692890d6bbe390f40768278da139",
         "title": "feat(dpp)!: refuse a reveal while another identity holds an older valid commitment (firstAmong)",
         "trigger": "new_push"
       },
       {
-        "age_seconds": 5118,
+        "age_seconds": 5178,
         "attempts": 2,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-11T19:06:24Z",
-        "eligible_in_seconds": 202,
+        "eligible_in_seconds": 142,
         "number": 7728,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7728",
@@ -1334,12 +1406,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 534,
+        "age_seconds": 594,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-10-11T19:24:08Z",
-        "eligible_in_seconds": 1266,
+        "eligible_in_seconds": 1206,
         "number": 18,
         "position": 3,
         "pr_url": "https://github.com/dashpay/quorum-list-server/pull/18",
@@ -1360,7 +1432,7 @@
       "reviews": 50,
       "tokens": 818338140
     },
-    "ts": "2026-10-11T19:03:02Z",
+    "ts": "2026-10-11T19:04:02Z",
     "typical_minutes_by_tier": {
       "critical": 20.6,
       "low": 11.0,
@@ -1370,8 +1442,8 @@
     },
     "watchdog": {
       "active": 1,
-      "eligible": 0,
-      "idle_minutes": 0.7333333333333333,
+      "eligible": 1,
+      "idle_minutes": 1.7333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
