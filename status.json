@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-11T09:56:01Z",
-  "generated_at": "2026-10-11T09:56:01Z",
+  "data_as_of": "2026-10-11T09:57:01Z",
+  "generated_at": "2026-10-11T09:57:01Z",
   "history": {
     "daily": [
       {
@@ -203,7 +203,7 @@
           },
           "wait": {
             "median_seconds": 1817,
-            "n": 496,
+            "n": 497,
             "p90_seconds": 1857
           }
         },
@@ -229,6 +229,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=81ca2004",
+        "kind": "run.spawned",
+        "number": 1015,
+        "repo": "dashpay/grovedb",
+        "run_id": 4415,
+        "ts": "2026-10-11T09:56:46Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -540,14 +548,6 @@
         "repo": "dashpay/platform",
         "run_id": 4410,
         "ts": "2026-10-11T06:26:37Z"
-      },
-      {
-        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
-        "kind": "compare.selected",
-        "number": 5365,
-        "repo": "dashpay/platform",
-        "run_id": 4410,
-        "ts": "2026-10-11T06:26:36Z"
       }
     ],
     "tokens_by_effort": [
@@ -1141,14 +1141,88 @@
       "findings_posted": 3561,
       "reviews": 5060,
       "reviews_imported": 2245,
-      "runs": 4414,
+      "runs": 4415,
       "tokens_in": 32413647326,
       "tokens_out": 454255432,
       "tokens_total": 32867902758
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-11T15:56:46Z",
+        "deadline_in_seconds": 21585,
+        "degraded": false,
+        "elapsed_seconds": 15,
+        "findings": null,
+        "heartbeat_age_seconds": 0,
+        "heartbeat_at": "2026-10-11T09:57:01Z",
+        "id": 4415,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1015,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/grovedb/pull/1015",
+        "priority": false,
+        "progress": 0.01,
+        "queue": "live",
+        "queued_at": "2026-10-11T09:26:20Z",
+        "remaining_seconds": 1516,
+        "repo": "dashpay/grovedb",
+        "sha": "81ca2004d8e25de62a698a1ed16489ec72403aa6",
+        "started_at": "2026-10-11T09:56:46Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-11T09:56:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-10-11T09:56:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate cross-layer change directly migrates persisted subtree records between storage prefixes in grovedb/src/batch/move_element.rs::move_subtree_storage and changes authenticated Merk mutation semantics through PutMoved and DeleteMoved.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 10,
+            "started_at": "2026-10-11T09:56:50Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(batch)!: move an element to a new key, keeping its stored subtree",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1826
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1164,7 +1238,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 4,
       "priority_overflow": 1,
@@ -1178,7 +1252,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-11T09:53:36Z",
+        "at": "2026-10-11T09:56:16Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1198,11 +1272,11 @@
       "closed": 343,
       "done": 5002,
       "failed": 70,
-      "queued": 1,
+      "running": 1,
       "superseded": 1955
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-11T09:52:53Z",
+    "ingest_last_at": "2026-10-11T09:56:42Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1236,32 +1310,12 @@
       }
     ],
     "last_run_done_at": "2026-10-11T09:23:15Z",
-    "last_run_started_at": "2026-10-11T09:03:33Z",
+    "last_run_started_at": "2026-10-11T09:56:46Z",
     "median_run_minutes": 25.033333333333335,
-    "notify_last_at": "2026-10-11T09:54:16Z",
-    "oldest_queued_at": "2026-10-11T09:26:20Z",
+    "notify_last_at": "2026-10-11T09:56:42Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1781,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": false,
-        "eligible_at": "2026-10-11T09:56:20Z",
-        "eligible_in_seconds": 19,
-        "number": 1015,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/grovedb/pull/1015",
-        "prioritize_url": "https://github.com/dashpay/grovedb/issues/1015#issuecomment-6082422833",
-        "priority": false,
-        "queued_at": "2026-10-11T09:26:20Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/grovedb",
-        "sha": "81ca2004d8e25de62a698a1ed16489ec72403aa6",
-        "title": "feat(batch)!: move an element to a new key, keeping its stored subtree",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-11",
       "failed": 0,
@@ -1269,7 +1323,7 @@
       "reviews": 12,
       "tokens": 281507028
     },
-    "ts": "2026-10-11T09:56:01Z",
+    "ts": "2026-10-11T09:57:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.1,
       "low": 11.8,
@@ -1278,9 +1332,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 52.46666666666667,
+      "idle_minutes": 0.25,
       "ingest_stale": false,
       "stuck": false
     }
