@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-11T08:13:03Z",
-  "generated_at": "2026-10-11T08:13:04Z",
+  "data_as_of": "2026-10-11T08:14:01Z",
+  "generated_at": "2026-10-11T08:14:01Z",
   "history": {
     "daily": [
       {
@@ -203,7 +203,7 @@
           },
           "wait": {
             "median_seconds": 1817,
-            "n": 496,
+            "n": 498,
             "p90_seconds": 1857
           }
         },
@@ -229,6 +229,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=45872cd2",
+        "kind": "run.spawned",
+        "number": 1016,
+        "repo": "dashpay/grovedb",
+        "run_id": 4413,
+        "ts": "2026-10-11T08:13:52Z"
+      },
+      {
+        "detail": "attempt 1 sha=4be5d8cb",
+        "kind": "run.spawned",
+        "number": 5337,
+        "repo": "dashpay/platform",
+        "run_id": 4412,
+        "ts": "2026-10-11T08:13:52Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -532,22 +548,6 @@
         "repo": "dashpay/grovedb",
         "run_id": null,
         "ts": "2026-10-11T06:03:23Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1015,
-        "repo": "dashpay/grovedb",
-        "run_id": null,
-        "ts": "2026-10-11T06:03:23Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1015,
-        "repo": "dashpay/grovedb",
-        "run_id": null,
-        "ts": "2026-10-11T06:03:22Z"
       }
     ],
     "tokens_by_effort": [
@@ -1141,14 +1141,145 @@
       "findings_posted": 3560,
       "reviews": 5058,
       "reviews_imported": 2245,
-      "runs": 4411,
+      "runs": 4413,
       "tokens_in": 32334086196,
       "tokens_out": 453758928,
       "tokens_total": 32787845124
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-11T14:13:52Z",
+        "deadline_in_seconds": 21591,
+        "degraded": false,
+        "elapsed_seconds": 9,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-11T08:13:52Z",
+        "id": 4412,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5337,
+        "overdue": false,
+        "phase": "worktree",
+        "pr_url": "https://github.com/dashpay/platform/pull/5337",
+        "priority": false,
+        "progress": 0.009,
+        "queue": "live",
+        "queued_at": "2026-10-11T07:43:21Z",
+        "remaining_seconds": 1001,
+        "repo": "dashpay/platform",
+        "sha": "4be5d8cb608844d891d42749b084954e2cf87cb2",
+        "started_at": "2026-10-11T08:13:52Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 9,
+            "started_at": "2026-10-11T08:13:52Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "feat(platform)!: dpns contract v3 checks name registration with schema keywords",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "select",
+          "triage",
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1831
+      },
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-11T14:13:52Z",
+        "deadline_in_seconds": 21591,
+        "degraded": false,
+        "elapsed_seconds": 9,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-11T08:13:52Z",
+        "id": 4413,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1016,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/grovedb/pull/1016",
+        "priority": false,
+        "progress": 0.02,
+        "queue": "live",
+        "queued_at": "2026-10-11T07:43:21Z",
+        "remaining_seconds": 436,
+        "repo": "dashpay/grovedb",
+        "sha": "45872cd25450712e439ec9172c3e127e4f35e150",
+        "started_at": "2026-10-11T08:13:52Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-11T08:13:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-11T08:13:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The production change is a small, centralized empty-path guard with focused regression tests, not a large or intricate change to a critical surface.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-11T08:13:56Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "low",
+        "title": "fix(batch): refuse an empty path on every reference hop instead of panicking",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "context",
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1831
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1164,7 +1295,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 4,
       "priority_overflow": 1,
@@ -1178,7 +1309,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-11T08:10:47Z",
+        "at": "2026-10-11T08:13:27Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1198,11 +1329,11 @@
       "closed": 342,
       "done": 5000,
       "failed": 70,
-      "queued": 2,
+      "running": 2,
       "superseded": 1955
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-11T08:10:00Z",
+    "ingest_last_at": "2026-10-11T08:13:52Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1236,51 +1367,12 @@
       }
     ],
     "last_run_done_at": "2026-10-11T06:56:00Z",
-    "last_run_started_at": "2026-10-11T07:09:22Z",
+    "last_run_started_at": "2026-10-11T08:13:52Z",
     "median_run_minutes": 25.033333333333335,
     "notify_last_at": "2026-10-11T08:12:07Z",
-    "oldest_queued_at": "2026-10-11T07:43:21Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1782,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": false,
-        "eligible_at": "2026-10-11T08:13:21Z",
-        "eligible_in_seconds": 18,
-        "number": 5337,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5337",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5337#issuecomment-6062007964",
-        "priority": false,
-        "queued_at": "2026-10-11T07:43:21Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "4be5d8cb608844d891d42749b084954e2cf87cb2",
-        "title": "feat(platform)!: dpns contract v3 checks name registration with schema keywords",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1782,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": false,
-        "eligible_at": "2026-10-11T08:13:21Z",
-        "eligible_in_seconds": 18,
-        "number": 1016,
-        "position": 2,
-        "pr_url": "https://github.com/dashpay/grovedb/pull/1016",
-        "prioritize_url": "https://github.com/dashpay/grovedb/issues/1016#issuecomment-6106816215",
-        "priority": false,
-        "queued_at": "2026-10-11T07:43:21Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/grovedb",
-        "sha": "45872cd25450712e439ec9172c3e127e4f35e150",
-        "title": "fix(batch): refuse an empty path on every reference hop instead of panicking",
-        "trigger": "new_pr"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-11",
       "failed": 0,
@@ -1288,7 +1380,7 @@
       "reviews": 10,
       "tokens": 202026234
     },
-    "ts": "2026-10-11T08:13:03Z",
+    "ts": "2026-10-11T08:14:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.1,
       "low": 11.8,
@@ -1297,9 +1389,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 2,
       "eligible": 0,
-      "idle_minutes": 63.7,
+      "idle_minutes": 0.15,
       "ingest_stale": false,
       "stuck": false
     }
