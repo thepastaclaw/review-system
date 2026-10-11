@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-11T07:36:36Z",
-  "generated_at": "2026-10-11T07:37:29Z",
+  "data_as_of": "2026-10-11T07:38:19Z",
+  "generated_at": "2026-10-11T07:38:20Z",
   "history": {
     "daily": [
       {
@@ -1153,12 +1153,16 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-11T13:09:22Z",
-        "deadline_in_seconds": 19966,
+        "deadline_in_seconds": 19863,
         "degraded": false,
-        "elapsed_seconds": 1634,
-        "findings": null,
-        "heartbeat_age_seconds": 0,
-        "heartbeat_at": "2026-10-11T07:36:38Z",
+        "elapsed_seconds": 1737,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 1
+        },
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-11T07:38:09Z",
         "id": 4411,
         "lanes": [
           {
@@ -1310,29 +1314,92 @@
             "status": "completed",
             "tokens_in": 2522074,
             "tokens_out": 8195
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 835504,
+            "tokens_out": 6048
           }
         ],
         "live_lanes": [
           {
-            "effort": "high",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify2",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 174,
+            "role": "architecture-layering",
+            "since_seconds": 95,
             "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 94,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 96,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_length": 3,
+            "line_position": 3,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 96,
+            "state": "waiting"
+          },
+          {
+            "effort": "xhigh",
+            "line_length": 3,
+            "line_position": 2,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 96,
+            "state": "waiting"
+          },
+          {
+            "effort": "xhigh",
+            "line_length": 3,
+            "line_position": 1,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 96,
+            "state": "waiting"
           }
         ],
         "number": 5337,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5337",
         "priority": false,
-        "progress": 0.915,
+        "progress": 0.861,
         "queue": "live",
         "queued_at": "2026-10-11T06:38:31Z",
-        "remaining_seconds": 151,
+        "remaining_seconds": 280,
         "repo": "dashpay/platform",
         "sha": "35696a2016bea2edd5a6d59da78408add9eb05d0",
         "started_at": "2026-10-11T07:09:22Z",
@@ -1427,17 +1494,46 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 1
+            },
             "name": "verify2",
-            "seconds": 174,
+            "seconds": 181,
             "started_at": "2026-10-11T07:33:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "ffi-engineer",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 6,
+            "name": "fresh_phase2",
+            "seconds": 96,
+            "started_at": "2026-10-11T07:36:43Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat(platform)!: dpns contract v3 checks name registration with schema keywords",
-        "tokens_in": 41388309,
-        "tokens_out": 264384,
+        "tokens_in": 42223813,
+        "tokens_out": 270432,
         "trigger": "new_push",
         "upcoming": [
           "publish"
@@ -1520,7 +1616,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 3,
         "slots": 4,
         "waiting": 3
       },
@@ -1534,7 +1630,7 @@
     "last_run_done_at": "2026-10-11T06:56:00Z",
     "last_run_started_at": "2026-10-11T07:09:22Z",
     "median_run_minutes": 25.033333333333335,
-    "notify_last_at": "2026-10-11T07:36:10Z",
+    "notify_last_at": "2026-10-11T07:38:19Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1545,7 +1641,7 @@
       "reviews": 10,
       "tokens": 202026234
     },
-    "ts": "2026-10-11T07:36:36Z",
+    "ts": "2026-10-11T07:38:19Z",
     "typical_minutes_by_tier": {
       "critical": 20.1,
       "low": 12.3,
@@ -1556,7 +1652,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 27.316666666666666,
+      "idle_minutes": 28.95,
       "ingest_stale": false,
       "stuck": false
     }
