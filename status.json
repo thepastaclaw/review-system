@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-12T02:22:01Z",
-  "generated_at": "2026-10-12T02:22:01Z",
+  "data_as_of": "2026-10-12T02:23:00Z",
+  "generated_at": "2026-10-12T02:23:01Z",
   "history": {
     "daily": [
       {
@@ -181,7 +181,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 8273,
+        "count": 8274,
         "severity": "blocking"
       },
       {
@@ -234,6 +234,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 724,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4496,
+        "ts": "2026-10-12T02:22:14Z"
+      },
       {
         "detail": "attempt 1 sha=da7129c3",
         "kind": "run.spawned",
@@ -545,14 +553,6 @@
         "repo": "dashpay/platform",
         "run_id": 4489,
         "ts": "2026-10-12T00:21:47Z"
-      },
-      {
-        "detail": "attempt 1 sha=54459c07",
-        "kind": "run.spawned",
-        "number": 5026,
-        "repo": "dashpay/platform",
-        "run_id": 4489,
-        "ts": "2026-10-12T00:20:27Z"
       }
     ],
     "tokens_by_effort": [
@@ -570,9 +570,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 9929,
-        "tokens_in": 20327102118,
-        "tokens_out": 337617702
+        "lanes": 9930,
+        "tokens_in": 20328270971,
+        "tokens_out": 337628185
       },
       {
         "effort": "medium",
@@ -630,18 +630,18 @@
         "tokens_out": 34044636
       },
       {
-        "avg_tokens_per_lane": 1100051.0,
-        "lanes": 9705,
+        "avg_tokens_per_lane": 1100059.0,
+        "lanes": 9706,
         "model": "gpt-6.1-sol",
-        "tokens_in": 10622043739,
-        "tokens_out": 53946761
+        "tokens_in": 10623212592,
+        "tokens_out": 53957244
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 4495,
-        "tokens_in": 609014,
-        "tokens_out": 7515
+        "tokens_in": 1777867,
+        "tokens_out": 17998
       },
       {
         "run_id": 4494,
@@ -1140,16 +1140,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11012819,
+      "avg_tokens_per_completed_review": 11013204,
       "completed_reviews": 3067,
-      "findings": 20548,
+      "findings": 20549,
       "findings_posted": 3639,
       "reviews": 5110,
       "reviews_imported": 2245,
       "runs": 4496,
-      "tokens_in": 33309520896,
-      "tokens_out": 466796005,
-      "tokens_total": 33776316901
+      "tokens_in": 33310689749,
+      "tokens_out": 466806488,
+      "tokens_total": 33777496237
     }
   },
   "live": {
@@ -1158,16 +1158,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-12T08:10:13Z",
-        "deadline_in_seconds": 20892,
+        "deadline_in_seconds": 20833,
         "degraded": false,
-        "elapsed_seconds": 708,
+        "elapsed_seconds": 767,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-12T02:21:53Z",
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-12T02:22:53Z",
         "id": 4495,
         "lanes": [
           {
@@ -1189,29 +1189,39 @@
             "status": "completed",
             "tokens_in": 93134,
             "tokens_out": 1155
+          },
+          {
+            "attempt": 1,
+            "effort": "xhigh",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 1168853,
+            "tokens_out": 10483
           }
         ],
         "live_lanes": [
           {
-            "effort": "xhigh",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "general",
-            "since_seconds": 395,
+            "role": "verifier",
+            "since_seconds": 16,
             "state": "running"
           }
         ],
         "number": 723,
         "overdue": false,
-        "phase": "fresh_phase2",
+        "phase": "fresh_verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/723",
         "priority": true,
-        "progress": 0.829,
+        "progress": 0.819,
         "queue": "live",
         "queued_at": "2026-10-12T02:10:05Z",
-        "remaining_seconds": 145,
+        "remaining_seconds": 169,
         "repo": "PastaPastaPasta/yappr",
         "sha": "415f6be434aa9864b0a1bb3ab3dc5adab7607b5f",
         "started_at": "2026-10-12T02:10:13Z",
@@ -1291,24 +1301,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "fresh_phase2",
-            "seconds": 395,
+            "seconds": 438,
             "started_at": "2026-10-12T02:15:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "fresh_verify2",
+            "seconds": 16,
+            "started_at": "2026-10-12T02:22:44Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat(platform-auth): App Connect v2 profile and shared core",
-        "tokens_in": 609014,
-        "tokens_out": 7515,
+        "tokens_in": 1777867,
+        "tokens_out": 17998,
         "trigger": "review_reply",
         "upcoming": [
-          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 8
@@ -1317,35 +1331,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-12T08:21:54Z",
-        "deadline_in_seconds": 21593,
+        "deadline_in_seconds": 21534,
         "degraded": false,
-        "elapsed_seconds": 7,
+        "elapsed_seconds": 66,
         "findings": null,
-        "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-10-12T02:21:54Z",
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-10-12T02:22:55Z",
         "id": 4496,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 2,
+            "role": "general",
+            "since_seconds": 45,
             "state": "running"
           }
         ],
         "number": 724,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/724",
         "priority": true,
-        "progress": null,
+        "progress": 0.067,
         "queue": "live",
         "queued_at": "2026-10-12T02:21:05Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 924,
         "repo": "PastaPastaPasta/yappr",
         "sha": "da7129c39d34849f19aea625c329b84349cd31e9",
         "started_at": "2026-10-12T02:21:54Z",
@@ -1368,19 +1382,61 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate scripts/register-app-connect-contracts.mjs introduces signing and signed-transition journaling, replay, and nonce-recovery logic, directly changing signature handling rather than merely surrounding contract tooling.",
+              "tier": "critical"
+            },
             "name": "triage",
-            "seconds": 2,
+            "seconds": 11,
             "started_at": "2026-10-12T02:21:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-12T02:22:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-12T02:22:14Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 45,
+            "started_at": "2026-10-12T02:22:15Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(contracts): yappr-app anchor and App Connect contract group tooling",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 49
       }
     ],
@@ -1413,7 +1469,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-12T02:20:39Z",
+        "at": "2026-10-12T02:22:57Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1484,7 +1540,7 @@
       "reviews": 8,
       "tokens": 123456940
     },
-    "ts": "2026-10-12T02:22:01Z",
+    "ts": "2026-10-12T02:23:00Z",
     "typical_minutes_by_tier": {
       "critical": 20.8,
       "low": 11.1,
@@ -1495,7 +1551,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.11666666666666667,
+      "idle_minutes": 1.1,
       "ingest_stale": false,
       "stuck": false
     }
