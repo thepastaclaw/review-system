@@ -487,8 +487,9 @@ agent_session_key = "agent:main:main"
 trusted_reviewers = ["PastaPastaPasta", "QuantumExplorer", "shumkov", "lklimek", "dustinface", "thephez", "knst", "pauldelucia", "UdjinM6"]
 
 [retention]
-# run artifacts (every lane's prompt, output and meta); 0 = keep forever. They are small
-# (~1 GB per two weeks) and the only per-lane record older reviews can be analysed from.
+# run artifacts (every lane's prompt, output, meta, transcript and first request); 0 = keep
+# forever. They are the only per-lane record older reviews can be analysed from; with the
+# transcripts expect a few hundred MB a day (~1500 lanes, a few hundred KB each).
 artifact_days = 0
 worktree_budget_gb = 60
 

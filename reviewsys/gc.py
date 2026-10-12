@@ -13,7 +13,7 @@ from .config import Config
 from .db import event, fmt_ts, now_dt, tx
 from .lane import claude_projects_dir, project_slug
 
-# a lane session (correction turns, lane.run_with_corrections) is deleted when its lane ends;
+# a lane session (kept as the lane's transcript.jsonl.gz) is deleted when its lane ends;
 # one a dead worker left behind goes once it is this old
 SESSION_RETENTION_HOURS = 24
 # how long a conversation "chose silence" marker outlives its PR's last queued head when run

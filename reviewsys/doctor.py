@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -13,11 +15,15 @@ from . import degraded, quota, status
 from .config import Config
 from .lane import (
     CLAUDE_SETTINGS,
+    FIRST_REQUEST,
+    TRANSCRIPT,
+    FirstRequest,
     claude_projects_dir,
     exec_deny_profile,
     forget_session,
     new_session_id,
     sandbox_problem,
+    save_transcript,
     session_files,
 )
 
@@ -116,10 +122,14 @@ def probe_lane(model: str, claude_bin: str) -> tuple[bool, str]:
 
 
 def probe_resume(model: str, claude_bin: str) -> tuple[bool, str]:
-    """Correction turns resume a lane's own session (`--session-id`, then `--resume`) through
-    the launcher: check both flags pass and the second turn sees the first, so a launcher that
-    filters arguments or a config dir the cleanup cannot see shows here, not in every lane."""
+    """Every lane keeps its session (`--session-id`) as its transcript, correction turns resume
+    it (`--resume`), and a lane's opening turn keeps its first request: check all of it
+    through the launcher, so a launcher that filters arguments or environment, a config dir
+    the cleanup cannot see, or a Claude Code that stopped writing request bodies shows here,
+    not as lanes silently missing their records."""
     sid = new_session_id()
+    art = Path(tempfile.mkdtemp(prefix="reviewsys-doctor-"))
+    first = FirstRequest(art)
     base = [
         claude_bin,
         "--bare",
@@ -147,7 +157,7 @@ def probe_resume(model: str, claude_bin: str) -> tuple[bool, str]:
                     [*base, *flags, "--print", prompt],
                     capture_output=True,
                     text=True,
-                    env=env,
+                    env={**env, **first.env} if flags[0] == "--session-id" else env,
                     timeout=LANE_PROBE_TIMEOUT_S,
                     check=False,
                 )
@@ -165,12 +175,20 @@ def probe_resume(model: str, claude_bin: str) -> tuple[bool, str]:
             # the launcher keeps sessions in a config dir the worker does not see: every
             # lane would leave its transcript behind, and gc could not find it either
             return False, f"session not under {claude_projects_dir()}: cleanup cannot see it"
+        first.close()
+        if not (art / FIRST_REQUEST).exists():
+            return False, "no first request recorded (OTEL_LOG_RAW_API_BODIES, query_source sdk)"
+        save_transcript(sid, art)
+        if not (art / TRANSCRIPT).exists():
+            return False, "transcript could not be saved"
         forget_session(sid)
         if session_files(sid):
             return False, "session could not be deleted"
-        return True, "session kept, resumed and deleted"
+        return True, "session kept, resumed, saved with its first request and deleted"
     finally:
+        first.close()
         forget_session(sid)
+        shutil.rmtree(art, ignore_errors=True)
 
 
 def report_quota(cfg: Config, mgmt: quota.Management | None = None) -> bool:
@@ -282,10 +300,9 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             for m in sorted(models):
                 good, detail = probe_single_stop(m, key)
                 ok &= _ok(f"proxy model {m} (single stop_sequence)", good, detail)
-        if cfg.lane_correction_turns:
-            m = cfg.policy.phase2_reviewer.model
-            good, detail = probe_resume(m, cfg.claude_bin)
-            ok &= _ok(f"lane correction turns ({m} session resume)", good, detail)
+        m = cfg.policy.phase2_reviewer.model
+        good, detail = probe_resume(m, cfg.claude_bin)
+        ok &= _ok(f"lane sessions ({m}: transcript, first request, resume)", good, detail)
         if cfg.policy.has_phase1_ladder:
             ok &= report_quota(cfg)
             for c in cfg.policy.phase1_candidates:
