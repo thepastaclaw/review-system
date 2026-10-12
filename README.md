@@ -277,8 +277,8 @@ layers now stand between a broken answer and a failed phase, in this order:
    `lane.corrected` and `lane.correction_failed` (phase/role, model, turns, first error, and
    for a failure whether the answer stayed invalid or the session could not be resumed). The
    saved session (`$CLAUDE_CONFIG_DIR` or `~/.claude`, `projects/<worktree slug>/<uuid>.jsonl`,
-   the only file a session leaves; megabytes for a long lane) is deleted when the lane's
-   turns end; `gc` removes what a dead worker left behind, and the emptied project dirs, for
+   the only file a session leaves; megabytes for a long lane) is copied into the lane's
+   `transcript.jsonl.gz` (see "Lane transcripts") and deleted when the lane's turns end; `gc` removes what a dead worker left behind, and the emptied project dirs, for
    finished runs' worktrees only (`runs.worktree`), after a day. Verified with Claude Code
    2.1.286: `--bare --print --output-format json` keeps and resumes sessions this way (from
    any cwd, prompt cache included), and a missing session exits 1 ("No conversation found
@@ -289,6 +289,21 @@ layers now stand between a broken answer and a failed phase, in this order:
    keep-resume-delete round trip through the launcher ("lane correction turns") whenever the
    knob is on, and fails it when the session lands where the cleanup cannot see it (a
    launcher with its own config dir) or cannot be deleted.
+   **Lane transcripts.** Every lane keeps a session, not only the correctable ones: a lane
+   without a session id gets one of its own (`--session-id`, never
+   `--no-session-persistence`). When its turns end the session is written into the lane's
+   artifact dir as `transcript.jsonl.gz` (every turn, tool call and tool result once, in
+   order, correction turns included), with each thinking block's encrypted `signature`
+   replaced by its length (three quarters of a transcript's bytes, unreadable and
+   incompressible); spilled tool output (`<uuid>/tool-results/`) is not kept, the transcript
+   has what the model was shown. The lane's opening turn also runs with
+   `OTEL_LOG_RAW_API_BODIES=file:<artifact dir>/.api-bodies`, Claude Code's raw request-body
+   log (no headers, thinking text redacted), and when it ends only the first main-thread
+   request is kept, as `first-request.json.gz`: the exact system prompt, tool schemas and
+   opening messages, which the transcript does not record. Correction turns record no
+   bodies (their first request is the whole session again). Both files are best-effort and
+   never fail a lane. A run's lanes are then read back from the attempt folders alone, keyed
+   by run and lane, without the proxy logs.
 3. **The repair lane**, the last resort for an answer that still has no readable JSON object
    (the session could not be resumed, the corrections ran out, or the knob is 0): the
    context-free `repair_model` (low effort) reformats it, now told the expected
@@ -928,7 +943,8 @@ Where to look when something is off, in order:
 1. `sqlite3 ~/.reviewsys/review.db "select ts,kind,repo,number,run_id,substr(detail,1,160) from events order by id desc limit 40"`
 2. `~/.reviewsys/daemon.log` (rotated, 20 MB × 5) and `daemon.stderr.log` (crash output only)
 3. `~/.reviewsys/work/runs/run-N/attempts/*/` — `prompt.md`, `stdout.json`, `lane-meta.json`
-   (`turns`, `cost_usd`, `subtype`) for every lane of a run; a lane's correction turns in its
+   (`turns`, `cost_usd`, `subtype`, `session_id`), `transcript.jsonl.gz` and
+   `first-request.json.gz` (`zcat`) for every lane of a run; a lane's correction turns in its
    `correction-N/`, the repair lane in `repair/`
 4. `~/.reviewsys/watchdog.log` — every restart the cron watchdog performed
 
