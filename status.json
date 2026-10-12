@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-12T02:36:01Z",
-  "generated_at": "2026-10-12T02:36:01Z",
+  "data_as_of": "2026-10-12T02:37:00Z",
+  "generated_at": "2026-10-12T02:37:01Z",
   "history": {
     "daily": [
       {
@@ -224,8 +224,8 @@
             "p90_seconds": 0
           },
           "wait": {
-            "median_seconds": 22,
-            "n": 564,
+            "median_seconds": 21,
+            "n": 565,
             "p90_seconds": 834
           }
         }
@@ -234,6 +234,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 723,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4498,
+        "ts": "2026-10-12T02:36:35Z"
+      },
+      {
+        "detail": "attempt 1 sha=7e0a3718",
+        "kind": "run.spawned",
+        "number": 723,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4498,
+        "ts": "2026-10-12T02:36:17Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 723,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-12T02:36:17Z"
+      },
+      {
+        "detail": "7e0a3718 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 723,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-12T02:36:10Z"
+      },
       {
         "detail": "ok in 490s",
         "kind": "run.done",
@@ -521,38 +553,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-12T01:32:55Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.sync_failed",
-        "number": null,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-12T01:27:49Z"
-      },
-      {
-        "detail": "ed8bf321 trigger=new_pr priority=0",
-        "kind": "head.queued",
-        "number": 723,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-12T01:27:42Z"
-      },
-      {
-        "detail": "ok in 1913s",
-        "kind": "run.done",
-        "number": 5350,
-        "repo": "dashpay/platform",
-        "run_id": 4490,
-        "ts": "2026-10-12T00:55:14Z"
-      },
-      {
-        "detail": "ok in 1460s",
-        "kind": "run.done",
-        "number": 1612,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 4491,
-        "ts": "2026-10-12T00:52:50Z"
       }
     ],
     "tokens_by_effort": [
@@ -1146,14 +1146,127 @@
       "findings_posted": 3643,
       "reviews": 5113,
       "reviews_imported": 2245,
-      "runs": 4497,
+      "runs": 4498,
       "tokens_in": 33315541349,
       "tokens_out": 466842700,
       "tokens_total": 33782384049
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-12T08:36:17Z",
+        "deadline_in_seconds": 21557,
+        "degraded": false,
+        "elapsed_seconds": 43,
+        "findings": null,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-12T02:36:48Z",
+        "id": 4498,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 23,
+            "state": "running"
+          }
+        ],
+        "number": 723,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/723",
+        "priority": true,
+        "progress": 0.045,
+        "queue": "live",
+        "queued_at": "2026-10-12T02:36:10Z",
+        "remaining_seconds": 911,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "7e0a3718bd3ef5f9ca857dcec5a2aeacca91618c",
+        "started_at": "2026-10-12T02:36:17Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-10-12T02:36:18Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-12T02:36:23Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff directly implements cryptography and key authorization in app-connect/crypto.ts (ECDH/HKDF/AES-GCM with identity-bound AAD), verify.ts (on-chain grant validation), and session.ts (budget-aware signing-key selection and split plans), meeting both criteria for critical review.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-12T02:36:23Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-12T02:36:33Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-12T02:36:35Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 23,
+            "started_at": "2026-10-12T02:36:37Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(platform-auth): App Connect v2 profile and shared core",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 7
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1169,7 +1282,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1203,10 +1316,11 @@
       "closed": 348,
       "done": 5055,
       "failed": 75,
+      "running": 1,
       "superseded": 1969
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-12T02:32:20Z",
+    "ingest_last_at": "2026-10-12T02:36:11Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1228,7 +1342,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1240,9 +1354,9 @@
       }
     ],
     "last_run_done_at": "2026-10-12T02:35:07Z",
-    "last_run_started_at": "2026-10-12T02:26:56Z",
+    "last_run_started_at": "2026-10-12T02:36:17Z",
     "median_run_minutes": 22.983333333333334,
-    "notify_last_at": "2026-10-12T02:33:58Z",
+    "notify_last_at": "2026-10-12T02:36:11Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1253,7 +1367,7 @@
       "reviews": 11,
       "tokens": 130140617
     },
-    "ts": "2026-10-12T02:36:01Z",
+    "ts": "2026-10-12T02:37:00Z",
     "typical_minutes_by_tier": {
       "critical": 20.7,
       "low": 11.1,
@@ -1262,9 +1376,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 9.083333333333334,
+      "idle_minutes": 0.7166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
