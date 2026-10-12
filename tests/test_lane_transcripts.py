@@ -7,7 +7,10 @@ from __future__ import annotations
 import gzip
 import json
 import os
-import time
+import tempfile
+from pathlib import Path
+
+import pytest
 
 from reviewsys import lane as lane_mod
 from reviewsys.lane import LaneResult, LaneSpec
@@ -69,14 +72,11 @@ def test_no_session_no_transcript(tmp_path):
     assert not (tmp_path / "art" / lane_mod.TRANSCRIPT).exists()
 
 
-def _bodies(tmp_path, index, files):
-    bodies = tmp_path / "art" / lane_mod.API_BODIES
-    bodies.mkdir(parents=True)
+def _write(bodies, index, files):
     for name, body in files.items():
         (bodies / name).write_text(json.dumps(body))
     if index is not None:
         (bodies / "index.jsonl").write_text("".join(json.dumps(x) + "\n" for x in index))
-    return bodies
 
 
 def _first(tmp_path):
@@ -84,34 +84,69 @@ def _first(tmp_path):
         return json.load(f)
 
 
-def test_first_main_thread_request_is_kept_and_the_rest_dropped(tmp_path):
-    bodies = _bodies(
-        tmp_path,
+def test_first_main_thread_request_is_kept_and_the_log_sealed(tmp_path):
+    (tmp_path / "art").mkdir()
+    first = lane_mod.FirstRequest(tmp_path / "art")
+    assert first.env["OTEL_LOG_RAW_API_BODIES"] == f"file:{first.dir}"
+    assert tmp_path not in first.dir.parents, "outside the run dir: no lane reads another's"
+    _write(first.dir, None, {"a.request.json": {"system": "main"}})
+    first.poll()
+    assert not first.done, "nothing is kept before the index names the call"
+    _write(
+        first.dir,
         [
             {"query_source": "side", "request_file": "a.request.json"},
+            {"query_source": "sdk", "request_file": "../escape.request.json"},
             {"query_source": "sdk", "request_file": "b.request.json"},
             {"query_source": "sdk", "request_file": "c.request.json"},
-            {"query_source": "sdk", "request_file": "../escape.request.json"},
         ],
         {
-            "a.request.json": {"system": "side"},
             "b.request.json": {"system": "main", "tools": [{"name": "Read"}]},
             "c.request.json": {"system": "later"},
             "b.response.json": {"content": []},
         },
     )
-    lane_mod.keep_first_request(bodies, tmp_path / "art")
-    assert _first(tmp_path) == {"system": "main", "tools": [{"name": "Read"}]}
-    assert not bodies.exists()
+    first.poll()
+    assert first.done and _first(tmp_path) == {"system": "main", "tools": [{"name": "Read"}]}
+    assert list(first.dir.iterdir()) == [], "later bodies are dropped"
+    if os.geteuid() != 0:  # root ignores the mode
+        with pytest.raises(PermissionError):
+            (first.dir / "d.request.json").write_text("{}")
+    first.close()
+    assert not first.dir.exists()
+    assert not list((tmp_path / "art").glob("*.tmp")), "written through a temporary file"
 
 
-def test_without_an_index_the_oldest_request_is_kept(tmp_path):
-    bodies = _bodies(tmp_path, None, {"new.request.json": {"n": 2}, "old.request.json": {"n": 1}})
-    past = time.time() - 60
-    os.utime(bodies / "old.request.json", (past, past))
-    lane_mod.keep_first_request(bodies, tmp_path / "art")
-    assert _first(tmp_path) == {"n": 1}
-    assert not bodies.exists()
+def test_only_a_main_thread_request_is_kept(tmp_path):
+    (tmp_path / "art").mkdir()
+    first = lane_mod.FirstRequest(tmp_path / "art")
+    _write(
+        first.dir,
+        [{"query_source": "compact", "request_file": "a.request.json"}],
+        {"a.request.json": {"system": "side"}},
+    )
+    first.close()
+    assert not (tmp_path / "art" / lane_mod.FIRST_REQUEST).exists()
+    assert not first.dir.exists()
+
+
+def test_subagent_sessions_are_kept_beside_the_transcript(tmp_path, _claude_config_dir):
+    sid = lane_mod.new_session_id()
+    project = _session(_claude_config_dir, sid, [{"type": "user", "n": 0}])
+    (project / sid / "subagents").mkdir()
+    (project / sid / "subagents" / "agent-x.jsonl").write_text('{"type":"user","n":1}\n')
+    lane_mod.save_transcript(sid, tmp_path / "art")
+    with gzip.open(tmp_path / "art" / "subagents" / "agent-x.jsonl.gz", "rt") as f:
+        assert json.loads(f.read()) == {"type": "user", "n": 1}
+
+
+def test_a_reused_attempt_dir_loses_the_earlier_lanes_records(tmp_path):
+    art = tmp_path / "art"
+    (art / lane_mod.SUBAGENT_TRANSCRIPTS).mkdir(parents=True)
+    for name in (lane_mod.TRANSCRIPT, lane_mod.FIRST_REQUEST, "prompt.md"):
+        (art / name).write_text("old")
+    lane_mod.clear_lane_records(art)
+    assert sorted(p.name for p in art.iterdir()) == ["prompt.md"]
 
 
 def test_a_correctable_lane_keeps_its_whole_session_once(tmp_path, _claude_config_dir):
@@ -152,7 +187,7 @@ mkdir -p "$d"
 echo '{"type":"user","message":{"role":"user","content":"p"}}' >> "$d/$sid.jsonl"
 if [ -n "$OTEL_LOG_RAW_API_BODIES" ]; then
   b="${OTEL_LOG_RAW_API_BODIES#file:}"
-  mkdir -p "$b"
+  echo "$b" > "$CLAUDE_CONFIG_DIR/bodies-dir"
   echo '{"system":"s","tools":[]}' > "$b/r1.request.json"
   echo '{"content":[]}' > "$b/p1.response.json"
   echo '{"query_source":"sdk","request_file":"r1.request.json"}' > "$b/index.jsonl"
@@ -170,7 +205,8 @@ def test_the_real_runner_leaves_transcript_and_first_request(tmp_path, _claude_c
     assert res.ok and res.session_id
     assert _transcript(art) == [{"type": "user", "message": {"role": "user", "content": "p"}}]
     assert _first(tmp_path) == {"system": "s", "tools": []}
-    assert not (art / lane_mod.API_BODIES).exists()
+    bodies = Path((_claude_config_dir / "bodies-dir").read_text().strip())
+    assert Path(tempfile.gettempdir()) in bodies.parents and not bodies.exists()
     assert not lane_mod.session_files(res.session_id), "the lane's session is deleted"
     meta = json.loads((art / "lane-meta.json").read_text())
     assert meta["session_id"] == res.session_id
@@ -188,5 +224,6 @@ def test_a_resumed_turn_records_no_request_bodies(tmp_path, _claude_config_dir):
     spec = _spec(tmp_path, claude_bin=str(script), session_id=sid, resume=True)
     assert lane_mod.run_claude_lane(spec, art, tmp_path).ok
     assert not (art / lane_mod.FIRST_REQUEST).exists()
+    assert not (_claude_config_dir / "bodies-dir").exists(), "no body log for a resumed turn"
     assert not (art / lane_mod.TRANSCRIPT).exists()
     assert lane_mod.session_files(sid), "the caller's session is not deleted by one turn"

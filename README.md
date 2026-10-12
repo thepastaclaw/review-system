@@ -286,24 +286,27 @@ layers now stand between a broken answer and a failed phase, in this order:
    of its turns; `total_cost_usd` is the session's running total, so a correction turn's
    `lane-meta.json` cost includes the turns before it, and `--max-budget-usd` (passed again)
    bounds the lane and its corrections together. `reviewsys doctor` runs one real
-   keep-resume-delete round trip through the launcher ("lane correction turns") whenever the
-   knob is on, and fails it when the session lands where the cleanup cannot see it (a
+   keep-resume-delete round trip through the launcher ("lane sessions"), and fails it when the session lands where the cleanup cannot see it (a
    launcher with its own config dir) or cannot be deleted.
    **Lane transcripts.** Every lane keeps a session, not only the correctable ones: a lane
    without a session id gets one of its own (`--session-id`, never
    `--no-session-persistence`). When its turns end the session is written into the lane's
    artifact dir as `transcript.jsonl.gz` (every turn, tool call and tool result once, in
-   order, correction turns included), with each thinking block's encrypted `signature`
-   replaced by its length (three quarters of a transcript's bytes, unreadable and
-   incompressible); spilled tool output (`<uuid>/tool-results/`) is not kept, the transcript
-   has what the model was shown. The lane's opening turn also runs with
-   `OTEL_LOG_RAW_API_BODIES=file:<artifact dir>/.api-bodies`, Claude Code's raw request-body
-   log (no headers, thinking text redacted), and when it ends only the first main-thread
-   request is kept, as `first-request.json.gz`: the exact system prompt, tool schemas and
-   opening messages, which the transcript does not record. Correction turns record no
-   bodies (their first request is the whole session again). Both files are best-effort and
-   never fail a lane. A run's lanes are then read back from the attempt folders alone, keyed
-   by run and lane, without the proxy logs.
+   order, correction turns included; subagent sessions in `subagents/`), with each thinking
+   block's encrypted `signature` replaced by its length (three quarters of a transcript's
+   bytes, unreadable and incompressible); spilled tool output (`<uuid>/tool-results/`) is
+   not kept, the transcript has what the model was shown. The lane's opening turn also runs
+   with `OTEL_LOG_RAW_API_BODIES=file:<temp dir>`, Claude Code's raw request-body log (no
+   headers, thinking text redacted), outside the run dir so no lane reads another's. As
+   soon as its index names the first main-thread (`query_source` "sdk") request, that one
+   is kept as `first-request.json.gz` (the exact system prompt, tool schemas and opening
+   messages, which the transcript does not record), the rest deleted and the directory made
+   read-only: every later body would be the whole conversation again, and Claude Code's
+   further writes fail quietly. Correction turns record no bodies. Both files are written
+   atomically, cleared when an attempt dir is reused, and never fail a lane. A run's lanes
+   are then read back from the attempt folders alone, keyed by run and lane, without the
+   proxy logs. `reviewsys doctor` checks the whole path through the launcher ("lane
+   sessions") whatever `correction_turns` is.
 3. **The repair lane**, the last resort for an answer that still has no readable JSON object
    (the session could not be resumed, the corrections ran out, or the knob is 0): the
    context-free `repair_model` (low effort) reformats it, now told the expected
@@ -967,7 +970,8 @@ where the lanes write. It must match a launcher that forces its own: the box's
 else `~/.claude`).
 
 `[retention] artifact_days` (0 = keep run artifacts forever, the default: they are the
-only per-lane record for later analysis and grow ~1 GB per two weeks), `worktree_budget_gb`.
+only per-lane record for later analysis; with lane transcripts a few hundred MB a day),
+`worktree_budget_gb`.
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
