@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-12T03:41:01Z",
-  "generated_at": "2026-10-12T03:41:01Z",
+  "data_as_of": "2026-10-12T03:42:01Z",
+  "generated_at": "2026-10-12T03:42:01Z",
   "history": {
     "daily": [
       {
@@ -189,7 +189,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 10778,
+        "count": 10779,
         "severity": "suggestion"
       }
     ],
@@ -582,9 +582,9 @@
       },
       {
         "effort": "high",
-        "lanes": 10951,
-        "tokens_in": 10553709988,
-        "tokens_out": 103710209
+        "lanes": 10952,
+        "tokens_in": 10553881112,
+        "tokens_out": 103713081
       },
       {
         "effort": "low",
@@ -630,18 +630,18 @@
         "tokens_out": 34111936
       },
       {
-        "avg_tokens_per_lane": 1100240.0,
-        "lanes": 9732,
+        "avg_tokens_per_lane": 1100145.0,
+        "lanes": 9733,
         "model": "gpt-6.1-sol",
-        "tokens_in": 10653388832,
-        "tokens_out": 54146911
+        "tokens_in": 10653559956,
+        "tokens_out": 54149783
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 4503,
-        "tokens_in": 1746021,
-        "tokens_out": 15480
+        "tokens_in": 1917145,
+        "tokens_out": 18352
       },
       {
         "run_id": 4502,
@@ -1140,16 +1140,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10999751,
+      "avg_tokens_per_completed_review": 10999807,
       "completed_reviews": 3075,
-      "findings": 20587,
+      "findings": 20588,
       "findings_posted": 3647,
       "reviews": 5118,
       "reviews_imported": 2245,
       "runs": 4503,
-      "tokens_in": 33357054658,
-      "tokens_out": 467178671,
-      "tokens_total": 33824233329
+      "tokens_in": 33357225782,
+      "tokens_out": 467181543,
+      "tokens_total": 33824407325
     }
   },
   "live": {
@@ -1158,12 +1158,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-12T09:32:15Z",
-        "deadline_in_seconds": 21074,
+        "deadline_in_seconds": 21014,
         "degraded": false,
-        "elapsed_seconds": 526,
-        "findings": null,
+        "elapsed_seconds": 586,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 1
+        },
         "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-10-12T03:40:52Z",
+        "heartbeat_at": "2026-10-12T03:41:52Z",
         "id": 4503,
         "lanes": [
           {
@@ -1185,29 +1189,39 @@
             "status": "completed",
             "tokens_in": 1149509,
             "tokens_out": 10416
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 171124,
+            "tokens_out": 2872
           }
         ],
         "live_lanes": [
           {
-            "effort": "high",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify2",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 52,
+            "role": "general",
+            "since_seconds": 21,
             "state": "running"
           }
         ],
         "number": 724,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/724",
         "priority": true,
-        "progress": 0.577,
+        "progress": 0.535,
         "queue": "live",
         "queued_at": "2026-10-12T03:32:08Z",
-        "remaining_seconds": 385,
+        "remaining_seconds": 509,
         "repo": "PastaPastaPasta/yappr",
         "sha": "87d847075af9a5ce68eb0a7a2d30bbba517eff16",
         "started_at": "2026-10-12T03:32:15Z",
@@ -1276,20 +1290,38 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 1
+            },
             "name": "verify2",
-            "seconds": 52,
+            "seconds": 91,
             "started_at": "2026-10-12T03:40:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "fresh_phase2",
+            "seconds": 21,
+            "started_at": "2026-10-12T03:41:40Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat(contracts): yappr-app anchor and App Connect contract group tooling",
-        "tokens_in": 1746021,
-        "tokens_out": 15480,
+        "tokens_in": 1917145,
+        "tokens_out": 18352,
         "trigger": "review_reply",
         "upcoming": [
-          "fresh_phase2",
           "fresh_verify2",
           "publish"
         ],
@@ -1386,17 +1418,17 @@
     "last_run_done_at": "2026-10-12T03:28:02Z",
     "last_run_started_at": "2026-10-12T03:32:15Z",
     "median_run_minutes": 21.25,
-    "notify_last_at": "2026-10-12T03:38:55Z",
+    "notify_last_at": "2026-10-12T03:41:08Z",
     "oldest_queued_at": "2026-10-12T03:40:04Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 57,
+        "age_seconds": 117,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-12T04:10:04Z",
-        "eligible_in_seconds": 1743,
+        "eligible_in_seconds": 1683,
         "number": 725,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/725",
@@ -1417,7 +1449,7 @@
       "reviews": 16,
       "tokens": 170228396
     },
-    "ts": "2026-10-12T03:41:01Z",
+    "ts": "2026-10-12T03:42:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.6,
       "low": 11.1,
@@ -1428,7 +1460,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 8.766666666666667,
+      "idle_minutes": 9.766666666666667,
       "ingest_stale": false,
       "stuck": false
     }
