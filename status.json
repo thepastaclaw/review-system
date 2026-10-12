@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-12T02:41:01Z",
-  "generated_at": "2026-10-12T02:41:01Z",
+  "data_as_of": "2026-10-12T02:42:00Z",
+  "generated_at": "2026-10-12T02:42:00Z",
   "history": {
     "daily": [
       {
@@ -234,6 +234,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 724,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4499,
+        "ts": "2026-10-12T02:41:06Z"
+      },
       {
         "detail": "attempt 1 sha=7ed49a48",
         "kind": "run.spawned",
@@ -545,14 +553,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 4493,
         "ts": "2026-10-12T02:06:27Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 723,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 4493,
-        "ts": "2026-10-12T01:59:07Z"
       }
     ],
     "tokens_by_effort": [
@@ -1158,12 +1158,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-12T08:36:17Z",
-        "deadline_in_seconds": 21316,
+        "deadline_in_seconds": 21257,
         "degraded": false,
-        "elapsed_seconds": 284,
+        "elapsed_seconds": 343,
         "findings": null,
-        "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-12T02:40:51Z",
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-12T02:41:53Z",
         "id": 4498,
         "lanes": [
           {
@@ -1185,7 +1185,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 5,
+            "since_seconds": 64,
             "state": "running"
           }
         ],
@@ -1194,10 +1194,10 @@
         "phase": "verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/723",
         "priority": true,
-        "progress": 0.396,
+        "progress": 0.479,
         "queue": "live",
         "queued_at": "2026-10-12T02:36:10Z",
-        "remaining_seconds": 432,
+        "remaining_seconds": 373,
         "repo": "PastaPastaPasta/yappr",
         "sha": "7e0a3718bd3ef5f9ca857dcec5a2aeacca91618c",
         "started_at": "2026-10-12T02:36:17Z",
@@ -1264,7 +1264,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 5,
+            "seconds": 64,
             "started_at": "2026-10-12T02:40:56Z",
             "status": "running"
           }
@@ -1285,35 +1285,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-12T08:40:41Z",
-        "deadline_in_seconds": 21580,
+        "deadline_in_seconds": 21521,
         "degraded": false,
-        "elapsed_seconds": 20,
+        "elapsed_seconds": 79,
         "findings": null,
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-12T02:40:56Z",
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-10-12T02:41:58Z",
         "id": 4499,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 14,
+            "role": "general",
+            "since_seconds": 53,
             "state": "running"
           }
         ],
         "number": 724,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/724",
         "priority": true,
-        "progress": null,
+        "progress": 0.082,
         "queue": "live",
         "queued_at": "2026-10-12T02:39:50Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 881,
         "repo": "PastaPastaPasta/yappr",
         "sha": "7ed49a48180da98a11b0152fd7d2b2b0b7fe2238",
         "started_at": "2026-10-12T02:40:41Z",
@@ -1336,19 +1336,61 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate new publisher in scripts/register-app-connect-contracts.mjs directly implements state-transition signing, nonce allocation, and journaled signed-byte rebroadcast and refusal recovery, meeting the critical-surface bar for signatures.",
+              "tier": "critical"
+            },
             "name": "triage",
-            "seconds": 14,
+            "seconds": 15,
             "started_at": "2026-10-12T02:40:47Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-12T02:41:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-12T02:41:06Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 53,
+            "started_at": "2026-10-12T02:41:07Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(contracts): yappr-app anchor and App Connect contract group tooling",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 51
       }
     ],
@@ -1452,7 +1494,7 @@
       "reviews": 11,
       "tokens": 130140617
     },
-    "ts": "2026-10-12T02:41:01Z",
+    "ts": "2026-10-12T02:42:00Z",
     "typical_minutes_by_tier": {
       "critical": 20.7,
       "low": 11.1,
@@ -1463,7 +1505,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.3333333333333333,
+      "idle_minutes": 1.3166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
