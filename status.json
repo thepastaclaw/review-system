@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-12T04:11:01Z",
-  "generated_at": "2026-10-12T04:11:01Z",
+  "data_as_of": "2026-10-12T04:12:00Z",
+  "generated_at": "2026-10-12T04:12:00Z",
   "history": {
     "daily": [
       {
@@ -208,7 +208,7 @@
           },
           "wait": {
             "median_seconds": 1817,
-            "n": 528,
+            "n": 526,
             "p90_seconds": 1857
           }
         },
@@ -225,8 +225,8 @@
           },
           "wait": {
             "median_seconds": 20,
-            "n": 568,
-            "p90_seconds": 803
+            "n": 566,
+            "p90_seconds": 808
           }
         }
       },
@@ -234,6 +234,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 725,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4506,
+        "ts": "2026-10-12T04:11:05Z"
+      },
       {
         "detail": "attempt 1 sha=a59958c9",
         "kind": "run.spawned",
@@ -545,14 +553,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 4501,
         "ts": "2026-10-12T03:16:42Z"
-      },
-      {
-        "detail": "ok in 1495s",
-        "kind": "run.done",
-        "number": 5371,
-        "repo": "dashpay/platform",
-        "run_id": 4500,
-        "ts": "2026-10-12T03:08:35Z"
       }
     ],
     "tokens_by_effort": [
@@ -1158,12 +1158,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-12T10:09:44Z",
-        "deadline_in_seconds": 21523,
+        "deadline_in_seconds": 21464,
         "degraded": false,
-        "elapsed_seconds": 77,
+        "elapsed_seconds": 136,
         "findings": null,
-        "heartbeat_age_seconds": 0,
-        "heartbeat_at": "2026-10-12T04:11:01Z",
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-10-12T04:11:46Z",
         "id": 4505,
         "lanes": [],
         "live_lanes": [
@@ -1174,7 +1174,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 56,
+            "since_seconds": 115,
             "state": "running"
           },
           {
@@ -1184,7 +1184,7 @@
             "phase": "phase2",
             "pool": "compare",
             "role": "general",
-            "since_seconds": 55,
+            "since_seconds": 114,
             "state": "running"
           }
         ],
@@ -1193,10 +1193,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/724",
         "priority": true,
-        "progress": 0.078,
+        "progress": 0.137,
         "queue": "live",
         "queued_at": "2026-10-12T04:09:42Z",
-        "remaining_seconds": 913,
+        "remaining_seconds": 854,
         "repo": "PastaPastaPasta/yappr",
         "sha": "0c46d3e663f2259bd6bbaea67989d6f945305007",
         "started_at": "2026-10-12T04:09:44Z",
@@ -1259,7 +1259,7 @@
             ],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 56,
+            "seconds": 115,
             "started_at": "2026-10-12T04:10:05Z",
             "status": "running"
           }
@@ -1281,35 +1281,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-12T10:10:51Z",
-        "deadline_in_seconds": 21590,
+        "deadline_in_seconds": 21531,
         "degraded": false,
-        "elapsed_seconds": 10,
+        "elapsed_seconds": 69,
         "findings": null,
-        "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-12T04:10:51Z",
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-10-12T04:11:52Z",
         "id": 4506,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 5,
+            "role": "general",
+            "since_seconds": 54,
             "state": "running"
           }
         ],
         "number": 725,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/725",
         "priority": false,
-        "progress": 0.007,
+        "progress": 0.092,
         "queue": "live",
         "queued_at": "2026-10-12T03:40:04Z",
-        "remaining_seconds": 1495,
+        "remaining_seconds": 677,
         "repo": "PastaPastaPasta/yappr",
         "sha": "a59958c94212f748c7d90613fa5de345f8a7e189",
         "started_at": "2026-10-12T04:10:51Z",
@@ -1332,22 +1332,56 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff directly changes cryptographic key derivation in mobile/tools/src/app-connect/derive.ts and key registration, MASTER-signed updates, renewal, revocation, and encrypted response handling in mobile/tools/src/app-connect/wallet.ts, meeting both the complexity and critical-surface criteria despite being devnet tooling.",
+              "tier": "critical"
+            },
             "name": "triage",
             "seconds": 5,
             "started_at": "2026-10-12T04:10:56Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-12T04:11:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-12T04:11:05Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 54,
+            "started_at": "2026-10-12T04:11:06Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(mobile-tools): answer App Connect v2 requests in the test-wallet responder",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1383,7 +1417,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-12T04:08:57Z",
+        "at": "2026-10-12T04:11:13Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1444,17 +1478,17 @@
     "last_run_done_at": "2026-10-12T04:07:10Z",
     "last_run_started_at": "2026-10-12T04:10:51Z",
     "median_run_minutes": 21.25,
-    "notify_last_at": "2026-10-12T04:09:38Z",
+    "notify_last_at": "2026-10-12T04:11:54Z",
     "oldest_queued_at": "2026-10-12T03:58:55Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 726,
+        "age_seconds": 785,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-12T04:28:55Z",
-        "eligible_in_seconds": 1074,
+        "eligible_in_seconds": 1015,
         "number": 1617,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1617",
@@ -1475,7 +1509,7 @@
       "reviews": 18,
       "tokens": 174954756
     },
-    "ts": "2026-10-12T04:11:01Z",
+    "ts": "2026-10-12T04:12:00Z",
     "typical_minutes_by_tier": {
       "critical": 20.6,
       "low": 11.1,
@@ -1486,7 +1520,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.16666666666666666,
+      "idle_minutes": 1.15,
       "ingest_stale": false,
       "stuck": false
     }
