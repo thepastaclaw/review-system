@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-13T04:41:00Z",
-  "generated_at": "2026-10-13T04:41:01Z",
+  "data_as_of": "2026-10-13T04:42:01Z",
+  "generated_at": "2026-10-13T04:42:01Z",
   "history": {
     "daily": [
       {
@@ -230,8 +230,8 @@
           },
           "wait": {
             "median_seconds": 12,
-            "n": 525,
-            "p90_seconds": 410
+            "n": 526,
+            "p90_seconds": 408
           }
         }
       },
@@ -239,6 +239,46 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 745,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4718,
+        "ts": "2026-10-13T04:41:21Z"
+      },
+      {
+        "detail": "attempt 1 sha=fbb6cc31",
+        "kind": "run.spawned",
+        "number": 745,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4718,
+        "ts": "2026-10-13T04:41:05Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 745,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-13T04:41:04Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 745,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-13T04:41:03Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 745,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-13T04:41:02Z"
+      },
       {
         "detail": "fbb6cc31 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -518,46 +558,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": null,
         "ts": "2026-10-13T02:14:29Z"
-      },
-      {
-        "detail": "pr_closed",
-        "kind": "head.closed",
-        "number": 743,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-13T02:03:02Z"
-      },
-      {
-        "detail": "5942e46a trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 1607,
-        "repo": "dashpay/dash-wallet",
-        "run_id": null,
-        "ts": "2026-10-13T02:02:58Z"
-      },
-      {
-        "detail": null,
-        "kind": "ingest.error",
-        "number": null,
-        "repo": "dashpay/tenderdash",
-        "run_id": null,
-        "ts": "2026-10-13T01:55:57Z"
-      },
-      {
-        "detail": null,
-        "kind": "ingest.error",
-        "number": null,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-13T01:55:52Z"
-      },
-      {
-        "detail": null,
-        "kind": "ingest.error",
-        "number": null,
-        "repo": "dashpay/evo-sdk-website",
-        "run_id": null,
-        "ts": "2026-10-13T01:55:52Z"
       }
     ],
     "tokens_by_effort": [
@@ -1151,14 +1151,125 @@
       "findings_posted": 3905,
       "reviews": 5292,
       "reviews_imported": 2245,
-      "runs": 4717,
+      "runs": 4718,
       "tokens_in": 36121987281,
       "tokens_out": 497248936,
       "tokens_total": 36619236217
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-13T10:41:05Z",
+        "deadline_in_seconds": 21544,
+        "degraded": false,
+        "elapsed_seconds": 56,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-13T04:41:50Z",
+        "id": 4718,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 39,
+            "state": "running"
+          }
+        ],
+        "number": 745,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/745",
+        "priority": true,
+        "progress": 0.033,
+        "queue": "live",
+        "queued_at": "2026-10-13T04:40:15Z",
+        "remaining_seconds": 1628,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "fbb6cc316d69440ac8510941dc57aabbda236f68",
+        "started_at": "2026-10-13T04:41:05Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-13T04:41:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-13T04:41:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, cross-cutting diff directly changes cryptographic key derivation in lib/crypto/derive-encryption-key.ts, MASTER-signed identity-update construction in lib/services/identity-update-builder.ts, and stored-key acceptance in lib/secure-storage.ts, affecting which keys are registered and used for encrypted communication.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-13T04:41:12Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-13T04:41:18Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-13T04:41:21Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 39,
+            "started_at": "2026-10-13T04:41:22Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(app-connect): set up an anchor-bound messaging key; show others as not set up",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 50
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1174,7 +1285,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1188,7 +1299,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-13T04:38:57Z",
+        "at": "2026-10-13T04:41:27Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1208,7 +1319,8 @@
       "closed": 366,
       "done": 5233,
       "failed": 75,
-      "queued": 3,
+      "queued": 2,
+      "running": 1,
       "superseded": 2044
     },
     "ingest_error_streak": 0,
@@ -1234,7 +1346,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1246,19 +1358,19 @@
       }
     ],
     "last_run_done_at": "2026-10-13T04:31:21Z",
-    "last_run_started_at": "2026-10-13T04:25:24Z",
+    "last_run_started_at": "2026-10-13T04:41:05Z",
     "median_run_minutes": 14.816666666666666,
     "notify_last_at": "2026-10-13T04:40:56Z",
     "oldest_queued_at": "2026-10-13T04:13:51Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1629,
+        "age_seconds": 1690,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-13T04:43:51Z",
-        "eligible_in_seconds": 171,
+        "eligible_in_seconds": 110,
         "number": 7868,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7868",
@@ -1272,12 +1384,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 716,
+        "age_seconds": 777,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-13T04:59:04Z",
-        "eligible_in_seconds": 1084,
+        "eligible_in_seconds": 1023,
         "number": 7869,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7869",
@@ -1289,25 +1401,6 @@
         "sha": "87e9eeefc992a10915af4158525cf83045653ed2",
         "title": "fix: let startup block replay handle quorum commitments and asset unlocks",
         "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 45,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-13T05:10:15Z",
-        "eligible_in_seconds": 1755,
-        "number": 745,
-        "position": 3,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/745",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/745#issuecomment-6137864171",
-        "priority": false,
-        "queued_at": "2026-10-13T04:40:15Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "fbb6cc316d69440ac8510941dc57aabbda236f68",
-        "title": "feat(app-connect): set up an anchor-bound messaging key; show others as not set up",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1317,7 +1410,7 @@
       "reviews": 12,
       "tokens": 37289121
     },
-    "ts": "2026-10-13T04:41:00Z",
+    "ts": "2026-10-13T04:42:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.4,
       "low": 10.4,
@@ -1326,9 +1419,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 15.6,
+      "idle_minutes": 0.9333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
