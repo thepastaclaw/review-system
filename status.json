@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-13T01:08:00Z",
-  "generated_at": "2026-10-13T01:08:00Z",
+  "data_as_of": "2026-10-13T01:09:01Z",
+  "generated_at": "2026-10-13T01:09:01Z",
   "history": {
     "daily": [
       {
@@ -213,7 +213,7 @@
           },
           "wait": {
             "median_seconds": 1818,
-            "n": 509,
+            "n": 510,
             "p90_seconds": 1858
           }
         },
@@ -239,6 +239,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1607,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4712,
+        "ts": "2026-10-13T01:08:20Z"
+      },
+      {
+        "detail": "attempt 1 sha=c37eb3c1",
+        "kind": "run.spawned",
+        "number": 1607,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 4712,
+        "ts": "2026-10-13T01:08:04Z"
+      },
       {
         "detail": "ok in 100s",
         "kind": "run.done",
@@ -542,22 +558,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 4705,
         "ts": "2026-10-12T23:04:18Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 7865,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-12T22:58:56Z"
-      },
-      {
-        "detail": "ok in 78s",
-        "kind": "run.done",
-        "number": 735,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 4704,
-        "ts": "2026-10-12T22:58:53Z"
       }
     ],
     "tokens_by_effort": [
@@ -1151,14 +1151,155 @@
       "findings_posted": 3900,
       "reviews": 5286,
       "reviews_imported": 2245,
-      "runs": 4711,
+      "runs": 4712,
       "tokens_in": 36098478359,
       "tokens_out": 496604016,
       "tokens_total": 36595082375
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-13T07:08:04Z",
+        "deadline_in_seconds": 21543,
+        "degraded": false,
+        "elapsed_seconds": 57,
+        "findings": null,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-13T01:08:49Z",
+        "id": 4712,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 41,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 40,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 41,
+            "state": "running"
+          }
+        ],
+        "number": 1607,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1607",
+        "priority": false,
+        "progress": 0.026,
+        "queue": "live",
+        "queued_at": "2026-10-13T00:38:00Z",
+        "remaining_seconds": 2125,
+        "repo": "dashpay/dash-wallet",
+        "sha": "c37eb3c14c3e633c8154d0ae3ee0ddcc705194ca",
+        "started_at": "2026-10-13T01:08:04Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-13T01:08:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-13T01:08:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "CoinJoinFundsMigrationService.kt and CoinJoinConsolidation.kt introduce intricate funds-movement logic involving bounded input selection, signed-transaction validation, consolidation broadcasts, and persistent recovery checkpoints before shielding.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-13T01:08:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-13T01:08:17Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 41,
+            "started_at": "2026-10-13T01:08:20Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 41,
+            "started_at": "2026-10-13T01:08:20Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(cutover): migrate CoinJoin funds through bounded consolidation",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1804
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1174,7 +1315,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1188,7 +1329,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-13T01:06:00Z",
+        "at": "2026-10-13T01:08:41Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1208,7 +1349,7 @@
       "closed": 365,
       "done": 5227,
       "failed": 75,
-      "queued": 1,
+      "running": 1,
       "superseded": 2042
     },
     "ingest_error_streak": 0,
@@ -1234,44 +1375,24 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-10-13T00:51:23Z",
-    "last_run_started_at": "2026-10-13T00:49:43Z",
+    "last_run_started_at": "2026-10-13T01:08:04Z",
     "median_run_minutes": 14.816666666666666,
     "notify_last_at": "2026-10-13T01:07:40Z",
-    "oldest_queued_at": "2026-10-13T00:38:00Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1800,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": true,
-        "eligible_at": "2026-10-13T01:08:00Z",
-        "eligible_in_seconds": 0,
-        "number": 1607,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1607",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1607#issuecomment-6074062655",
-        "priority": false,
-        "queued_at": "2026-10-13T00:38:00Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash-wallet",
-        "sha": "c37eb3c14c3e633c8154d0ae3ee0ddcc705194ca",
-        "title": "fix(cutover): migrate CoinJoin funds through bounded consolidation",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-13",
       "failed": 0,
@@ -1279,7 +1400,7 @@
       "reviews": 6,
       "tokens": 13135279
     },
-    "ts": "2026-10-13T01:08:00Z",
+    "ts": "2026-10-13T01:09:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.4,
       "low": 10.9,
@@ -1288,9 +1409,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 18.283333333333335,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.95,
       "ingest_stale": false,
       "stuck": false
     }
