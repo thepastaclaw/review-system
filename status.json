@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-13T16:53:01Z",
-  "generated_at": "2026-10-13T16:53:06Z",
+  "data_as_of": "2026-10-13T16:54:01Z",
+  "generated_at": "2026-10-13T16:54:05Z",
   "history": {
     "daily": [
       {
@@ -213,7 +213,7 @@
           },
           "wait": {
             "median_seconds": 1818,
-            "n": 523,
+            "n": 524,
             "p90_seconds": 1858
           }
         },
@@ -239,6 +239,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 748,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4837,
+        "ts": "2026-10-13T16:53:48Z"
+      },
+      {
+        "detail": "attempt 1 sha=7d0489e8",
+        "kind": "run.spawned",
+        "number": 748,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4837,
+        "ts": "2026-10-13T16:53:17Z"
+      },
       {
         "detail": "ok in 3655s",
         "kind": "run.done",
@@ -494,22 +510,6 @@
         "repo": "dashpay/dashwallet-ios",
         "run_id": 4829,
         "ts": "2026-10-13T16:31:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1196,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 4829,
-        "ts": "2026-10-13T16:31:03Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1196,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 4829,
-        "ts": "2026-10-13T16:31:03Z"
       },
       {
         "detail": null,
@@ -1151,14 +1151,125 @@
       "findings_posted": 4002,
       "reviews": 5389,
       "reviews_imported": 2245,
-      "runs": 4836,
+      "runs": 4837,
       "tokens_in": 37082406647,
       "tokens_out": 510099687,
       "tokens_total": 37592506334
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-13T22:53:17Z",
+        "deadline_in_seconds": 21556,
+        "degraded": false,
+        "elapsed_seconds": 44,
+        "findings": null,
+        "heartbeat_age_seconds": 0,
+        "heartbeat_at": "2026-10-13T16:54:02Z",
+        "id": 4837,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 11,
+            "state": "running"
+          }
+        ],
+        "number": 748,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/748",
+        "priority": false,
+        "progress": 0.078,
+        "queue": "live",
+        "queued_at": "2026-10-13T16:22:58Z",
+        "remaining_seconds": 519,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "7d0489e87a26a972d8c477a35ff98ca8507ee646",
+        "started_at": "2026-10-13T16:53:17Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 8,
+            "started_at": "2026-10-13T16:53:17Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-13T16:53:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The substantial cleanup tooling adds tombstone writes, retries, and CI integration but reuses existing key derivation and signing primitives rather than changing cryptography, signature rules, or funds-transfer logic.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 17,
+            "started_at": "2026-10-13T16:53:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-13T16:53:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-13T16:53:48Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 11,
+            "started_at": "2026-10-13T16:53:50Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "chore(scripts): tombstone battery and devnet e2e posts after each run",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1819
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1174,7 +1285,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1208,7 +1319,8 @@
       "closed": 378,
       "done": 5329,
       "failed": 75,
-      "queued": 7,
+      "queued": 6,
+      "running": 1,
       "superseded": 2062
     },
     "ingest_error_streak": 0,
@@ -1234,7 +1346,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1246,40 +1358,21 @@
       }
     ],
     "last_run_done_at": "2026-10-13T16:52:42Z",
-    "last_run_started_at": "2026-10-13T16:39:40Z",
+    "last_run_started_at": "2026-10-13T16:53:17Z",
     "median_run_minutes": 21.583333333333332,
-    "notify_last_at": "2026-10-13T16:50:53Z",
-    "oldest_queued_at": "2026-10-13T16:22:58Z",
+    "notify_last_at": "2026-10-13T16:53:12Z",
+    "oldest_queued_at": "2026-10-13T16:26:15Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1803,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-10-13T16:52:58Z",
-        "eligible_in_seconds": 0,
-        "number": 748,
-        "position": 1,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/748",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/748#issuecomment-6150172756",
-        "priority": false,
-        "queued_at": "2026-10-13T16:22:58Z",
-        "reason": "waiting for a review slot",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "7d0489e87a26a972d8c477a35ff98ca8507ee646",
-        "title": "chore(scripts): tombstone battery and devnet e2e posts after each run",
-        "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 1606,
+        "age_seconds": 1666,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-13T16:56:15Z",
-        "eligible_in_seconds": 194,
+        "eligible_in_seconds": 134,
         "number": 1086,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1086",
         "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/1086#issuecomment-6149668453",
         "priority": false,
@@ -1291,14 +1384,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1606,
+        "age_seconds": 1666,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-13T16:56:15Z",
-        "eligible_in_seconds": 194,
+        "eligible_in_seconds": 134,
         "number": 1085,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1085",
         "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/1085#issuecomment-6148460377",
         "priority": false,
@@ -1310,14 +1403,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1606,
+        "age_seconds": 1666,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-13T16:56:15Z",
-        "eligible_in_seconds": 194,
+        "eligible_in_seconds": 134,
         "number": 1088,
-        "position": 4,
+        "position": 3,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1088",
         "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/1088#issuecomment-6149963750",
         "priority": false,
@@ -1329,14 +1422,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1407,
+        "age_seconds": 1467,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-13T16:59:34Z",
-        "eligible_in_seconds": 393,
+        "eligible_in_seconds": 333,
         "number": 749,
-        "position": 5,
+        "position": 4,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/749",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/749#issuecomment-6150309093",
         "priority": false,
@@ -1348,14 +1441,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 61,
+        "age_seconds": 121,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-10-13T17:22:00Z",
-        "eligible_in_seconds": 1739,
+        "eligible_in_seconds": 1679,
         "number": 7863,
-        "position": 6,
+        "position": 5,
         "pr_url": "https://github.com/dashpay/dash/pull/7863",
         "prioritize_url": "https://github.com/dashpay/dash/issues/7863#issuecomment-6111716712",
         "priority": false,
@@ -1367,14 +1460,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 59,
+        "age_seconds": 119,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-10-13T17:22:02Z",
-        "eligible_in_seconds": 1741,
+        "eligible_in_seconds": 1681,
         "number": 5396,
-        "position": 7,
+        "position": 6,
         "pr_url": "https://github.com/dashpay/platform/pull/5396",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5396#issuecomment-6132416924",
         "priority": false,
@@ -1393,7 +1486,7 @@
       "reviews": 124,
       "tokens": 972798879
     },
-    "ts": "2026-10-13T16:53:01Z",
+    "ts": "2026-10-13T16:54:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.7,
       "low": 9.2,
@@ -1402,9 +1495,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 13.383333333333333,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.7666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
