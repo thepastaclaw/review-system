@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-13T22:41:01Z",
-  "generated_at": "2026-10-13T22:41:02Z",
+  "data_as_of": "2026-10-13T22:42:00Z",
+  "generated_at": "2026-10-13T22:42:01Z",
   "history": {
     "daily": [
       {
@@ -230,8 +230,8 @@
           },
           "wait": {
             "median_seconds": 11,
-            "n": 572,
-            "p90_seconds": 386
+            "n": 573,
+            "p90_seconds": 383
           }
         }
       },
@@ -239,6 +239,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=b62e7dd8",
+        "kind": "run.spawned",
+        "number": 756,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 4924,
+        "ts": "2026-10-13T22:41:53Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 756,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-13T22:41:53Z"
+      },
+      {
+        "detail": "b62e7dd8 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 756,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-13T22:41:47Z"
+      },
       {
         "detail": "ok in 64s",
         "kind": "run.done",
@@ -438,30 +462,6 @@
         "repo": "dashpay/dashwallet-ios",
         "run_id": 4920,
         "ts": "2026-10-13T22:30:01Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1202,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 4920,
-        "ts": "2026-10-13T22:30:00Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1202,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 4920,
-        "ts": "2026-10-13T22:30:00Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1202,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 4920,
-        "ts": "2026-10-13T22:30:00Z"
       },
       {
         "detail": null,
@@ -1151,14 +1151,86 @@
       "findings_posted": 4104,
       "reviews": 5470,
       "reviews_imported": 2245,
-      "runs": 4923,
+      "runs": 4924,
       "tokens_in": 38037517932,
       "tokens_out": 519148296,
       "tokens_total": 38556666228
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-14T04:41:53Z",
+        "deadline_in_seconds": 21593,
+        "degraded": false,
+        "elapsed_seconds": 7,
+        "findings": null,
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-13T22:41:53Z",
+        "id": 4924,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 756,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/756",
+        "priority": true,
+        "progress": 0.004,
+        "queue": "live",
+        "queued_at": "2026-10-13T22:41:47Z",
+        "remaining_seconds": 1826,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "b62e7dd88d69e44fa247e5ff2799abe2a2c03882",
+        "started_at": "2026-10-13T22:41:53Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-13T22:41:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-13T22:41:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large diff changes wallet sign-in, renewal, revoke handling, account key loading, and engine session flows in files such as mobile/app/src/features/auth/app-connect.ts and mobile/engine/src/api/session.ts, directly affecting key handling and signature authorization.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-13T22:41:57Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(mobile): App Connect wallet sign-in screens",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 6
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1174,7 +1246,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1209,10 +1281,11 @@
       "done": 5408,
       "failed": 75,
       "queued": 1,
+      "running": 1,
       "superseded": 2074
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-13T22:38:02Z",
+    "ingest_last_at": "2026-10-13T22:41:47Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1246,19 +1319,19 @@
       }
     ],
     "last_run_done_at": "2026-10-13T22:39:30Z",
-    "last_run_started_at": "2026-10-13T22:38:25Z",
+    "last_run_started_at": "2026-10-13T22:41:53Z",
     "median_run_minutes": 21.2,
-    "notify_last_at": "2026-10-13T22:39:25Z",
+    "notify_last_at": "2026-10-13T22:41:48Z",
     "oldest_queued_at": "2026-10-13T22:22:47Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1094,
+        "age_seconds": 1153,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-13T22:52:47Z",
-        "eligible_in_seconds": 706,
+        "eligible_in_seconds": 647,
         "number": 5421,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5421",
@@ -1279,7 +1352,7 @@
       "reviews": 207,
       "tokens": 1930791999
     },
-    "ts": "2026-10-13T22:41:01Z",
+    "ts": "2026-10-13T22:42:00Z",
     "typical_minutes_by_tier": {
       "critical": 21.7,
       "low": 8.9,
@@ -1288,9 +1361,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 2.6,
+      "idle_minutes": 0.11666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
