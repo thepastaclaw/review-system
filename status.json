@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-14T02:59:00Z",
-  "generated_at": "2026-10-14T02:59:01Z",
+  "data_as_of": "2026-10-14T03:00:00Z",
+  "generated_at": "2026-10-14T03:00:01Z",
   "history": {
     "daily": [
       {
@@ -244,6 +244,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5405,
+        "repo": "dashpay/platform",
+        "run_id": 4949,
+        "ts": "2026-10-14T02:59:17Z"
+      },
       {
         "detail": "attempt 1 sha=1f99e0fb",
         "kind": "run.spawned",
@@ -555,14 +563,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-14T01:30:26Z"
-      },
-      {
-        "detail": "ok in 3397s",
-        "kind": "run.done",
-        "number": 5396,
-        "repo": "dashpay/platform",
-        "run_id": 4943,
-        "ts": "2026-10-14T01:28:24Z"
       }
     ],
     "tokens_by_effort": [
@@ -1168,35 +1168,45 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-10-14T08:58:36Z",
-        "deadline_in_seconds": 21576,
+        "deadline_in_seconds": 21516,
         "degraded": false,
-        "elapsed_seconds": 24,
+        "elapsed_seconds": 84,
         "findings": null,
         "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-10-14T02:58:51Z",
+        "heartbeat_at": "2026-10-14T02:59:51Z",
         "id": 4949,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 8,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 43,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 42,
             "state": "running"
           }
         ],
         "number": 5405,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5405",
         "priority": true,
-        "progress": 0.018,
+        "progress": 0.054,
         "queue": "live",
         "queued_at": "2026-10-14T02:50:46Z",
-        "remaining_seconds": 1295,
+        "remaining_seconds": 1471,
         "repo": "dashpay/platform",
         "sha": "1f99e0fb6e45bd95581d317c412c09ce9cec2828",
         "started_at": "2026-10-14T02:58:36Z",
@@ -1210,29 +1220,68 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 9,
+            "seconds": 23,
             "started_at": "2026-10-14T02:58:51Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a contained but nontrivial WASM query-parsing change spanning shared conversion logic, six parsers, and extensive tests, while it does not modify a critical consensus, funds, cryptographic, or storage surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 22,
+            "started_at": "2026-10-14T02:58:52Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 8,
-            "started_at": "2026-10-14T02:58:52Z",
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-14T02:59:15Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 43,
+            "started_at": "2026-10-14T02:59:17Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix(wasm-sdk): accept Identifier instances in group queries",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "manual",
         "upcoming": [
-          "context",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 470
@@ -1267,7 +1316,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-14T02:57:15Z",
+        "at": "2026-10-14T02:59:18Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1314,13 +1363,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1333,12 +1382,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1384,
+        "age_seconds": 1444,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-14T03:05:56Z",
-        "eligible_in_seconds": 416,
+        "eligible_in_seconds": 356,
         "number": 4844,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/4844",
@@ -1352,12 +1401,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 939,
+        "age_seconds": 999,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-14T03:13:21Z",
-        "eligible_in_seconds": 861,
+        "eligible_in_seconds": 801,
         "number": 763,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/763",
@@ -1371,12 +1420,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 496,
+        "age_seconds": 556,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-14T03:20:44Z",
-        "eligible_in_seconds": 1304,
+        "eligible_in_seconds": 1244,
         "number": 7879,
         "position": 3,
         "pr_url": "https://github.com/dashpay/dash/pull/7879",
@@ -1397,7 +1446,7 @@
       "reviews": 16,
       "tokens": 411024628
     },
-    "ts": "2026-10-14T02:59:00Z",
+    "ts": "2026-10-14T03:00:00Z",
     "typical_minutes_by_tier": {
       "critical": 22.2,
       "low": 9.1,
@@ -1408,7 +1457,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.4,
+      "idle_minutes": 1.4,
       "ingest_stale": false,
       "stuck": false
     }
