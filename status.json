@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-14T02:47:01Z",
-  "generated_at": "2026-10-14T02:47:02Z",
+  "data_as_of": "2026-10-14T02:48:01Z",
+  "generated_at": "2026-10-14T02:48:01Z",
   "history": {
     "daily": [
       {
@@ -235,8 +235,8 @@
           },
           "wait": {
             "median_seconds": 11,
-            "n": 567,
-            "p90_seconds": 392
+            "n": 568,
+            "p90_seconds": 403
           }
         }
       },
@@ -244,6 +244,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5405,
+        "repo": "dashpay/platform",
+        "run_id": 4948,
+        "ts": "2026-10-14T02:47:37Z"
+      },
+      {
+        "detail": "attempt 1 sha=9af0142a",
+        "kind": "run.spawned",
+        "number": 5405,
+        "repo": "dashpay/platform",
+        "run_id": 4948,
+        "ts": "2026-10-14T02:47:05Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -547,22 +563,6 @@
         "repo": "dashpay/platform",
         "run_id": 4943,
         "ts": "2026-10-14T01:17:59Z"
-      },
-      {
-        "detail": null,
-        "kind": "compare.lane_dropped",
-        "number": 5396,
-        "repo": "dashpay/platform",
-        "run_id": 4943,
-        "ts": "2026-10-14T01:17:59Z"
-      },
-      {
-        "detail": null,
-        "kind": "compare.lane_dropped",
-        "number": 5396,
-        "repo": "dashpay/platform",
-        "run_id": 4943,
-        "ts": "2026-10-14T01:17:58Z"
       }
     ],
     "tokens_by_effort": [
@@ -1156,14 +1156,137 @@
       "findings_posted": 4131,
       "reviews": 5488,
       "reviews_imported": 2245,
-      "runs": 4947,
+      "runs": 4948,
       "tokens_in": 38532938127,
       "tokens_out": 522541265,
       "tokens_total": 39055479392
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "shumkov",
+        "deadline_at": "2026-10-14T08:47:05Z",
+        "deadline_in_seconds": 21544,
+        "degraded": false,
+        "elapsed_seconds": 56,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-14T02:47:50Z",
+        "id": 4948,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 23,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 24,
+            "state": "running"
+          }
+        ],
+        "number": 5405,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5405",
+        "priority": true,
+        "progress": 0.036,
+        "queue": "live",
+        "queued_at": "2026-10-14T02:39:43Z",
+        "remaining_seconds": 1489,
+        "repo": "dashpay/platform",
+        "sha": "9af0142a65e906a1d00b9777b582091da66ba2f9",
+        "started_at": "2026-10-14T02:47:05Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 16,
+            "started_at": "2026-10-14T02:47:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-10-14T02:47:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds nontrivial WASM query-input normalization and extensive tests, but the diff does not change consensus, funds movement, cryptography, peer-facing network deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 10,
+            "started_at": "2026-10-14T02:47:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-14T02:47:33Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 25,
+            "started_at": "2026-10-14T02:47:36Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(wasm-sdk): accept Identifier instances in group queries",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "manual",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 442
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1179,21 +1302,21 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
-      "reason": "7 of 8 OpenAI accounts usable, capped at 3",
+      "reason": "6 of 8 OpenAI accounts usable, capped at 3",
       "scale": 3,
       "typical": 9,
-      "usable_accounts": 7
+      "usable_accounts": 6
     },
     "degraded": {
       "active": false,
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-14T02:45:31Z",
+        "at": "2026-10-14T02:47:47Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1213,7 +1336,8 @@
       "closed": 379,
       "done": 5425,
       "failed": 75,
-      "queued": 3,
+      "queued": 2,
+      "running": 1,
       "superseded": 2074
     },
     "ingest_error_streak": 0,
@@ -1245,46 +1369,27 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-10-14T02:09:38Z",
-    "last_run_started_at": "2026-10-14T01:49:27Z",
+    "last_run_started_at": "2026-10-14T02:47:05Z",
     "median_run_minutes": 21.8,
     "notify_last_at": "2026-10-14T02:46:59Z",
     "oldest_queued_at": "2026-10-14T02:35:56Z",
-    "priority_queued": 1,
+    "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 438,
-        "attempts": 0,
-        "author": "shumkov",
-        "eligible": true,
-        "eligible_at": "2026-10-14T02:45:56Z",
-        "eligible_in_seconds": 0,
-        "number": 5405,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5405",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5405#issuecomment-6144177978",
-        "priority": true,
-        "queued_at": "2026-10-14T02:39:43Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "9af0142a65e906a1d00b9777b582091da66ba2f9",
-        "title": "fix(wasm-sdk): accept Identifier instances in group queries",
-        "trigger": "manual"
-      },
-      {
-        "age_seconds": 665,
+        "age_seconds": 725,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-14T03:05:56Z",
-        "eligible_in_seconds": 1135,
+        "eligible_in_seconds": 1075,
         "number": 4844,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/4844",
         "prioritize_url": "https://github.com/dashpay/platform/issues/4844#issuecomment-5745218795",
         "priority": false,
@@ -1296,14 +1401,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 220,
+        "age_seconds": 280,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-14T03:13:21Z",
-        "eligible_in_seconds": 1580,
+        "eligible_in_seconds": 1520,
         "number": 763,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/763",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/763#issuecomment-6159743922",
         "priority": false,
@@ -1322,7 +1427,7 @@
       "reviews": 16,
       "tokens": 411024628
     },
-    "ts": "2026-10-14T02:47:01Z",
+    "ts": "2026-10-14T02:48:01Z",
     "typical_minutes_by_tier": {
       "critical": 22.2,
       "low": 9.1,
@@ -1331,11 +1436,11 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 57.583333333333336,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.9333333333333333,
       "ingest_stale": false,
-      "stuck": true
+      "stuck": false
     }
   },
   "schema_version": 1
