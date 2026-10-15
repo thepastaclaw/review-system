@@ -1807,6 +1807,39 @@ def test_conversation_approves_only_once_no_suggestion_is_left(cfg, conn, gh, la
     assert "COMMENTED -> APPROVE" in _updates(conn)[-1]
 
 
+def test_a_publication_that_carried_every_finding_still_approves_after_discussion(
+    cfg, conn, gh, lanes
+):
+    """dashpay/dash#7861: the review of this commit carried all its findings onto threads from
+    an earlier head, so it posted none and wrote no `posted` rows. Withdrawing its only blocker
+    then found "no verifier record" and posted a COMMENT, which leaves the REQUEST_CHANGES it
+    had just posted standing. Its `reviews` row and publish step make it the publication."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    rid = _full_strength_prior(conn)
+    with tx(conn):
+        conn.execute("DELETE FROM findings WHERE stage='posted'")
+        conn.execute(
+            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?, 'publish', 'ok', 'x')",
+            (rid,),
+        )
+        conn.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, "
+            "posted_at) VALUES (?, 'dashpay/platform', 1, ?, 'final', 4242, "
+            "'REQUEST_CHANGES', 'x')",
+            (rid, HEAD),
+        )
+    gh.can_resolve = False
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    gh.posted_reviews.append(
+        {"id": 4242, "event": "REQUEST_CHANGES", "body": _standing_body(blocker["title"])}
+    )
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
+    assert [r["event"] for r in gh.posted_reviews] == ["REQUEST_CHANGES", "APPROVE"]
+    assert "verifier record" not in gh.posted_reviews[1]["body"]
+    assert "🔴 ~~1~~ 0 blocking" in gh.posted_reviews[0]["body"]
+
+
 def test_a_finding_carried_onto_a_resolved_thread_still_blocks(cfg, conn, gh, lanes):
     """The verifier kept a blocker that dedupe carried onto a thread a maintainer had resolved
     by hand, so it was never posted for this commit and has no open thread. Withdrawing the

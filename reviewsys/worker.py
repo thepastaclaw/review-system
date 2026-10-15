@@ -2862,8 +2862,8 @@ def _identity(file: Any, title: Any) -> tuple[str, str]:
 def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None = None) -> _Standing:
     """Findings on this commit's `phase` publication that still stand.
 
-    The publication is the latest run that posted findings for this sha (a same-sha re-review
-    refreshes it). Its standing set is that run's final verifier set (`verify2` rows, the
+    The publication is the latest run that posted findings or published the review for this
+    sha (a same-sha re-review refreshes it). Its standing set is that run's final verifier set (`verify2` rows, the
     fresh audit's when it ran), which includes findings that dedupe carried onto an existing
     thread instead of posting; runs without those rows fall back to their `posted` rows. Plus
     unresolved bot finding threads this database never posted (legacy findings); threads from
@@ -2880,7 +2880,21 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
         "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded')",
         (ctx.repo, ctx.number, ctx.sha, phase),
     ).fetchall()
-    run_id = max((int(r["run_id"]) for r in rows if r["stage"] == "posted"), default=None)
+    # a full review that carried every finding onto existing threads posts none, so it has
+    # no `posted` rows, but it is still this commit's publication (dashpay/dash#7861: missing
+    # it left "the verifier record ... is not available" and a COMMENT that never cleared the
+    # REQUEST_CHANGES it had just posted). A conversation follow-up has no publish step.
+    published = ctx.conn.execute(
+        "SELECT MAX(rv.run_id) FROM reviews rv JOIN steps s ON s.run_id=rv.run_id "
+        "WHERE rv.repo=? AND rv.number=? AND rv.sha=? AND rv.phase=? AND s.name=? "
+        "AND s.status='ok'",
+        (ctx.repo, ctx.number, ctx.sha, phase, StepName.PUBLISH.value),
+    ).fetchone()[0]
+    run_id = max(
+        [int(r["run_id"]) for r in rows if r["stage"] == "posted"]
+        + ([int(published)] if published is not None else []),
+        default=None,
+    )
     pub: dict[str, tuple[str, tuple[str, str]]] = {}
     titles: dict[str, str] = {}
     verified = False

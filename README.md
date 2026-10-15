@@ -629,8 +629,9 @@ verifier lanes):
 - Verdict: the verdict on a commit is its full review minus what the discussion withdrew
   or deferred. A conversation never adds blockers. The standing set is the final verifier
   set (`verify2` rows, the fresh audit's when it ran) of the run that last published
-  findings for the sha, so findings dedupe carried onto other (even resolved) threads
-  count; plus unresolved bot threads this database never posted (legacy). Threads from
+  findings or the review for the sha (a `reviews` row plus an `ok` publish step: a
+  review that carried every finding onto existing threads posts none, dashpay/dash#7861),
+  so findings dedupe carried onto other (even resolved) threads count; plus unresolved bot threads this database never posted (legacy). Threads from
   earlier heads that run re-adjudicated do not count. Lifted = `conceded` rows after that
   run, matched by hash or by file and title. Once no blocker stands, the follow-up
   **APPROVEs** (from `CHANGES_REQUESTED` or `COMMENTED`) when nothing above a nitpick is
