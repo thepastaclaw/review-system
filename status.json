@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-15T01:37:01Z",
-  "generated_at": "2026-10-15T01:37:01Z",
+  "data_as_of": "2026-10-15T01:38:01Z",
+  "generated_at": "2026-10-15T01:38:01Z",
   "history": {
     "daily": [
       {
@@ -235,7 +235,7 @@
           },
           "wait": {
             "median_seconds": 12,
-            "n": 523,
+            "n": 524,
             "p90_seconds": 457
           }
         }
@@ -244,6 +244,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1541,
+        "repo": "dashpay/tenderdash",
+        "run_id": 5105,
+        "ts": "2026-10-15T01:37:39Z"
+      },
+      {
+        "detail": "attempt 1 sha=8e5b819a",
+        "kind": "run.spawned",
+        "number": 1541,
+        "repo": "dashpay/tenderdash",
+        "run_id": 5105,
+        "ts": "2026-10-15T01:37:26Z"
+      },
+      {
+        "detail": "8e5b819a trigger=mention priority=1",
+        "kind": "head.queued",
+        "number": 1541,
+        "repo": "dashpay/tenderdash",
+        "run_id": null,
+        "ts": "2026-10-15T01:37:26Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -539,30 +563,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-10-14T20:25:23Z"
-      },
-      {
-        "detail": "ok in 883s",
-        "kind": "run.done",
-        "number": 7839,
-        "repo": "dashpay/dash",
-        "run_id": 5099,
-        "ts": "2026-10-14T20:25:22Z"
-      },
-      {
-        "detail": null,
-        "kind": "compare.lane_dropped",
-        "number": 5150,
-        "repo": "dashpay/platform",
-        "run_id": 5100,
-        "ts": "2026-10-14T20:25:10Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 5150,
-        "repo": "dashpay/platform",
-        "run_id": 5100,
-        "ts": "2026-10-14T20:22:42Z"
       }
     ],
     "tokens_by_effort": [
@@ -1156,14 +1156,120 @@
       "findings_posted": 4255,
       "reviews": 5603,
       "reviews_imported": 2245,
-      "runs": 5104,
+      "runs": 5105,
       "tokens_in": 40370976405,
       "tokens_out": 544037211,
       "tokens_total": 40915013616
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "dependabot",
+        "deadline_at": "2026-10-15T07:37:26Z",
+        "deadline_in_seconds": 21565,
+        "degraded": false,
+        "elapsed_seconds": 35,
+        "findings": null,
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-10-15T01:37:56Z",
+        "id": 5105,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 22,
+            "state": "running"
+          }
+        ],
+        "number": 1541,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/tenderdash/pull/1541",
+        "priority": true,
+        "progress": 0.019,
+        "queue": "live",
+        "queued_at": "2026-10-15T01:37:24Z",
+        "remaining_seconds": 1786,
+        "repo": "dashpay/tenderdash",
+        "sha": "8e5b819a1be04e37f6c659b39b4820e84e70fab2",
+        "started_at": "2026-10-15T01:37:26Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-15T01:37:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-15T01:37:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a small, contained dependency update limited to go.mod and go.sum, with straightforward version and checksum changes.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-15T01:37:30Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-15T01:37:35Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 24,
+            "started_at": "2026-10-15T01:37:37Z",
+            "status": "running"
+          }
+        ],
+        "tier": "low",
+        "title": "build(deps): Bump golang.org/x/term from 0.46.0 to 0.47.0",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "mention",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1179,7 +1285,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1213,6 +1319,7 @@
       "closed": 382,
       "done": 5539,
       "failed": 75,
+      "running": 1,
       "superseded": 2097
     },
     "ingest_error_streak": 0,
@@ -1232,7 +1339,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1250,9 +1357,9 @@
       }
     ],
     "last_run_done_at": "2026-10-14T22:45:35Z",
-    "last_run_started_at": "2026-10-14T22:26:02Z",
+    "last_run_started_at": "2026-10-15T01:37:26Z",
     "median_run_minutes": 20.766666666666666,
-    "notify_last_at": "2026-10-15T01:35:07Z",
+    "notify_last_at": "2026-10-15T01:37:20Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1263,7 +1370,7 @@
       "reviews": 0,
       "tokens": 0
     },
-    "ts": "2026-10-15T01:37:01Z",
+    "ts": "2026-10-15T01:38:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.7,
       "low": 8.4,
@@ -1272,9 +1379,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 190.98333333333332,
+      "idle_minutes": 0.5833333333333334,
       "ingest_stale": false,
       "stuck": false
     }
