@@ -209,7 +209,7 @@ def test_answer_conversation_posts_once_resolves_and_defuses(monkeypatch):
         f"<!-- thepastaclaw-thread-answer v1 sha={HEAD} reply=901 finding=aaa -->\n"
     )
     assert "done, thanks @​knst" in body and body.endswith("_Withdrawing this finding._")
-    assert cid2 == 930 and body2.endswith("I will not press it further here._")
+    assert cid2 == 930 and body2.endswith("no longer blocks this pull request._")
     # second pass with the same replies: everything already answered, nothing reposted
     gh.inline = [{"body": b} for _, b in gh.replies]
     out = publish.answer_conversation(
@@ -316,3 +316,132 @@ def test_answer_conversation_marks_the_root_only_when_the_thread_stays_open(monk
     assert str(out["ddd"]["marked"]).startswith("failed")  # never edit a root we did not write
     assert [cid for cid, _ in edits] == [900, 920]
     assert "**Withdrawn**" in edits[0][1] and edits[1][1] == ROOT
+
+
+STANDING = f"""<!-- thepastaclaw-review v1 -->
+<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->
+## Re-review — Final validation — Phase 1 + Phase 2
+
+Summary.
+
+🔴 2 blocking | 💬 1 nitpick(s)
+
+<details>
+<summary>🤖 Prompt for all review comments with AI agents</summary>
+
+```
+In `t.py`:
+- [BLOCKING] t.py:2355-2358: Synchronize the second rotating session
+  body one
+- [BLOCKING] t.py:2239: Synchronize secondary types
+  body two
+
+In `<commit:fb6f0d5207>`:
+- [NITPICK] <commit:fb6f0d5207>:1: Reword the polling commit
+```
+</details>"""
+
+
+def _lifted(title, *, file="t.py", severity="blocking", status="INTENTIONALLY_DEFERRED"):
+    return publish.LiftedFinding(
+        hash=title[:6], severity=severity, file=file, title=title, status=status
+    )
+
+
+def test_lifted_findings_rewrite_the_standing_review_idempotently_and_reversibly():
+    deferred = _lifted("Synchronize the second rotating session")
+    nit = _lifted(
+        "Reword the polling commit",
+        file="<commit:fb6f0d5207>",
+        severity="nitpick",
+        status="WITHDRAWN",
+    )
+    once = publish.with_lifted_findings(STANDING, [deferred])
+    lines = once.split("\n")
+    assert lines[3] == "" and lines[4] == publish.REVIEW_STATUS_MARKER
+    assert lines[5] == (
+        "> **Updated after discussion:** 1 finding(s) of this review were settled in the "
+        "inline threads; 1 blocking finding(s) still stand."
+    )
+    assert lines[6] == (
+        "> - ⏭️ Deferred (maintainer decision): 🔴 Synchronize the second rotating session"
+    )
+    assert lines[7] == "" and lines[8] == "Summary."
+    assert "🔴 ~~2~~ 1 blocking | 💬 1 nitpick(s)" in once
+    assert (
+        "- [BLOCKING → DEFERRED by a maintainer; not blocking, do not fix in this PR] "
+        "t.py:2355-2358: Synchronize the second rotating session" in once
+    )
+    assert "- [BLOCKING] t.py:2239: Synchronize secondary types" in once
+    # re-applying is a no-op; a wider set re-derives from the original numbers
+    assert publish.with_lifted_findings(once, [deferred]) == once
+    both = publish.with_lifted_findings(once, [deferred, nit])
+    assert "🔴 ~~2~~ 1 blocking | 💬 ~~1~~ 0 nitpick(s)" in both
+    assert "- [NITPICK → WITHDRAWN in discussion; do not fix] <commit:fb6f0d5207>:1:" in both
+    assert both.count(publish.REVIEW_STATUS_MARKER) == 1 and "2 finding(s)" in both
+    # nothing lifted any more (a later full review voided the concessions): back to the original
+    assert publish.with_lifted_findings(both, []) == STANDING
+    assert publish.with_lifted_findings(STANDING, []) == STANDING
+
+
+def test_a_lifted_finding_retags_only_its_own_prompt_entry():
+    """Same title in another file, a title that ends in the lifted one, and a finding the
+    review never listed (a legacy thread): none of them may be retagged or counted."""
+    fence = "```"
+    body = (
+        "## Final validation\n\n🔴 3 blocking\n\n<details>\n<summary>p</summary>\n\n"
+        f"{fence}\nIn `a.cpp`:\n- [BLOCKING] a.cpp:1: Missing lock\n\n"
+        "In `b.cpp`:\n- [BLOCKING] b.cpp:9: Missing lock\n"
+        f"- [BLOCKING] b.cpp:20: Race: Missing lock\n{fence}\n</details>"
+    )
+    out = publish.with_lifted_findings(body, [_lifted("Missing lock", file="a.cpp")])
+    assert "🔴 ~~3~~ 2 blocking" in out and "2 blocking finding(s) still stand" in out
+    assert out.count("→ DEFERRED") == 1 and "] a.cpp:1: Missing lock" in out
+    assert "- [BLOCKING] b.cpp:9: Missing lock" in out
+    assert "- [BLOCKING] b.cpp:20: Race: Missing lock" in out
+    legacy = _lifted("Some legacy thread", file="c.cpp")
+    assert publish.with_lifted_findings(body, [legacy]) == body
+
+
+def test_a_multiline_title_keeps_the_status_block_idempotent():
+    odd = _lifted("Synchronize the second rotating session")
+    odd = publish.LiftedFinding(
+        hash=odd.hash, severity="blocking", file="t.py", title=odd.title, status="WITHDRAWN"
+    )
+    once = publish.with_lifted_findings(STANDING, [odd])
+    weird = publish.LiftedFinding(
+        hash="w", severity="blocking", file="t.py", title="a\n<!-- x -->", status=""
+    )
+    block = publish.with_lifted_findings(once, [odd, weird])
+    assert publish.with_lifted_findings(block, [odd, weird]) == block
+    assert publish.with_lifted_findings(block, []) == STANDING
+    assert publish._block_text("a\n<!-- x -->") == "a &lt;!-- x -->"
+
+
+def test_prompt_tells_the_lane_what_still_blocks_and_what_it_already_settled():
+    threads = {
+        "aaa": {
+            "severity": "blocking",
+            "title": "Deferred one",
+            "awaiting_answer": True,
+            "transcript": [{"id": 1, "author": "knst", "body": "IT IS STILL HERE"}],
+        }
+    }
+    text = converse.prompt(
+        repo="dashpay/dash",
+        number=1,
+        head_sha=HEAD,
+        meta={},
+        project_skill="",
+        review_skill="",
+        threads=threads,
+        fetched_commits=[],
+        unfetched_commits=[],
+        standing_verdict="CHANGES_REQUESTED",
+        evidence={},
+        still_blocking=["The other blocker"],
+        settled={"aaa": "INTENTIONALLY_DEFERRED"},
+    )
+    standing = text.split("## Where your review stands")[1].split("\n## ")[0]
+    assert "- The other blocker" in standing and "do not settle it again" in standing
+    assert '"already_settled_as": "INTENTIONALLY_DEFERRED"' in text

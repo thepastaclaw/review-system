@@ -2706,12 +2706,18 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     if not threads:
         # the reply came from another bot, landed on a resolved thread, or was already
         # considered: nothing to say, restore the gate comment we overwrote at run start
-        remaining = _open_blockers(ctx, phase)
-        _gate_comment(ctx, "done", phase=phase, blocker_count=remaining)
-        return {"answered": 0, "reason": "no thread awaiting an answer"}
+        kept = _standing_findings(ctx, phase)
+        _gate_comment(ctx, "done", phase=phase, blocker_count=kept.blockers)
+        return {
+            "answered": 0,
+            "reason": "no thread awaiting an answer",
+            "review_summary": _mark_lifted_in_review(ctx, phase, kept, reviews),
+        }
     fetched, unfetched = _fetch_linked_commits(ctx, threads)
     project_skill, review_skill = skill_texts(ctx.cfg, ctx.repo)
     lm = ctx.lane_model(ctx.cfg.policy.conversation_lane)
+    before = _standing_findings(ctx, phase)
+    settled = before.settled(threads)
     out = _run_conversation_lane(
         ctx,
         lm,
@@ -2726,6 +2732,10 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         unfetched_commits=unfetched,
         standing_verdict=publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login),
         evidence=ctx.evidence,
+        still_blocking=[
+            before.titles.get(h) or h for h, sev in before.findings.items() if sev == "blocking"
+        ],
+        settled=settled,
     )
     (ctx.run_dir / "conversation.json").write_text(
         json.dumps({h: dataclasses.asdict(o) for h, o in out.outcomes.items()}, indent=1)
@@ -2734,11 +2744,17 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     # follow-up must never be posted against an obsolete commit (the run ends superseded and
     # ingest queues the live one)
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    out = converse.accept_deferrals(out, threads)
+    out = converse.accept_deferrals(out, threads, settled=set(settled))
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
         answered = publish.answer_conversation(
-            ctx.gh, ctx.repo, ctx.number, ctx.sha, threads=threads, outcomes=out.outcomes
+            ctx.gh,
+            ctx.repo,
+            ctx.number,
+            ctx.sha,
+            threads=threads,
+            outcomes=out.outcomes,
+            settled=settled,
         )
     # Posting happens before the bookkeeping below is committed. If the worker dies in
     # between, the reply is public but no `conceded` row exists, and the requeued run will not
@@ -2762,8 +2778,9 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
             )
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
-        _record_conceded(ctx, phase, lifted)
+        _record_conceded(ctx, phase, {h: out.outcomes[h].status for h in lifted})
     kept = _standing_findings(ctx, phase, lifted=lifted)
+    summary = _mark_lifted_in_review(ctx, phase, kept, reviews)
     update = None
     if not ctx.dry_run:
         update = _conversation_verdict_update(ctx, phase, lm, kept, lifted=lifted)
@@ -2777,16 +2794,19 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         },
         "blockers_remaining": kept.blockers,
         "verdict_updated": bool(update and update.posted),
+        "review_summary": summary,
     }
 
 
-def _record_conceded(ctx: RunContext, phase: str, lifted: set[str]) -> None:
+def _record_conceded(ctx: RunContext, phase: str, lifted: dict[str, str]) -> None:
     """A finding the conversation withdrew or accepted as deferred gets a `conceded` findings
-    row for this run (and so this sha), which `_standing_findings` honours on every later run. Caller holds the write transaction."""
+    row for this run (and so this sha), which `_standing_findings` honours on every later run.
+    `lifted` maps finding hash -> outcome, kept in the row's body. Caller holds the write
+    transaction."""
     if not lifted:
         return
     rows = []
-    for h in lifted:
+    for h, status in lifted.items():
         t = ctx.open_threads.get(h) or {}
         rows.append(
             (
@@ -2801,7 +2821,7 @@ def _record_conceded(ctx: RunContext, phase: str, lifted: set[str]) -> None:
                 None,
                 "general",
                 t.get("title") or h,
-                "",
+                status,
             )
         )
     ctx.conn.executemany(_FINDINGS_INSERT, rows)
@@ -2815,6 +2835,20 @@ class _Standing:
     run_id: int | None  # the run that published it (None: no recorded findings)
     verified: bool  # that run's final verifier set is on record (an approval needs it)
     lifted_any: bool  # at least one of that set's non-nitpick findings has been lifted
+    titles: dict[str, str] = field(default_factory=dict)  # hash -> title, lifted ones too
+    lifted: list[publish.LiftedFinding] = field(default_factory=list)
+
+    def settled(self, threads: dict[str, dict[str, Any]]) -> dict[str, str]:
+        """thread hash -> the outcome that already lifted its finding on this commit, matched
+        the way concessions are (by hash, or by file and title for a re-hashed carry)."""
+        by_hash = {f.hash: f.status or "SETTLED" for f in self.lifted}
+        by_id = {_identity(f.file, f.title): f.status or "SETTLED" for f in self.lifted}
+        out = {}
+        for h, t in threads.items():
+            st = by_hash.get(h) or by_id.get(_identity(t.get("path"), t.get("title")))
+            if st:
+                out[h] = st
+        return out
 
     @property
     def blockers(self) -> int:
@@ -2828,8 +2862,8 @@ def _identity(file: Any, title: Any) -> tuple[str, str]:
 def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None = None) -> _Standing:
     """Findings on this commit's `phase` publication that still stand.
 
-    The publication is the latest run that posted findings for this sha (a same-sha re-review
-    refreshes it). Its standing set is that run's final verifier set (`verify2` rows, the
+    The publication is the latest run that posted findings or published the review for this
+    sha (a same-sha re-review refreshes it). Its standing set is that run's final verifier set (`verify2` rows, the
     fresh audit's when it ran), which includes findings that dedupe carried onto an existing
     thread instead of posting; runs without those rows fall back to their `posted` rows. Plus
     unresolved bot finding threads this database never posted (legacy findings); threads from
@@ -2841,13 +2875,29 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     preliminary publication stacked on the same sha never leaks into the final accounting.
     """
     rows = ctx.conn.execute(
-        "SELECT f.run_id, f.hash, f.severity, f.stage, f.file, f.title FROM findings f "
+        "SELECT f.run_id, f.hash, f.severity, f.stage, f.file, f.title, f.body FROM findings f "
         "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
         "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded')",
         (ctx.repo, ctx.number, ctx.sha, phase),
     ).fetchall()
-    run_id = max((int(r["run_id"]) for r in rows if r["stage"] == "posted"), default=None)
+    # a full review that carried every finding onto existing threads posts none, so it has
+    # no `posted` rows, but it is still this commit's publication (dashpay/dash#7861: missing
+    # it left "the verifier record ... is not available" and a COMMENT that never cleared the
+    # REQUEST_CHANGES it had just posted). Every run that writes a `reviews` row posted or
+    # recorded that review, except a conversation's own verdict follow-up.
+    published = ctx.conn.execute(
+        "SELECT MAX(rv.run_id) FROM reviews rv WHERE rv.repo=? AND rv.number=? AND rv.sha=? "
+        "AND rv.phase=? AND NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id "
+        "AND s.name=?)",
+        (ctx.repo, ctx.number, ctx.sha, phase, StepName.CONVERSE.value),
+    ).fetchone()[0]
+    run_id = max(
+        [int(r["run_id"]) for r in rows if r["stage"] == "posted"]
+        + ([int(published)] if published is not None else []),
+        default=None,
+    )
     pub: dict[str, tuple[str, tuple[str, str]]] = {}
+    titles: dict[str, str] = {}
     verified = False
     if run_id is not None:
         final = ctx.conn.execute(
@@ -2860,11 +2910,13 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
             verified = True
             for r in fresh or final:
                 pub[str(r["hash"])] = (str(r["severity"]), _identity(r["file"], r["title"]))
+                titles[str(r["hash"])] = str(r["title"] or "")
         for r in rows:
             if r["stage"] == "posted" and int(r["run_id"]) == run_id:
                 pub.setdefault(
                     str(r["hash"]), (str(r["severity"]), _identity(r["file"], r["title"]))
                 )
+                titles.setdefault(str(r["hash"]), str(r["title"] or ""))
     ever_posted = {
         str(r["hash"])
         for r in ctx.conn.execute(
@@ -2874,12 +2926,16 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     for h, t in ctx.open_threads.items():
         if h not in pub and h not in ever_posted:
             pub[h] = (str(t.get("severity") or "nitpick"), _identity(t.get("path"), t.get("title")))
-    # a later full review of this sha re-adjudicated everything: older concessions are void
-    gone = {
-        str(r["hash"]): _identity(r["file"], r["title"])
-        for r in rows
-        if r["stage"] == "conceded" and (run_id is None or int(r["run_id"]) > run_id)
-    }
+            titles[h] = str(t.get("title") or "")
+    # a later full review of this sha re-adjudicated everything: older concessions are void.
+    # Each concession row's body is the outcome that lifted it (empty on rows older than that)
+    gone: dict[str, tuple[str, str]] = {}
+    outcome: dict[tuple[str, str] | str, str] = {}
+    for r in rows:
+        if r["stage"] == "conceded" and (run_id is None or int(r["run_id"]) > run_id):
+            h, ident = str(r["hash"]), _identity(r["file"], r["title"])
+            gone[h] = ident
+            outcome[h] = outcome[ident] = str(r["body"] or "")
     for h in lifted or set():
         t = ctx.open_threads.get(h) or {}
         gone[h] = _identity(t.get("path"), t.get("title"))
@@ -2890,12 +2946,73 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
         run_id=run_id,
         verified=verified,
         lifted_any=any(pub[h][0] != "nitpick" for h in lifted_hashes),
+        titles=titles,
+        lifted=[
+            publish.LiftedFinding(
+                hash=h,
+                severity=sev,
+                file=ident[0],
+                title=titles.get(h) or h,
+                status=outcome.get(h) or outcome.get(ident) or "",
+            )
+            for h, (sev, ident) in sorted(pub.items())
+            if h in lifted_hashes
+        ],
     )
 
 
 def _open_blockers(ctx: RunContext, phase: str, *, lifted: set[str] | None = None) -> int:
     """Blocking findings on this commit's `phase` publication that still stand."""
     return _standing_findings(ctx, phase, lifted=lifted).blockers
+
+
+def _mark_lifted_in_review(
+    ctx: RunContext, phase: str, standing: _Standing, reviews: list[dict[str, Any]]
+) -> str:
+    """Bring the body of this commit's standing `phase` review in line with what the
+    discussion lifted (`publish.with_lifted_findings`). Runs after every conversation, so a
+    body left stale by an earlier run (or an edit that failed) is repaired by the next one.
+    Returns what happened; a failed edit never fails the run."""
+    if ctx.dry_run:
+        return "dry_run"
+    marker = f"thepastaclaw-review-phase v1 phase={phase} sha={ctx.sha}"
+    ours = [
+        r
+        for r in reviews
+        if (r.get("user") or {}).get("login") == ctx.cfg.bot_login
+        and marker in str(r.get("body") or "")
+    ]
+    # the publication the standing set describes; the newest marked review when the run that
+    # published it recorded no review id (adopted an existing one, or a legacy import)
+    row = ctx.conn.execute(
+        "SELECT github_review_id FROM reviews WHERE run_id=? AND phase=? "
+        "AND github_review_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (standing.run_id, phase),
+    ).fetchone()
+    review = next(
+        (r for r in ours if row and str(r.get("id")) == str(row["github_review_id"])),
+        ours[-1] if ours else None,
+    )
+    if review is None:
+        return "no_review"
+    body = str(review.get("body") or "")
+    new = publish.with_lifted_findings(body, standing.lifted)
+    if new == body:
+        return "unchanged"
+    try:
+        github.edit_review(ctx.gh, ctx.repo, ctx.number, int(review["id"]), new)
+    except (ReviewError, ValueError, KeyError) as exc:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "review.summary_update_failed",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"review {review.get('id')}: {exc}",
+            )
+        return f"failed: {exc}"
+    return "updated"
 
 
 def _review_strength(ctx: RunContext, run_id: int | None) -> str:
@@ -2954,7 +3071,9 @@ def _conversation_verdict_update(
     queued instead. Otherwise, with every blocker gone, a standing REQUEST_CHANGES becomes
     COMMENT. A conversation never adds blockers, and posts nothing when the verdict would not
     move."""
-    if standing.blockers or not lifted:
+    if standing.blockers or not lifted or not standing.lifted_any:
+        # nothing of the publication's own set was lifted (it was clean, or only nitpicks
+        # went): the discussion removed nothing the verdict rests on, so it stays
         return None
     # the lane ran for minutes: a push or a dismissal since then must not get an approval
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
@@ -3015,8 +3134,6 @@ def _conversation_verdict_update(
             "Not approved: the verifier record an approval after discussion rests on is not "
             "available for the standing review of this commit."
         )
-    elif not standing.lifted_any:
-        note = "Not approved: the findings settled here are not the ones the standing review of this commit raised."
     else:
         note = (
             "Not approved: the standing review of this commit did not run at full strength "

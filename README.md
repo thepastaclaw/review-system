@@ -604,14 +604,39 @@ verifier lanes):
   later answer says the finding applies again, or a later review keeps it
   (`thread.answered` → `marked`). The full re-review path does the same for threads it
   would resolve. Dedupe strips the line before matching.
+- The standing review's own body is corrected too, after every conversation: a lifted
+  finding moves no verdict while another blocker stands, so without this the review kept
+  saying "🔴 2 blocking" and listing a deferred finding as `[BLOCKING]` in its agent prompt
+  (dashpay/dash#7892). `publish.with_lifted_findings` adds a quoted status block under the
+  title (`<!-- thepastaclaw-review-status v1 -->`: what was settled, with which outcome,
+  and how many blockers still stand), strikes the original counts through
+  (`🔴 ~~2~~ 1 blocking`), and retags the lifted entries in the agent prompt
+  (`[BLOCKING → DEFERRED …]`). Only a finding the review lists in its agent prompt is
+  annotated, matched by file header, location and exact title, each entry at most once:
+  a same-titled finding in another file keeps its tag, and a legacy thread the review
+  never counted moves no number. Everything is derived from the original numbers and
+  tags, so re-applying it is a no-op and an empty lifted set restores the original body.
+  The edit (`PUT …/reviews/<id>`) targets the review the publishing run recorded (else
+  the newest one carrying the commit's `thepastaclaw-review-phase` marker); a failure is
+  a `review.summary_update_failed` event, never a failed run, and only the next
+  conversation on the PR retries it. `conceded` rows keep the lifting outcome in `body`.
+  The lane's prompt lists the blockers still standing and marks threads already settled
+  on this commit (`already_settled_as`, matched like concessions), so a maintainer
+  pointing at a stale summary gets the concrete state once, not another
+  acknowledgement. A settled thread stays lifted whatever a later answer says: a
+  restated deferral there is not re-vetted for a maintainer, and the root keeps its
+  status line.
 - Verdict: the verdict on a commit is its full review minus what the discussion withdrew
   or deferred. A conversation never adds blockers. The standing set is the final verifier
   set (`verify2` rows, the fresh audit's when it ran) of the run that last published
-  findings for the sha, so findings dedupe carried onto other (even resolved) threads
-  count; plus unresolved bot threads this database never posted (legacy). Threads from
+  findings or the review for the sha (any `reviews` row but a conversation's own
+  follow-up: a review that carried every finding onto existing threads posts none,
+  dashpay/dash#7861),
+  so findings dedupe carried onto other (even resolved) threads count; plus unresolved bot threads this database never posted (legacy). Threads from
   earlier heads that run re-adjudicated do not count. Lifted = `conceded` rows after that
   run, matched by hash or by file and title. Once no blocker stands, the follow-up
-  **APPROVEs** (from `CHANGES_REQUESTED` or `COMMENTED`) when nothing above a nitpick is
+  **APPROVEs** (from `CHANGES_REQUESTED` or `COMMENTED`; nothing moves unless something
+  above a nitpick of that set was lifted) when nothing above a nitpick is
   left, something of the verifier set was lifted, and that run is one the pipeline itself
   would approve on: Phase 2 `ok`, not degraded, and on a later review round (an earlier
   review of the PR exists) the fresh Phase-2 audit `ok`. A COMMENT never clears a

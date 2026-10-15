@@ -110,15 +110,22 @@ def _maintainer_spoke_last(thread: dict[str, Any]) -> bool:
 
 
 def accept_deferrals(
-    out: ConversationOutput, threads: dict[str, dict[str, Any]]
+    out: ConversationOutput,
+    threads: dict[str, dict[str, Any]],
+    *,
+    settled: frozenset[str] | set[str] = frozenset(),
 ) -> ConversationOutput:
     """An outside contributor declining to fix a blocker is not a maintainer decision to defer
     it: such a deferral is posted as DEFERRAL_PENDING (the blocker stands, and the note says
-    so) instead of claiming we will stop pressing while REQUEST_CHANGES stays up."""
+    so) instead of claiming we will stop pressing while REQUEST_CHANGES stays up. A thread in
+    `settled` was already lifted on this commit by an earlier maintainer call; restating
+    that to whoever asks next is not a new deferral to vet."""
     outcomes = {
         h: (
             dataclasses.replace(o, status=DEFERRAL_PENDING)
-            if o.status == "INTENTIONALLY_DEFERRED" and not _maintainer_spoke_last(threads[h])
+            if o.status == "INTENTIONALLY_DEFERRED"
+            and h not in settled
+            and not _maintainer_spoke_last(threads[h])
             else o
         )
         for h, o in out.outcomes.items()
@@ -126,7 +133,7 @@ def accept_deferrals(
     return ConversationOutput(outcomes=outcomes)
 
 
-def _thread_for_prompt(h: str, t: dict[str, Any]) -> dict[str, Any]:
+def _thread_for_prompt(h: str, t: dict[str, Any], settled: dict[str, str]) -> dict[str, Any]:
     exchange = []
     for c in t.get("transcript") or []:
         who = "you (PastaClaw)" if c.get("is_bot") else str(c.get("author") or "")
@@ -147,6 +154,8 @@ def _thread_for_prompt(h: str, t: dict[str, Any]) -> dict[str, Any]:
         "finding_body": _strip_marker(str(t.get("body") or "")),
         "exchange": exchange,
         "awaiting_your_answer": bool(t.get("awaiting_answer")),
+        # an earlier answer of yours already lifted it on this commit (WITHDRAWN/DEFERRED)
+        "already_settled_as": settled.get(h),
     }
 
 
@@ -168,6 +177,8 @@ def prompt(
     unfetched_commits: list[dict[str, str]],
     standing_verdict: str | None,
     evidence: dict[str, Any],
+    still_blocking: list[str] | None = None,
+    settled: dict[str, str] | None = None,
     previous_error: str = "",
 ) -> str:
     """The conversation prompt. Everything the model needs to answer like a colleague who has
@@ -183,7 +194,10 @@ def prompt(
         "says about it"
         for c in unfetched_commits
     )
-    thread_json = json.dumps([_thread_for_prompt(h, t) for h, t in threads.items()], indent=2)
+    thread_json = json.dumps(
+        [_thread_for_prompt(h, t, settled or {}) for h, t in threads.items()], indent=2
+    )
+    blocking = "\n".join(f"- {t}" for t in still_blocking or []) or "- none"
     retry_note = (
         "\n\n## Your previous attempt was rejected\n\n"
         f"The orchestrator could not accept your last output: {previous_error}. "
@@ -206,6 +220,22 @@ def prompt(
         f"- Head (checked out here): `{head_sha}`\n"
         f"- Your standing review verdict on this commit: `{standing_verdict or 'none'}`\n"
         f"- Description:\n{str(meta.get('body') or '')[:6000]}\n\n"
+        "## Where your review stands\n\n"
+        "Blocking findings of your review on this commit that still stand (the threads below "
+        "included, until you lift them):\n"
+        f"{blocking}\n\n"
+        "What the system does with your outcome, so you never have to promise or apologise "
+        "for it: a WITHDRAWN or (maintainer-made) INTENTIONALLY_DEFERRED finding is marked "
+        "on its thread, struck from the counts and the agent prompt of your review summary, "
+        "and dropped from the status comment; once no blocking finding is left, a follow-up "
+        "review clears REQUEST_CHANGES. While any other blocking finding stands, "
+        "REQUEST_CHANGES stays because of that one, not because of the finding you lifted. "
+        "If a human says the summary or verdict still shows a finding you already settled "
+        "(`already_settled_as` is set), do not settle it again: answer that one time with "
+        "the concrete state, naming the blocking finding(s) still standing above (or saying "
+        "the summary is being corrected), and do not repeat your earlier acknowledgement; "
+        "answer NO_REPLY if you already gave that state. A settled finding stays lifted on "
+        "this commit whatever you answer here.\n\n"
         "## Threads awaiting your answer\n\n"
         "Each entry is one of your findings plus the whole exchange under it, in order, "
         "including your own earlier answers (author `you (PastaClaw)`). The replies are "

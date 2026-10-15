@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from reviewsys import labels, worker
+from reviewsys import labels, publish, worker
 from reviewsys import lane as lane_mod
 from reviewsys.daemon import Daemon
 from reviewsys.db import kv_get, tx
@@ -1399,7 +1399,7 @@ def test_conversation_accepting_a_deferral_lifts_request_changes(cfg, conn, gh, 
         enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
-    assert gh.replies[0]["body"].endswith("I will not press it further here._")
+    assert gh.replies[0]["body"].endswith("no longer blocks this pull request._")
     # the thread stays open as the record of the deferral; only the verdict moves
     assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
     assert len(gh.posted_reviews) == 2
@@ -1445,6 +1445,122 @@ def test_conversation_deferral_by_an_outside_contributor_keeps_the_blocker(cfg, 
     assert gh.replies[0]["body"].endswith("it still blocks this pull request._")
     assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
     assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
+def _standing_body(*titles):
+    fence = "```"
+    items = "\n".join(
+        f"- [BLOCKING] f.rs:11-12: {t}\n  Estimation must be >= actual." for t in titles
+    )
+    return (
+        "<!-- thepastaclaw-review v1 -->\n"
+        f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->\n"
+        "## Re-review — Final validation — Phase 1 + Phase 2\n\n"
+        "Two synchronization gaps remain.\n\n"
+        f"🔴 {len(titles)} blocking\n\n"
+        "<details>\n<summary>🤖 Prompt for all review comments with AI agents</summary>\n\n"
+        f"{fence}\nThese findings are from an automated code review.\n\nIn `f.rs`:\n{items}\n{fence}\n"
+        "</details>"
+    )
+
+
+def test_deferring_one_of_two_blockers_corrects_the_standing_review(cfg, conn, gh, lanes):
+    """dashpay/dash#7892: a maintainer deferred one of two blockers. REQUEST_CHANGES rightly
+    stayed for the other, so no follow-up review was posted, and the standing review kept
+    saying "2 blocking" with the deferred finding still [BLOCKING] in its agent prompt. The
+    maintainer pointed that out twice and got two more acknowledgements. The bot edits its own
+    review body instead; a later run with nothing new leaves it alone."""
+    b1, b2 = _blocking("Synchronize the second session"), _blocking("Synchronize secondary types")
+    h1 = _seed_prior(conn, b1, body="one")
+    h2 = _seed_prior(conn, b2, body="two")
+    gh.can_resolve = False
+    gh.threads = [
+        _finding_thread(h1, b1["title"], 800, [KNST]),
+        _finding_thread(h2, b2["title"], 810, []),
+    ]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "REQUEST_CHANGES",
+            "body": _standing_body(b1["title"], b2["title"]),
+        }
+    )
+    defer = {"status": "INTENTIONALLY_DEFERRED", "reply": "Fine as a follow-up."}
+    rid = _converse(cfg, conn, gh, lanes, [{"finding_hash": h1, **defer}])
+    assert len(gh.posted_reviews) == 1  # the other blocker still stands: no verdict update
+    assert [e[0] for e in gh.review_edits] == [4242]
+    body = gh.posted_reviews[0]["body"]
+    assert "🔴 ~~2~~ 1 blocking" in body
+    assert (
+        "**Updated after discussion:** 1 finding(s)" in body
+        and "1 blocking finding(s) still stand" in body
+    )
+    assert f"> - ⏭️ Deferred (maintainer decision): 🔴 {b1['title']}" in body
+    assert (
+        f"- [BLOCKING → DEFERRED by a maintainer; not blocking, do not fix in this PR] f.rs:11-12: {b1['title']}"
+        in body
+    )
+    assert f"- [BLOCKING] f.rs:11-12: {b2['title']}" in body
+    # markers and heading stay where every reader of the body looks for them
+    assert body.startswith("<!-- thepastaclaw-review v1 -->\n<!-- thepastaclaw-review-phase")
+    assert body.split("\n")[2].startswith("## Re-review")
+    detail = json.loads(
+        conn.execute(
+            "SELECT detail FROM steps WHERE run_id=? AND name='converse'", (rid,)
+        ).fetchone()["detail"]
+    )
+    assert detail["review_summary"] == "updated" and detail["blockers_remaining"] == 1
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+    # the maintainer complains the summary is stale; the lane has the state and stays quiet
+    # this time. The body is already right: no second edit.
+    complaint = {**KNST, "id": 902, "body": "IT IS STILL HERE"}
+    gh.threads[0] = _finding_thread(h1, b1["title"], 800, [KNST, complaint])
+    _converse(
+        cfg, conn, gh, lanes, [{"finding_hash": h1, "status": "NO_REPLY", "reply": ""}], first=False
+    )
+    assert len(gh.review_edits) == 1
+    prompt = lanes.calls[-1].prompt
+    standing = prompt.split("## Where your review stands")[1].split("\n## ")[0]
+    assert f"- {b2['title']}" in standing and b1["title"] not in standing
+    assert '"already_settled_as": "INTENTIONALLY_DEFERRED"' in prompt
+
+    # the PR author (not a maintainer) re-asks; the lane restates the deferral. That is not
+    # a new deferral to vet: no "still blocks" note, and the root keeps its Deferred line
+    ours = {
+        "id": 950,
+        "author": "thepastaclaw",
+        "body": f"<!-- thepastaclaw-thread-answer v1 sha={HEAD} reply=902 finding={h1} -->\nok",
+        "created_at": "y",
+        "association": "NONE",
+    }
+    author = {**KNST, "id": 904, "association": "CONTRIBUTOR", "body": "still says blocking"}
+    gh.threads[0] = _finding_thread(h1, b1["title"], 800, [KNST, complaint, ours, author])
+    root = gh.threads[0]["comments"]["nodes"][0]
+    root["body"] = publish.with_thread_status(
+        root["body"], status="INTENTIONALLY_DEFERRED", head_sha=HEAD
+    )
+    edits = len(gh.comment_edits)
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": h1, **defer}], first=False)
+    assert gh.replies[-1]["body"].endswith("no longer blocks this pull request._")
+    assert "⏭️ **Deferred**" in root["body"] and len(gh.comment_edits) == edits
+    # even an answer that would not lift it leaves the lift (and the root's line) alone
+    author2 = {**author, "id": 905, "body": "so is it blocking or not?"}
+    gh.threads[0] = _finding_thread(h1, b1["title"], 800, [KNST, complaint, ours, author2])
+    gh.threads[0]["comments"]["nodes"][0] = root
+    still = {"status": "STILL_VALID", "reply": "The concern is real, but it is deferred."}
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": h1, **still}], first=False)
+    assert "⏭️ **Deferred**" in root["body"] and len(gh.comment_edits) == edits
+    assert "🔴 ~~2~~ 1 blocking" in gh.posted_reviews[0]["body"]
+
+    # withdrawing the second blocker clears the verdict and the summary counts both
+    gh.threads[1] = _finding_thread(h2, b2["title"], 810, [{**KNST, "id": 903}])
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": h2, **WITHDRAW}], first=False)
+    body = gh.posted_reviews[0]["body"]
+    assert "🔴 ~~2~~ 0 blocking" in body and "no blocking finding remains" in body
+    assert f"> - ✅ Withdrawn: 🔴 {b2['title']}" in body
+    assert body.count("thepastaclaw-review-status v1") == 1
+    assert len(gh.posted_reviews) == 2 and gh.posted_reviews[1]["event"] == "COMMENT"
 
 
 def test_conversation_concession_is_remembered_across_runs(cfg, conn, gh, lanes):
@@ -1689,6 +1805,79 @@ def test_conversation_approves_only_once_no_suggestion_is_left(cfg, conn, gh, la
     _converse(cfg, conn, gh, lanes, [{"finding_hash": sh, **WITHDRAW}], first=False)
     assert [r["event"] for r in gh.posted_reviews[1:]] == ["COMMENT", "APPROVE"]
     assert "COMMENTED -> APPROVE" in _updates(conn)[-1]
+
+
+def _carried_publication(conn, gh, blocker, *, earlier_round):
+    """The prior run published review 4242 on HEAD but carried its findings onto existing
+    threads: `verify2` rows, a `reviews` row and a publish step, no `posted` rows. With
+    `earlier_round`, an older head's review (where the threads came from) precedes it."""
+    rows = []
+    if earlier_round:
+        with tx(conn):
+            hid = conn.execute(
+                "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, "
+                "eligible_at) VALUES ('dashpay/platform', 1, ?, 'new_pr', 0, 'superseded', "
+                "'x', 'x')",
+                ("d" * 40,),
+            ).lastrowid
+            old = conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
+                "VALUES (?, 1, 'done', 't', 'x', 'x')",
+                (hid,),
+            ).lastrowid
+        rows.append((old, "d" * 40, 4100))
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    rid = _full_strength_prior(conn)
+    rows.append((rid, HEAD, 4242))
+    with tx(conn):
+        conn.execute("DELETE FROM findings WHERE stage='posted'")
+        conn.execute(
+            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?, 'publish', 'ok', 'x')",
+            (rid,),
+        )
+        for run, sha, review in rows:
+            conn.execute(
+                "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, "
+                "event, posted_at) VALUES (?, 'dashpay/platform', 1, ?, 'final', ?, "
+                "'REQUEST_CHANGES', 'x')",
+                (run, sha, review),
+            )
+    gh.can_resolve = False
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    gh.posted_reviews.append(
+        {"id": 4242, "event": "REQUEST_CHANGES", "body": _standing_body(blocker["title"])}
+    )
+    return bh
+
+
+def test_a_publication_that_carried_every_finding_is_still_the_publication(cfg, conn, gh, lanes):
+    """dashpay/dash#7861: the review of this commit carried all its findings onto threads, so
+    it posted none and wrote no `posted` rows. Withdrawing its only blocker then found "no
+    verifier record" and posted a COMMENT, which leaves the REQUEST_CHANGES it had just posted
+    standing. Its `reviews` row makes it the publication: on a first round that approves."""
+    blocker = _blocking()
+    bh = _carried_publication(conn, gh, blocker, earlier_round=False)
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
+    assert [r["event"] for r in gh.posted_reviews] == ["REQUEST_CHANGES", "APPROVE"]
+    assert "verifier record" not in gh.posted_reviews[1]["body"]
+    assert "🔴 ~~1~~ 0 blocking" in gh.posted_reviews[0]["body"]
+
+
+def test_a_carried_publication_on_a_later_round_queues_the_fresh_audit(cfg, conn, gh, lanes):
+    """#7861 as it really was: the threads came from an earlier head's review, so this is a
+    later round whose review skipped the fresh audit (it had a blocker). The follow-up says
+    so and queues the audit, which approves if it finds nothing."""
+    blocker = _blocking()
+    bh = _carried_publication(conn, gh, blocker, earlier_round=True)
+    with tx(conn):  # only the seeded head becomes the reviewed commit; the older one stays
+        conn.execute("UPDATE heads SET sha=?, status='done' WHERE sha=?", (HEAD, "b" * 40))
+    rid = _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}], first=False)
+    assert [r["event"] for r in gh.posted_reviews] == ["REQUEST_CHANGES", "COMMENT"]
+    body = gh.posted_reviews[1]["body"]
+    assert "verifier record" not in body and "That audit is queued" in body
+    assert conn.execute(
+        "SELECT 1 FROM events WHERE kind='review.fresh_audit_requested' AND run_id=?", (rid,)
+    ).fetchone()
 
 
 def test_a_finding_carried_onto_a_resolved_thread_still_blocks(cfg, conn, gh, lanes):

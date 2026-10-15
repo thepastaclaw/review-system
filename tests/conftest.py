@@ -184,6 +184,7 @@ class FakeGh(Gh):
         # False: the bot lacks write access, so resolveReviewThread is refused (dashpay/dash)
         self.can_resolve = True
         self.comment_edits: list[tuple[int, str]] = []  # (comment id, new body) via PATCH
+        self.review_edits: list[tuple[int, str]] = []  # (review id, new body) via PUT
 
     def _runner(
         self, argv: Sequence[str], stdin: str | None, timeout: int
@@ -307,6 +308,14 @@ class FakeGh(Gh):
                     "id": rid,
                     "html_url": f"https://github.com/r/pull/1#pullrequestreview-{rid}",
                 }
+            if "/pulls/" in ep and "/reviews/" in ep and method == "PUT":
+                rid = int(ep.rsplit("/", 1)[1])
+                new_body = (body or {})["body"]
+                self.review_edits.append((rid, new_body))
+                for r in self.posted_reviews:
+                    if r["id"] == rid:
+                        r["body"] = new_body
+                return {"id": rid}
             if "/pulls/" in ep and "/reviews" in ep:
                 states = {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}
                 return [
