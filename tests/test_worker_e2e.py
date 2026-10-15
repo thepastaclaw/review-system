@@ -1807,37 +1807,77 @@ def test_conversation_approves_only_once_no_suggestion_is_left(cfg, conn, gh, la
     assert "COMMENTED -> APPROVE" in _updates(conn)[-1]
 
 
-def test_a_publication_that_carried_every_finding_still_approves_after_discussion(
-    cfg, conn, gh, lanes
-):
-    """dashpay/dash#7861: the review of this commit carried all its findings onto threads from
-    an earlier head, so it posted none and wrote no `posted` rows. Withdrawing its only blocker
-    then found "no verifier record" and posted a COMMENT, which leaves the REQUEST_CHANGES it
-    had just posted standing. Its `reviews` row and publish step make it the publication."""
-    blocker = _blocking()
+def _carried_publication(conn, gh, blocker, *, earlier_round):
+    """The prior run published review 4242 on HEAD but carried its findings onto existing
+    threads: `verify2` rows, a `reviews` row and a publish step, no `posted` rows. With
+    `earlier_round`, an older head's review (where the threads came from) precedes it."""
+    rows = []
+    if earlier_round:
+        with tx(conn):
+            hid = conn.execute(
+                "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, "
+                "eligible_at) VALUES ('dashpay/platform', 1, ?, 'new_pr', 0, 'superseded', "
+                "'x', 'x')",
+                ("d" * 40,),
+            ).lastrowid
+            old = conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
+                "VALUES (?, 1, 'done', 't', 'x', 'x')",
+                (hid,),
+            ).lastrowid
+        rows.append((old, "d" * 40, 4100))
     bh = _seed_prior(conn, blocker, body="blocker body")
     rid = _full_strength_prior(conn)
+    rows.append((rid, HEAD, 4242))
     with tx(conn):
         conn.execute("DELETE FROM findings WHERE stage='posted'")
         conn.execute(
             "INSERT INTO steps (run_id, name, status, started_at) VALUES (?, 'publish', 'ok', 'x')",
             (rid,),
         )
-        conn.execute(
-            "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, "
-            "posted_at) VALUES (?, 'dashpay/platform', 1, ?, 'final', 4242, "
-            "'REQUEST_CHANGES', 'x')",
-            (rid, HEAD),
-        )
+        for run, sha, review in rows:
+            conn.execute(
+                "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, "
+                "event, posted_at) VALUES (?, 'dashpay/platform', 1, ?, 'final', ?, "
+                "'REQUEST_CHANGES', 'x')",
+                (run, sha, review),
+            )
     gh.can_resolve = False
     gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
     gh.posted_reviews.append(
         {"id": 4242, "event": "REQUEST_CHANGES", "body": _standing_body(blocker["title"])}
     )
+    return bh
+
+
+def test_a_publication_that_carried_every_finding_is_still_the_publication(cfg, conn, gh, lanes):
+    """dashpay/dash#7861: the review of this commit carried all its findings onto threads, so
+    it posted none and wrote no `posted` rows. Withdrawing its only blocker then found "no
+    verifier record" and posted a COMMENT, which leaves the REQUEST_CHANGES it had just posted
+    standing. Its `reviews` row makes it the publication: on a first round that approves."""
+    blocker = _blocking()
+    bh = _carried_publication(conn, gh, blocker, earlier_round=False)
     _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
     assert [r["event"] for r in gh.posted_reviews] == ["REQUEST_CHANGES", "APPROVE"]
     assert "verifier record" not in gh.posted_reviews[1]["body"]
     assert "🔴 ~~1~~ 0 blocking" in gh.posted_reviews[0]["body"]
+
+
+def test_a_carried_publication_on_a_later_round_queues_the_fresh_audit(cfg, conn, gh, lanes):
+    """#7861 as it really was: the threads came from an earlier head's review, so this is a
+    later round whose review skipped the fresh audit (it had a blocker). The follow-up says
+    so and queues the audit, which approves if it finds nothing."""
+    blocker = _blocking()
+    bh = _carried_publication(conn, gh, blocker, earlier_round=True)
+    with tx(conn):  # only the seeded head becomes the reviewed commit; the older one stays
+        conn.execute("UPDATE heads SET sha=?, status='done' WHERE sha=?", (HEAD, "b" * 40))
+    rid = _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}], first=False)
+    assert [r["event"] for r in gh.posted_reviews] == ["REQUEST_CHANGES", "COMMENT"]
+    body = gh.posted_reviews[1]["body"]
+    assert "verifier record" not in body and "That audit is queued" in body
+    assert conn.execute(
+        "SELECT 1 FROM events WHERE kind='review.fresh_audit_requested' AND run_id=?", (rid,)
+    ).fetchone()
 
 
 def test_a_finding_carried_onto_a_resolved_thread_still_blocks(cfg, conn, gh, lanes):

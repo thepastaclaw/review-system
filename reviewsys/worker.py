@@ -2883,12 +2883,13 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     # a full review that carried every finding onto existing threads posts none, so it has
     # no `posted` rows, but it is still this commit's publication (dashpay/dash#7861: missing
     # it left "the verifier record ... is not available" and a COMMENT that never cleared the
-    # REQUEST_CHANGES it had just posted). A conversation follow-up has no publish step.
+    # REQUEST_CHANGES it had just posted). Every run that writes a `reviews` row posted or
+    # recorded that review, except a conversation's own verdict follow-up.
     published = ctx.conn.execute(
-        "SELECT MAX(rv.run_id) FROM reviews rv JOIN steps s ON s.run_id=rv.run_id "
-        "WHERE rv.repo=? AND rv.number=? AND rv.sha=? AND rv.phase=? AND s.name=? "
-        "AND s.status='ok'",
-        (ctx.repo, ctx.number, ctx.sha, phase, StepName.PUBLISH.value),
+        "SELECT MAX(rv.run_id) FROM reviews rv WHERE rv.repo=? AND rv.number=? AND rv.sha=? "
+        "AND rv.phase=? AND NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id "
+        "AND s.name=?)",
+        (ctx.repo, ctx.number, ctx.sha, phase, StepName.CONVERSE.value),
     ).fetchone()[0]
     run_id = max(
         [int(r["run_id"]) for r in rows if r["stage"] == "posted"]
@@ -3070,7 +3071,9 @@ def _conversation_verdict_update(
     queued instead. Otherwise, with every blocker gone, a standing REQUEST_CHANGES becomes
     COMMENT. A conversation never adds blockers, and posts nothing when the verdict would not
     move."""
-    if standing.blockers or not lifted:
+    if standing.blockers or not lifted or not standing.lifted_any:
+        # nothing of the publication's own set was lifted (it was clean, or only nitpicks
+        # went): the discussion removed nothing the verdict rests on, so it stays
         return None
     # the lane ran for minutes: a push or a dismissal since then must not get an approval
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
@@ -3131,8 +3134,6 @@ def _conversation_verdict_update(
             "Not approved: the verifier record an approval after discussion rests on is not "
             "available for the standing review of this commit."
         )
-    elif not standing.lifted_any:
-        note = "Not approved: the findings settled here are not the ones the standing review of this commit raised."
     else:
         note = (
             "Not approved: the standing review of this commit did not run at full strength "
