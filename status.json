@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-15T02:52:01Z",
-  "generated_at": "2026-10-15T02:52:01Z",
+  "data_as_of": "2026-10-15T02:53:01Z",
+  "generated_at": "2026-10-15T02:53:02Z",
   "history": {
     "daily": [
       {
@@ -223,7 +223,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 503,
+            "n": 504,
             "p90_seconds": 1860
           }
         },
@@ -249,6 +249,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=2374eb83",
+        "kind": "run.spawned",
+        "number": 5277,
+        "repo": "dashpay/platform",
+        "run_id": 5108,
+        "ts": "2026-10-15T02:52:49Z"
+      },
       {
         "detail": "ok in 1421s",
         "kind": "run.done",
@@ -560,14 +568,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-10-14T21:01:05Z"
-      },
-      {
-        "detail": "ce5b786d trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 7827,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-14T21:00:55Z"
       }
     ],
     "tokens_by_effort": [
@@ -1161,14 +1161,68 @@
       "findings_posted": 4256,
       "reviews": 5606,
       "reviews_imported": 2245,
-      "runs": 5107,
+      "runs": 5108,
       "tokens_in": 40381772510,
       "tokens_out": 544202318,
       "tokens_total": 40925974828
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-15T08:52:49Z",
+        "deadline_in_seconds": 21588,
+        "degraded": false,
+        "elapsed_seconds": 12,
+        "findings": null,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-15T02:52:49Z",
+        "id": 5108,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5277,
+        "overdue": false,
+        "phase": "worktree",
+        "pr_url": "https://github.com/dashpay/platform/pull/5277",
+        "priority": false,
+        "progress": 0.01,
+        "queue": "live",
+        "queued_at": "2026-10-15T02:22:31Z",
+        "remaining_seconds": 1183,
+        "repo": "dashpay/platform",
+        "sha": "2374eb834bc9a7460e1f7ad7c570455114251f94",
+        "started_at": "2026-10-15T02:52:49Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 12,
+            "started_at": "2026-10-15T02:52:49Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "perf(platform-wallet): don't hold the shielded store lock across sync network I/O",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "select",
+          "triage",
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1818
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1184,7 +1238,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1218,7 +1272,8 @@
       "closed": 382,
       "done": 5542,
       "failed": 75,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2097
     },
     "ingest_error_streak": 0,
@@ -1256,40 +1311,21 @@
       }
     ],
     "last_run_done_at": "2026-10-15T02:48:36Z",
-    "last_run_started_at": "2026-10-15T02:37:07Z",
+    "last_run_started_at": "2026-10-15T02:52:49Z",
     "median_run_minutes": 19.55,
-    "notify_last_at": "2026-10-15T02:50:35Z",
-    "oldest_queued_at": "2026-10-15T02:22:31Z",
+    "notify_last_at": "2026-10-15T02:52:43Z",
+    "oldest_queued_at": "2026-10-15T02:38:21Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1770,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-15T02:52:31Z",
-        "eligible_in_seconds": 30,
-        "number": 5277,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5277",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5277#issuecomment-5987335744",
-        "priority": false,
-        "queued_at": "2026-10-15T02:22:31Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "2374eb834bc9a7460e1f7ad7c570455114251f94",
-        "title": "perf(platform-wallet): don't hold the shielded store lock across sync network I/O",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 820,
+        "age_seconds": 880,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-15T03:08:21Z",
-        "eligible_in_seconds": 980,
+        "eligible_in_seconds": 920,
         "number": 5231,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5231",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5231#issuecomment-5920462235",
         "priority": false,
@@ -1308,7 +1344,7 @@
       "reviews": 3,
       "tokens": 10961212
     },
-    "ts": "2026-10-15T02:52:01Z",
+    "ts": "2026-10-15T02:53:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.7,
       "low": 8.4,
@@ -1317,9 +1353,9 @@
       "unknown": 0.8
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 14.9,
+      "idle_minutes": 0.2,
       "ingest_stale": false,
       "stuck": false
     }
