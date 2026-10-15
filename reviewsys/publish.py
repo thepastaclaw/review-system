@@ -1257,17 +1257,16 @@ def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
         lines[counts[-1]], left = _recount(lines[counts[-1]], matched)
     if not matched:
         return "\n".join(lines)
-    tail = (
-        ""
-        if left is None
-        else "; no blocking finding remains."
-        if not left
-        else f"; {left} blocking finding(s) still stand."
-    )
+    if left is None:
+        tail = "."
+    elif left == 0:
+        tail = "; no blocking finding remains."
+    else:
+        tail = f"; {left} blocking finding(s) still stand."
     block = [
         REVIEW_STATUS_MARKER,
         f"> **Updated after discussion:** {len(matched)} finding(s) of this review were settled "
-        f"in the inline threads{tail or '.'}",
+        f"in the inline threads{tail}",
         *(
             f"> - {_LIFTED_LABEL.get(f.status, _LIFTED_DEFAULT)[0]}: "
             f"{SEVERITY_ICONS.get(f.severity, '')} {_block_text(f.title)}"

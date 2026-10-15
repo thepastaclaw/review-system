@@ -2717,6 +2717,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     project_skill, review_skill = skill_texts(ctx.cfg, ctx.repo)
     lm = ctx.lane_model(ctx.cfg.policy.conversation_lane)
     before = _standing_findings(ctx, phase)
+    settled = before.settled(threads)
     out = _run_conversation_lane(
         ctx,
         lm,
@@ -2734,7 +2735,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         still_blocking=[
             before.titles.get(h) or h for h, sev in before.findings.items() if sev == "blocking"
         ],
-        settled=before.settled(threads),
+        settled=settled,
     )
     (ctx.run_dir / "conversation.json").write_text(
         json.dumps({h: dataclasses.asdict(o) for h, o in out.outcomes.items()}, indent=1)
@@ -2743,7 +2744,6 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     # follow-up must never be posted against an obsolete commit (the run ends superseded and
     # ingest queues the live one)
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    settled = before.settled(threads)
     out = converse.accept_deferrals(out, threads, settled=set(settled))
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
