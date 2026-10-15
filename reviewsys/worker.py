@@ -3000,7 +3000,7 @@ def _mark_lifted_in_review(
     if new == body:
         return "unchanged"
     try:
-        github.edit_review(ctx.gh, ctx.repo, ctx.number, int(review["id"]), new)
+        github.edit_review(ctx.gh, str(review["node_id"]), new)
     except (ReviewError, ValueError, KeyError) as exc:
         with tx(ctx.conn):
             event(

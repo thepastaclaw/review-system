@@ -257,6 +257,15 @@ class FakeGh(Gh):
                 return {
                     "data": {"resolveReviewThread": {"thread": {"id": "t", "isResolved": True}}}
                 }
+            if "updatePullRequestReview" in q:
+                node = next(a for a in args if a.startswith("id=")).split("=", 1)[1]
+                new_body = next(a for a in args if a.startswith("body=")).split("=", 1)[1]
+                rid = int(node.removeprefix("PRR_"))
+                self.review_edits.append((rid, new_body))
+                for r in self.posted_reviews:
+                    if r["id"] == rid:
+                        r["body"] = new_body
+                return {"data": {"updatePullRequestReview": {"pullRequestReview": {"id": node}}}}
             if "userContentEdits" in q and "graphql:userContentEdits" in self.routes:
                 return {"data": self.routes["graphql:userContentEdits"]}
             if "node(id:" in q:
@@ -309,18 +318,14 @@ class FakeGh(Gh):
                     "html_url": f"https://github.com/r/pull/1#pullrequestreview-{rid}",
                 }
             if "/pulls/" in ep and "/reviews/" in ep and method == "PUT":
-                rid = int(ep.rsplit("/", 1)[1])
-                new_body = (body or {})["body"]
-                self.review_edits.append((rid, new_body))
-                for r in self.posted_reviews:
-                    if r["id"] == rid:
-                        r["body"] = new_body
-                return {"id": rid}
+                # what dashpay/dash answers the bot for its own review: use the mutation
+                raise _GhFailure("gh: Not Found (HTTP 404)")
             if "/pulls/" in ep and "/reviews" in ep:
                 states = {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}
                 return [
                     {
                         "id": r["id"],
+                        "node_id": f"PRR_{r['id']}",
                         "user": {"login": "thepastaclaw"},
                         "body": r.get("body", ""),
                         "state": r.get("state") or states.get(r.get("event", ""), "COMMENTED"),

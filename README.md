@@ -616,7 +616,7 @@ verifier lanes):
   a same-titled finding in another file keeps its tag, and a legacy thread the review
   never counted moves no number. Everything is derived from the original numbers and
   tags, so re-applying it is a no-op and an empty lifted set restores the original body.
-  The edit (`PUT …/reviews/<id>`) targets the review the publishing run recorded (else
+  The edit (GraphQL `updatePullRequestReview`; the REST `PUT …/reviews/<id>` answers 404 to the bot on dashpay/dash) targets the review the publishing run recorded (else
   the newest one carrying the commit's `thepastaclaw-review-phase` marker); a failure is
   a `review.summary_update_failed` event, never a failed run, and only the next
   conversation on the PR retries it. `conceded` rows keep the lifting outcome in `body`.

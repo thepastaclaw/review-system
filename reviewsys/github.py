@@ -580,8 +580,15 @@ def edit_review_comment(gh: Gh, repo: str, comment_id: int, body: str) -> None:
     gh.api(f"repos/{repo}/pulls/comments/{comment_id}", method="PATCH", body={"body": body})
 
 
-def edit_review(gh: Gh, repo: str, number: int, review_id: int, body: str) -> None:
-    gh.api(f"repos/{repo}/pulls/{number}/reviews/{review_id}", method="PUT", body={"body": body})
+def edit_review(gh: Gh, node_id: str, body: str) -> None:
+    """Replace the body of one of our own reviews. GraphQL, not REST: on dashpay/dash (triage
+    access) `PUT …/pulls/<n>/reviews/<id>` answers 404 for the bot's own review, while
+    `updatePullRequestReview` succeeds."""
+    gh.graphql(
+        "mutation($id: ID!, $body: String!) { updatePullRequestReview(input: "
+        "{pullRequestReviewId: $id, body: $body}) { pullRequestReview { id } } }",
+        {"id": node_id, "body": body},
+    )
 
 
 def react(gh: Gh, repo: str, comment_id: int, content: str) -> None:
