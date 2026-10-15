@@ -811,7 +811,7 @@ _CONVERSATION_NOTE = {
         "full review._"
     ),
     "INTENTIONALLY_DEFERRED": (
-        "\n\n_Noted as intentionally deferred; I will not press it further here._"
+        "\n\n_Deferred on a maintainer's call: this finding no longer blocks this pull request._"
     ),
     "DEFERRAL_PENDING": (
         "\n\n_Deferring this needs a maintainer's call; until then it still blocks this pull "
@@ -938,9 +938,13 @@ def answer_conversation(
     *,
     threads: dict[str, dict[str, Any]],
     outcomes: dict[str, Any],
+    settled: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Post the conversation lane's replies: one per replied thread with something to say,
-    exactly once per (human reply, head), resolving threads the model conceded. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done."""
+    exactly once per (human reply, head), resolving threads the model conceded. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done.
+
+    `settled` (hash -> outcome) are threads an earlier answer already lifted on this commit:
+    the lift stands whatever this answer says, so their root keeps its status line."""
     posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
     done: list[dict[str, Any]] = []
     seen_roots: set[tuple[str, str]] = set()  # same alias guard as answer_replied_threads
@@ -986,7 +990,13 @@ def answer_conversation(
             thread_id=t.get("thread_id"),
             resolve=o.status in _RESOLVING,
             item=item,
-            root_body=str(t.get("body") or ""),
+            # a settled thread's root keeps the line its lift put there unless this answer
+            # lifts it again (a re-deferral by a maintainer refreshes the line)
+            root_body=(
+                ""
+                if h in (settled or {}) and o.status not in _THREAD_STATUS_LINE
+                else str(t.get("body") or "")
+            ),
             lifted_status=o.status if o.status in _THREAD_STATUS_LINE else None,
             head_sha=head_sha,
         )
@@ -1142,6 +1152,143 @@ def answer_replied_threads(
             )
             done.append(item)
     return done
+
+
+# ---- the standing review after discussion ----
+
+# A finding the discussion lifted while other blockers stand moves no verdict, so no follow-up
+# review is posted, and the standing review kept saying "🔴 2 blocking" and listing the
+# deferred finding as [BLOCKING] in its agent prompt (dashpay/dash#7892). The bot can edit its
+# own review body: a status block under the title, struck-through counts, and a retagged prompt
+# entry, all derived from the original text so a re-edit is idempotent and reversible.
+REVIEW_STATUS_MARKER = "<!-- thepastaclaw-review-status v1 -->"
+_REVIEW_STATUS_RE = re.compile(re.escape(REVIEW_STATUS_MARKER) + r"\n(?:>[^\n]*\n)*\n?")
+_COUNT_LABELS = {"blocking": "blocking", "suggestion(s)": "suggestion", "nitpick(s)": "nitpick"}
+_COUNT_SEGMENT = r"(\S+) (?:~~(\d+)~~ )?(\d+) (blocking|suggestion\(s\)|nitpick\(s\))"
+_COUNT_SEGMENT_RE = re.compile(_COUNT_SEGMENT)
+_COUNTS_LINE_RE = re.compile(rf"^{_COUNT_SEGMENT}(?: \| {_COUNT_SEGMENT})*$")
+_PROMPT_ITEM_RE = re.compile(r"^- \[([A-Z]+)(?: → [^\]]*)?\] (.*)$")
+# status -> (status-block label, agent-prompt tag)
+_LIFTED_LABEL = {
+    "WITHDRAWN": ("✅ Withdrawn", "WITHDRAWN in discussion; do not fix"),
+    "INTENTIONALLY_DEFERRED": (
+        "⏭️ Deferred (maintainer decision)",
+        "DEFERRED by a maintainer; not blocking, do not fix in this PR",
+    ),
+}
+_LIFTED_DEFAULT = ("Settled in discussion", "SETTLED in discussion; do not fix")
+
+
+@dataclass(frozen=True, slots=True)
+class LiftedFinding:
+    hash: str
+    severity: str
+    file: str
+    title: str
+    status: str  # the conversation outcome that lifted it ("" when not on record)
+
+
+def _recount(line: str, lifted: list[LiftedFinding]) -> tuple[str, int | None]:
+    """The counts line with `lifted` struck off the original numbers, and the blocking count
+    it now shows (None when the line has no blocking segment)."""
+    by_sev: dict[str, int] = {}
+    for f in lifted:
+        by_sev[f.severity] = by_sev.get(f.severity, 0) + 1
+    blocking: int | None = None
+
+    def seg(m: re.Match[str]) -> str:
+        nonlocal blocking
+        icon, orig, label = m.group(1), int(m.group(2) or m.group(3)), m.group(4)
+        now = max(orig - by_sev.get(_COUNT_LABELS[label], 0), 0)
+        if label == "blocking":
+            blocking = now
+        return f"{icon} ~~{orig}~~ {now} {label}" if now != orig else f"{icon} {orig} {label}"
+
+    return _COUNT_SEGMENT_RE.sub(seg, line), blocking
+
+
+def _block_text(title: str) -> str:
+    """A title as one inert line: a newline would end the quoted status block early (and the
+    next edit could not find its end), an HTML comment could fake a marker."""
+    return " ".join(title.split()).replace("<!--", "&lt;!--")
+
+
+def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
+    """`body` (the bot's standing review) annotated for the findings the discussion lifted:
+    a status block under the title, the counts struck through, and the agent-prompt entries
+    retagged. Only a finding this review lists in its agent prompt (by file, location and
+    exact title; each entry at most once) is annotated, so a finding the review never counted
+    (a legacy thread) moves no number, and a same-titled finding elsewhere keeps its tag.
+    With nothing lifted every annotation is removed again."""
+    lines = _REVIEW_STATUS_RE.sub("", body, count=1).split("\n")
+    todo = list(lifted)
+    matched: list[LiftedFinding] = []
+    path = ""
+    for i, line in enumerate(lines):
+        if line.startswith("In `") and line.endswith("`:"):
+            path = line[4:-2]
+            continue
+        m = _PROMPT_ITEM_RE.match(line)
+        if not m:
+            continue
+        sev, rest = m.group(1), m.group(2)
+        hit = next(
+            (
+                f
+                for f in todo
+                if (f.file or "(no file)") == path
+                and rest.endswith(f": {f.title}")
+                and _is_location(rest[: -len(f.title) - 2], path)
+            ),
+            None,
+        )
+        tag = ""
+        if hit:
+            todo.remove(hit)
+            matched.append(hit)
+            tag = f" → {_LIFTED_LABEL.get(hit.status, _LIFTED_DEFAULT)[1]}"
+        lines[i] = f"- [{sev}{tag}] {rest}"
+    # the counts line sits between the summary and the first <details>; the last full-line
+    # match there, so a summary sentence shaped like a count is never the one rewritten
+    details = next((i for i, ln in enumerate(lines) if ln == "<details>"), len(lines))
+    counts = [i for i in range(details) if _COUNTS_LINE_RE.match(lines[i])]
+    left: int | None = None
+    if counts:
+        lines[counts[-1]], left = _recount(lines[counts[-1]], matched)
+    if not matched:
+        return "\n".join(lines)
+    tail = (
+        ""
+        if left is None
+        else "; no blocking finding remains."
+        if not left
+        else f"; {left} blocking finding(s) still stand."
+    )
+    block = [
+        REVIEW_STATUS_MARKER,
+        f"> **Updated after discussion:** {len(matched)} finding(s) of this review were settled "
+        f"in the inline threads{tail or '.'}",
+        *(
+            f"> - {_LIFTED_LABEL.get(f.status, _LIFTED_DEFAULT)[0]}: "
+            f"{SEVERITY_ICONS.get(f.severity, '')} {_block_text(f.title)}"
+            for f in matched
+        ),
+        "",
+    ]
+    title = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), None)
+    if title is None:  # no heading: after the leading markers
+        title = next((i for i, ln in enumerate(lines) if not ln.startswith("<!--")), len(lines)) - 1
+    at = title + 1
+    if at < len(lines) and not lines[at].strip():
+        at += 1
+    return "\n".join(lines[:at] + block + lines[at:])
+
+
+def _is_location(loc: str, path: str) -> bool:
+    """`loc` is what `_location` renders for a finding in `path`."""
+    return loc == path or (
+        loc.startswith(f"{path}:") and loc[len(path) + 1 :].replace("-", "").isdigit()
+    )
 
 
 # ---- same-sha verdict update ----

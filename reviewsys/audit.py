@@ -62,7 +62,8 @@ SYNC_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 CANONICAL_RC = "Canonical verifier result: `REQUEST_CHANGES`"
-BLOCKING_COUNT_RE = re.compile(r"🔴 ([1-9]\d*) blocking")
+# a count the conversation lane struck through reads "🔴 ~~2~~ 1 blocking"
+BLOCKING_COUNT_RE = re.compile(r"🔴 (?:~~\d+~~ )?([1-9]\d*) blocking")
 PHASE_MARKER_RE = re.compile(r"phase=([a-z]+) sha=([0-9a-f]{40})")
 
 MODE_FULL, MODE_LIGHT, MODE_SYNC = "full", "light", "sync"
