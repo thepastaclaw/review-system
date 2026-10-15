@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-15T01:41:00Z",
-  "generated_at": "2026-10-15T01:41:00Z",
+  "data_as_of": "2026-10-15T01:42:01Z",
+  "generated_at": "2026-10-15T01:42:01Z",
   "history": {
     "daily": [
       {
@@ -225,17 +225,17 @@
         "priority": {
           "duration": {
             "median_seconds": 1212,
-            "n": 454,
-            "p90_seconds": 3058
+            "n": 453,
+            "p90_seconds": 3059
           },
           "slot_wait": {
             "median_seconds": 0,
-            "n": 454,
+            "n": 453,
             "p90_seconds": 99
           },
           "wait": {
             "median_seconds": 12,
-            "n": 524,
+            "n": 523,
             "p90_seconds": 457
           }
         }
@@ -586,15 +586,15 @@
       },
       {
         "effort": "medium",
-        "lanes": 3605,
-        "tokens_in": 517441867,
-        "tokens_out": 5877924
+        "lanes": 3606,
+        "tokens_in": 517508481,
+        "tokens_out": 5878750
       },
       {
         "effort": "high",
-        "lanes": 12353,
-        "tokens_in": 11602195991,
-        "tokens_out": 113338968
+        "lanes": 12354,
+        "tokens_in": 11602643023,
+        "tokens_out": 113345664
       },
       {
         "effort": "low",
@@ -612,11 +612,11 @@
         "tokens_out": 344886129
       },
       {
-        "avg_tokens_per_lane": 5100973.0,
-        "lanes": 919,
+        "avg_tokens_per_lane": 5095922.0,
+        "lanes": 920,
         "model": "glm-5.3-flash",
-        "tokens_in": 4624622918,
-        "tokens_out": 63171396
+        "tokens_in": 4625069950,
+        "tokens_out": 63178092
       },
       {
         "avg_tokens_per_lane": 1019991.0,
@@ -640,14 +640,19 @@
         "tokens_out": 36337643
       },
       {
-        "avg_tokens_per_lane": 1232709.0,
-        "lanes": 13026,
+        "avg_tokens_per_lane": 1232620.0,
+        "lanes": 13027,
         "model": "gpt-6.1-sol",
-        "tokens_in": 15977262899,
-        "tokens_out": 80005356
+        "tokens_in": 15977329513,
+        "tokens_out": 80006182
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 5105,
+        "tokens_in": 513646,
+        "tokens_out": 7522
+      },
       {
         "run_id": 5104,
         "tokens_in": 1253148,
@@ -1142,24 +1147,19 @@
         "run_id": 4999,
         "tokens_in": 6059921,
         "tokens_out": 94708
-      },
-      {
-        "run_id": 4998,
-        "tokens_in": 216001,
-        "tokens_out": 903
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11374761,
+      "avg_tokens_per_completed_review": 11374905,
       "completed_reviews": 3597,
       "findings": 24428,
       "findings_posted": 4255,
       "reviews": 5603,
       "reviews_imported": 2245,
       "runs": 5105,
-      "tokens_in": 40370976405,
-      "tokens_out": 544037211,
-      "tokens_total": 40915013616
+      "tokens_in": 40371490051,
+      "tokens_out": 544044733,
+      "tokens_total": 40915534784
     }
   },
   "live": {
@@ -1168,35 +1168,60 @@
         "attempt": 1,
         "author": "dependabot",
         "deadline_at": "2026-10-15T07:37:26Z",
-        "deadline_in_seconds": 21386,
+        "deadline_in_seconds": 21325,
         "degraded": false,
-        "elapsed_seconds": 214,
-        "findings": null,
+        "elapsed_seconds": 275,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 0
+        },
         "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-15T01:40:59Z",
+        "heartbeat_at": "2026-10-15T01:42:00Z",
         "id": 5105,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "high",
-            "line_position": null,
             "model": "glm-5.3-flash",
             "phase": "phase1",
-            "pool": "glm",
             "role": "general",
-            "since_seconds": 201,
+            "status": "completed",
+            "tokens_in": 447032,
+            "tokens_out": 6696
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 66614,
+            "tokens_out": 826
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "medium",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 2,
             "state": "running"
           }
         ],
         "number": 1541,
         "overdue": false,
-        "phase": "phase1",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1541",
         "priority": true,
-        "progress": 0.117,
+        "progress": 0.56,
         "queue": "live",
         "queued_at": "2026-10-15T01:37:24Z",
-        "remaining_seconds": 1607,
+        "remaining_seconds": 216,
         "repo": "dashpay/tenderdash",
         "sha": "8e5b819a1be04e37f6c659b39b4820e84e70fab2",
         "started_at": "2026-10-15T01:37:26Z",
@@ -1242,26 +1267,59 @@
                 "general"
               ]
             },
+            "lanes_done": 1,
+            "lanes_left": [],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 237,
+            "started_at": "2026-10-15T01:37:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
+            "name": "verify1",
+            "seconds": 25,
+            "started_at": "2026-10-15T01:41:34Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "admit_phase2": true,
+              "blockers": 0,
+              "phase2_effort": "medium",
+              "tier": "low"
+            },
+            "name": "gate",
+            "seconds": 0,
+            "started_at": "2026-10-15T01:41:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
             "lanes_done": 0,
             "lanes_left": [
               "general"
             ],
             "lanes_total": 1,
-            "name": "phase1",
-            "seconds": 203,
-            "started_at": "2026-10-15T01:37:37Z",
+            "name": "phase2",
+            "seconds": 2,
+            "started_at": "2026-10-15T01:41:59Z",
             "status": "running"
           }
         ],
         "tier": "low",
         "title": "build(deps): Bump golang.org/x/term from 0.46.0 to 0.47.0",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 513646,
+        "tokens_out": 7522,
         "trigger": "mention",
         "upcoming": [
-          "verify1",
-          "gate",
-          "phase2",
           "verify2",
           "fresh_phase2",
           "fresh_verify2",
@@ -1339,13 +1397,13 @@
       },
       {
         "pool": "glm",
-        "running": 1,
+        "running": 0,
         "slots": 6,
         "waiting": 0
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1359,7 +1417,7 @@
     "last_run_done_at": "2026-10-14T22:45:35Z",
     "last_run_started_at": "2026-10-15T01:37:26Z",
     "median_run_minutes": 20.766666666666666,
-    "notify_last_at": "2026-10-15T01:39:30Z",
+    "notify_last_at": "2026-10-15T01:41:37Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1370,7 +1428,7 @@
       "reviews": 0,
       "tokens": 0
     },
-    "ts": "2026-10-15T01:41:00Z",
+    "ts": "2026-10-15T01:42:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.7,
       "low": 8.4,
@@ -1381,7 +1439,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 3.566666666666667,
+      "idle_minutes": 4.583333333333333,
       "ingest_stale": false,
       "stuck": false
     }
