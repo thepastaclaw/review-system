@@ -3416,6 +3416,43 @@ def test_full_review_keeps_a_deferred_finding_standing_until_it_is_tracked(cfg, 
     assert "give the row a `tracking` field" in prompt
 
 
+def test_a_held_suggestion_is_not_approved_over_nor_watched_for_ci(cfg, conn, gh, lanes):
+    """The verifier approved with a suggestion lifted as deferred; held for tracking, the
+    suggestion stands again, so the verdict is COMMENT, and no CI watch (ci.py) is kept for
+    an APPROVE that was never published."""
+    from reviewsys import ci
+
+    s = _sugg()
+    sh = _seed_prior(conn, s)
+    gh.threads = [
+        _finding_thread(sh, s["title"], 900, [{**KNST, "body": "later"}], label="🟡 Suggestion")
+    ]
+    deferred = {"finding_hash": sh, "status": "INTENTIONALLY_DEFERRED", "reason": "Later."}
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [deferred],
+    }
+    approve = {
+        **_verifier([]),
+        "review_action": "APPROVE",
+        "prior_finding_reconciliation": [deferred],
+    }
+    lanes.verifier["default"] = approve
+    lanes.verifier["final"] = {**approve, "review_phase": "final"}
+    gh.routes[f"repos/dashpay/platform/commits/{HEAD}/check-runs?per_page=100"] = {
+        "total_count": 1,
+        "check_runs": [{"name": "Tests", "status": "in_progress", "conclusion": None}],
+    }
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    review = gh.posted_reviews[-1]
+    assert "phase=final" in review["body"] and review["event"] == "COMMENT"
+    assert "Needs a tracking issue before it can be deferred (1)" in review["body"]
+    assert ci.load(conn, "dashpay/platform", 1, HEAD) is None
+
+
 def test_full_review_lifts_a_deferral_tracked_in_its_thread(cfg, conn, gh, lanes):
     _full_review_deferral(
         gh, conn, lanes, "pre-existing; tracked in https://github.com/dashpay/platform/issues/4321"
@@ -3637,32 +3674,34 @@ def test_a_grandfathered_deferral_restated_in_conversation_is_not_re_vetted(cfg,
     assert "_Deferred on a maintainer's call" in reply
 
 
-def _publish(conn, run_id, sha, *, converse=False):
-    """A `reviews` row for `run_id`; `converse`: a conversation's verdict follow-up."""
+def _publish(conn, run_id, sha, *, step=None):
+    """A `reviews` row for `run_id`; `step`: a follow-up's own step (`converse`: a
+    conversation's verdict follow-up, `ci_check`: a CI update)."""
     conn.execute(
         "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, "
         "posted_at) VALUES (?,?,?,?,?,?,?,?)",
         (run_id, "dashpay/platform", 1, sha, "final", 8, "COMMENT", "x"),
     )
-    if converse:
+    if step:
         conn.execute(
-            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?, 'converse', 'ok', 'x')",
-            (run_id,),
+            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?, ?, 'ok', 'x')",
+            (run_id, step),
         )
 
 
-@pytest.mark.parametrize("case", ["conversation_follow_up", "stood_after_cutoff"])
+@pytest.mark.parametrize("case", ["conversation_follow_up", "ci_update", "stood_after_cutoff"])
 def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, case):
-    """The last review before the cutoff being a conversation's verdict follow-up (no
-    verifier set) proves nothing; and a finding deferred long ago that a review carried
+    """The last review before the cutoff being a conversation's verdict follow-up or a CI
+    update (ci.py; neither has a verifier set) proves nothing; and a finding deferred long ago that a review carried
     again after the cutoff was standing, so deferring it now is a new deferral."""
     bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here")
     if case == "stood_after_cutoff":
         _old_deferral(conn, gh, bh, "event")
     with tx(conn):
         kv_set(conn, CUTOFF_KEY, "2026-10-01T00:00:00Z")
-        if case == "conversation_follow_up":
-            _publish(conn, _new_run(conn, "2026-09-20T00:00:00Z"), "c" * 40, converse=True)
+        if case in ("conversation_follow_up", "ci_update"):
+            step = "converse" if case == "conversation_follow_up" else "ci_check"
+            _publish(conn, _new_run(conn, "2026-09-20T00:00:00Z"), "c" * 40, step=step)
         else:
             f = _blocking()  # carried again, re-hashed (another category): matched by title
             conn.execute(

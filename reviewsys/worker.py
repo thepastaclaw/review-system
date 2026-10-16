@@ -1788,6 +1788,10 @@ def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_pha
         )
     if held:
         out.prior_reconciliation = list(rows.values())
+        # the verifier approved with these lifted; standing again (above a nitpick), they
+        # leave nothing to approve, and an APPROVE would also be watched for CI (ci.py)
+        if out.review_action == "APPROVE":
+            out.review_action = "COMMENT"
         _defer_event(ctx, "defer.needs_tracking", f"{expected_phase}: held {', '.join(held)}")
 
 
@@ -1864,8 +1868,8 @@ def _grandfathered(ctx: RunContext, h: str) -> bool:
     last = ctx.conn.execute(
         "SELECT rv.run_id, r.started_at FROM reviews rv JOIN runs r ON r.id=rv.run_id "
         "WHERE rv.repo=? AND rv.number=? AND r.started_at < ? AND rv.github_review_id IS NOT NULL "
-        f"AND {_NOT_A_CONVERSATION} ORDER BY r.started_at DESC, rv.id DESC LIMIT 1",
-        (*pr, cutoff, StepName.CONVERSE.value),
+        f"AND {_NOT_A_FOLLOW_UP} ORDER BY r.started_at DESC, rv.id DESC LIMIT 1",
+        (*pr, cutoff, StepName.CONVERSE.value, StepName.CI_CHECK.value),
     ).fetchone()
     if last is None:
         return False
@@ -1877,8 +1881,11 @@ def _grandfathered(ctx: RunContext, h: str) -> bool:
 
 
 # a `reviews` row of a run that reviewed the code, not a conversation's verdict follow-up
-# (which records no verifier set); `rv.run_id` must be in scope, the step name bound
-_NOT_A_CONVERSATION = "NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id AND s.name=?)"
+# or a CI update (ci.py), neither of which records a verifier set; `rv.run_id` must be in
+# scope, the two step names bound
+_NOT_A_FOLLOW_UP = (
+    "NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id AND s.name IN (?, ?))"
+)
 
 
 def _stood_since(ctx: RunContext, h: str, cutoff: str) -> bool:

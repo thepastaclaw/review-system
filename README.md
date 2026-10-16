@@ -609,7 +609,9 @@ itself), else a link already on record for it (kv `defer.issue:…`, or an earli
 conversation's `conceded` row). The PR description and comments count only when the row
 cites the reference. Without one
 the worker overrides the verifier (`_hold_untracked_deferrals`, after every verifier lane):
-the finding is carried again as it was and keeps counting, its thread is answered
+the finding is carried again as it was and keeps counting (a verifier's APPROVE becomes
+COMMENT: it approved with the finding lifted, so no CI watch is kept for it either), its
+thread is answered
 "**Still applies**: Deferring this needs a tracking issue …", the review body ends with
 "⏸️ Needs a tracking issue before it can be deferred (n): <titles>", and event
 `defer.needs_tracking` names the held hashes. Post-merge audits skip this. Deferrals
@@ -624,7 +626,8 @@ keeps lifting without tracking (event `defer.grandfathered`) when any of these p
 a conversation's INTENTIONALLY_DEFERRED `conceded` row (by its run's start; old rows have
 no link line, the oldest an empty body), an INTENTIONALLY_DEFERRED `thread.answered` event
 from either path, the bot's own "**Deferred**" answer on the open thread, or the last
-review published before the cutoff (not a conversation's verdict follow-up) no longer
+review published before the cutoff (not a conversation's verdict follow-up or a CI
+update, neither of which has a verifier set) no longer
 carrying a finding posted earlier, matched by hash or by file and title (a verifier's
 deferral on a thread nobody replied to leaves no other trace). It is not grandfathered once
 a review after the cutoff carried it again: it was standing, so deferring it now is a new
@@ -1211,6 +1214,11 @@ handled inbox rows are still pruned after 30 days),
 `worktree_budget_gb` (run worktrees and shared sister checkouts together).
 `[context] sister_owners`, `sister_max_repos` (0 = no sister checkouts),
 `sister_budget_minutes` (see [Review context](#review-context-sister-repos-and-base-drift)).
+`[deferral] file_owners` / `file_repos` (where the bot may file a deferral's tracking
+issue) and `tracking_required_since` (see
+[the conversation lane](#replies-on-an-already-reviewed-commit-the-conversation-lane)). The
+grandfathering of older deferrals reads `thread.answered` events from before that instant,
+so a positive `[retention] event_days` can let one of them flip back to standing.
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
