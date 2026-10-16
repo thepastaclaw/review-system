@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T03:09:01Z",
-  "generated_at": "2026-10-16T03:09:01Z",
+  "data_as_of": "2026-10-16T03:10:01Z",
+  "generated_at": "2026-10-16T03:10:01Z",
   "history": {
     "daily": [
       {
@@ -254,6 +254,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 765,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5255,
+        "ts": "2026-10-16T03:09:13Z"
+      },
+      {
+        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
+        "kind": "compare.selected",
+        "number": 765,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5255,
+        "ts": "2026-10-16T03:09:13Z"
+      },
       {
         "detail": "attempt 1 sha=eed8c2e6",
         "kind": "run.spawned",
@@ -557,22 +573,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": null,
         "ts": "2026-10-16T02:55:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1607,
-        "repo": "dashpay/dash-wallet",
-        "run_id": null,
-        "ts": "2026-10-16T02:55:03Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1607,
-        "repo": "dashpay/dash-wallet",
-        "run_id": null,
-        "ts": "2026-10-16T02:55:03Z"
       }
     ],
     "tokens_by_effort": [
@@ -1178,12 +1178,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-16T09:04:49Z",
-        "deadline_in_seconds": 21348,
+        "deadline_in_seconds": 21288,
         "degraded": false,
-        "elapsed_seconds": 252,
+        "elapsed_seconds": 312,
         "findings": null,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-16T03:08:51Z",
+        "heartbeat_at": "2026-10-16T03:09:51Z",
         "id": 5254,
         "lanes": [],
         "live_lanes": [
@@ -1194,7 +1194,7 @@
             "phase": "phase1",
             "pool": "gemini",
             "role": "general",
-            "since_seconds": 236,
+            "since_seconds": 296,
             "state": "running"
           }
         ],
@@ -1203,10 +1203,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7889",
         "priority": false,
-        "progress": 0.255,
+        "progress": 0.316,
         "queue": "live",
         "queued_at": "2026-10-16T02:34:42Z",
-        "remaining_seconds": 734,
+        "remaining_seconds": 674,
         "repo": "dashpay/dash",
         "sha": "4295dd70dfc89e81c3e0da465b8ff7dc64a115e1",
         "started_at": "2026-10-16T03:04:49Z",
@@ -1260,7 +1260,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 237,
+            "seconds": 297,
             "started_at": "2026-10-16T03:05:04Z",
             "status": "running"
           }
@@ -1283,24 +1283,45 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-16T09:08:58Z",
-        "deadline_in_seconds": 21597,
+        "deadline_in_seconds": 21537,
         "degraded": false,
-        "elapsed_seconds": 3,
+        "elapsed_seconds": 63,
         "findings": null,
         "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-10-16T03:08:58Z",
+        "heartbeat_at": "2026-10-16T03:09:58Z",
         "id": 5255,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 47,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6-astra",
+            "phase": "phase2",
+            "pool": "compare",
+            "role": "general",
+            "since_seconds": 46,
+            "state": "running"
+          }
+        ],
         "number": 765,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/765",
         "priority": true,
-        "progress": null,
+        "progress": 0.082,
         "queue": "live",
         "queued_at": "2026-10-16T03:08:09Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 703,
         "repo": "PastaPastaPasta/yappr",
         "sha": "eed8c2e663018315a4605f540531b420f869fada",
         "started_at": "2026-10-16T03:08:58Z",
@@ -1311,15 +1332,74 @@
             "name": "worktree",
             "seconds": 3,
             "started_at": "2026-10-16T03:08:58Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-16T03:09:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, cross-cutting change includes an in-place persistent schema migration in scripts/update-contract-additive.mjs, which validates, signs, broadcasts, and verifies updates to an existing deployed data contract.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-16T03:09:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-16T03:09:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-16T03:09:13Z",
+            "status": "skipped"
+          },
+          {
+            "comparison_left": 1,
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 47,
+            "started_at": "2026-10-16T03:09:14Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(storefront): shipping zones per item (storefront v9)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 49
       }
     ],
@@ -1381,7 +1461,7 @@
     "lane_pools": [
       {
         "pool": "compare",
-        "running": 0,
+        "running": 1,
         "slots": 2,
         "waiting": 0
       },
@@ -1399,7 +1479,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1418,12 +1498,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 56,
+        "age_seconds": 116,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-10-16T03:38:05Z",
-        "eligible_in_seconds": 1744,
+        "eligible_in_seconds": 1684,
         "number": 7898,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7898",
@@ -1444,7 +1524,7 @@
       "reviews": 16,
       "tokens": 130560687
     },
-    "ts": "2026-10-16T03:09:01Z",
+    "ts": "2026-10-16T03:10:01Z",
     "typical_minutes_by_tier": {
       "critical": 26.0,
       "low": 9.0,
@@ -1455,7 +1535,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.05,
+      "idle_minutes": 1.05,
       "ingest_stale": false,
       "stuck": false
     }
