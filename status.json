@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T13:03:00Z",
-  "generated_at": "2026-10-16T13:03:01Z",
+  "data_as_of": "2026-10-16T13:04:01Z",
+  "generated_at": "2026-10-16T13:04:01Z",
   "history": {
     "daily": [
       {
@@ -228,7 +228,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 488,
+            "n": 489,
             "p90_seconds": 1858
           }
         },
@@ -254,6 +254,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=ec94c91e",
+        "kind": "run.spawned",
+        "number": 1095,
+        "repo": "dashpay/dash-evo-tool",
+        "run_id": 5322,
+        "ts": "2026-10-16T13:03:52Z"
+      },
+      {
+        "detail": "fa110a12 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 5150,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-16T13:03:48Z"
+      },
+      {
+        "detail": "head 9257 superseded by fa110a12",
+        "kind": "head.superseded",
+        "number": 5150,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-16T13:03:48Z"
+      },
       {
         "detail": "a437848a trigger=new_push priority=0",
         "kind": "head.queued",
@@ -549,30 +573,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5320,
         "ts": "2026-10-16T12:31:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5320,
-        "ts": "2026-10-16T12:31:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5320,
-        "ts": "2026-10-16T12:31:50Z"
-      },
-      {
-        "detail": "phase=phase2 kept=2 dropped=0",
-        "kind": "compare.lanes",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5320,
-        "ts": "2026-10-16T12:28:53Z"
       }
     ],
     "tokens_by_effort": [
@@ -1166,14 +1166,88 @@
       "findings_posted": 4407,
       "reviews": 5792,
       "reviews_imported": 2245,
-      "runs": 5321,
+      "runs": 5322,
       "tokens_in": 42293831564,
       "tokens_out": 566407851,
       "tokens_total": 42860239415
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "Claudius-Maginificent",
+        "deadline_at": "2026-10-16T19:03:52Z",
+        "deadline_in_seconds": 21591,
+        "degraded": false,
+        "elapsed_seconds": 9,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-16T13:03:52Z",
+        "id": 5322,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1095,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1095",
+        "priority": false,
+        "progress": 0.023,
+        "queue": "live",
+        "queued_at": "2026-10-16T12:33:34Z",
+        "remaining_seconds": 386,
+        "repo": "dashpay/dash-evo-tool",
+        "sha": "ec94c91e12b4f51b970ee499e3c73884e29e6a86",
+        "started_at": "2026-10-16T13:03:52Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-10-16T13:03:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-16T13:03:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a small, contained profile-cache retry fix with targeted regression tests and no changes to critical surfaces.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-16T13:03:57Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "low",
+        "title": "fix(identity): load the hub's profile once the network finishes syncing",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "context",
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1818
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1189,7 +1263,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1203,7 +1277,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-16T13:00:48Z",
+        "at": "2026-10-16T13:03:26Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1223,11 +1297,12 @@
       "closed": 393,
       "done": 5724,
       "failed": 75,
-      "queued": 2,
-      "superseded": 2154
+      "queued": 1,
+      "running": 1,
+      "superseded": 2155
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T13:00:02Z",
+    "ingest_last_at": "2026-10-16T13:03:52Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1261,47 +1336,28 @@
       }
     ],
     "last_run_done_at": "2026-10-16T12:44:17Z",
-    "last_run_started_at": "2026-10-16T12:43:58Z",
+    "last_run_started_at": "2026-10-16T13:03:52Z",
     "median_run_minutes": 9.966666666666667,
     "notify_last_at": "2026-10-16T13:02:09Z",
-    "oldest_queued_at": "2026-10-16T12:33:34Z",
+    "oldest_queued_at": "2026-10-16T13:03:48Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1766,
-        "attempts": 0,
-        "author": "Claudius-Maginificent",
-        "eligible": false,
-        "eligible_at": "2026-10-16T13:03:34Z",
-        "eligible_in_seconds": 34,
-        "number": 1095,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1095",
-        "prioritize_url": "https://github.com/dashpay/dash-evo-tool/issues/1095#issuecomment-6215388923",
-        "priority": false,
-        "queued_at": "2026-10-16T12:33:34Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-evo-tool",
-        "sha": "ec94c91e12b4f51b970ee499e3c73884e29e6a86",
-        "title": "fix(identity): load the hub's profile once the network finishes syncing",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 409,
+        "age_seconds": 13,
         "attempts": 0,
         "author": "lklimek",
         "eligible": false,
-        "eligible_at": "2026-10-16T13:26:11Z",
-        "eligible_in_seconds": 1391,
+        "eligible_at": "2026-10-16T13:33:48Z",
+        "eligible_in_seconds": 1787,
         "number": 5150,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5150",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5150#issuecomment-5876269860",
         "priority": false,
-        "queued_at": "2026-10-16T12:56:11Z",
+        "queued_at": "2026-10-16T13:03:48Z",
         "reason": "debounce (more pushes may follow)",
         "repo": "dashpay/platform",
-        "sha": "a437848a1060aee7063f33caec71dcce6c61e0a2",
+        "sha": "fa110a12cda7350ab3b0da36f67a84a50beb881f",
         "title": "fix(platform-wallet)!: restore Core spending state and repair persisted accounting",
         "trigger": "new_push"
       }
@@ -1313,7 +1369,7 @@
       "reviews": 81,
       "tokens": 756874434
     },
-    "ts": "2026-10-16T13:03:00Z",
+    "ts": "2026-10-16T13:04:01Z",
     "typical_minutes_by_tier": {
       "critical": 27.1,
       "low": 7.9,
@@ -1322,9 +1378,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 19.033333333333335,
+      "idle_minutes": 0.15,
       "ingest_stale": false,
       "stuck": false
     }
