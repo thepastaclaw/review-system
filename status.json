@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T17:08:01Z",
-  "generated_at": "2026-10-16T17:08:01Z",
+  "data_as_of": "2026-10-16T17:09:00Z",
+  "generated_at": "2026-10-16T17:09:00Z",
   "history": {
     "daily": [
       {
@@ -255,6 +255,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1616,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5340,
+        "ts": "2026-10-16T17:08:10Z"
+      },
+      {
         "detail": "attempt 1 sha=a3398801",
         "kind": "run.spawned",
         "number": 1616,
@@ -429,14 +437,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5336,
         "ts": "2026-10-16T16:26:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5336,
-        "ts": "2026-10-16T16:26:42Z"
       },
       {
         "detail": null,
@@ -1178,24 +1178,55 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-16T23:07:56Z",
-        "deadline_in_seconds": 21595,
+        "deadline_in_seconds": 21536,
         "degraded": false,
-        "elapsed_seconds": 5,
+        "elapsed_seconds": 64,
         "findings": null,
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-16T17:07:56Z",
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-10-16T17:08:57Z",
         "id": 5340,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 51,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 50,
+            "state": "running"
+          }
+        ],
         "number": 1616,
         "overdue": false,
-        "phase": "select",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
         "priority": false,
-        "progress": 0.007,
+        "progress": 0.085,
         "queue": "live",
         "queued_at": "2026-10-16T16:37:30Z",
-        "remaining_seconds": 715,
+        "remaining_seconds": 688,
         "repo": "dashpay/dash-wallet",
         "sha": "a3398801a4658f7f1f2a8abe72690825dae90c35",
         "started_at": "2026-10-16T17:07:56Z",
@@ -1209,25 +1240,75 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 1,
+            "seconds": 5,
             "started_at": "2026-10-16T17:08:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate changes in SendCoinsTaskRunner.kt, PendingDirectPaymentVerifier.kt and PendingPaymentEngine.kt alter payment submission, transaction broadcast and SDK reservation release, directly affecting funds movement and prevention of duplicate spending.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-16T17:08:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-16T17:08:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 51,
+            "started_at": "2026-10-16T17:08:09Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 51,
+            "started_at": "2026-10-16T17:08:09Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "Merge master into feat/kotlin-sdk-phase-1 (v11.9.1, DashSpend lost-reply recovery ported to SDK)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "triage",
-          "context",
-          "phase1",
-          "verify1",
-          "gate",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1288,7 +1369,7 @@
       "superseded": 2156
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T17:05:02Z",
+    "ingest_last_at": "2026-10-16T17:08:54Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1298,7 +1379,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1310,7 +1391,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1329,12 +1410,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1357,
+        "age_seconds": 1416,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-16T17:15:24Z",
-        "eligible_in_seconds": 443,
+        "eligible_in_seconds": 384,
         "number": 1625,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1625",
@@ -1355,7 +1436,7 @@
       "reviews": 98,
       "tokens": 1081431950
     },
-    "ts": "2026-10-16T17:08:01Z",
+    "ts": "2026-10-16T17:09:00Z",
     "typical_minutes_by_tier": {
       "critical": 26.1,
       "low": 7.9,
@@ -1366,7 +1447,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.08333333333333333,
+      "idle_minutes": 1.0666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
