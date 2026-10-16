@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T06:48:01Z",
-  "generated_at": "2026-10-16T06:48:01Z",
+  "data_as_of": "2026-10-16T06:49:01Z",
+  "generated_at": "2026-10-16T06:49:01Z",
   "history": {
     "daily": [
       {
@@ -254,6 +254,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5470,
+        "repo": "dashpay/platform",
+        "run_id": 5284,
+        "ts": "2026-10-16T06:48:31Z"
+      },
       {
         "detail": "attempt 1 sha=2ac37896",
         "kind": "run.spawned",
@@ -564,14 +572,6 @@
         "number": 5471,
         "repo": "dashpay/platform",
         "run_id": 5281,
-        "ts": "2026-10-16T06:27:47Z"
-      },
-      {
-        "detail": "attempt 1 sha=d0be7dca",
-        "kind": "run.spawned",
-        "number": 5472,
-        "repo": "dashpay/platform",
-        "run_id": 5280,
         "ts": "2026-10-16T06:27:47Z"
       }
     ],
@@ -1178,24 +1178,45 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-16T12:48:00Z",
-        "deadline_in_seconds": 21599,
+        "deadline_in_seconds": 21539,
         "degraded": false,
-        "elapsed_seconds": 1,
+        "elapsed_seconds": 61,
         "findings": null,
         "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-16T06:48:00Z",
+        "heartbeat_at": "2026-10-16T06:49:00Z",
         "id": 5284,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 30,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 29,
+            "state": "running"
+          }
+        ],
         "number": 5470,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5470",
         "priority": true,
-        "progress": null,
+        "progress": 0.054,
         "queue": "live",
         "queued_at": "2026-10-16T06:47:57Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1068,
         "repo": "dashpay/platform",
         "sha": "2ac3789698c02d450c55e7cfeaa8776367e765bb",
         "started_at": "2026-10-16T06:48:00Z",
@@ -1204,17 +1225,73 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 1,
+            "seconds": 21,
             "started_at": "2026-10-16T06:48:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-16T06:48:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a substantial but ordinary Rust SDK extraction involving profile queries, field merging, and document submission, without changes to consensus, cryptography, signatures, key handling, or other qualifying critical surfaces.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-16T06:48:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-16T06:48:28Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 31,
+            "started_at": "2026-10-16T06:48:30Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat(sdk): move DashPay profile create, update and fetch into rs-sdk",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 3
       }
     ],
@@ -1247,7 +1324,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-16T06:46:32Z",
+        "at": "2026-10-16T06:48:41Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1282,7 +1359,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1313,12 +1390,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 998,
+        "age_seconds": 1058,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-16T07:01:23Z",
-        "eligible_in_seconds": 802,
+        "eligible_in_seconds": 742,
         "number": 7905,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7905",
@@ -1332,12 +1409,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 767,
+        "age_seconds": 827,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-10-16T07:05:14Z",
-        "eligible_in_seconds": 1033,
+        "eligible_in_seconds": 973,
         "number": 7906,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7906",
@@ -1351,12 +1428,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 334,
+        "age_seconds": 394,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-16T07:12:27Z",
-        "eligible_in_seconds": 1466,
+        "eligible_in_seconds": 1406,
         "number": 7763,
         "position": 3,
         "pr_url": "https://github.com/dashpay/dash/pull/7763",
@@ -1370,12 +1447,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 332,
+        "age_seconds": 392,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-16T07:12:29Z",
-        "eligible_in_seconds": 1468,
+        "eligible_in_seconds": 1408,
         "number": 5473,
         "position": 4,
         "pr_url": "https://github.com/dashpay/platform/pull/5473",
@@ -1389,12 +1466,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 96,
+        "age_seconds": 156,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-10-16T07:16:25Z",
-        "eligible_in_seconds": 1704,
+        "eligible_in_seconds": 1644,
         "number": 1217,
         "position": 5,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1217",
@@ -1415,7 +1492,7 @@
       "reviews": 45,
       "tokens": 318518288
     },
-    "ts": "2026-10-16T06:48:01Z",
+    "ts": "2026-10-16T06:49:01Z",
     "typical_minutes_by_tier": {
       "critical": 26.1,
       "low": 7.8,
@@ -1426,7 +1503,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.016666666666666666,
+      "idle_minutes": 1.0166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
