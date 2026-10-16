@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T23:48:01Z",
-  "generated_at": "2026-10-16T23:48:01Z",
+  "data_as_of": "2026-10-16T23:49:00Z",
+  "generated_at": "2026-10-16T23:49:00Z",
   "history": {
     "daily": [
       {
@@ -254,6 +254,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "b0779725 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 772,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-16T23:48:52Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 771,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5394,
+        "ts": "2026-10-16T23:48:05Z"
+      },
       {
         "detail": "attempt 1 sha=e90eb921",
         "kind": "run.spawned",
@@ -557,22 +573,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5386,
         "ts": "2026-10-16T23:22:33Z"
-      },
-      {
-        "detail": "ok in 409s",
-        "kind": "run.done",
-        "number": 772,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5388,
-        "ts": "2026-10-16T23:21:32Z"
-      },
-      {
-        "detail": "phase=phase2 kept=1 dropped=0",
-        "kind": "compare.lanes",
-        "number": 772,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5388,
-        "ts": "2026-10-16T23:19:46Z"
       }
     ],
     "tokens_by_effort": [
@@ -1178,35 +1178,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-17T05:47:54Z",
-        "deadline_in_seconds": 21593,
+        "deadline_in_seconds": 21534,
         "degraded": false,
-        "elapsed_seconds": 7,
+        "elapsed_seconds": 66,
         "findings": null,
-        "heartbeat_age_seconds": 6,
-        "heartbeat_at": "2026-10-16T23:47:55Z",
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-10-16T23:48:55Z",
         "id": 5394,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 2,
+            "role": "general",
+            "since_seconds": 54,
             "state": "running"
           }
         ],
         "number": 771,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/771",
         "priority": true,
-        "progress": null,
+        "progress": 0.136,
         "queue": "live",
         "queued_at": "2026-10-16T23:47:53Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 420,
         "repo": "PastaPastaPasta/yappr",
         "sha": "e90eb921bbebcefc5198c35d6b063a2a315a35b4",
         "started_at": "2026-10-16T23:47:54Z",
@@ -1229,19 +1229,59 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff directly changes private-key persistence and retired-secret purging in lib/secure-storage.ts and lib/auth/retired-secrets.ts, key validation in lib/auth/login-key.ts, and session commit ordering in vendor/platform-auth/src/core/controller.ts, meeting the critical key-handling bar.",
+              "tier": "critical"
+            },
             "name": "triage",
             "seconds": 2,
             "started_at": "2026-10-16T23:47:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-16T23:48:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-16T23:48:05Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 54,
+            "started_at": "2026-10-16T23:48:06Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(auth): release sign-in: private key first, no password or vault (WP6)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 1
       }
     ],
@@ -1298,12 +1338,12 @@
       "closed": 394,
       "done": 5787,
       "failed": 75,
-      "queued": 1,
+      "queued": 2,
       "running": 1,
       "superseded": 2164
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T23:45:01Z",
+    "ingest_last_at": "2026-10-16T23:48:53Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1344,12 +1384,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1317,
+        "age_seconds": 1376,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-16T23:56:04Z",
-        "eligible_in_seconds": 483,
+        "eligible_in_seconds": 424,
         "number": 5479,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5479",
@@ -1361,6 +1401,25 @@
         "sha": "b3a06b187d97eea9fee3d9b2135f5cfe669b68d1",
         "title": "feat(platform-wallet-storage): persist DashPay backfill coverage and outbound-account markers",
         "trigger": "new_pr"
+      },
+      {
+        "age_seconds": 8,
+        "attempts": 0,
+        "author": "PastaPastaPasta",
+        "eligible": false,
+        "eligible_at": "2026-10-17T00:18:52Z",
+        "eligible_in_seconds": 1792,
+        "number": 772,
+        "position": 2,
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/772",
+        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/772#issuecomment-6226040609",
+        "priority": false,
+        "queued_at": "2026-10-16T23:48:52Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "b07797252ad045a3fff1e423e7c4f34c7619f86d",
+        "title": "fix(writes): settle a lost write answer on proof instead of a 15-minute lockout (#644)",
+        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1370,7 +1429,7 @@
       "reviews": 150,
       "tokens": 1596469137
     },
-    "ts": "2026-10-16T23:48:01Z",
+    "ts": "2026-10-16T23:49:00Z",
     "typical_minutes_by_tier": {
       "critical": 24.7,
       "low": 7.8,
@@ -1381,7 +1440,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.11666666666666667,
+      "idle_minutes": 1.1,
       "ingest_stale": false,
       "stuck": false
     }
