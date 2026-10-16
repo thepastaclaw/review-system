@@ -303,7 +303,7 @@ class DeferralConfig:
     `tracking_required_since` (ISO-8601) is when deferrals started needing tracking; one
     recorded before it was accepted under the old rule and keeps lifting its finding. ""
     = the first daemon or worker start with this code, recorded once in kv
-    (`converse.tracking_required_since`)."""
+    (`deferral.tracking_required_since`, see converse.tracking_required_since)."""
 
     file_owners: tuple[str, ...] = ("dashpay",)
     file_repos: tuple[str, ...] = ()
@@ -1012,7 +1012,8 @@ def _deferral(d: dict[str, Any]) -> DeferralConfig:
     if since:
         try:
             dt = parse_ts(since)
-            since = fmt_ts((dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC))
+            dt = (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC)
+            since = fmt_ts(dt.replace(microsecond=0))
         except ValueError as exc:
             raise ValueError(f"[deferral] tracking_required_since {since!r}: {exc}") from exc
     return DeferralConfig(

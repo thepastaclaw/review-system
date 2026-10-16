@@ -1824,21 +1824,23 @@ def _known_tracking(ctx: RunContext, h: str) -> str:
 
 def _grandfathered(ctx: RunContext, h: str) -> bool:
     """Finding `h` was deferred on this PR before deferrals needed tracking
-    (`ctx.deferral_cutoff`), so it keeps lifting without one. Evidence, any of: a
-    conversation's INTENTIONALLY_DEFERRED concession from a run that started before it; an
-    INTENTIONALLY_DEFERRED thread answer before it (event, or our answer on the open thread),
-    from either path; or the last review published before it no longer carrying the finding
-    it had posted earlier (a verifier's deferral on a thread nobody replied to leaves no
-    other trace; a finding withdrawn or fixed then and called deferred now is let through
-    too, which costs nothing)."""
+    (`ctx.deferral_cutoff`) and has not stood in a review since, so it keeps lifting without
+    one. Evidence of the old deferral, any of: a conversation's INTENTIONALLY_DEFERRED
+    concession from a run that started before it (rows older than the outcome column have
+    an empty body); an INTENTIONALLY_DEFERRED thread answer before it (event, or our answer
+    on the open thread), from either path; or the last review published before it no longer
+    carrying the finding it had posted earlier (a verifier's deferral on a thread nobody
+    replied to leaves no other trace; a finding withdrawn or fixed then and called deferred
+    now is let through too). A finding a review carried after the cutoff was standing
+    again, so deferring it now is a new deferral."""
     cutoff = ctx.deferral_cutoff
-    if not cutoff:
+    if not cutoff or _stood_since(ctx, h, cutoff):
         return False
     pr = (ctx.repo, ctx.number)
     if ctx.conn.execute(
         "SELECT 1 FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON hd.id=r.head_id "
         "WHERE hd.repo=? AND hd.number=? AND f.hash=? AND f.stage='conceded' "
-        "AND f.body LIKE 'INTENTIONALLY_DEFERRED%' AND r.started_at < ? LIMIT 1",
+        "AND (f.body LIKE 'INTENTIONALLY_DEFERRED%' OR f.body='') AND r.started_at < ? LIMIT 1",
         (*pr, h, cutoff),
     ).fetchone():
         return True
@@ -1862,8 +1864,8 @@ def _grandfathered(ctx: RunContext, h: str) -> bool:
     last = ctx.conn.execute(
         "SELECT rv.run_id, r.started_at FROM reviews rv JOIN runs r ON r.id=rv.run_id "
         "WHERE rv.repo=? AND rv.number=? AND r.started_at < ? AND rv.github_review_id IS NOT NULL "
-        "ORDER BY r.started_at DESC, rv.id DESC LIMIT 1",
-        (*pr, cutoff),
+        f"AND {_NOT_A_CONVERSATION} ORDER BY r.started_at DESC, rv.id DESC LIMIT 1",
+        (*pr, cutoff, StepName.CONVERSE.value),
     ).fetchone()
     if last is None:
         return False
@@ -1871,12 +1873,42 @@ def _grandfathered(ctx: RunContext, h: str) -> bool:
         "SELECT 1 FROM posted_findings WHERE repo=? AND number=? AND hash=? AND posted_at < ?",
         (*pr, h, last["started_at"]),
     ).fetchone()
-    carried = ctx.conn.execute(
-        "SELECT 1 FROM findings WHERE run_id=? AND hash=? "
-        "AND stage IN ('verified', 'verified-fresh', 'posted')",
-        (last["run_id"], h),
+    return bool(posted_before) and not _carried_by(ctx, h, "r.id=?", (last["run_id"],))
+
+
+# a `reviews` row of a run that reviewed the code, not a conversation's verdict follow-up
+# (which records no verifier set); `rv.run_id` must be in scope, the step name bound
+_NOT_A_CONVERSATION = "NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id AND s.name=?)"
+
+
+def _stood_since(ctx: RunContext, h: str, cutoff: str) -> bool:
+    """A review of this PR other than this run, started at or after `cutoff`, kept `h`."""
+    return _carried_by(ctx, h, "r.started_at >= ? AND r.id <> ?", (cutoff, ctx.run_id), pr=True)
+
+
+def _carried_by(
+    ctx: RunContext, h: str, where: str, params: tuple[Any, ...], *, pr: bool = False
+) -> bool:
+    """Some run matching `where` (over `runs r`) kept finding `h` in its verifier set or
+    posted it, by hash or, since a carried finding may be re-hashed, by file and title."""
+    ident = ctx.conn.execute(
+        "SELECT f.file, f.title FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
+        "hd.id=r.head_id WHERE hd.repo=? AND hd.number=? AND f.hash=? AND f.stage='posted' "
+        "LIMIT 1",
+        (ctx.repo, ctx.number, h),
     ).fetchone()
-    return bool(posted_before) and not carried
+    file, title = (ident["file"] or "", str(ident["title"] or "")) if ident else ("", "")
+    scope = "hd.repo=? AND hd.number=? AND " if pr else ""
+    return bool(
+        ctx.conn.execute(
+            "SELECT 1 FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
+            f"hd.id=r.head_id WHERE {scope}{where} "
+            "AND f.stage IN ('verified', 'verified-fresh', 'posted') "
+            "AND (f.hash=? OR (? <> '' AND f.file=? AND lower(trim(f.title))=lower(trim(?)))) "
+            "LIMIT 1",
+            (*((ctx.repo, ctx.number) if pr else ()), *params, h, title, file, title),
+        ).fetchone()
+    )
 
 
 def _blind(outputs: dict[str, Any], *, seed: int) -> dict[str, Any]:
@@ -2986,6 +3018,14 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     lm = ctx.lane_model(ctx.cfg.policy.conversation_lane)
     before = _standing_findings(ctx, phase)
     settled = before.settled(threads)
+    # a deferral from before the tracking rule, of a finding this commit's review does not
+    # stand on, is settled: restating it is no new deferral to vet (the lane is told so),
+    # and a reply must not say the finding stands when it does not
+    settled |= {
+        h: "INTENTIONALLY_DEFERRED"
+        for h in threads
+        if h not in settled and h not in before.findings and _grandfathered(ctx, h)
+    }
     out = _run_conversation_lane(
         ctx,
         lm,
@@ -3012,10 +3052,6 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     # follow-up must never be posted against an obsolete commit (the run ends superseded and
     # ingest queues the live one)
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    # a deferral from before the tracking rule stands as if settled: restating it is no new
-    # deferral to vet, and a reply must not say the finding stands when it does not
-    grandfathered = {h for h in threads if h not in settled and _grandfathered(ctx, h)}
-    settled = {**{h: "INTENTIONALLY_DEFERRED" for h in grandfathered}, **settled}
     out = converse.accept_deferrals(
         out,
         threads,
@@ -4197,7 +4233,7 @@ def main(
         dry_run=dry_run,
     )
     ctx.deferral_cutoff = converse.tracking_required_since(
-        conn, cfg.deferral.tracking_required_since
+        conn, cfg.deferral.tracking_required_since, record=not dry_run
     )
     if row["queue"] == "audit":
         ctx.audit = audit.load(conn, ctx.head_id)

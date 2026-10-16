@@ -81,8 +81,8 @@ class Daemon:
         self.spawn = spawn
         self.prober = prober or degraded.probe
         self.labels_repos: dict[str, bool] = {}  # repo -> has created the pastaclaw:* labels
-        # the first start with the deferral-tracking rule fixes when it took effect
-        converse.tracking_required_since(conn, cfg.deferral.tracking_required_since)
+        if spawn:  # the first scheduling start with the tracking rule fixes when it took effect
+            converse.tracking_required_since(conn, cfg.deferral.tracking_required_since)
         self.stop = False
         self.tasks = [
             Task("ingest", cfg.ingest_interval_seconds, self.t_ingest),

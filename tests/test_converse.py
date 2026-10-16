@@ -681,3 +681,8 @@ def test_the_tracking_cutoff_is_configured_or_recorded_once(conn):
     with tx(conn):
         kv_set(conn, converse.TRACKING_CUTOFF_KEY, "2026-10-01T00:00:00Z")
     assert converse.tracking_required_since(conn) == "2026-10-01T00:00:00Z"  # never moves
+
+
+def test_a_dry_run_or_shadow_process_never_fixes_the_cutoff(conn):
+    assert converse.tracking_required_since(conn, record=False)
+    assert kv_get(conn, converse.TRACKING_CUTOFF_KEY) is None

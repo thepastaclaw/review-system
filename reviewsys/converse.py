@@ -149,13 +149,19 @@ def linked_commits(threads: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
 TRACKING_CUTOFF_KEY = "deferral.tracking_required_since"
 
 
-def tracking_required_since(conn: sqlite3.Connection, configured: str = "") -> str:
+def tracking_required_since(
+    conn: sqlite3.Connection, configured: str = "", *, record: bool = True
+) -> str:
     """When deferrals started needing tracking: `[deferral] tracking_required_since`, else
-    the first time code with this rule ran (a daemon or worker start), recorded once in kv
-    so every later process agrees. A deferral recorded before it was accepted under the old
-    rule and keeps lifting its finding: existing PRs must not flip to REQUEST_CHANGES."""
+    the first time code with this rule ran for real (a scheduling daemon, a live worker),
+    recorded once in kv so every later process agrees. A deferral recorded before it was
+    accepted under the old rule and keeps lifting its finding: existing PRs must not flip
+    to REQUEST_CHANGES. `record` False (shadow daemons, dry runs, a checkout pointed at the
+    production DB before deploy) reads without fixing it."""
     if configured:
         return configured
+    if not record:
+        return kv_get(conn, TRACKING_CUTOFF_KEY) or now()
     with tx(conn):
         since = kv_get(conn, TRACKING_CUTOFF_KEY)
         if not since:

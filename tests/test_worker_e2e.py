@@ -3625,8 +3625,64 @@ def test_a_grandfathered_deferral_restated_in_conversation_is_not_re_vetted(cfg,
     _old_deferral(conn, gh, bh, "event")
     with tx(conn):
         kv_set(conn, CUTOFF_KEY, "2026-10-01T00:00:00Z")
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        # this commit's full review (after the cutoff) let the old deferral through
+        _publish(conn, _new_run(conn, "2026-10-05T00:00:00Z"), HEAD)
     defer = {"status": "INTENTIONALLY_DEFERRED", "reply": "Yes, still deferred."}
-    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **defer}])
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **defer}], first=False)
     reply = gh.replies[-1]["body"]
     assert reply.startswith(f"<!-- thepastaclaw-thread-answer v1 sha={HEAD}")
     assert "Yes, still deferred." in reply and "Before I mark this deferred" not in reply
+
+    assert "_Deferred on a maintainer's call" in reply
+
+
+def _publish(conn, run_id, sha, *, converse=False):
+    """A `reviews` row for `run_id`; `converse`: a conversation's verdict follow-up."""
+    conn.execute(
+        "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, "
+        "posted_at) VALUES (?,?,?,?,?,?,?,?)",
+        (run_id, "dashpay/platform", 1, sha, "final", 8, "COMMENT", "x"),
+    )
+    if converse:
+        conn.execute(
+            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?, 'converse', 'ok', 'x')",
+            (run_id,),
+        )
+
+
+@pytest.mark.parametrize("case", ["conversation_follow_up", "stood_after_cutoff"])
+def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, case):
+    """The last review before the cutoff being a conversation's verdict follow-up (no
+    verifier set) proves nothing; and a finding deferred long ago that a review carried
+    again after the cutoff was standing, so deferring it now is a new deferral."""
+    bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here")
+    if case == "stood_after_cutoff":
+        _old_deferral(conn, gh, bh, "event")
+    with tx(conn):
+        kv_set(conn, CUTOFF_KEY, "2026-10-01T00:00:00Z")
+        if case == "conversation_follow_up":
+            _publish(conn, _new_run(conn, "2026-09-20T00:00:00Z"), "c" * 40, converse=True)
+        else:
+            f = _blocking()  # carried again, re-hashed (another category): matched by title
+            conn.execute(
+                worker._FINDINGS_INSERT,
+                (
+                    _new_run(conn, "2026-10-05T00:00:00Z"),
+                    "verify2",
+                    "verified",
+                    "0123456789ab",
+                    f["file"],
+                    11,
+                    12,
+                    "blocking",
+                    None,
+                    "bug",
+                    blocker["title"],
+                    "still",
+                ),
+            )
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert not conn.execute("SELECT 1 FROM events WHERE kind='defer.grandfathered'").fetchone()
