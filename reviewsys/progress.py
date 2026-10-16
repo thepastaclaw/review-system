@@ -14,7 +14,7 @@ of every tier (ALL_TIERS) and the estimate says so (`basis`), so the gate commen
 from the run's first minute; the tiers differ several-fold, so the figure moves once the tier
 is known. A run queued by a reply is not estimated before triage unless the caller knows it
 is a review (`conversation=False`): it may still turn out to be a conversation. Nor is an
-audit without a tier (a light audit never records one). A live review is measured against its own path too (`path_of`:
+audit without a tier (a light audit never records one), nor a CI check (ci.py). A live review is measured against its own path too (`path_of`:
 priority or normal), since a priority run's lanes go ahead of normal ones in every model
 pool's line and so spend less of each step waiting for a slot; a path with fewer than
 `MIN_PROFILE_RUNS` recent reviews of the tier borrows the tier's profile of both paths. A
@@ -49,6 +49,7 @@ ORDER = (
     "publish",
     "persistence",
     "converse",
+    "ci_check",
 )
 LABELS = {
     "worktree": "checkout",
@@ -65,6 +66,7 @@ LABELS = {
     "publish": "publish",
     "persistence": "persistence",
     "converse": "conversation",
+    "ci_check": "CI check",
 }
 PROFILE_RUNS = 40
 MIN_PROFILE_RUNS = 5  # below this a tier borrows the all-tier profile
@@ -181,7 +183,11 @@ def estimate(
     if key is None:
         # before triage: reviews of every tier, unless it may be a conversation, or it is an
         # audit (a light one never records a tier and is a fraction of any review)
-        if path == AUDIT or (conversation is None and run[5] == "review_reply"):
+        if (
+            path == AUDIT
+            or (conversation is None and run[5] == "review_reply")
+            or run[5] == "ci_failed"  # a CI check (ci.py) is a lane, not a review
+        ):
             return Estimate(elapsed, None, None)
         key = ALL_TIERS
     cached = (key, None if key == CONVERSATION or path == AUDIT else path)

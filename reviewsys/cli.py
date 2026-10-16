@@ -89,6 +89,8 @@ def cmd_status(args: argparse.Namespace) -> int:
                 f"  run {a['id']} {a['repo']}#{a['number']} {a['sha'][:8]} phase={a['phase']} pid={a['pid']} hb={a['heartbeat_at']}"
             )
         print(status_mod.slots_summary(cfg, slots_mod.capacity(conn, cfg)))
+        cw = snap["ci_watches"]
+        print(f"ci watches: watching={cw.get('watching', 0)} ci_check_queued={cw.get('queued', 0)}")
         w = snap["watchdog"]
         print(
             f"watchdog: stuck={w['stuck']} eligible={w['eligible']} ingest_stale={w['ingest_stale']} median_run_min={snap['median_run_minutes']}"

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import audit, degraded, labels, slots
+from . import audit, ci, degraded, labels, slots
 from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
@@ -97,6 +97,8 @@ class Daemon:
                 Task("queue_comments", cfg.queue_comment_interval_seconds, self.t_queue_comments),
                 Task("labels", 60, self.t_labels),
             ]
+            if cfg.ci.enabled:
+                self.tasks.append(Task("ci_watch", cfg.ci.interval_seconds, self.t_ci_watch))
             if cfg.audit.enabled:
                 self.tasks += [
                     Task("audit_sweep", AUDIT_SWEEP_S, self.t_audit_sweep),
@@ -129,6 +131,9 @@ class Daemon:
 
     def t_labels(self) -> object:
         return labels.reconcile(self.conn, self.gh, repos=self.labels_repos)
+
+    def t_ci_watch(self) -> object:
+        return ci.watch(self.conn, self.cfg, self.gh)
 
     def t_audit_sweep(self) -> object:
         return audit.sweep(self.conn, self.cfg, self.gh)

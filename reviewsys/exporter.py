@@ -434,7 +434,8 @@ def build_path_timing(conn: sqlite3.Connection, cfg: Config, at: datetime) -> di
         "SELECT r.status,r.started_at,r.finished_at,r.deadline_at,r.path,h.queued_at,"
         "(SELECT MAX(o.finished_at) FROM runs o WHERE o.head_id=r.head_id AND o.id<r.id) prev_end "
         "FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.path IN (?,?) AND r.started_at>=? "
-        "AND NOT EXISTS (SELECT 1 FROM steps c WHERE c.run_id=r.id AND c.name='converse')",
+        "AND NOT EXISTS (SELECT 1 FROM steps c WHERE c.run_id=r.id "
+        "AND c.name IN ('converse','ci_check'))",
         (progress.PRIORITY, progress.NORMAL, since),
     ):
         mine = samples[row["path"]]

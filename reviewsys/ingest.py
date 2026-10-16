@@ -68,6 +68,11 @@ def fetch_open_prs(gh: Gh, repo: str) -> list[OpenPr]:
     return out
 
 
+# what re-opens an already-reviewed commit: a reply under a finding, an operator, the
+# priority box (a mention or review request on a reviewed commit changes nothing)
+REOPENING = frozenset({Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST})
+
+
 def enqueue_head(
     conn: sqlite3.Connection,
     cfg: Config,
@@ -82,15 +87,29 @@ def enqueue_head(
 
     Returns one of: created, promoted (existing head got priority), requeued (a finished
     head re-opened by a review reply), noop. Caller holds a transaction.
+
+    `Trigger.CI_FAILED` (a check failed after the head's APPROVE, ci.py) only ever re-opens
+    a finished head for the light CI-check run: it never creates a head or takes one over.
+    A person asking for anything on a head whose CI check is waiting gets their run instead
+    (the CI check is re-queued by its watch if still needed), or, while it runs, right after.
     """
     ts = ts or now()
     existing = conn.execute(
-        "SELECT id, status, priority, queue FROM heads WHERE repo=? AND number=? AND sha=?",
+        "SELECT id, status, priority, queue, trigger FROM heads WHERE repo=? AND number=? AND sha=?",
         (repo, number, sha),
     ).fetchone()
     if existing and existing["queue"] == "audit":
         return "noop"  # the PR merged: its head belongs to the audit queue now
+    if trigger == Trigger.CI_FAILED:
+        # a reviewed head only, at the front of the line like any same-sha follow-up
+        if existing is None or existing["status"] != HeadStatus.DONE:
+            return "noop"
+        return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
     priority = 1 if trigger.priority else 0
+    if existing and existing["trigger"] == Trigger.CI_FAILED.value and trigger in REOPENING:
+        taken = _take_over_ci_check(conn, existing, trigger, ts)
+        if taken:
+            return taken
     if existing:
         if (
             existing["status"] in (HeadStatus.QUEUED, HeadStatus.RUNNING)
@@ -102,27 +121,14 @@ def enqueue_head(
                 (trigger.value, ts, existing["id"]),
             )
             return "promoted"
-        if trigger in (Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST) and existing[
-            "status"
-        ] in (
+        if trigger in REOPENING and existing["status"] in (
             HeadStatus.DONE,
             HeadStatus.FAILED,
             HeadStatus.CLOSED,
         ):
             # same commit, already reviewed: a human answered a finding (or an operator asked),
             # so review it again with the threads in context and answer on them
-            conn.execute(
-                "UPDATE heads SET status='queued', priority=1, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
-                (trigger.value, ts, ts, existing["id"]),
-            )
-            event(
-                conn,
-                "head.requeued",
-                repo=repo,
-                number=number,
-                detail=f"{sha[:8]} re-opened by {trigger.value}",
-            )
-            return "requeued"
+            return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
     # supersede older active heads for this PR
     for row in conn.execute(
@@ -153,6 +159,57 @@ def enqueue_head(
         detail=f"{sha[:8]} trigger={trigger.value} priority={priority}",
     )
     return "created"
+
+
+def _requeue(
+    conn: sqlite3.Connection,
+    head_id: int,
+    repo: str,
+    number: int,
+    sha: str,
+    trigger: Trigger,
+    ts: str,
+) -> str:
+    """Re-open a finished head at the front of the line."""
+    conn.execute(
+        "UPDATE heads SET status='queued', priority=1, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
+        (trigger.value, ts, ts, head_id),
+    )
+    event(
+        conn,
+        "head.requeued",
+        repo=repo,
+        number=number,
+        detail=f"{sha[:8]} re-opened by {trigger.value}",
+    )
+    return "requeued"
+
+
+def _take_over_ci_check(
+    conn: sqlite3.Connection, existing: sqlite3.Row, trigger: Trigger, ts: str
+) -> str | None:
+    """Someone re-opened (`REOPENING`) a head whose CI-check run is queued or running: the CI
+    check must not swallow the request. A queued one becomes their run (the watch queues the
+    CI check again after it, if still needed). A running one hands them the head: a retry of
+    it is their run, and once it ends a re-review is queued (`scheduler.finish_run`); a reply
+    is the exception, which the router holds until the head finishes and then queues as a
+    conversation."""
+    if existing["status"] == HeadStatus.QUEUED:
+        conn.execute(
+            "UPDATE heads SET trigger=?, eligible_at=? WHERE id=?",
+            (trigger.value, ts, existing["id"]),
+        )
+        return "promoted"
+    if existing["status"] == HeadStatus.RUNNING and trigger != Trigger.REVIEW_REPLY:
+        run = conn.execute(
+            "SELECT id FROM runs WHERE head_id=? AND status IN ('spawned','running') ORDER BY id DESC LIMIT 1",
+            (existing["id"],),
+        ).fetchone()
+        if run:
+            conn.execute("UPDATE heads SET trigger=? WHERE id=?", (trigger.value, existing["id"]))
+            kv_set(conn, f"rereview.after_run:{run['id']}", "1")
+            return "promoted"
+    return None
 
 
 # heads the ingest pass creates on its own; every other trigger is someone asking for a review

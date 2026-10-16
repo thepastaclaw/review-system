@@ -457,6 +457,7 @@ def _path_run(
     slot_wait_min=0,
     days_ago=1,
     converse=False,
+    step="",
 ):
     """A head queued `waited_min` before its one run started `days_ago` days before _AT; the
     run took `took_min` and only waited for slots for `slot_wait_min` (its deadline credit)."""
@@ -489,10 +490,10 @@ def _path_run(
             path_of(queue, priority),
         ),
     ).lastrowid
-    if converse:
+    if converse or step:
         conn.execute(
             "INSERT INTO steps (run_id, name, status, started_at) VALUES (?,?,?,?)",
-            (run, "converse", "ok", fmt_ts(started)),
+            (run, step or "converse", "ok", fmt_ts(started)),
         )
     return run
 
@@ -523,10 +524,11 @@ def test_path_timing_splits_priority_from_normal_and_leaves_audits_out(cfg, conn
             _path_run(conn, 10 + i, waited_min=31 + i, took_min=60, slot_wait_min=i)
         for i in range(3):  # priority: waits 1..3 min, reviews 20, 30, 40 min
             _path_run(conn, 30 + i, priority=True, waited_min=1 + i, took_min=20 + 10 * i)
-        # left out: audits, conversations, runs before the window, and still-running runs'
-        # review time (their wait counts: it ended when they started)
+        # left out: audits, conversations, CI checks (ci.py), runs before the window, and
+        # still-running runs' review time (their wait counts: it ended when they started)
         _path_run(conn, 40, queue="audit", waited_min=900, took_min=900)
         _path_run(conn, 41, priority=True, converse=True, waited_min=0, took_min=1)
+        _path_run(conn, 45, priority=True, step="ci_check", waited_min=0, took_min=1)
         _path_run(conn, 42, days_ago=8, waited_min=999, took_min=999)
         _path_run(conn, 43, priority=True, status="running", waited_min=4)
         # a failed run waited too, but its short life is no review time

@@ -194,6 +194,12 @@ class ModelPolicy:
             agent="conversation", model=self.phase2_reviewer.model, effort="high"
         )
 
+    @property
+    def ci_check_lane(self) -> LaneModel:
+        """The lane that judges a CI failure after an APPROVE (ci.py): the cheap side-lane
+        model triage and prep run on, or without triage the selector model at low effort."""
+        return self.triage or LaneModel(agent="ci-check", model=self.selector_model, effort="low")
+
     def tier_effort(self, tier: str) -> TierEffort:
         default = TierEffort(phase1=self.phase1_reviewer.effort, phase2=self.phase2_reviewer.effort)
         return self.tiers.get(tier) or self.tiers.get(self.fallback_tier) or default
@@ -242,6 +248,32 @@ class AuditConfig:
     post_live: bool = False
     # repos never audited (also: never auto-enrolled on merge)
     exclude_repos: tuple[str, ...] = ()
+
+
+# check names (searched case-insensitively) that say nothing about the code: PR title and
+# semantic-commit checks, codecov, policy and hygiene bots, review bots ("CodeRabbit or
+# PastaClaw review"), milestone / label / conflict bookkeeping, CLA and DCO
+DEFAULT_CI_IGNORE = (
+    r"title|semantic|conventional.?commit|codecov|policy|hygiene|coderabbit|pastaclaw|\breview\b"
+    r"|milestone|label|conflict|check.?merge|\bcla\b|\bdco\b"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CiConfig:
+    """CI after the verdict (ci.py): an APPROVE published while code checks were still running
+    is watched until they finish, and a related failure moves it to COMMENT."""
+
+    enabled: bool = True
+    interval_seconds: int = 180  # how often the daemon reads the checks of watched heads
+    watch_hours: int = 12  # how long after the verdict a head is watched
+    # check names (regex, case-insensitive search) that never count: never pending, never a
+    # failure
+    ignore_checks: str = DEFAULT_CI_IGNORE
+
+    @property
+    def ignore_re(self) -> re.Pattern[str]:
+        return re.compile(self.ignore_checks, re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
@@ -331,6 +363,7 @@ class Config:
     extra: dict[str, Any] = field(default_factory=dict)
     audit: AuditConfig = field(default_factory=AuditConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
+    ci: CiConfig = field(default_factory=CiConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -538,6 +571,18 @@ sister_owners = ["dashpay"]
 sister_max_repos = 6
 # wall-clock budget for all of one run's sister checkouts
 sister_budget_minutes = 10
+
+[ci]
+# re-check an APPROVE when CI finishes after it: a failed check that looks related to the
+# change moves the verdict to COMMENT (one follow-up review per commit); a flake posts nothing
+enabled = true
+# how often the daemon reads the checks of watched heads, and for how long after the verdict
+interval_seconds = 180
+watch_hours = 12
+# check names (regex, case-insensitive) that say nothing about the code and never count.
+# Unset = the built-in list (config.DEFAULT_CI_IGNORE: PR title, semantic commits, codecov,
+# policy, review bots, ...)
+# ignore_checks = "title|semantic|codecov|policy|coderabbit|pastaclaw|review"
 """
 
 
@@ -859,6 +904,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         extra={**settings, "additional_repos": s.get("additional_repos", [])},
         audit=_audit(t.get("audit") or {}),
         context=_context(t.get("context") or {}),
+        ci=_ci(t.get("ci") or {}),
     )
 
 
@@ -906,4 +952,18 @@ def _context(c: dict[str, Any]) -> ContextConfig:
         sister_owners=_strings(c.get("sister_owners", d.sister_owners)),
         sister_max_repos=max(0, int(c.get("sister_max_repos", d.sister_max_repos))),
         sister_budget_minutes=max(1, int(c.get("sister_budget_minutes", d.sister_budget_minutes))),
+    )
+
+
+def _ci(c: dict[str, Any]) -> CiConfig:
+    pattern = str(c.get("ignore_checks") or DEFAULT_CI_IGNORE)
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ValueError(f"[ci] ignore_checks is not a valid regex: {exc}") from exc
+    return CiConfig(
+        enabled=bool(c.get("enabled", True)),
+        interval_seconds=max(30, int(c.get("interval_seconds", 180))),
+        watch_hours=max(1, int(c.get("watch_hours", 12))),
+        ignore_checks=pattern,
     )
