@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from reviewsys import converse, publish
+from reviewsys.db import kv_get, kv_set, tx
 from reviewsys.models import ReviewError
 
 HEAD = "a" * 40
@@ -670,3 +671,13 @@ def test_tracking_issue_body_links_the_thread_and_never_pages_anyone():
     assert "PastaClaw finding (blocking): **Check the @​quorum**" in body
     assert "> The quorum is not checked.\n> Second line." in body
     assert "Posted autonomously" not in body
+
+
+def test_the_tracking_cutoff_is_configured_or_recorded_once(conn):
+    assert converse.tracking_required_since(conn, "2026-10-17T00:00:00Z") == "2026-10-17T00:00:00Z"
+    assert kv_get(conn, converse.TRACKING_CUTOFF_KEY) is None  # configured: nothing recorded
+    first = converse.tracking_required_since(conn)
+    assert kv_get(conn, converse.TRACKING_CUTOFF_KEY) == first
+    with tx(conn):
+        kv_set(conn, converse.TRACKING_CUTOFF_KEY, "2026-10-01T00:00:00Z")
+    assert converse.tracking_required_since(conn) == "2026-10-01T00:00:00Z"  # never moves

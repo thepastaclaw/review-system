@@ -3526,10 +3526,107 @@ def test_a_settled_deferral_can_still_have_its_issue_filed(cfg, conn, gh, lanes)
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
 
 
-def _new_run(conn):
+def _new_run(conn, at="2026-09-08T00:00:00Z"):
     (hid,) = conn.execute("SELECT id FROM heads LIMIT 1").fetchone()
     return conn.execute(
         "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
-        "VALUES (?,2,'done','t2','2026-09-08T00:00:00Z','2026-09-08T00:00:00Z')",
-        (hid,),
+        "VALUES (?,2,'done',?,?,?)",
+        (hid, f"t-{at}", at, at),
     ).lastrowid
+
+
+# ---- deferrals accepted under the old rule are grandfathered ----
+
+CUTOFF_KEY = "deferral.tracking_required_since"
+
+
+def _old_deferral(conn, gh, bh, source, *, at="2026-09-08T12:00:00Z"):
+    """Evidence that `bh` was deferred at `at`, as each path left it."""
+    with tx(conn):
+        if source == "concession":  # a conversation's lift, old body format (no link)
+            conn.execute(
+                worker._FINDINGS_INSERT,
+                (
+                    _new_run(conn, at),
+                    "final",
+                    "conceded",
+                    bh,
+                    "f.rs",
+                    11,
+                    11,
+                    "blocking",
+                    None,
+                    "general",
+                    _blocking()["title"],
+                    "INTENTIONALLY_DEFERRED",
+                ),
+            )
+        elif source == "event":  # a thread answer either path recorded
+            detail = json.dumps(
+                {"finding_hash": bh, "status": "INTENTIONALLY_DEFERRED", "action": "replied"}
+            )
+            conn.execute(
+                "INSERT INTO events (ts, kind, repo, number, detail) VALUES (?,?,?,?,?)",
+                (at, "thread.answered", "dashpay/platform", 1, detail),
+            )
+        elif source == "verifier_set":  # a published review that no longer carried it
+            conn.execute(
+                "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, "
+                "event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+                (_new_run(conn, at), "dashpay/platform", 1, "c" * 40, "final", 7, "APPROVE", at),
+            )
+    if source == "bot_answer":  # our own answer on the still-open thread
+        answer = {
+            "id": 950,
+            "author": "thepastaclaw",
+            "body": f"<!-- thepastaclaw-thread-answer v1 sha=x reply=901 finding={bh} -->\n"
+            "**Deferred** (re-reviewed at `cccccccc`): Pre-existing.",
+            "created_at": at,
+            "association": "NONE",
+        }
+        gh.threads[0]["comments"]["nodes"].append(_gql_comment(answer))
+
+
+@pytest.mark.parametrize("source", ["concession", "event", "verifier_set", "bot_answer"])
+def test_a_deferral_from_before_the_cutoff_stays_lifted_on_the_next_push(
+    cfg, conn, gh, lanes, source
+):
+    bh, _ = _full_review_deferral(gh, conn, lanes, "out of scope here")
+    _old_deferral(conn, gh, bh, source)
+    with tx(conn):
+        kv_set(conn, CUTOFF_KEY, "2026-10-01T00:00:00Z")
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    review = gh.posted_reviews[-1]
+    assert review["event"] != "REQUEST_CHANGES" and "Needs a tracking issue" not in review["body"]
+    assert not conn.execute("SELECT 1 FROM events WHERE kind='defer.needs_tracking'").fetchone()
+    old = conn.execute("SELECT detail FROM events WHERE kind='defer.grandfathered'").fetchone()
+    assert old and bh in old["detail"] and "2026-10-01T00:00:00Z" in old["detail"]
+
+
+@pytest.mark.parametrize("source", ["concession", "event", "verifier_set", "bot_answer"])
+def test_an_untracked_deferral_after_the_cutoff_is_held(cfg, conn, gh, lanes, source):
+    bh, _ = _full_review_deferral(gh, conn, lanes, "out of scope here")
+    _old_deferral(conn, gh, bh, source)
+    with tx(conn):
+        kv_set(conn, CUTOFF_KEY, "2026-09-01T00:00:00Z")
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    held = conn.execute("SELECT detail FROM events WHERE kind='defer.needs_tracking'").fetchone()
+    assert held and bh in held["detail"]
+    assert not conn.execute("SELECT 1 FROM events WHERE kind='defer.grandfathered'").fetchone()
+
+
+def test_a_grandfathered_deferral_restated_in_conversation_is_not_re_vetted(cfg, conn, gh, lanes):
+    """On a new head the old deferral was let through; a maintainer asking about it gets the
+    restatement, not a demand for tracking that would claim the finding stands."""
+    bh = _deferral_thread(gh, conn, body="is this still deferred?")
+    _old_deferral(conn, gh, bh, "event")
+    with tx(conn):
+        kv_set(conn, CUTOFF_KEY, "2026-10-01T00:00:00Z")
+    defer = {"status": "INTENTIONALLY_DEFERRED", "reply": "Yes, still deferred."}
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **defer}])
+    reply = gh.replies[-1]["body"]
+    assert reply.startswith(f"<!-- thepastaclaw-thread-answer v1 sha={HEAD}")
+    assert "Yes, still deferred." in reply and "Before I mark this deferred" not in reply

@@ -44,9 +44,11 @@ from __future__ import annotations
 import dataclasses
 import json
 import re
+import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from .db import kv_get, kv_set, now, tx
 from .dedupe import THREAD_STATUS_RE
 from .models import FailKind, ReviewError
 from .prompts import RAW_JSON_CONTRACT, STATIC_REVIEW
@@ -142,6 +144,24 @@ def linked_commits(threads: dict[str, dict[str, Any]]) -> list[dict[str, str]]:
                     }
                 )
     return out
+
+
+TRACKING_CUTOFF_KEY = "deferral.tracking_required_since"
+
+
+def tracking_required_since(conn: sqlite3.Connection, configured: str = "") -> str:
+    """When deferrals started needing tracking: `[deferral] tracking_required_since`, else
+    the first time code with this rule ran (a daemon or worker start), recorded once in kv
+    so every later process agrees. A deferral recorded before it was accepted under the old
+    rule and keeps lifting its finding: existing PRs must not flip to REQUEST_CHANGES."""
+    if configured:
+        return configured
+    with tx(conn):
+        since = kv_get(conn, TRACKING_CUTOFF_KEY)
+        if not since:
+            since = now()
+            kv_set(conn, TRACKING_CUTOFF_KEY, since)
+    return since
 
 
 def maintainer_reply(thread: dict[str, Any]) -> dict[str, Any] | None:

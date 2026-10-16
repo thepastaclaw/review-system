@@ -612,7 +612,18 @@ the worker overrides the verifier (`_hold_untracked_deferrals`, after every veri
 the finding is carried again as it was and keeps counting, its thread is answered
 "**Still applies**: Deferring this needs a tracking issue …", the review body ends with
 "⏸️ Needs a tracking issue before it can be deferred (n): <titles>", and event
-`defer.needs_tracking` names the held hashes. Post-merge audits skip this. Open bot
+`defer.needs_tracking` names the held hashes. Post-merge audits skip this. Deferrals
+accepted under the old rule are grandfathered, so no existing PR flips to REQUEST_CHANGES:
+the rule took effect at `[deferral] tracking_required_since` (ISO-8601, normalized to UTC),
+or, unset, at the first daemon or worker start with this code, recorded once in kv
+`deferral.tracking_required_since` and never moved. A finding deferred before that instant
+keeps lifting without tracking (event `defer.grandfathered`) when any of these predates it:
+a conversation's INTENTIONALLY_DEFERRED `conceded` row (by its run's start; old rows have
+no link line), an INTENTIONALLY_DEFERRED `thread.answered` event from either path, the
+bot's own "**Deferred**" answer on the open thread, or the last review published before
+the cutoff no longer carrying a finding posted earlier (a verifier's deferral on a thread
+nobody replied to leaves no other trace). In a conversation, such a thread is treated as
+settled: a restated deferral is not re-vetted. Open bot
 threads nobody replied to get the same note and resolution when a reviewer explicitly
 withdrew that finding, so a dropped finding never lingers. If the commit already has a
 review (same sha), the standing review is not re-posted; the thread answers are the

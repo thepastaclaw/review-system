@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from reviewsys import config as cfg_mod
 
 
@@ -96,3 +98,21 @@ def test_deferral_filing_allowlist(tmp_path, skills_dir):
     p.write_text(head + '[deferral]\nfile_owners = []\nfile_repos = ["bitcoin/bitcoin"]\n')
     d = cfg_mod.load(p).deferral
     assert d.may_file("bitcoin/bitcoin") and not d.may_file("dashpay/platform")
+
+
+def test_tracking_cutoff_is_normalized_and_validated(tmp_path, skills_dir):
+    p = _write(tmp_path, skills_dir, "max_concurrent = 2")
+    assert cfg_mod.load(p).deferral.tracking_required_since == ""  # unset: recorded at start
+    base = p.read_text()
+    p.write_text(
+        base.replace(
+            "file_repos = []",
+            'file_repos = []\ntracking_required_since = "2026-10-17T02:00:00+02:00"',
+        )
+    )
+    assert cfg_mod.load(p).deferral.tracking_required_since == "2026-10-17T00:00:00Z"
+    p.write_text(
+        base.replace("file_repos = []", 'file_repos = []\ntracking_required_since = "soon"')
+    )
+    with pytest.raises(ValueError, match="tracking_required_since"):
+        cfg_mod.load(p)

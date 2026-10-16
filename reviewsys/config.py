@@ -13,8 +13,11 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 from typing import Any
+
+from .db import fmt_ts, parse_ts
 
 DEFAULT_CONFIG_PATH = Path(
     os.environ.get("REVIEWSYS_CONFIG", "~/.reviewsys/config.toml")
@@ -295,10 +298,16 @@ class DeferralConfig:
     """Where the bot may file the tracking issue a deferred finding needs (converse.py): a
     maintainer who defers a finding and asks the bot to file the follow-up gets it filed only
     in a repository listed here (by owner, or by full name); anywhere else the bot asks the
-    maintainer to file it. Both empty: the bot never files."""
+    maintainer to file it. Both empty: the bot never files.
+
+    `tracking_required_since` (ISO-8601) is when deferrals started needing tracking; one
+    recorded before it was accepted under the old rule and keeps lifting its finding. ""
+    = the first daemon or worker start with this code, recorded once in kv
+    (`converse.tracking_required_since`)."""
 
     file_owners: tuple[str, ...] = ("dashpay",)
     file_repos: tuple[str, ...] = ()
+    tracking_required_since: str = ""
 
     def may_file(self, repo: str) -> bool:
         owner = repo.split("/", 1)[0].lower()
@@ -608,6 +617,9 @@ watch_hours = 12
 # maintainer to file it
 file_owners = ["dashpay"]
 file_repos = []
+# deferrals recorded before this instant were accepted without tracking and keep lifting
+# their finding; unset = when this code first ran (kept in kv deferral.tracking_required_since)
+# tracking_required_since = "2026-10-17T00:00:00Z"
 """
 
 
@@ -996,7 +1008,15 @@ def _ci(c: dict[str, Any]) -> CiConfig:
 
 
 def _deferral(d: dict[str, Any]) -> DeferralConfig:
+    since = str(d.get("tracking_required_since") or "")
+    if since:
+        try:
+            dt = parse_ts(since)
+            since = fmt_ts((dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC))
+        except ValueError as exc:
+            raise ValueError(f"[deferral] tracking_required_since {since!r}: {exc}") from exc
     return DeferralConfig(
         file_owners=tuple(str(x) for x in d.get("file_owners", ("dashpay",)) or ()),
         file_repos=tuple(str(x) for x in d.get("file_repos") or ()),
+        tracking_required_since=since,
     )
