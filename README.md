@@ -238,7 +238,12 @@ build with `sleep 420`.
 
 A reviewer lane must answer one JSON object (`summary`, `findings`, `out_of_scope_findings`,
 `review_phase`, `head_sha`, and on a re-review one `prior_finding_reconciliation` row per
-prior finding); a verifier its own schema (`contract.parse_verifier_output`). Measured
+prior finding). It may add `considered_dismissed[]` (`{area, concern, why_dismissed}`: what
+it looked at and decided was fine, so an audit can tell "never looked" from "looked and
+dismissed"). The key is optional and never fails a lane: `contract.parse_reviewer_output`
+drops non-object entries, keeps at most 30 and cuts each string to 400 characters. The
+verifier is shown it with the rest of the reviewer's output, so it can rescue a dismissal it
+disagrees with; it is never published to GitHub. A verifier its own schema (`contract.parse_verifier_output`). Measured
 2026-09-26..10-01, about a tenth of runs failed, and the output contract was a large part of
 it: a broken answer failed the whole phase (its siblings stopped) and usually the run. Three
 layers now stand between a broken answer and a failed phase, in this order:

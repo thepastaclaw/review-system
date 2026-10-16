@@ -247,8 +247,8 @@ def verifier_prompt(
 
 # The top-level keys of each lane kind's output, for the repair and correction prompts.
 OUTPUT_KEYS = {
-    "reviewer": "summary, findings[], out_of_scope_findings[], review_phase, head_sha, and "
-    "prior_finding_reconciliation[] when prior findings were supplied",
+    "reviewer": "summary, findings[], out_of_scope_findings[], review_phase, head_sha, optionally "
+    "considered_dismissed[], and prior_finding_reconciliation[] when prior findings were supplied",
     "verifier": "summary, review_action, findings[], dropped_findings[], out_of_scope_findings[], "
     "coderabbit_reactions[], prerequisite_adjudications[], adjudication_complete, review_phase, "
     "and prior_finding_reconciliation[] when prior findings were supplied",
