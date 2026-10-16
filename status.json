@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T14:38:00Z",
-  "generated_at": "2026-10-16T14:38:00Z",
+  "data_as_of": "2026-10-16T14:39:01Z",
+  "generated_at": "2026-10-16T14:39:01Z",
   "history": {
     "daily": [
       {
@@ -245,7 +245,7 @@
           },
           "wait": {
             "median_seconds": 11,
-            "n": 493,
+            "n": 494,
             "p90_seconds": 340
           }
         }
@@ -254,6 +254,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "label.synced",
+        "number": 7887,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-10-16T14:38:50Z"
+      },
+      {
+        "detail": "attempt 1 sha=79aa0adf",
+        "kind": "run.spawned",
+        "number": 7887,
+        "repo": "dashpay/dash",
+        "run_id": 5328,
+        "ts": "2026-10-16T14:38:48Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 7887,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-10-16T14:38:48Z"
+      },
+      {
+        "detail": "79aa0adf trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 7887,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-10-16T14:38:36Z"
+      },
       {
         "detail": "ok in 547s",
         "kind": "run.done",
@@ -493,38 +525,6 @@
         "repo": "dashpay/dash",
         "run_id": 5324,
         "ts": "2026-10-16T13:36:56Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7887,
-        "repo": "dashpay/dash",
-        "run_id": 5324,
-        "ts": "2026-10-16T13:36:55Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7887,
-        "repo": "dashpay/dash",
-        "run_id": 5324,
-        "ts": "2026-10-16T13:36:55Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7887,
-        "repo": "dashpay/dash",
-        "run_id": 5324,
-        "ts": "2026-10-16T13:36:55Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7887,
-        "repo": "dashpay/dash",
-        "run_id": 5324,
-        "ts": "2026-10-16T13:36:55Z"
       },
       {
         "detail": null,
@@ -1166,14 +1166,86 @@
       "findings_posted": 4410,
       "reviews": 5798,
       "reviews_imported": 2245,
-      "runs": 5327,
+      "runs": 5328,
       "tokens_in": 42406259858,
       "tokens_out": 567057530,
       "tokens_total": 42973317388
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-16T20:38:48Z",
+        "deadline_in_seconds": 21587,
+        "degraded": false,
+        "elapsed_seconds": 13,
+        "findings": null,
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-16T14:38:48Z",
+        "id": 5328,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 7887,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/dash/pull/7887",
+        "priority": true,
+        "progress": 0.011,
+        "queue": "live",
+        "queued_at": "2026-10-16T14:38:36Z",
+        "remaining_seconds": 1188,
+        "repo": "dashpay/dash",
+        "sha": "79aa0adfc3504190a8fb4772292977e4cb97479c",
+        "started_at": "2026-10-16T14:38:48Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 7,
+            "started_at": "2026-10-16T14:38:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-16T14:38:56Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate change directly modifies persistent storage layout and migration in src/evo/evodb.cpp and src/evo/evodb.h through generation namespaces, rejection cleanup, and crash-resumable journaled promotion into the normal keyspace.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-16T14:38:56Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat: isolate Evo state per chainstate while an AssumeUTXO snapshot is active",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 12
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1189,7 +1261,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1224,10 +1296,11 @@
       "done": 5730,
       "failed": 75,
       "queued": 3,
+      "running": 1,
       "superseded": 2155
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T14:34:44Z",
+    "ingest_last_at": "2026-10-16T14:38:42Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1261,19 +1334,19 @@
       }
     ],
     "last_run_done_at": "2026-10-16T14:27:10Z",
-    "last_run_started_at": "2026-10-16T14:18:03Z",
+    "last_run_started_at": "2026-10-16T14:38:48Z",
     "median_run_minutes": 9.966666666666667,
-    "notify_last_at": "2026-10-16T14:35:47Z",
+    "notify_last_at": "2026-10-16T14:38:42Z",
     "oldest_queued_at": "2026-10-16T14:19:16Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1124,
+        "age_seconds": 1185,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-16T14:49:16Z",
-        "eligible_in_seconds": 676,
+        "eligible_in_seconds": 615,
         "number": 5476,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5476",
@@ -1287,12 +1360,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 667,
+        "age_seconds": 728,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-16T14:56:53Z",
-        "eligible_in_seconds": 1133,
+        "eligible_in_seconds": 1072,
         "number": 1616,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
@@ -1306,12 +1379,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 665,
+        "age_seconds": 726,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-10-16T14:56:55Z",
-        "eligible_in_seconds": 1135,
+        "eligible_in_seconds": 1074,
         "number": 5396,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5396",
@@ -1332,7 +1405,7 @@
       "reviews": 87,
       "tokens": 869952407
     },
-    "ts": "2026-10-16T14:38:00Z",
+    "ts": "2026-10-16T14:39:01Z",
     "typical_minutes_by_tier": {
       "critical": 26.6,
       "low": 7.9,
@@ -1341,9 +1414,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 19.95,
+      "idle_minutes": 0.21666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
