@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T10:58:01Z",
-  "generated_at": "2026-10-16T10:58:01Z",
+  "data_as_of": "2026-10-16T10:59:01Z",
+  "generated_at": "2026-10-16T10:59:01Z",
   "history": {
     "daily": [
       {
@@ -254,6 +254,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7887,
+        "repo": "dashpay/dash",
+        "run_id": 5316,
+        "ts": "2026-10-16T10:58:12Z"
+      },
       {
         "detail": null,
         "kind": "label.synced",
@@ -565,14 +573,6 @@
         "repo": "dashpay/dash",
         "run_id": 5312,
         "ts": "2026-10-16T09:59:07Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 7887,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-16T09:58:51Z"
       }
     ],
     "tokens_by_effort": [
@@ -1178,16 +1178,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-16T16:40:47Z",
-        "deadline_in_seconds": 20566,
+        "deadline_in_seconds": 20506,
         "degraded": false,
-        "elapsed_seconds": 1034,
+        "elapsed_seconds": 1094,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 2
         },
         "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-10-16T10:57:48Z",
+        "heartbeat_at": "2026-10-16T10:58:48Z",
         "id": 5313,
         "lanes": [
           {
@@ -1359,7 +1359,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 59,
+            "since_seconds": 119,
             "state": "running"
           }
         ],
@@ -1368,10 +1368,10 @@
         "phase": "fresh_verify2",
         "pr_url": "https://github.com/dashpay/platform/pull/5288",
         "priority": false,
-        "progress": 0.905,
+        "progress": 0.958,
         "queue": "live",
         "queued_at": "2026-10-16T10:10:00Z",
-        "remaining_seconds": 108,
+        "remaining_seconds": 48,
         "repo": "dashpay/platform",
         "sha": "17b627fa2172995dd9117d88f4484b0d02dc7316",
         "started_at": "2026-10-16T10:40:47Z",
@@ -1483,7 +1483,7 @@
           {
             "info": {},
             "name": "fresh_verify2",
-            "seconds": 59,
+            "seconds": 119,
             "started_at": "2026-10-16T10:57:02Z",
             "status": "running"
           }
@@ -1502,35 +1502,55 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-16T16:57:49Z",
-        "deadline_in_seconds": 21588,
+        "deadline_in_seconds": 21528,
         "degraded": false,
-        "elapsed_seconds": 12,
+        "elapsed_seconds": 72,
         "findings": null,
         "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-10-16T10:57:49Z",
+        "heartbeat_at": "2026-10-16T10:58:49Z",
         "id": 5316,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 49,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 4,
+            "role": "dash-core-commit-history",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 49,
             "state": "running"
           }
         ],
         "number": 7887,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/7887",
         "priority": true,
-        "progress": null,
+        "progress": 0.05,
         "queue": "live",
         "queued_at": "2026-10-16T10:57:46Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1375,
         "repo": "dashpay/dash",
         "sha": "4ec89718d07a138c99684c14afb2468ef8fdc298",
         "started_at": "2026-10-16T10:57:49Z",
@@ -1544,26 +1564,78 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
             "name": "select",
-            "seconds": 4,
+            "seconds": 9,
             "started_at": "2026-10-16T10:57:57Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff changes persistent storage layout and migration in src/evo/evodb.cpp through generation namespaces and crash-resumable journaled promotion, meeting the critical storage-migration bar.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-16T10:57:57Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
+            "name": "context",
             "seconds": 4,
-            "started_at": "2026-10-16T10:57:57Z",
+            "started_at": "2026-10-16T10:58:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "dash-core-commit-history"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "dash-core-commit-history"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 50,
+            "started_at": "2026-10-16T10:58:11Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 50,
+            "started_at": "2026-10-16T10:58:11Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat: isolate Evo state per chainstate while an AssumeUTXO snapshot is active",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 3
       }
     ],
@@ -1631,7 +1703,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1643,7 +1715,7 @@
       },
       {
         "pool": "gpt",
-        "running": 2,
+        "running": 3,
         "slots": 12,
         "waiting": 0
       },
@@ -1662,12 +1734,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1038,
+        "age_seconds": 1098,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-10-16T11:10:43Z",
-        "eligible_in_seconds": 762,
+        "eligible_in_seconds": 702,
         "number": 5396,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5396",
@@ -1688,7 +1760,7 @@
       "reviews": 74,
       "tokens": 588910453
     },
-    "ts": "2026-10-16T10:58:01Z",
+    "ts": "2026-10-16T10:59:01Z",
     "typical_minutes_by_tier": {
       "critical": 26.6,
       "low": 7.9,
@@ -1699,7 +1771,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.2,
+      "idle_minutes": 1.2,
       "ingest_stale": false,
       "stuck": false
     }
