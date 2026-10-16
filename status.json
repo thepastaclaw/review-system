@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T21:25:00Z",
-  "generated_at": "2026-10-16T21:25:00Z",
+  "data_as_of": "2026-10-16T21:26:00Z",
+  "generated_at": "2026-10-16T21:26:00Z",
   "history": {
     "daily": [
       {
@@ -254,6 +254,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1625,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5373,
+        "ts": "2026-10-16T21:25:07Z"
+      },
       {
         "detail": "attempt 1 sha=a558b72d",
         "kind": "run.spawned",
@@ -565,14 +573,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-10-16T20:39:49Z"
-      },
-      {
-        "detail": "ok in 746s",
-        "kind": "run.done",
-        "number": 7568,
-        "repo": "dashpay/dash",
-        "run_id": 5365,
-        "ts": "2026-10-16T20:38:48Z"
       }
     ],
     "tokens_by_effort": [
@@ -1178,35 +1178,35 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-17T03:24:56Z",
-        "deadline_in_seconds": 21596,
+        "deadline_in_seconds": 21536,
         "degraded": false,
-        "elapsed_seconds": 4,
+        "elapsed_seconds": 64,
         "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-10-16T21:24:56Z",
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-10-16T21:25:57Z",
         "id": 5373,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 0,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 53,
             "state": "running"
           }
         ],
         "number": 1625,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1625",
         "priority": false,
-        "progress": 0.005,
+        "progress": 0.137,
         "queue": "live",
         "queued_at": "2026-10-16T20:54:38Z",
-        "remaining_seconds": 784,
+        "remaining_seconds": 401,
         "repo": "dashpay/dash-wallet",
         "sha": "a558b72d9ffaf734ed829e9ff1d7ee6615165c71",
         "started_at": "2026-10-16T21:24:56Z",
@@ -1220,28 +1220,57 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": []
+            },
             "name": "select",
-            "seconds": 0,
+            "seconds": 2,
             "started_at": "2026-10-16T21:25:00Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff is a small, straightforward Android resource and layout change that corrects dark-mode colors and dialog theme inheritance without changing application logic.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 2,
+            "started_at": "2026-10-16T21:25:00Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 0,
-            "started_at": "2026-10-16T21:25:00Z",
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-16T21:25:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 54,
+            "started_at": "2026-10-16T21:25:06Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "low",
         "title": "fix(dashpay): dark mode fixes in the username flow",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1282,7 +1311,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-16T21:23:14Z",
+        "at": "2026-10-16T21:25:22Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1316,7 +1345,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1328,7 +1357,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
@@ -1353,7 +1382,7 @@
       "reviews": 129,
       "tokens": 1454077030
     },
-    "ts": "2026-10-16T21:25:00Z",
+    "ts": "2026-10-16T21:26:00Z",
     "typical_minutes_by_tier": {
       "critical": 25.5,
       "low": 7.3,
@@ -1364,7 +1393,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.06666666666666667,
+      "idle_minutes": 1.0666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
