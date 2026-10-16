@@ -371,7 +371,13 @@ def job_logs(gh: Gh, repo: str, failing: list[dict[str, Any]]) -> list[dict[str,
         if len(out) >= LOG_JOBS:
             break
         try:
-            text = gh.run("api", f"repos/{repo}/actions/jobs/{m.group(1)}/logs", timeout=60)
+            # job logs carry colour codes, and gh refuses to print those without the flag
+            text = gh.run(
+                "api",
+                f"repos/{repo}/actions/jobs/{m.group(1)}/logs",
+                "--allow-escape-sequences",
+                timeout=60,
+            )
         except Exception as exc:
             out.append({"check": str(c["name"]), "error": str(exc)[:200]})
             continue
@@ -380,8 +386,13 @@ def job_logs(gh: Gh, repo: str, failing: list[dict[str, Any]]) -> list[dict[str,
 
 
 def log_tail(text: str) -> str:
-    """The last LOG_LINES lines, without the runner's timestamps and colour codes."""
-    lines = [_LOG_TS_RE.sub("", _ANSI_RE.sub("", ln)) for ln in text.splitlines()[-LOG_LINES:]]
+    """LOG_LINES lines ending at the last `##[error]` annotation (a job's cleanup steps run after
+    it and would otherwise fill the window), or the last LOG_LINES lines when there is none;
+    without the runner's timestamps and colour codes."""
+    raw = text.splitlines()
+    end = next((i + 1 for i in range(len(raw) - 1, -1, -1) if "##[error]" in raw[i]), len(raw))
+    window = raw[max(0, end - LOG_LINES) : end]
+    lines = [_LOG_TS_RE.sub("", _ANSI_RE.sub("", ln)) for ln in window]
     return "\n".join(lines)[-LOG_CHARS:]
 
 

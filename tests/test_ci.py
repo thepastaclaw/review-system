@@ -196,6 +196,16 @@ def test_log_tail_strips_timestamps_and_colour_and_keeps_the_end():
     assert "\x1b" not in tail and "2026-10-16T" not in tail
 
 
+def test_log_tail_ends_at_the_last_error_not_the_cleanup_steps():
+    body = [f"compile step {i}" for i in range(300)] + [
+        "##[error]Process completed with exit code 2."
+    ]
+    cleanup = [f"Post job cleanup {i}" for i in range(250)]
+    tail = ci.log_tail("\n".join(body + cleanup))
+    assert tail.splitlines()[-1] == "##[error]Process completed with exit code 2."
+    assert "Post job cleanup" not in tail and tail.splitlines()[0] == "compile step 101"
+
+
 # ---- registration ----
 
 
