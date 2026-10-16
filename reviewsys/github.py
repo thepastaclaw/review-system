@@ -203,15 +203,18 @@ def evidence_bundle(
 
 def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
     """The head's CI as reviewers need it: check runs and commit statuses, one line each,
-    as of `fetched_at` (the run's later lanes read it hours on). The first 100 of each;
-    `truncated` says when GitHub has more. Best effort: lanes can still ask `gh pr checks`
-    themselves, so a failed read only notes the error instead of failing the run."""
+    as of `fetched_at` (the run's later lanes read it hours on). Every check run (a large
+    matrix passes 100; ci.py must not miss a pending or failed one past the first page) and
+    the first 100 statuses; `truncated` says when GitHub has more. Best effort: lanes can
+    still ask `gh pr checks` themselves, so a failed read only notes the error instead of
+    failing the run."""
     fetched_at = now()
     try:
-        runs = gh.api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100") or {}
+        pages = gh.api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100", paginate=True)
         status = gh.api(f"repos/{repo}/commits/{sha}/status?per_page=100") or {}
     except Exception as exc:  # evidence only, never the run's problem
         return {"error": str(exc)[:300]}
+    pages = [p for p in (pages if isinstance(pages, list) else [pages]) if isinstance(p, dict)]
     checks = [
         {
             "name": r.get("name"),
@@ -219,7 +222,8 @@ def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
             "conclusion": r.get("conclusion"),
             "url": r.get("html_url") or r.get("details_url"),
         }
-        for r in (runs.get("check_runs") or [])
+        for p in pages
+        for r in (p.get("check_runs") or [])
         if isinstance(r, dict)
     ]
     checks += [
@@ -232,7 +236,8 @@ def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
         for st in (status.get("statuses") or [])
         if isinstance(st, dict)
     ]
-    total = int(runs.get("total_count") or 0) + int(status.get("total_count") or 0)
+    runs_total = max((int(p.get("total_count") or 0) for p in pages), default=0)
+    total = runs_total + int(status.get("total_count") or 0)
     return {
         "head_sha": sha,
         "fetched_at": fetched_at,
