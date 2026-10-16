@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T15:24:01Z",
-  "generated_at": "2026-10-16T15:24:01Z",
+  "data_as_of": "2026-10-16T15:25:01Z",
+  "generated_at": "2026-10-16T15:25:01Z",
   "history": {
     "daily": [
       {
@@ -201,7 +201,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 10522,
+        "count": 10524,
         "severity": "blocking"
       },
       {
@@ -235,18 +235,18 @@
         "priority": {
           "duration": {
             "median_seconds": 1348,
-            "n": 425,
+            "n": 424,
             "p90_seconds": 3429
           },
           "slot_wait": {
             "median_seconds": 0,
-            "n": 425,
+            "n": 424,
             "p90_seconds": 85
           },
           "wait": {
             "median_seconds": 11,
-            "n": 483,
-            "p90_seconds": 340
+            "n": 482,
+            "p90_seconds": 339
           }
         }
       },
@@ -602,9 +602,9 @@
       },
       {
         "effort": "high",
-        "lanes": 13063,
-        "tokens_in": 12627607791,
-        "tokens_out": 121059031
+        "lanes": 13065,
+        "tokens_in": 12638436928,
+        "tokens_out": 121140500
       },
       {
         "effort": "low",
@@ -636,11 +636,11 @@
         "tokens_out": 259385
       },
       {
-        "avg_tokens_per_lane": 3375305.0,
-        "lanes": 1101,
+        "avg_tokens_per_lane": 3379077.0,
+        "lanes": 1103,
         "model": "gemini-3.8-flash-high",
-        "tokens_in": 3691941489,
-        "tokens_out": 24269447
+        "tokens_in": 3702770626,
+        "tokens_out": 24350916
       },
       {
         "avg_tokens_per_lane": 922514.0,
@@ -660,8 +660,8 @@
     "tokens_by_run": [
       {
         "run_id": 5332,
-        "tokens_in": 13230325,
-        "tokens_out": 67332
+        "tokens_in": 24059462,
+        "tokens_out": 148801
       },
       {
         "run_id": 5331,
@@ -1160,16 +1160,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11302884,
+      "avg_tokens_per_completed_review": 11305747,
       "completed_reviews": 3811,
-      "findings": 25529,
+      "findings": 25531,
       "findings_posted": 4416,
       "reviews": 5802,
       "reviews_imported": 2245,
       "runs": 5332,
-      "tokens_in": 42507717748,
-      "tokens_out": 567573871,
-      "tokens_total": 43075291619
+      "tokens_in": 42518546885,
+      "tokens_out": 567655340,
+      "tokens_total": 43086202225
     }
   },
   "live": {
@@ -1178,12 +1178,12 @@
         "attempt": 1,
         "author": "llbartekll",
         "deadline_at": "2026-10-16T21:17:04Z",
-        "deadline_in_seconds": 21183,
+        "deadline_in_seconds": 21123,
         "degraded": false,
-        "elapsed_seconds": 417,
+        "elapsed_seconds": 477,
         "findings": null,
-        "heartbeat_age_seconds": 6,
-        "heartbeat_at": "2026-10-16T15:23:55Z",
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-10-16T15:24:56Z",
         "id": 5332,
         "lanes": [
           {
@@ -1245,39 +1245,49 @@
             "status": "completed",
             "tokens_in": 2760177,
             "tokens_out": 12983
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 5345437,
+            "tokens_out": 44427
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "rust-quality",
+            "status": "completed",
+            "tokens_in": 5483700,
+            "tokens_out": 37042
           }
         ],
         "live_lanes": [
           {
             "effort": "high",
             "line_position": null,
-            "model": "gemini-3.8-flash-high",
-            "phase": "phase1",
-            "pool": "gemini",
-            "role": "general",
-            "since_seconds": 391,
-            "state": "running"
-          },
-          {
-            "effort": "high",
-            "line_position": null,
-            "model": "gemini-3.8-flash-high",
-            "phase": "phase1",
-            "pool": "gemini",
-            "role": "rust-quality",
-            "since_seconds": 390,
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 54,
             "state": "running"
           }
         ],
         "number": 5396,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/dashpay/platform/pull/5396",
         "priority": true,
-        "progress": 0.408,
+        "progress": 0.676,
         "queue": "live",
         "queued_at": "2026-10-16T15:16:54Z",
-        "remaining_seconds": 604,
+        "remaining_seconds": 228,
         "repo": "dashpay/platform",
         "sha": "73f1bc9372208ceb69d30f4917389af4f91985c3",
         "started_at": "2026-10-16T15:17:04Z",
@@ -1349,25 +1359,28 @@
                 "rust-quality"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general",
-              "rust-quality"
-            ],
+            "lanes_done": 2,
+            "lanes_left": [],
             "lanes_total": 2,
             "name": "phase1",
-            "seconds": 392,
+            "seconds": 398,
             "started_at": "2026-10-16T15:17:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 54,
+            "started_at": "2026-10-16T15:24:07Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "fix(platform-wallet)!: drain Core balance with restart-safe shielded recovery",
-        "tokens_in": 13230325,
-        "tokens_out": 67332,
+        "tokens_in": 24059462,
+        "tokens_out": 148801,
         "trigger": "review_reply",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 10
@@ -1426,7 +1439,7 @@
       "superseded": 2155
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T15:20:30Z",
+    "ingest_last_at": "2026-10-16T15:24:18Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1436,7 +1449,7 @@
       },
       {
         "pool": "gemini",
-        "running": 2,
+        "running": 0,
         "slots": 6,
         "waiting": 0
       },
@@ -1448,7 +1461,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1462,7 +1475,7 @@
     "last_run_done_at": "2026-10-16T15:09:23Z",
     "last_run_started_at": "2026-10-16T15:17:04Z",
     "median_run_minutes": 11.216666666666667,
-    "notify_last_at": "2026-10-16T15:21:32Z",
+    "notify_last_at": "2026-10-16T15:24:19Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1473,7 +1486,7 @@
       "reviews": 91,
       "tokens": 958628981
     },
-    "ts": "2026-10-16T15:24:01Z",
+    "ts": "2026-10-16T15:25:01Z",
     "typical_minutes_by_tier": {
       "critical": 26.6,
       "low": 7.9,
@@ -1484,7 +1497,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 6.95,
+      "idle_minutes": 7.95,
       "ingest_stale": false,
       "stuck": false
     }
