@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T13:49:00Z",
-  "generated_at": "2026-10-16T13:49:00Z",
+  "data_as_of": "2026-10-16T13:50:00Z",
+  "generated_at": "2026-10-16T13:50:01Z",
   "history": {
     "daily": [
       {
@@ -228,7 +228,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 487,
+            "n": 488,
             "p90_seconds": 1858
           }
         },
@@ -254,6 +254,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7909,
+        "repo": "dashpay/dash",
+        "run_id": 5325,
+        "ts": "2026-10-16T13:49:53Z"
+      },
+      {
+        "detail": "attempt 1 sha=d9d3704a",
+        "kind": "run.spawned",
+        "number": 7909,
+        "repo": "dashpay/dash",
+        "run_id": 5325,
+        "ts": "2026-10-16T13:49:34Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -557,22 +573,6 @@
         "repo": "dashpay/dash",
         "run_id": 5318,
         "ts": "2026-10-16T12:37:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7887,
-        "repo": "dashpay/dash",
-        "run_id": 5318,
-        "ts": "2026-10-16T12:37:49Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7887,
-        "repo": "dashpay/dash",
-        "run_id": 5318,
-        "ts": "2026-10-16T12:37:49Z"
       }
     ],
     "tokens_by_effort": [
@@ -1166,14 +1166,120 @@
       "findings_posted": 4408,
       "reviews": 5795,
       "reviews_imported": 2245,
-      "runs": 5324,
+      "runs": 5325,
       "tokens_in": 42358559506,
       "tokens_out": 566752144,
       "tokens_total": 42925311650
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "UdjinM6",
+        "deadline_at": "2026-10-16T19:49:34Z",
+        "deadline_in_seconds": 21574,
+        "degraded": false,
+        "elapsed_seconds": 26,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-16T13:49:49Z",
+        "id": 5325,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 7,
+            "state": "running"
+          }
+        ],
+        "number": 7909,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash/pull/7909",
+        "priority": false,
+        "progress": 0.035,
+        "queue": "live",
+        "queued_at": "2026-10-16T13:18:55Z",
+        "remaining_seconds": 721,
+        "repo": "dashpay/dash",
+        "sha": "d9d3704aec512781d2546ebddb43ee12925099ff",
+        "started_at": "2026-10-16T13:49:34Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-10-16T13:49:34Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 8,
+            "started_at": "2026-10-16T13:49:40Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change is intricate and spans masternode-list construction and mining package selection, but src/evo/specialtxman.cpp preserves existing consensus transition rules while src/node/miner.cpp changes template assembly rather than consensus rules or another qualifying critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 7,
+            "started_at": "2026-10-16T13:49:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-16T13:49:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 8,
+            "started_at": "2026-10-16T13:49:52Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(mining): build the masternode list incrementally during block assembly",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1839
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1189,7 +1295,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1203,7 +1309,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-16T13:46:29Z",
+        "at": "2026-10-16T13:49:07Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1223,11 +1329,11 @@
       "closed": 393,
       "done": 5727,
       "failed": 75,
-      "queued": 1,
+      "running": 1,
       "superseded": 2155
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T13:45:41Z",
+    "ingest_last_at": "2026-10-16T13:49:34Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1237,7 +1343,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1261,32 +1367,12 @@
       }
     ],
     "last_run_done_at": "2026-10-16T13:36:56Z",
-    "last_run_started_at": "2026-10-16T13:27:44Z",
+    "last_run_started_at": "2026-10-16T13:49:34Z",
     "median_run_minutes": 9.55,
-    "notify_last_at": "2026-10-16T13:47:50Z",
-    "oldest_queued_at": "2026-10-16T13:18:55Z",
+    "notify_last_at": "2026-10-16T13:49:55Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1805,
-        "attempts": 0,
-        "author": "UdjinM6",
-        "eligible": true,
-        "eligible_at": "2026-10-16T13:48:55Z",
-        "eligible_in_seconds": 0,
-        "number": 7909,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash/pull/7909",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/7909#issuecomment-6214993392",
-        "priority": false,
-        "queued_at": "2026-10-16T13:18:55Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash",
-        "sha": "d9d3704aec512781d2546ebddb43ee12925099ff",
-        "title": "feat(mining): build the masternode list incrementally during block assembly",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-16",
       "failed": 0,
@@ -1294,7 +1380,7 @@
       "reviews": 84,
       "tokens": 821946669
     },
-    "ts": "2026-10-16T13:49:00Z",
+    "ts": "2026-10-16T13:50:00Z",
     "typical_minutes_by_tier": {
       "critical": 27.1,
       "low": 7.9,
@@ -1303,9 +1389,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 21.266666666666666,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.45,
       "ingest_stale": false,
       "stuck": false
     }
