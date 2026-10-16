@@ -9,6 +9,7 @@ import time
 from datetime import timedelta
 from pathlib import Path
 
+from . import sister
 from .config import Config
 from .db import event, fmt_ts, now_dt, tx
 from .lane import claude_projects_dir, project_slug
@@ -30,6 +31,35 @@ def _dir_size(path: Path) -> int:
         except OSError:
             pass
     return total
+
+
+def _checkouts(worktrees_dir: Path) -> list[tuple[float, Path]]:
+    """(mtime, path) of what gc may remove from the worktrees dir, oldest first: each run's
+    worktree and, one level down, each shared sister checkout (sister.py), never the
+    `sister/` directory as a whole. One that vanishes while listed (a worker removed or moved
+    it) is left out."""
+    paths: list[Path] = []
+    for p in worktrees_dir.iterdir():
+        if p.name == sister.SISTER_DIR and p.is_dir():
+            paths += p.iterdir()
+        else:
+            paths.append(p)
+    out = []
+    for p in paths:
+        with contextlib.suppress(OSError):
+            out.append((p.stat().st_mtime, p))
+    return sorted(out)
+
+
+def _remove(
+    conn: sqlite3.Connection, cfg: Config, path: Path, *, older_than: float | None = None
+) -> bool:
+    """Remove a run's worktree, or a shared sister checkout no active run uses (checked again
+    under its repo's lock, see `sister.remove_unused`). True when it was removed."""
+    if path.parent == sister.sister_root(cfg):
+        return sister.remove_unused(cfg, conn, path, older_than=older_than)
+    shutil.rmtree(path, ignore_errors=True)
+    return True
 
 
 def sweep_lane_sessions(conn: sqlite3.Connection) -> int:
@@ -76,6 +106,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
         "inbox_pruned": 0,
         "silence_pruned": 0,
         "lane_sessions_removed": 0,
+        "sister_leases_released": 0,
     }
     active_wts = {
         r["worktree"]
@@ -83,28 +114,28 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             "SELECT worktree FROM runs WHERE status IN ('spawned','running') AND worktree IS NOT NULL"
         )
     }
+    active_wts |= sister.paths_in_use(conn)  # shared checkouts a run in flight reads
     # 0 keeps run artifacts forever; the conversation silence markers below still expire
     keep_runs = cfg.artifact_retention_days <= 0
     cutoff = now_dt() - timedelta(days=cfg.artifact_retention_days or SILENCE_RETENTION_DAYS)
-    # worktrees not tied to an active run and older than 24h
+    # worktrees not tied to an active run and older than 24h (a sister checkout's mtime is
+    # refreshed by every run that uses it)
     if cfg.worktrees_dir.exists():
-        for wt in sorted(cfg.worktrees_dir.iterdir(), key=lambda p: p.stat().st_mtime):
-            if str(wt) in active_wts:
-                continue
-            age_h = (time.time() - wt.stat().st_mtime) / 3600
-            if age_h > 24:
-                shutil.rmtree(wt, ignore_errors=True)
+        day_ago = time.time() - 24 * 3600
+        for mtime, wt in _checkouts(cfg.worktrees_dir):
+            removable = str(wt) not in active_wts and mtime < day_ago
+            if removable and _remove(conn, cfg, wt, older_than=day_ago):
                 stats["worktrees_removed"] += 1
         # budget enforcement (LRU)
         budget = cfg.worktree_budget_gb * 1024**3
-        entries = [p for p in cfg.worktrees_dir.iterdir() if str(p) not in active_wts]
-        entries.sort(key=lambda p: p.stat().st_mtime)
+        entries = [wt for _, wt in _checkouts(cfg.worktrees_dir) if str(wt) not in active_wts]
         total = _dir_size(cfg.worktrees_dir)
         while total > budget and entries:
             victim = entries.pop(0)
-            total -= _dir_size(victim)
-            shutil.rmtree(victim, ignore_errors=True)
-            stats["worktrees_removed"] += 1
+            size = _dir_size(victim)
+            if _remove(conn, cfg, victim):
+                total -= size
+                stats["worktrees_removed"] += 1
     stats["lane_sessions_removed"] = sweep_lane_sessions(conn)
     if cfg.runs_dir.exists() and not keep_runs:
         for rd in cfg.runs_dir.iterdir():
@@ -136,5 +167,6 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             (fmt_ts(cutoff),),
         )
         stats["silence_pruned"] = c.rowcount
+        stats["sister_leases_released"] = sister.release_finished(conn)
         event(conn, "gc.run", detail=str(stats))
     return stats

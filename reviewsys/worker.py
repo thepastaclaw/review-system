@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from . import audit, converse, degraded, github, labels, lanepool, publish, quota
+from . import audit, converse, degraded, github, labels, lanepool, publish, quota, sister
 from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
@@ -953,11 +953,48 @@ def step_context(ctx: RunContext) -> None:
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
     ctx.prior_threads = {h: t for h, t in replied.items() if h in seen}
+    if not ctx.conversation:  # the conversation lane is given none of it
+        _review_context(ctx)
     (ctx.run_dir / "evidence.json").write_text(
         json.dumps(
             {"evidence": ctx.evidence, "coderabbit": ctx.coderabbit, "prior": ctx.prior}, indent=1
         )
     )
+
+
+def _review_context(ctx: RunContext) -> None:
+    """Evidence from beyond the PR's own range: the sister repos it builds against, checked
+    out for the lanes (`sister_repos`, sister.py). Best effort: what cannot be had is
+    recorded in the evidence and an event, never a failure."""
+    assert ctx.meta and ctx.worktree
+    try:
+        pins = sister.lock_pins(ctx.cfg, ctx.repo, ctx.worktree)
+    except Exception as exc:  # evidence only; the configured sister repos still come
+        pins = {}
+        _context_event(ctx, "context.sister_failed", f"Cargo.lock: {type(exc).__name__}: {exc}")
+    try:
+        repos = sister.gather(
+            ctx.cfg,
+            ctx.conn,
+            repo=ctx.repo,
+            run_id=ctx.run_id,
+            pins=pins,
+            should_stop=ctx.cancel_flag.is_set,
+        )
+    except Exception as exc:  # it records its own failures; this is a bug's safety net
+        repos = []
+        _context_event(ctx, "context.sister_failed", f"{type(exc).__name__}: {exc}")
+    ctx.check_cancel()
+    for r in repos:
+        if r.get("error"):
+            _context_event(ctx, "context.sister_failed", f"{r['repo']}: {r['error']}")
+    if repos:
+        ctx.evidence["sister_repos"] = repos
+
+
+def _context_event(ctx: RunContext, kind: str, detail: str) -> None:
+    with tx(ctx.conn):
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
 
 
 def _run_lane(
@@ -1068,6 +1105,7 @@ def _run_checked_lane[T](
             prompt=prompt,
             cwd=ctx.worktree,
             add_dir=ctx.run_dir,
+            extra_dirs=sister.lane_dirs(ctx.evidence),
             timeout_seconds=ctx.cfg.lane_timeout_minutes * 60,
             claude_bin=ctx.cfg.claude_bin,
             max_budget_usd=ctx.cfg.lane_budget_usd,

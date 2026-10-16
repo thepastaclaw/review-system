@@ -68,6 +68,8 @@ class LaneSpec:
     pool: str | None = None
     # macOS sandbox profile the lane runs under ("" = none); see `exec_deny_profile`
     sandbox_profile: str = ""
+    # more directories the lane may read beside `cwd` and `add_dir` (sister repo checkouts)
+    extra_dirs: tuple[Path, ...] = ()
     # Correction turns (see `run_with_corrections`). `session_id` (a UUID) makes the lane keep
     # its Claude Code session under that id instead of `--no-session-persistence`; with
     # `resume` the lane continues that session, `prompt` being the next user turn. `check` looks
@@ -454,6 +456,7 @@ def argv_for(spec: LaneSpec) -> list[str]:
         spec.effort,
         "--add-dir",
         str(spec.add_dir),
+        *(str(d) for d in spec.extra_dirs),
         "--output-format",
         "json",
         *session_args(spec),

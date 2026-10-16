@@ -10,6 +10,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -207,6 +208,9 @@ class RepoConfig:
     # False: reviews of this repo skip Phase 1 and go straight to Phase 2 (measured to add
     # next to nothing there); disclosed in the review like the backlog rule
     phase1: bool = True
+    # other repos (`owner/name`) whose default branch the review context checks out beside
+    # the ones the repo's Cargo.lock pins (see sister.py), e.g. platform -> dashpay/tenderdash
+    sister_repos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +242,20 @@ class AuditConfig:
     post_live: bool = False
     # repos never audited (also: never auto-enrolled on merge)
     exclude_repos: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ContextConfig:
+    """Review context beyond the PR itself, gathered by the context step: sister repositories
+    checked out read-only for the lanes (sister.py). Best effort, never a run's failure."""
+
+    # Cargo.lock git dependencies from these GitHub owners are sister repos (case-insensitive)
+    sister_owners: tuple[str, ...] = ("dashpay",)
+    # sister repos checked out per run (configured ones first, then by pinned packages);
+    # 0 = none. Repos over the cap are listed without a checkout
+    sister_max_repos: int = 6
+    # wall-clock bound on all sister checkouts of one run (a first clone is the slow part)
+    sister_budget_minutes: int = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -312,6 +330,7 @@ class Config:
     policy: ModelPolicy
     extra: dict[str, Any] = field(default_factory=dict)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    context: ContextConfig = field(default_factory=ContextConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -509,6 +528,16 @@ report_branch = "main"
 # for merges seen live: post a "Post-merge review" comment and one issue per PR with blockers
 post_live = false
 exclude_repos = []
+
+[context]
+# sister repositories checked out read-only for the lanes: git dependencies in the PR's
+# Cargo.lock from these GitHub owners (at the pinned commit and the default branch's tip),
+# plus a repo's `sister_repos` in the skills config.json (default branch only)
+sister_owners = ["dashpay"]
+# per run, configured repos first; 0 = no sister checkouts
+sister_max_repos = 6
+# wall-clock budget for all of one run's sister checkouts
+sister_budget_minutes = 10
 """
 
 
@@ -642,6 +671,7 @@ def load_skills_config(
             enabled=bool(r.get("enabled", False)),
             disabled_reason=r.get("disabled_reason"),
             phase1=bool(r.get("phase1", True)),
+            sister_repos=_sister_repos(r.get("sister_repos")),
         )
         for r in raw["repos"]
     )
@@ -828,6 +858,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         policy=policy,
         extra={**settings, "additional_repos": s.get("additional_repos", [])},
         audit=_audit(t.get("audit") or {}),
+        context=_context(t.get("context") or {}),
     )
 
 
@@ -850,4 +881,29 @@ def _audit(a: dict[str, Any]) -> AuditConfig:
         report_branch=str(a.get("report_branch") or "main"),
         post_live=bool(a.get("post_live", False)),
         exclude_repos=tuple(str(x) for x in a.get("exclude_repos") or ()),
+    )
+
+
+def _strings(value: Any) -> tuple[str, ...]:
+    """A list of strings; one written as a bare string is one entry, not one per letter."""
+    return (str(value),) if isinstance(value, str) else tuple(str(x) for x in value or ())
+
+
+_REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def _sister_repos(value: Any) -> tuple[str, ...]:
+    repos = _strings(value)
+    for r in repos:
+        if not _REPO_NAME.match(r):
+            raise ValueError(f"sister_repos entry {r!r}: need owner/name")
+    return repos
+
+
+def _context(c: dict[str, Any]) -> ContextConfig:
+    d = ContextConfig()
+    return ContextConfig(
+        sister_owners=_strings(c.get("sister_owners", d.sister_owners)),
+        sister_max_repos=max(0, int(c.get("sister_max_repos", d.sister_max_repos))),
+        sister_budget_minutes=max(1, int(c.get("sister_budget_minutes", d.sister_budget_minutes))),
     )
