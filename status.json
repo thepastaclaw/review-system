@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T23:01:01Z",
-  "generated_at": "2026-10-16T23:01:01Z",
+  "data_as_of": "2026-10-16T23:02:01Z",
+  "generated_at": "2026-10-16T23:02:01Z",
   "history": {
     "daily": [
       {
@@ -244,9 +244,9 @@
             "p90_seconds": 89
           },
           "wait": {
-            "median_seconds": 10,
-            "n": 472,
-            "p90_seconds": 328
+            "median_seconds": 9,
+            "n": 473,
+            "p90_seconds": 327
           }
         }
       },
@@ -254,6 +254,46 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 771,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5385,
+        "ts": "2026-10-16T23:02:01Z"
+      },
+      {
+        "detail": "attempt 1 sha=ac56aa3c",
+        "kind": "run.spawned",
+        "number": 771,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5385,
+        "ts": "2026-10-16T23:01:50Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 771,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-16T23:01:50Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 771,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-16T23:01:49Z"
+      },
+      {
+        "detail": "ac56aa3c trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 771,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-16T23:01:49Z"
+      },
       {
         "detail": "ok in 570s",
         "kind": "run.done",
@@ -533,46 +573,6 @@
         "repo": "dashpay/dash",
         "run_id": 5375,
         "ts": "2026-10-16T22:26:05Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 7917,
-        "repo": "dashpay/dash",
-        "run_id": 5375,
-        "ts": "2026-10-16T22:26:03Z"
-      },
-      {
-        "detail": "attempt 1 sha=849f036e",
-        "kind": "run.spawned",
-        "number": 5396,
-        "repo": "dashpay/platform",
-        "run_id": 5379,
-        "ts": "2026-10-16T22:25:45Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch_dropped",
-        "number": 767,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5378,
-        "ts": "2026-10-16T22:21:49Z"
-      },
-      {
-        "detail": "dbdcdb6d trigger=new_pr priority=0",
-        "kind": "head.queued",
-        "number": 771,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-16T22:21:49Z"
-      },
-      {
-        "detail": "ok in 112s",
-        "kind": "run.done",
-        "number": 767,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5378,
-        "ts": "2026-10-16T22:18:31Z"
       }
     ],
     "tokens_by_effort": [
@@ -1166,14 +1166,99 @@
       "findings_posted": 4453,
       "reviews": 5851,
       "reviews_imported": 2245,
-      "runs": 5384,
+      "runs": 5385,
       "tokens_in": 43088839501,
       "tokens_out": 570891035,
       "tokens_total": 43659730536
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-17T05:01:50Z",
+        "deadline_in_seconds": 21589,
+        "degraded": false,
+        "elapsed_seconds": 11,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-16T23:01:50Z",
+        "id": 5385,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 771,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/771",
+        "priority": true,
+        "progress": 0.022,
+        "queue": "live",
+        "queued_at": "2026-10-16T23:01:48Z",
+        "remaining_seconds": 480,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "ac56aa3cd6007f132ed9f66ce52232f72d783caa",
+        "started_at": "2026-10-16T23:01:50Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-16T23:01:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-16T23:01:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, cross-cutting diff directly changes private-key handling and session persistence in lib/secure-storage.ts and vendor/platform-auth/src/core/controller.ts, removes cryptographic vault and key-backup paths, and changes identity-key validation in lib/auth/login-key.ts.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-16T23:01:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-16T23:01:58Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-16T23:02:01Z",
+            "status": "skipped"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(auth): release sign-in: private key first, no password or vault (WP6)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1189,7 +1274,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1207,7 +1292,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-16T22:59:08Z",
+        "at": "2026-10-16T23:01:24Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1228,6 +1313,7 @@
       "done": 5779,
       "failed": 75,
       "queued": 3,
+      "running": 1,
       "superseded": 2164
     },
     "ingest_error_streak": 0,
@@ -1265,19 +1351,19 @@
       }
     ],
     "last_run_done_at": "2026-10-16T23:00:05Z",
-    "last_run_started_at": "2026-10-16T22:51:54Z",
+    "last_run_started_at": "2026-10-16T23:01:50Z",
     "median_run_minutes": 10.783333333333333,
-    "notify_last_at": "2026-10-16T22:59:35Z",
+    "notify_last_at": "2026-10-16T23:01:44Z",
     "oldest_queued_at": "2026-10-16T22:44:28Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 993,
+        "age_seconds": 1053,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-16T23:14:28Z",
-        "eligible_in_seconds": 807,
+        "eligible_in_seconds": 747,
         "number": 772,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/772",
@@ -1291,12 +1377,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 319,
+        "age_seconds": 379,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-16T23:25:42Z",
-        "eligible_in_seconds": 1481,
+        "eligible_in_seconds": 1421,
         "number": 1221,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1221",
@@ -1310,12 +1396,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 90,
+        "age_seconds": 150,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-10-16T23:29:31Z",
-        "eligible_in_seconds": 1710,
+        "eligible_in_seconds": 1650,
         "number": 5396,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5396",
@@ -1336,7 +1422,7 @@
       "reviews": 141,
       "tokens": 1538739247
     },
-    "ts": "2026-10-16T23:01:01Z",
+    "ts": "2026-10-16T23:02:01Z",
     "typical_minutes_by_tier": {
       "critical": 25.0,
       "low": 7.8,
@@ -1345,9 +1431,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 9.116666666666667,
+      "idle_minutes": 0.18333333333333332,
       "ingest_stale": false,
       "stuck": false
     }
