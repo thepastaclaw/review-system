@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T23:56:01Z",
-  "generated_at": "2026-10-16T23:56:01Z",
+  "data_as_of": "2026-10-16T23:57:01Z",
+  "generated_at": "2026-10-16T23:57:01Z",
   "history": {
     "daily": [
       {
@@ -228,7 +228,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 482,
+            "n": 483,
             "p90_seconds": 1857
           }
         },
@@ -254,6 +254,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=b3a06b18",
+        "kind": "run.spawned",
+        "number": 5479,
+        "repo": "dashpay/platform",
+        "run_id": 5396,
+        "ts": "2026-10-16T23:56:36Z"
+      },
       {
         "detail": "ok in 314s",
         "kind": "run.done",
@@ -565,14 +573,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5390,
         "ts": "2026-10-16T23:29:03Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 772,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-16T23:29:02Z"
       }
     ],
     "tokens_by_effort": [
@@ -1166,14 +1166,94 @@
       "findings_posted": 4463,
       "reviews": 5861,
       "reviews_imported": 2245,
-      "runs": 5395,
+      "runs": 5396,
       "tokens_in": 43150507440,
       "tokens_out": 571320247,
       "tokens_total": 43721827687
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-17T05:56:36Z",
+        "deadline_in_seconds": 21575,
+        "degraded": false,
+        "elapsed_seconds": 25,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-16T23:56:51Z",
+        "id": 5396,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5479,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5479",
+        "priority": false,
+        "progress": 0.028,
+        "queue": "live",
+        "queued_at": "2026-10-16T23:26:04Z",
+        "remaining_seconds": 883,
+        "repo": "dashpay/platform",
+        "sha": "b3a06b187d97eea9fee3d9b2135f5cfe669b68d1",
+        "started_at": "2026-10-16T23:56:36Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 11,
+            "started_at": "2026-10-16T23:56:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 9,
+            "started_at": "2026-10-16T23:56:47Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change intricately couples durable backfill coverage, cursor rewinds, buffered persistence and restart recovery while changing storage schema in migrations/V019__dashpay_backfill.rs and cursor semantics in core_state.rs::upsert_sync_state.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-16T23:56:48Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-16T23:56:57Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(platform-wallet-storage): persist DashPay backfill coverage and outbound-account markers",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1832
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1189,7 +1269,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1207,7 +1287,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-16T23:53:27Z",
+        "at": "2026-10-16T23:56:06Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1227,11 +1307,11 @@
       "closed": 394,
       "done": 5789,
       "failed": 75,
-      "queued": 1,
+      "running": 1,
       "superseded": 2164
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T23:52:44Z",
+    "ingest_last_at": "2026-10-16T23:56:32Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1265,32 +1345,12 @@
       }
     ],
     "last_run_done_at": "2026-10-16T23:54:56Z",
-    "last_run_started_at": "2026-10-16T23:49:41Z",
+    "last_run_started_at": "2026-10-16T23:56:36Z",
     "median_run_minutes": 6.833333333333333,
-    "notify_last_at": "2026-10-16T23:54:07Z",
-    "oldest_queued_at": "2026-10-16T23:26:04Z",
+    "notify_last_at": "2026-10-16T23:56:32Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1797,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-10-16T23:56:04Z",
-        "eligible_in_seconds": 3,
-        "number": 5479,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5479",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5479#issuecomment-6226615413",
-        "priority": false,
-        "queued_at": "2026-10-16T23:26:04Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "b3a06b187d97eea9fee3d9b2135f5cfe669b68d1",
-        "title": "feat(platform-wallet-storage): persist DashPay backfill coverage and outbound-account markers",
-        "trigger": "new_pr"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-16",
       "failed": 1,
@@ -1298,7 +1358,7 @@
       "reviews": 152,
       "tokens": 1600836398
     },
-    "ts": "2026-10-16T23:56:01Z",
+    "ts": "2026-10-16T23:57:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.6,
       "low": 7.8,
@@ -1307,9 +1367,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 6.333333333333333,
+      "idle_minutes": 0.4166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
