@@ -996,7 +996,9 @@ else `~/.claude`).
 
 `[retention] artifact_days` (0 = keep run artifacts forever, the default: they are the
 only per-lane record for later analysis; with lane transcripts a few hundred MB a day),
-`worktree_budget_gb`.
+`[retention] event_days` (0 = keep the `events` table forever, the default: thread outcomes
+and verdict updates exist nowhere else; a positive value makes `gc` delete older events;
+handled inbox rows are still pruned after 30 days), `worktree_budget_gb`.
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
