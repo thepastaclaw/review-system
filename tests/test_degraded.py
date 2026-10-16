@@ -10,7 +10,7 @@ import urllib.error
 import pytest
 
 from reviewsys import config as cfg_mod
-from reviewsys import degraded, worker
+from reviewsys import degraded, labels, worker
 from reviewsys.daemon import Daemon
 from reviewsys.db import kv_get, kv_set, tx
 from reviewsys.github import gate_body
@@ -676,6 +676,8 @@ def test_degraded_rereview_never_retracts_a_full_strength_approval(
     assert f"## {DEGRADED_BADGE} — Re-review — Final validation" in gh.posted_reviews[-1]["body"]
     kinds = [r["kind"] for r in conn.execute("SELECT kind FROM events WHERE run_id=?", (rid,))]
     assert "review.verdict_kept" in kinds and "review.verdict_updated" not in kinds
+    # our record keeps the APPROVE too, which the verdict label and the CI watch read
+    assert labels.latest_verdict(conn, "dashpay/platform", 1, HEAD) == "APPROVE"
     # a degraded re-review that DOES find a blocker still corrects the verdict
     blocker = {
         "file": "f.rs",

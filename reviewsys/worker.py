@@ -247,6 +247,9 @@ class RunContext:
     phase2_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
     verify1: VerifierOutput | None = None
     verify2: VerifierOutput | None = None
+    # the standing verdict a degraded same-sha re-review left in place (`_verdict_update`):
+    # recorded again after its informational summary, whose canonical event is only COMMENT
+    kept_verdict: str = ""
     reviewers: list[dict[str, Any]] = field(default_factory=list)
     lane_runner: LaneRunner = run_claude_lane
     dry_run: bool = False
@@ -1829,6 +1832,10 @@ def step_publish(
             force_comment=True,
         )
         _record_publication(ctx, phase, model, result, verified)
+        if ctx.kept_verdict:
+            # the APPROVE still stands on GitHub: the label and the CI watch (ci.py) read
+            # our record, which the summary's COMMENT just overwrote
+            _record_verdict(ctx, phase, verified, ctx.kept_verdict)
         return result
     model = _build_review(
         ctx,
@@ -1955,6 +1962,7 @@ def _verdict_update(
                 run_id=ctx.run_id,
                 detail=f"APPROVED stands on {ctx.sha[:8]}: degraded re-review found no blockers",
             )
+        ctx.kept_verdict = "APPROVE"
         return None
     lifted = [
         str(r.get("finding_hash"))
