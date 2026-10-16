@@ -98,6 +98,9 @@ def test_deferral_filing_allowlist(tmp_path, skills_dir):
     p.write_text(head + '[deferral]\nfile_owners = []\nfile_repos = ["bitcoin/bitcoin"]\n')
     d = cfg_mod.load(p).deferral
     assert d.may_file("bitcoin/bitcoin") and not d.may_file("dashpay/platform")
+    # a bare string is one owner, not one per letter
+    p.write_text(head + '[deferral]\nfile_owners = "dashpay"\n')
+    assert cfg_mod.load(p).deferral.file_owners == ("dashpay",)
 
 
 def test_tracking_cutoff_is_normalized_and_validated(tmp_path, skills_dir):

@@ -1017,7 +1017,7 @@ def _deferral(d: dict[str, Any]) -> DeferralConfig:
         except ValueError as exc:
             raise ValueError(f"[deferral] tracking_required_since {since!r}: {exc}") from exc
     return DeferralConfig(
-        file_owners=tuple(str(x) for x in d.get("file_owners", ("dashpay",)) or ()),
-        file_repos=tuple(str(x) for x in d.get("file_repos") or ()),
+        file_owners=_strings(d.get("file_owners", ("dashpay",))),
+        file_repos=_strings(d.get("file_repos")),
         tracking_required_since=since,
     )
