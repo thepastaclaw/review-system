@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from . import audit, converse, degraded, github, labels, lanepool, publish, quota
+from . import audit, converse, degraded, drift, github, labels, lanepool, publish, quota, sister
 from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
@@ -210,6 +210,7 @@ class RunContext:
     mirror: Path | None = None
     meta: github.PrMeta | None = None
     base_sha: str = ""
+    merge_base: str | None = None  # of the head with the live base branch (not on an audit)
     selection: list[str] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
     triage: Triage | None = None
@@ -685,6 +686,7 @@ def step_worktree(ctx: RunContext) -> None:
     _gate_comment(ctx, "in_progress")
     ctx.worktree = _checkout_head(ctx)
     base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
+    ctx.merge_base = base
     ctx.coverage_from = base or f"{ctx.sha}~1"
     _record_worktree(ctx)
 
@@ -953,11 +955,58 @@ def step_context(ctx: RunContext) -> None:
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
     ctx.prior_threads = {h: t for h, t in replied.items() if h in seen}
+    if not ctx.conversation:  # the conversation lane is given none of it
+        _review_context(ctx)
     (ctx.run_dir / "evidence.json").write_text(
         json.dumps(
             {"evidence": ctx.evidence, "coderabbit": ctx.coderabbit, "prior": ctx.prior}, indent=1
         )
     )
+
+
+def _review_context(ctx: RunContext) -> None:
+    """Evidence from beyond the PR's own range: the sister repos it builds against, checked
+    out for the lanes (`sister_repos`, sister.py), and how the base branch moved since it
+    branched (`base_drift`, drift.py; not on an audit, whose PR is in the base by now). Best
+    effort: what cannot be had is recorded in the evidence and an event, never a failure."""
+    assert ctx.meta and ctx.worktree
+    try:
+        pins = sister.lock_pins(ctx.cfg, ctx.repo, ctx.worktree)
+    except Exception as exc:  # evidence only; the configured sister repos still come
+        pins = {}
+        _context_event(ctx, "context.sister_failed", f"Cargo.lock: {type(exc).__name__}: {exc}")
+    try:
+        repos = sister.gather(
+            ctx.cfg,
+            ctx.conn,
+            repo=ctx.repo,
+            run_id=ctx.run_id,
+            pins=pins,
+            should_stop=ctx.cancel_flag.is_set,
+        )
+    except Exception as exc:  # it records its own failures; this is a bug's safety net
+        repos = []
+        _context_event(ctx, "context.sister_failed", f"{type(exc).__name__}: {exc}")
+    ctx.check_cancel()
+    for r in repos:
+        if r.get("error"):
+            _context_event(ctx, "context.sister_failed", f"{r['repo']}: {r['error']}")
+    if repos:
+        ctx.evidence["sister_repos"] = repos
+    if ctx.is_audit or not ctx.merge_base or not ctx.meta.base_ref:
+        return
+    try:
+        bd = drift.base_drift(ctx.worktree, ctx.meta.base_ref, ctx.merge_base, ctx.sha)
+    except Exception as exc:  # evidence only, never the run's problem
+        bd = {"base_branch": ctx.meta.base_ref, "error": f"{type(exc).__name__}: {exc}"[:300]}
+    ctx.evidence["base_drift"] = bd
+    if bd.get("error"):
+        _context_event(ctx, "context.base_drift_failed", bd["error"])
+
+
+def _context_event(ctx: RunContext, kind: str, detail: str) -> None:
+    with tx(ctx.conn):
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
 
 
 def _run_lane(
@@ -1068,6 +1117,7 @@ def _run_checked_lane[T](
             prompt=prompt,
             cwd=ctx.worktree,
             add_dir=ctx.run_dir,
+            extra_dirs=sister.lane_dirs(ctx.evidence),
             timeout_seconds=ctx.cfg.lane_timeout_minutes * 60,
             claude_bin=ctx.cfg.claude_bin,
             max_budget_usd=ctx.cfg.lane_budget_usd,

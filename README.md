@@ -30,6 +30,8 @@ tested, one daemon, one SQLite file, no lock files.
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
+| `sister.py` | sister Dash repos (Cargo.lock pins + configured `sister_repos`) checked out read-only for the lanes, shared across runs |
+| `drift.py` | base drift: base commits since the merge base that touch the PR's files, merge conflicts with the current base |
 | `status.py` | `reviewsys status --json` + watchdog predicate |
 | `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model, quota per Phase-1 rung |
 
@@ -233,6 +235,55 @@ platform workspace and the iOS FFI side by side (each run in its own worktree,
 so each a cold build); the box went to load 900 and 60 GB of swap, and a
 `low`-tier dashwallet-ios review spent a 3-hour lane timeout polling an FFI
 build with `sleep 420`.
+
+### Review context: sister repos and base drift
+
+The context step adds two best-effort evidence keys to every review (not to conversation
+runs; an audit gets only the first). Why (2026-10-16 lane audit): in most missed maintainer
+asks the lanes lacked the code that mattered: rust-dashcore (`key-wallet`, `dash-spv`) and
+Tenderdash were not on the box, and nobody looked at what had landed on the base since the PR
+branched.
+
+- **`sister_repos`** (`sister.py`): the git dependencies the PR's root `Cargo.lock` pins from
+  a `[context] sister_owners` GitHub owner (default `dashpay`; never the reviewed repo), each
+  checked out at the pinned commit (`pinned`; a repo pinned at several commits gets the two
+  with the most packages, `also_pinned`, and names the rest in `note`) and at the tip of its
+  default branch (`default`), plus the repo's `sister_repos` from the skills `config.json`
+  (e.g. platform → `dashpay/tenderdash`) at the default branch only. Configured repos come
+  first, then by packages pinned; at most `sister_max_repos` (6) per run are checked out, the
+  rest are listed with `skipped`. An unreadable `Cargo.lock` only loses the pinned repos. Repo
+  names are lowercased. Mirrors are blob-less bare clones under `work/mirrors` made on first
+  use (the first clone is slow, once); checkouts are detached worktrees shared by every run,
+  one per (repo, commit), under `work/worktrees/sister/<owner>__<repo>@<sha12>`, reused when
+  still clean at that commit (one a lane wrote into is made afresh). The default branch is the
+  upstream's `HEAD` as of now (`ls-remote --symref`), else the mirror's. One run's sister
+  checkouts share a `sister_budget_minutes` (10) wall-clock budget, each git step at most 5
+  minutes, and stop when the run is cancelled. Everything done to one repo happens under its
+  `flock` (`work/mirrors/.<owner>__<repo>.lock`): a run waits at most 2 minutes for a repo
+  another run is fetching, then goes on without it. Lanes get each checkout still on disk as
+  an extra `--add-dir` (the sandbox only denies exec; reads anywhere are allowed).
+- **`base_drift`** (`drift.py`): against the `refs/remotes/origin/<base>` the worktree step
+  fetched, `commits_behind` (merge base..base tip), `conflicting_files` (`git merge-tree
+  --write-tree`: what conflicts when the head is merged onto today's base; null with an
+  `error` when git cannot tell) and `base_commits_touching_changed_files` (first-parent base
+  commits since the merge base that touch a path the PR changes, newest first, at most 40 of
+  the latest 2000, with the overlapping `files` and the PR number parsed from `(#N)`,
+  `Merge pull request #N` or `Merge #N:`).
+
+Reviewer and verifier prompts get one short paragraph per key that is present
+(`prompts.context_notes`; none for a PR with nothing landed on its base since): read the
+sister repos whenever the change depends on, works around, duplicates or is driven by code
+there, search their issues and PRs with `gh`, never edit them; check whether a listed base
+commit already does what the PR does, supersedes it or conflicts with it. A repo that cannot
+be had carries `error` (event `context.sister_failed`), a failed drift read `error` (event
+`context.base_drift_failed`); neither fails the run.
+
+gc treats each sister checkout like a run's worktree (removed after a day unused, LRU within
+`worktree_budget_gb`), except that one an active run uses is never removed: a run records
+every checkout it uses in kv `sister.inuse:<run id>` (under the repo's lock, before touching
+it), and gc removes a sister checkout only under that lock (never waited for: a busy repo is
+left for the next pass), reading the records and the checkout's mtime again there. The
+records are released once the run ends. A checkout gc deleted is made again on next use.
 
 ### Output contract: normalization, correction turns, repair
 
@@ -1003,7 +1054,10 @@ else `~/.claude`).
 only per-lane record for later analysis; with lane transcripts a few hundred MB a day),
 `[retention] event_days` (0 = keep the `events` table forever, the default: thread outcomes
 and verdict updates exist nowhere else; a positive value makes `gc` delete older events;
-handled inbox rows are still pruned after 30 days), `worktree_budget_gb`.
+handled inbox rows are still pruned after 30 days),
+`worktree_budget_gb` (run worktrees and shared sister checkouts together).
+`[context] sister_owners`, `sister_max_repos` (0 = no sister checkouts),
+`sister_budget_minutes` (see [Review context](#review-context-sister-repos-and-base-drift)).
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
