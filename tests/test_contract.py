@@ -170,6 +170,34 @@ def test_reviewer_output_reconciliation_contract():
         )
 
 
+def test_considered_dismissed_is_optional_and_defaults_empty():
+    out = _reviewer({"findings": [], "out_of_scope_findings": []})
+    assert out.considered_dismissed == [] and "considered_dismissed" not in out.raw
+
+
+def test_considered_dismissed_keeps_well_formed_entries():
+    row = {"area": "a.rs", "concern": "overflow", "why_dismissed": "bounded by caller"}
+    out = _reviewer({"findings": [], "considered_dismissed": [row]})
+    assert out.considered_dismissed == [row] and out.raw["considered_dismissed"] == [row]
+
+
+@pytest.mark.parametrize("junk", ["text", 7, {"area": "x"}, None, [[], "s", 3]])
+def test_considered_dismissed_never_fails_a_lane(junk):
+    out = _reviewer({"findings": [], "considered_dismissed": junk})
+    assert out.considered_dismissed == []
+    assert out.raw["considered_dismissed"] == []
+
+
+def test_considered_dismissed_is_tolerant_capped_and_truncated():
+    rows: list = ["junk", {"area": "a", "concern": "c" * 1000, "why_dismissed": None, "x": 1}]
+    rows += [{"area": str(i), "concern": "c", "why_dismissed": "w"} for i in range(40)]
+    out = _reviewer({"findings": [], "considered_dismissed": rows})
+    assert len(out.considered_dismissed) == 30
+    first = out.considered_dismissed[0]
+    assert first == {"area": "a", "concern": "c" * 400, "why_dismissed": ""}
+    assert out.raw["considered_dismissed"] == out.considered_dismissed
+
+
 def test_verifier_output_contract():
     base = {
         "summary": "s",

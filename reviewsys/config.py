@@ -303,6 +303,8 @@ class Config:
     trusted_reviewers: tuple[str, ...]
     # retention; 0 = run artifacts (lane outputs) are never deleted
     artifact_retention_days: int
+    # events (the history of thread outcomes and verdict updates); 0 = never deleted
+    event_retention_days: int
     worktree_budget_gb: int
     # from skills config
     repos: tuple[RepoConfig, ...]
@@ -491,6 +493,9 @@ trusted_reviewers = ["PastaPastaPasta", "QuantumExplorer", "shumkov", "lklimek",
 # forever. They are the only per-lane record older reviews can be analysed from; with the
 # transcripts expect a few hundred MB a day (~1500 lanes, a few hundred KB each).
 artifact_days = 0
+# events (thread outcomes, verdict updates, ...) are the only history audits can read; 0 = keep
+# forever. Inbox pruning is separate and not configurable.
+event_days = 0
 worktree_budget_gb = 60
 
 [audit]
@@ -815,6 +820,8 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         agent_session_key=str(i.get("agent_session_key", "agent:main:main")),
         trusted_reviewers=tuple(i.get("trusted_reviewers", [])),
         artifact_retention_days=max(0, int(r["artifact_days"])),
+        # optional: a config.toml written before the key existed has none
+        event_retention_days=max(0, int(r.get("event_days", 0))),
         worktree_budget_gb=int(r["worktree_budget_gb"]),
         repos=repos,
         specialists=specialists,

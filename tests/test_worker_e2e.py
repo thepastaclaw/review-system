@@ -166,6 +166,35 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
         GOLDEN.write_text(body)
 
 
+def test_considered_dismissed_reaches_the_verifier_but_is_not_published(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_sugg()],
+        "out_of_scope_findings": [],
+        "considered_dismissed": [
+            {
+                "area": "fee estimation",
+                "concern": "drainage costs missing from the estimate",
+                "why_dismissed": "the v2 caller adds them before the check",
+            },
+            "not an object",
+        ],
+    }
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([_sugg()])
+    _, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    verifiers = [s for s in lanes.calls if s.role == "verifier"]
+    assert len(verifiers) == 2
+    for v in verifiers:  # Phase-1 and Phase-2 reviewer outputs alike
+        assert "drainage costs missing from the estimate" in v.prompt
+        assert "the v2 caller adds them before the check" in v.prompt
+        assert "not an object" not in v.prompt
+    review = gh.posted_reviews[0]
+    published = review["body"] + "".join(c["body"] for c in review["comments"])
+    assert "considered_dismissed" not in published and "drainage costs" not in published
+
+
 def test_incremental_review_requires_fresh_final_phase2_gate(cfg, conn, gh, lanes):
     lanes.reviewer["default"] = {
         "summary": "ok",

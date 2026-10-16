@@ -1,4 +1,4 @@
-"""Garbage collection: stale worktrees, old run artifacts, old inbox/events."""
+"""Garbage collection: stale worktrees, old run artifacts, old inbox and (optionally) events."""
 
 from __future__ import annotations
 
@@ -115,11 +115,13 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
             except OSError:
                 pass
     with tx(conn):
-        c = conn.execute(
-            "DELETE FROM events WHERE ts < ?",
-            (fmt_ts(now_dt() - timedelta(days=90)),),
-        )
-        stats["events_pruned"] = c.rowcount
+        # events are the history audits read; 0 keeps them forever
+        if cfg.event_retention_days > 0:
+            c = conn.execute(
+                "DELETE FROM events WHERE ts < ?",
+                (fmt_ts(now_dt() - timedelta(days=cfg.event_retention_days)),),
+            )
+            stats["events_pruned"] = c.rowcount
         c = conn.execute(
             "DELETE FROM inbox WHERE handled_at IS NOT NULL AND seen_at < ?",
             (fmt_ts(now_dt() - timedelta(days=30)),),

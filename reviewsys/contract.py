@@ -37,6 +37,11 @@ REVALIDATION_STATUSES = ("STILL_VALID", "FIXED", "OUTDATED", "INTENTIONALLY_DEFE
 # Shortest abbreviation of a commit sha (git's default) or a finding hash that the output
 # normalization below will expand to the one full value it names.
 MIN_SHA_PREFIX = 7
+# `considered_dismissed[]` in a reviewer's output is optional context for the verifier and the
+# audits, so it is cut down rather than rejected
+DISMISSED_KEYS = ("area", "concern", "why_dismissed")
+MAX_DISMISSED = 30
+MAX_DISMISSED_CHARS = 400
 
 _NORMALIZE_RE = re.compile(r"[^\w\s]|_")
 _FENCE_RE = re.compile(r"```(?:json)?\s*(\{.*\})\s*```", re.S)
@@ -175,6 +180,9 @@ class ReviewerOutput:
     # what `normalize_reviewer_output` fixed deterministically, e.g. "review_phase 'final' ->
     # 'preliminary'"; the worker records each non-empty list as a `lane.output_normalized` event
     normalized: list[str] = field(default_factory=list)
+    # what the lane looked at and decided was fine (`considered_dismissed[]`); optional,
+    # cleaned by `clean_considered_dismissed`, shown to the verifier, never published
+    considered_dismissed: list[dict[str, str]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -371,6 +379,18 @@ def _reconciliation_problems(
     return problems
 
 
+def clean_considered_dismissed(value: Any) -> list[dict[str, str]]:
+    """The `considered_dismissed` entries a reviewer gave, tolerantly: non-object entries are
+    dropped, at most MAX_DISMISSED are kept, and each of the three string fields is cut to
+    MAX_DISMISSED_CHARS. Anything but a list is an empty list; it never fails a lane."""
+    if not isinstance(value, list):
+        return []
+    rows = [r for r in value if isinstance(r, dict)][:MAX_DISMISSED]
+    return [
+        {k: str(r.get(k) or "").strip()[:MAX_DISMISSED_CHARS] for k in DISMISSED_KEYS} for r in rows
+    ]
+
+
 def parse_reviewer_output(
     raw: dict[str, Any], *, expected_phase: str, head_sha: str, source: str, prior_hashes: set[str]
 ) -> ReviewerOutput:
@@ -389,6 +409,10 @@ def parse_reviewer_output(
         if problems:
             raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     oos = raw.get("out_of_scope_findings") or []
+    dismissed = clean_considered_dismissed(raw.get("considered_dismissed"))
+    if "considered_dismissed" in raw:
+        # the verifier is shown `raw`, so it gets the cleaned list
+        raw = {**raw, "considered_dismissed": dismissed}
     return ReviewerOutput(
         summary=str(raw.get("summary") or "").strip(),
         findings=findings,
@@ -398,6 +422,7 @@ def parse_reviewer_output(
         prior_reconciliation=[r for r in recon if isinstance(r, dict)],
         raw=raw,
         normalized=notes,
+        considered_dismissed=dismissed,
     )
 
 

@@ -69,3 +69,16 @@ def test_max_runs_defaults_to_a_safety_cap_and_is_clamped(tmp_path, skills_dir):
     # the box config.toml predates the key: the code default applies
     p.write_text(p.read_text().replace("max_runs = -4\n", "", 1))
     assert cfg_mod.load(p).max_runs == 30
+
+
+def test_event_retention_defaults_to_forever_and_parses(tmp_path, skills_dir):
+    p = _write(tmp_path, skills_dir, "max_concurrent = 2")
+    assert cfg_mod.load(p).event_retention_days == 0
+    p.write_text(p.read_text().replace("event_days = 0", "event_days = 45", 1))
+    assert cfg_mod.load(p).event_retention_days == 45
+    p.write_text(p.read_text().replace("event_days = 45", "event_days = -5", 1))
+    assert cfg_mod.load(p).event_retention_days == 0
+    # a box config written before the key existed keeps events forever too
+    lines = [ln for ln in p.read_text().splitlines() if not ln.startswith("event_days")]
+    p.write_text("\n".join(lines))
+    assert cfg_mod.load(p).event_retention_days == 0

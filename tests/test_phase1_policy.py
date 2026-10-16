@@ -10,6 +10,7 @@ import re
 import sqlite3
 import threading
 import time
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ import pytest
 from reviewsys import config as cfg_mod
 from reviewsys import gc
 from reviewsys.contract import parse_verifier_output
+from reviewsys.db import fmt_ts, now_dt, tx
 from reviewsys.gate import gate_score, phase1_blocks
 from reviewsys.lane import LaneResult, LaneSpec
 from reviewsys.models import RunStatus
@@ -102,6 +104,7 @@ def test_policy_knobs_parse_and_default_off(cfg, skills_dir, tmp_path):
     assert not any(t.single_stage for t in cfg.policy.tiers.values())
     assert all(r.phase1 for r in cfg.repos)
     assert cfg.phase_parallelism == 0 and cfg.artifact_retention_days == 0
+    assert cfg.event_retention_days == 0
 
     def mutate(raw):
         p = raw["review_model_policy"]
@@ -488,3 +491,21 @@ def test_run_artifacts_are_kept_forever_at_retention_zero(cfg, conn):
     assert old.exists()
     gc.run(conn, dataclasses.replace(cfg, artifact_retention_days=14))
     assert not old.exists()
+
+
+def test_events_are_kept_forever_by_default_and_pruned_when_configured(cfg, conn):
+    assert cfg.event_retention_days == 0
+    old = fmt_ts(now_dt() - timedelta(days=400))
+    mid = fmt_ts(now_dt() - timedelta(days=45))
+    with tx(conn):
+        for ts, kind in ((old, "old"), (mid, "mid")):
+            conn.execute("INSERT INTO events (ts, kind) VALUES (?, ?)", (ts, kind))
+
+    def kinds():
+        return {r[0] for r in conn.execute("SELECT kind FROM events WHERE kind IN ('old','mid')")}
+
+    assert gc.run(conn, cfg)["events_pruned"] == 0 and kinds() == {"old", "mid"}
+    assert gc.run(conn, dataclasses.replace(cfg, event_retention_days=90))["events_pruned"] == 1
+    assert kinds() == {"mid"}
+    assert gc.run(conn, dataclasses.replace(cfg, event_retention_days=30))["events_pruned"] >= 1
+    assert kinds() == set()
