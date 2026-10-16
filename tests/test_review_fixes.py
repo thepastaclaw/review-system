@@ -204,3 +204,15 @@ def test_gc_prunes_silence_markers_for_prs_out_of_retention(cfg, conn):
     assert kv_get(conn, "converse.silent:dashpay/dash#3:ghi") is None
     assert kv_get(conn, "converse.silent:dashpay/platform#2:def") == "902"
     assert kv_get(conn, "labels.reconciled_at") == "x"
+
+
+def test_events_are_indexed_by_run_and_kind(tmp_path):
+    # events are kept forever by default; per-run lookups must not scan the table
+    c = connect(tmp_path / "db.sqlite")
+    plan = " ".join(
+        str(r[-1])
+        for r in c.execute(
+            "EXPLAIN QUERY PLAN SELECT * FROM events WHERE run_id=? AND kind=?", (1, "x")
+        )
+    )
+    assert "events_run" in plan

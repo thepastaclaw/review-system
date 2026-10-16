@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -123,6 +123,11 @@ MIGRATIONS: dict[int, str] = {
     UPDATE runs SET path=(SELECT CASE WHEN h.queue='audit' THEN 'audit'
         WHEN h.priority<>0 THEN 'priority' ELSE 'normal' END
         FROM heads h WHERE h.id=runs.head_id AND h.queued_at<=runs.started_at);
+    """,
+    # events are kept forever by default (`[retention] event_days = 0`), and progress, compare
+    # and the exporter look them up by run and kind; without this they scan the whole table
+    6: """
+    CREATE INDEX IF NOT EXISTS events_run ON events (run_id, kind);
     """,
 }
 
