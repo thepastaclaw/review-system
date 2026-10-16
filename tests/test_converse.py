@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from reviewsys import converse, publish
+from reviewsys.db import kv_get, kv_set, tx
 from reviewsys.models import ReviewError
 
 HEAD = "a" * 40
@@ -227,8 +228,8 @@ def test_answer_conversation_posts_once_resolves_and_defuses(monkeypatch):
 def test_a_deferral_counts_only_when_a_maintainer_spoke_since_our_last_answer():
     """A maintainer who agreed the blocker was real before our last answer does not make a
     later contributor's "follow-up" a maintainer call; the PR author as MEMBER does count."""
-    member = {"is_bot": False, "association": "MEMBER"}
-    contributor = {"is_bot": False, "association": "CONTRIBUTOR"}
+    member = {"is_bot": False, "association": "MEMBER", "body": "follow-up is #77"}
+    contributor = {"is_bot": False, "association": "CONTRIBUTOR", "body": "see #77"}
     bot = {"is_bot": True, "association": None}
     threads = {
         "old": {"transcript": [member, bot, contributor]},
@@ -237,13 +238,18 @@ def test_a_deferral_counts_only_when_a_maintainer_spoke_since_our_last_answer():
     }
     out = converse.ConversationOutput(
         outcomes={
-            h: converse.ThreadOutcome(h, "INTENTIONALLY_DEFERRED", "ok")
+            h: converse.ThreadOutcome(h, "INTENTIONALLY_DEFERRED", "ok", tracking_url="#77")
             for h in ("old", "new", "none")
         }
         | {"kept": converse.ThreadOutcome("kept", "STILL_VALID", "still")}
     )
     threads["kept"] = {"transcript": [contributor]}
-    got = {h: o.status for h, o in converse.accept_deferrals(out, threads).outcomes.items()}
+    got = {
+        h: o.status
+        for h, o in converse.accept_deferrals(
+            out, threads, repo="dashpay/dash", number=1
+        ).outcomes.items()
+    }
     assert got == {
         "old": converse.DEFERRAL_PENDING,
         "new": "INTENTIONALLY_DEFERRED",
@@ -445,3 +451,238 @@ def test_prompt_tells_the_lane_what_still_blocks_and_what_it_already_settled():
     standing = text.split("## Where your review stands")[1].split("\n## ")[0]
     assert "- The other blocker" in standing and "do not settle it again" in standing
     assert '"already_settled_as": "INTENTIONALLY_DEFERRED"' in text
+
+
+# ---- deferrals need tracking (platform#5258: deferred "to a change of its own", never filed) ----
+
+MEMBER = {"is_bot": False, "association": "MEMBER", "author": "QuantumExplorer"}
+
+
+def _deferral(**kw):
+    return converse.ThreadOutcome("aaa", "INTENTIONALLY_DEFERRED", "Fine as a follow-up.", **kw)
+
+
+def _vet(outcome, transcript, *, severity="blocking", pr_text="", settled=frozenset()):
+    threads = {"aaa": {"severity": severity, "transcript": transcript}}
+    out = converse.ConversationOutput(outcomes={"aaa": outcome})
+    vetted = converse.accept_deferrals(
+        out, threads, settled=settled, repo="dashpay/platform", number=5258, pr_text=pr_text
+    )
+    return vetted.outcomes["aaa"]
+
+
+def test_parse_reads_tracking_only_on_a_deferral():
+    out = converse.parse(
+        {
+            "threads": [
+                {
+                    "finding_hash": "aaa",
+                    "status": "INTENTIONALLY_DEFERRED",
+                    "reply": "ok",
+                    "tracking": {"url": " #5300 "},
+                },
+                {
+                    "finding_hash": "bbb",
+                    "status": "intentionally_deferred",
+                    "reply": "will do",
+                    "tracking": {
+                        "file": {"repo": "dashpay/rust-dashcore", "title": "Fix it", "body": "b"}
+                    },
+                },
+                {
+                    "finding_hash": "ccc",
+                    "status": "DEFERRAL_NEEDS_TRACKING",
+                    "reply": "Link one, or say so and I'll file it in `dashpay/platform`.",
+                    "tracking": {"url": "#1"},
+                },
+            ]
+        },
+        expected={"aaa", "bbb", "ccc"},
+    )
+    a, b, c = (out.outcomes[h] for h in ("aaa", "bbb", "ccc"))
+    assert a.tracking_url == "#5300" and a.file_request is None
+    assert b.file_request == converse.FileRequest("dashpay/rust-dashcore", "Fix it", "b")
+    assert c.status == converse.DEFERRAL_NEEDS_TRACKING and c.tracking_url == ""
+    assert converse.DEFERRAL_NEEDS_TRACKING not in converse.LIFTING_STATUSES
+
+
+@pytest.mark.parametrize(
+    "tracking",
+    ["#5300", {"file": {"repo": "not a repo", "title": "x"}}, {"file": {"repo": "a/b"}}],
+)
+def test_malformed_tracking_is_dropped_not_a_failed_run(tracking):
+    """The deferral is then vetted as untracked: that costs a reply, not the conversation."""
+    row = {"finding_hash": "aaa", "status": "INTENTIONALLY_DEFERRED", "reply": "ok"}
+    out = converse.parse({"threads": [{**row, "tracking": tracking}]}, expected={"aaa"})
+    assert out.outcomes["aaa"].file_request is None
+    assert out.outcomes["aaa"].tracking_url == ""
+
+
+def test_an_untracked_maintainer_deferral_asks_for_tracking_instead():
+    got = _vet(_deferral(), [{**MEMBER, "body": "deferred by decision, to a change of its own"}])
+    assert got.status == converse.DEFERRAL_NEEDS_TRACKING
+    assert got.reply == (
+        "Before I mark this deferred it needs a tracking issue for the follow-up. Link one, "
+        "or say so and I'll file it in `dashpay/platform`."
+    )
+
+
+@pytest.mark.parametrize(
+    "cited, where",
+    [
+        ("#5300", "thread"),
+        ("dashpay/platform#5300", "thread"),
+        ("https://github.com/dashpay/platform/issues/5300", "pr"),
+        ("https://github.com/dashpay/rust-dashcore/pull/12", "pr"),
+    ],
+)
+def test_a_cited_reference_counts_when_a_reader_of_the_pr_can_see_it(cited, where):
+    text = {
+        "#5300": "follow-up in #5300",
+        "dashpay/platform#5300": "see https://github.com/dashpay/platform/issues/5300",
+        "https://github.com/dashpay/platform/issues/5300": "Follow-ups: dashpay/platform#5300",
+        "https://github.com/dashpay/rust-dashcore/pull/12": "upstream: dashpay/rust-dashcore#12",
+    }[cited]
+    transcript = [{**MEMBER, "body": text if where == "thread" else "defer it"}]
+    got = _vet(_deferral(tracking_url=cited), transcript, pr_text=text if where == "pr" else "")
+    assert got.status == "INTENTIONALLY_DEFERRED"
+    assert got.tracking_url.startswith("https://github.com/dashpay/")
+
+
+def test_a_reference_nobody_posted_or_the_pr_itself_does_not_count():
+    unseen = _vet(_deferral(tracking_url="#9999"), [{**MEMBER, "body": "it came in with #5300"}])
+    assert unseen.status == converse.DEFERRAL_NEEDS_TRACKING
+    assert "I could not find `#9999` linked in this thread" in unseen.reply
+    itself = _vet(_deferral(tracking_url="#5258"), [{**MEMBER, "body": "see #5258"}])
+    assert itself.status == converse.DEFERRAL_NEEDS_TRACKING
+    assert "`#5258` is this pull request itself" in itself.reply
+
+
+def test_a_maintainer_pointing_at_tracking_counts_when_the_lane_cites_nothing():
+    said = {**MEMBER, "body": "Fair, but out of scope.\nFollow-up tracked in dashpay/platform#5300"}
+    got = _vet(_deferral(), [said])
+    assert got.status == "INTENTIONALLY_DEFERRED"
+    assert got.tracking_url == "https://github.com/dashpay/platform/issues/5300"
+
+
+def test_a_nitpick_defers_without_tracking_and_a_file_request_waits_for_the_worker():
+    nit = _vet(_deferral(), [{**MEMBER, "body": "later"}], severity="nitpick")
+    assert nit.status == "INTENTIONALLY_DEFERRED" and nit.tracking_url == ""
+    req = converse.FileRequest("dashpay/platform", "Track it", "")
+    filing = _vet(_deferral(file_request=req), [{**MEMBER, "body": "go ahead, file it"}])
+    assert filing.status == "INTENTIONALLY_DEFERRED" and filing.file_request == req
+    # an outside contributor asking to file it is not a maintainer call: nothing is filed
+    drive_by = {"is_bot": False, "association": "CONTRIBUTOR", "body": "file it"}
+    pending = _vet(_deferral(file_request=req), [drive_by])
+    assert pending.status == converse.DEFERRAL_PENDING and pending.file_request is None
+    # a restated deferral on a settled thread is not re-vetted, and files nothing
+    settled = _vet(_deferral(file_request=req), [drive_by], settled={"aaa"})
+    assert settled.status == "INTENTIONALLY_DEFERRED" and settled.file_request is None
+
+
+def test_a_full_review_deferral_rests_on_a_visible_or_in_thread_reference():
+    said = "agreed, tracked in dashpay/rust-dashcore#12"
+    kw = {"pr_text": "Fixes #5000", "repo": "dashpay/platform", "number": 5258}
+    link = converse.review_deferral_link({"url": "#5000"}, said, **kw)
+    assert link == "https://github.com/dashpay/platform/issues/5000"
+    # an unseen citation (or none) falls back to what the finding's own thread references
+    assert converse.review_deferral_link("#1", said, **kw).endswith("rust-dashcore/issues/12")
+    assert converse.review_deferral_link(None, said, **kw).endswith("rust-dashcore/issues/12")
+    # the PR description alone ("Fixes #5000") is not tracking for this finding, nor is a
+    # reference nobody points to as tracking, a commit link into a PR, or the PR itself
+    for said in (
+        "",
+        "it came in with #5100",
+        "color #333, step #1",
+        "follow-up: https://github.com/dashpay/platform/pull/5100/commits/abc1234",
+        "tracked in #5258",
+    ):
+        assert converse.review_deferral_link(None, said, **kw) == "", said
+    # a link without its scheme still counts
+    got = converse.review_deferral_link(None, "filed github.com/dashpay/platform/issues/9", **kw)
+    assert got == "https://github.com/dashpay/platform/issues/9"
+
+
+def test_prompt_states_the_tracking_rules():
+    text = converse.prompt(
+        repo="dashpay/platform",
+        number=5258,
+        head_sha=HEAD,
+        meta={},
+        project_skill="",
+        review_skill="",
+        threads={"aaa": {"severity": "blocking", "transcript": []}},
+        fetched_commits=[],
+        unfetched_commits=[],
+        standing_verdict=None,
+        evidence={},
+    )
+    assert "DEFERRAL_NEEDS_TRACKING" in text and "an unrelated link does not" in text
+    assert "this pull request's `dashpay/platform`" in text and "rust-dashcore" in text
+    assert '"tracking": {"file": {"repo"' in text and "Omit `tracking`" in text
+
+
+def test_deferral_notes_and_root_lines_carry_the_tracking():
+    marker = "<!-- m -->"
+    url = "https://github.com/dashpay/platform/issues/5300"
+    tracked = publish.render_conversation_answer(
+        marker=marker, status="INTENTIONALLY_DEFERRED", reply="ok", tracking_url=url
+    )
+    assert tracked.endswith(
+        f"_Tracked in {url}. Deferred on a maintainer's call: this finding no longer blocks this pull request._"
+    )
+    filed = publish.render_conversation_answer(
+        marker=marker, status="INTENTIONALLY_DEFERRED", reply="ok", tracking_url=url, filed=True
+    )
+    assert f"_Filed {url} for the follow-up." in filed
+    ask = publish.render_conversation_answer(
+        marker=marker, status=converse.DEFERRAL_NEEDS_TRACKING, reply="Link one?"
+    )
+    assert ask.endswith(
+        "_Not deferred yet: a deferral needs a tracking issue for the follow-up; until then the finding stands._"
+    )
+    line = publish.with_thread_status(
+        ROOT, status="INTENTIONALLY_DEFERRED", head_sha=HEAD, tracking_url=url
+    )
+    assert f"(maintainer decision; not blocking; tracked in {url})" in line
+    waiting = publish.with_thread_status(
+        line, status=converse.DEFERRAL_NEEDS_TRACKING, head_sha=HEAD
+    )
+    assert "⏸️ **Needs a tracking issue** (not yet deferred)" in waiting
+    assert waiting.count(publish.THREAD_STATUS_MARKER) == 1
+    assert publish.with_thread_status(waiting, status=None, head_sha=HEAD) == ROOT
+
+
+def test_tracking_issue_body_links_the_thread_and_never_pages_anyone():
+    body = publish.tracking_issue_body(
+        "Ping @knst: the quorum check belongs upstream.",
+        repo="dashpay/platform",
+        number=5258,
+        comment_url="https://github.com/dashpay/platform/pull/5258#discussion_r901",
+        asker="QuantumExplorer",
+        severity="blocking",
+        title="Check the @quorum",
+        finding="The quorum is not checked.\nSecond line.",
+    )
+    assert body.startswith("Ping @​knst: the quorum check belongs upstream.")
+    assert "Deferred from https://github.com/dashpay/platform/pull/5258 " in body
+    assert "(review thread: https://github.com/dashpay/platform/pull/5258#discussion_r901)" in body
+    assert "at the request of maintainer `QuantumExplorer`" in body
+    assert "PastaClaw finding (blocking): **Check the @​quorum**" in body
+    assert "> The quorum is not checked.\n> Second line." in body
+    assert "Posted autonomously" not in body
+
+
+def test_the_tracking_cutoff_is_configured_or_recorded_once(conn):
+    assert converse.tracking_required_since(conn, "2026-10-17T00:00:00Z") == "2026-10-17T00:00:00Z"
+    assert kv_get(conn, converse.TRACKING_CUTOFF_KEY) is None  # configured: nothing recorded
+    first = converse.tracking_required_since(conn)
+    assert kv_get(conn, converse.TRACKING_CUTOFF_KEY) == first
+    with tx(conn):
+        kv_set(conn, converse.TRACKING_CUTOFF_KEY, "2026-10-01T00:00:00Z")
+    assert converse.tracking_required_since(conn) == "2026-10-01T00:00:00Z"  # never moves
+
+
+def test_a_dry_run_or_shadow_process_never_fixes_the_cutoff(conn):
+    assert converse.tracking_required_since(conn, record=False)
+    assert kv_get(conn, converse.TRACKING_CUTOFF_KEY) is None

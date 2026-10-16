@@ -13,8 +13,11 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 from typing import Any
+
+from .db import fmt_ts, parse_ts
 
 DEFAULT_CONFIG_PATH = Path(
     os.environ.get("REVIEWSYS_CONFIG", "~/.reviewsys/config.toml")
@@ -291,6 +294,29 @@ class ContextConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DeferralConfig:
+    """Where the bot may file the tracking issue a deferred finding needs (converse.py): a
+    maintainer who defers a finding and asks the bot to file the follow-up gets it filed only
+    in a repository listed here (by owner, or by full name); anywhere else the bot asks the
+    maintainer to file it. Both empty: the bot never files.
+
+    `tracking_required_since` (ISO-8601) is when deferrals started needing tracking; one
+    recorded before it was accepted under the old rule and keeps lifting its finding. ""
+    = the first daemon or worker start with this code, recorded once in kv
+    (`deferral.tracking_required_since`, see converse.tracking_required_since)."""
+
+    file_owners: tuple[str, ...] = ("dashpay",)
+    file_repos: tuple[str, ...] = ()
+    tracking_required_since: str = ""
+
+    def may_file(self, repo: str) -> bool:
+        owner = repo.split("/", 1)[0].lower()
+        return owner in {o.lower() for o in self.file_owners} or repo.lower() in {
+            r.lower() for r in self.file_repos
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     # paths
     db_path: Path
@@ -364,6 +390,7 @@ class Config:
     audit: AuditConfig = field(default_factory=AuditConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     ci: CiConfig = field(default_factory=CiConfig)
+    deferral: DeferralConfig = field(default_factory=DeferralConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -583,6 +610,16 @@ watch_hours = 12
 # Unset = the built-in list (config.DEFAULT_CI_IGNORE: PR title, semantic commits, codecov,
 # policy, review bots, ...)
 # ignore_checks = "title|semantic|codecov|policy|coderabbit|pastaclaw|review"
+
+[deferral]
+# a maintainer who defers a finding can ask the bot to file the follow-up's tracking issue;
+# it files only in repositories of these owners (or listed by full name), else it asks the
+# maintainer to file it
+file_owners = ["dashpay"]
+file_repos = []
+# deferrals recorded before this instant were accepted without tracking and keep lifting
+# their finding; unset = when this code first ran (kept in kv deferral.tracking_required_since)
+# tracking_required_since = "2026-10-17T00:00:00Z"
 """
 
 
@@ -905,6 +942,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         audit=_audit(t.get("audit") or {}),
         context=_context(t.get("context") or {}),
         ci=_ci(t.get("ci") or {}),
+        deferral=_deferral(t.get("deferral") or {}),
     )
 
 
@@ -966,4 +1004,20 @@ def _ci(c: dict[str, Any]) -> CiConfig:
         interval_seconds=max(30, int(c.get("interval_seconds", 180))),
         watch_hours=max(1, int(c.get("watch_hours", 12))),
         ignore_checks=pattern,
+    )
+
+
+def _deferral(d: dict[str, Any]) -> DeferralConfig:
+    since = str(d.get("tracking_required_since") or "")
+    if since:
+        try:
+            dt = parse_ts(since)
+            dt = (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC)
+            since = fmt_ts(dt.replace(microsecond=0))
+        except ValueError as exc:
+            raise ValueError(f"[deferral] tracking_required_since {since!r}: {exc}") from exc
+    return DeferralConfig(
+        file_owners=_strings(d.get("file_owners", ("dashpay",))),
+        file_repos=_strings(d.get("file_repos")),
+        tracking_required_since=since,
     )

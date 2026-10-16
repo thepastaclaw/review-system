@@ -817,6 +817,10 @@ _CONVERSATION_NOTE = {
         "\n\n_Deferring this needs a maintainer's call; until then it still blocks this pull "
         "request._"
     ),
+    "DEFERRAL_NEEDS_TRACKING": (
+        "\n\n_Not deferred yet: a deferral needs a tracking issue for the follow-up; until "
+        "then the finding stands._"
+    ),
 }
 
 
@@ -830,16 +834,22 @@ _THREAD_STATUS_LINE = {
     "FIXED": "✅ **Resolved**",
     "OUTDATED": "✅ **No longer applies**",
     "INTENTIONALLY_DEFERRED": "⏭️ **Deferred** (maintainer decision; not blocking)",
+    # not a lift: the finding stands, but its root says what the deferral is waiting for
+    "DEFERRAL_NEEDS_TRACKING": "⏸️ **Needs a tracking issue** (not yet deferred)",
 }
 
 
-def with_thread_status(body: str, *, status: str | None, head_sha: str) -> str:
+def with_thread_status(
+    body: str, *, status: str | None, head_sha: str, tracking_url: str = ""
+) -> str:
     """`body` (a bot finding's root comment) with its status line set for `status`, or removed
-    when `status` is None or has no line."""
+    when `status` is None or has no line. A deferral's line names its tracking issue."""
     body = THREAD_STATUS_RE.sub("", body, count=1)
     line = _THREAD_STATUS_LINE.get(status or "")
     if not line:
         return body
+    if status == "INTENTIONALLY_DEFERRED" and tracking_url:
+        line = line.replace("not blocking)", f"not blocking; tracked in {tracking_url})")
     lines = body.split("\n")
     i = 0
     while i < len(lines) and lines[i].lstrip().startswith("<!--"):
@@ -849,13 +859,20 @@ def with_thread_status(body: str, *, status: str | None, head_sha: str) -> str:
 
 
 def _set_thread_status(
-    gh: Gh, repo: str, *, comment_id: Any, root_body: str, status: str | None, head_sha: str
+    gh: Gh,
+    repo: str,
+    *,
+    comment_id: Any,
+    root_body: str,
+    status: str | None,
+    head_sha: str,
+    tracking_url: str = "",
 ) -> bool | str:
     """Edit our own finding root to show `status`. True when the root now shows it (or already
     did), else the failure; only ever touches a comment carrying our finding marker."""
     if not FINDING_MARKER_RE.search(root_body):
         return "failed: root carries no finding marker"
-    new = with_thread_status(root_body, status=status, head_sha=head_sha)
+    new = with_thread_status(root_body, status=status, head_sha=head_sha, tracking_url=tracking_url)
     if new == root_body:
         return True
     try:
@@ -884,10 +901,21 @@ def render_thread_answer(*, marker: str, status: str, head_sha: str, reply: str)
     return f"{marker}\n**{lead}** (re-reviewed at `{head_sha[:8]}`): {reply}"
 
 
-def render_conversation_answer(*, marker: str, status: str, reply: str) -> str:
+def render_conversation_answer(
+    *, marker: str, status: str, reply: str, tracking_url: str = "", filed: bool = False
+) -> str:
     """A conversational answer: the model's prose, with the status as a quiet trailing note
-    rather than a bold lead, so the thread reads like a discussion, not a verdict log."""
-    return f"{marker}\n{reply}{_CONVERSATION_NOTE.get(status, '')}"
+    rather than a bold lead, so the thread reads like a discussion, not a verdict log. A
+    deferral's note links the issue that tracks the follow-up (`filed`: the bot just filed
+    it on a maintainer's request)."""
+    note = _CONVERSATION_NOTE.get(status, "")
+    if status == "INTENTIONALLY_DEFERRED" and tracking_url:
+        lead = f"Filed {tracking_url} for the follow-up" if filed else f"Tracked in {tracking_url}"
+        note = (
+            f"\n\n_{lead}. Deferred on a maintainer's call: this finding no longer blocks this "
+            "pull request._"
+        )
+    return f"{marker}\n{reply}{note}"
 
 
 def _deliver_answer(
@@ -901,14 +929,16 @@ def _deliver_answer(
     resolve: bool,
     item: dict[str, Any],
     root_body: str,
-    lifted_status: str | None,
+    root_status: str | None,
     head_sha: str,
+    tracking_url: str = "",
 ) -> None:
     """Post one answer on a finding thread and, when the outcome retires the finding, resolve
     the thread. Records what happened on `item` (`action`, and `resolved` when we tried).
 
-    `lifted_status` is the outcome when it lifts the finding. If the thread then stays open,
-    the root comment gets that status line (`marked`); any other answer clears a stale one."""
+    `root_status` is the outcome when it lifts the finding (or says what a deferral waits
+    for). If the thread then stays open, the root comment gets that status line (`marked`);
+    any other answer clears a stale one."""
     try:
         github.post_reply(gh, repo, number, int(comment_id), body)
         item["action"] = "replied"
@@ -923,10 +953,16 @@ def _deliver_answer(
             item["resolved"] = f"failed: {exc}"
     if not root_body:
         return
-    status = None if item.get("resolved") is True else lifted_status
+    status = None if item.get("resolved") is True else root_status
     if status or THREAD_STATUS_MARKER in root_body:
         item["marked"] = _set_thread_status(
-            gh, repo, comment_id=comment_id, root_body=root_body, status=status, head_sha=head_sha
+            gh,
+            repo,
+            comment_id=comment_id,
+            root_body=root_body,
+            status=status,
+            head_sha=head_sha,
+            tracking_url=tracking_url,
         )
 
 
@@ -944,7 +980,8 @@ def answer_conversation(
     exactly once per (human reply, head), resolving threads the model conceded. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done.
 
     `settled` (hash -> outcome) are threads an earlier answer already lifted on this commit:
-    the lift stands whatever this answer says, so their root keeps its status line."""
+    the lift stands whatever this answer says, so their root keeps its status line (a
+    restated deferral without a tracking link would otherwise drop the link it shows)."""
     posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
     done: list[dict[str, Any]] = []
     seen_roots: set[tuple[str, str]] = set()  # same alias guard as answer_replied_threads
@@ -981,24 +1018,35 @@ def answer_conversation(
             item["action"] = "suppressed_reply"
             done.append(item)
             continue
+        if o.tracking_url:
+            item["tracking"] = o.tracking_url
+        # a settled thread's root keeps the line its lift put there unless this answer lifts
+        # it again (a re-deferral by a maintainer that names its tracking refreshes the line)
+        relift = o.status in _RESOLVING or (
+            o.status == "INTENTIONALLY_DEFERRED" and bool(o.tracking_url)
+        )
         _deliver_answer(
             gh,
             repo,
             number,
             comment_id=cid,
-            body=render_conversation_answer(marker=marker, status=o.status, reply=reply),
+            body=render_conversation_answer(
+                marker=marker,
+                # a settled finding stays lifted: no note claiming it stands
+                status=""
+                if h in (settled or {}) and o.status == "DEFERRAL_NEEDS_TRACKING"
+                else o.status,
+                reply=reply,
+                tracking_url=o.tracking_url,
+                filed=o.tracking_filed,
+            ),
             thread_id=t.get("thread_id"),
             resolve=o.status in _RESOLVING,
             item=item,
-            # a settled thread's root keeps the line its lift put there unless this answer
-            # lifts it again (a re-deferral by a maintainer refreshes the line)
-            root_body=(
-                ""
-                if h in (settled or {}) and o.status not in _THREAD_STATUS_LINE
-                else str(t.get("body") or "")
-            ),
-            lifted_status=o.status if o.status in _THREAD_STATUS_LINE else None,
+            root_body="" if h in (settled or {}) and not relift else str(t.get("body") or ""),
+            root_status=o.status if o.status in _THREAD_STATUS_LINE else None,
             head_sha=head_sha,
+            tracking_url=o.tracking_url,
         )
         done.append(item)
     return done
@@ -1131,7 +1179,7 @@ def answer_replied_threads(
             resolve=resolve,
             item=item,
             root_body=str(t.get("body") or ""),
-            lifted_status=status if resolve else None,
+            root_status=status if resolve else None,
             head_sha=head_sha,
         )
         done.append(item)
@@ -1186,6 +1234,7 @@ class LiftedFinding:
     file: str
     title: str
     status: str  # the conversation outcome that lifted it ("" when not on record)
+    tracking: str = ""  # a deferral's tracking issue, when on record
 
 
 def _recount(line: str, lifted: list[LiftedFinding]) -> tuple[str, int | None]:
@@ -1270,6 +1319,7 @@ def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
         *(
             f"> - {_LIFTED_LABEL.get(f.status, _LIFTED_DEFAULT)[0]}: "
             f"{SEVERITY_ICONS.get(f.severity, '')} {_block_text(f.title)}"
+            + (f" (tracked in {_block_text(f.tracking)})" if f.tracking else "")
             for f in matched
         ),
         "",
@@ -1288,6 +1338,46 @@ def _is_location(loc: str, path: str) -> bool:
     return loc == path or (
         loc.startswith(f"{path}:") and loc[len(path) + 1 :].replace("-", "").isdigit()
     )
+
+
+def untracked_deferrals_line(titles: list[str]) -> str:
+    """The review-body line for prior findings the discussion would defer but nothing tracks:
+    they stay standing until a tracking issue is linked (or the bot is asked to file one)."""
+    named = "; ".join(_block_text(t) for t in titles)
+    return (
+        f"\n_⏸️ Needs a tracking issue before it can be deferred ({len(titles)}): {named}. "
+        "Link one in the finding's thread, or ask there and PastaClaw files it._"
+    )
+
+
+def tracking_issue_body(
+    body: str,
+    *,
+    repo: str,
+    number: int,
+    comment_url: str,
+    asker: str,
+    severity: str,
+    title: str,
+    finding: str,
+) -> str:
+    """The body of a tracking issue the bot files for a deferred finding: the lane's
+    description of the follow-up, then where it came from (the PR, the thread, who asked) and
+    a short quote of the finding. Mentions are defused: the bot never pages anyone, and posts
+    as itself with no attribution footer."""
+    quote = "\n".join(f"> {ln}" for ln in finding.strip()[:600].splitlines()) or "> (no text)"
+    origin = [
+        "### Origin",
+        "",
+        f"Deferred from https://github.com/{repo}/pull/{number} "
+        f"(review thread: {comment_url}) at the request of maintainer `{asker}`.",
+        "",
+        f"PastaClaw finding ({severity}): **{_block_text(title)}**",
+        "",
+        quote,
+    ]
+    described = scrub_reply(body, 4000)
+    return (described + "\n\n" if described else "") + "\n".join(origin).replace("@", "@\u200b")
 
 
 # ---- same-sha verdict update ----

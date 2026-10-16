@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import audit, ci, degraded, labels, slots
+from . import audit, ci, converse, degraded, labels, slots
 from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
@@ -81,6 +81,8 @@ class Daemon:
         self.spawn = spawn
         self.prober = prober or degraded.probe
         self.labels_repos: dict[str, bool] = {}  # repo -> has created the pastaclaw:* labels
+        if spawn:  # the first scheduling start with the tracking rule fixes when it took effect
+            converse.tracking_required_since(conn, cfg.deferral.tracking_required_since)
         self.stop = False
         self.tasks = [
             Task("ingest", cfg.ingest_interval_seconds, self.t_ingest),

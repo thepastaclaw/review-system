@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from reviewsys import config as cfg_mod
 
 
@@ -82,3 +84,38 @@ def test_event_retention_defaults_to_forever_and_parses(tmp_path, skills_dir):
     lines = [ln for ln in p.read_text().splitlines() if not ln.startswith("event_days")]
     p.write_text("\n".join(lines))
     assert cfg_mod.load(p).event_retention_days == 0
+
+
+def test_deferral_filing_allowlist(tmp_path, skills_dir):
+    p = _write(tmp_path, skills_dir, "max_concurrent = 2")
+    d = cfg_mod.load(p).deferral
+    assert d.may_file("dashpay/platform") and d.may_file("DashPay/rust-dashcore")
+    assert not d.may_file("bitcoin/bitcoin")
+    # a box config.toml predating the section files in dashpay repos, as a fresh one does
+    head, _, _ = p.read_text().partition("[deferral]")
+    p.write_text(head)
+    assert cfg_mod.load(p).deferral.may_file("dashpay/platform")
+    p.write_text(head + '[deferral]\nfile_owners = []\nfile_repos = ["bitcoin/bitcoin"]\n')
+    d = cfg_mod.load(p).deferral
+    assert d.may_file("bitcoin/bitcoin") and not d.may_file("dashpay/platform")
+    # a bare string is one owner, not one per letter
+    p.write_text(head + '[deferral]\nfile_owners = "dashpay"\n')
+    assert cfg_mod.load(p).deferral.file_owners == ("dashpay",)
+
+
+def test_tracking_cutoff_is_normalized_and_validated(tmp_path, skills_dir):
+    p = _write(tmp_path, skills_dir, "max_concurrent = 2")
+    assert cfg_mod.load(p).deferral.tracking_required_since == ""  # unset: recorded at start
+    base = p.read_text()
+    p.write_text(
+        base.replace(
+            "file_repos = []",
+            'file_repos = []\ntracking_required_since = "2026-10-17T02:00:00+02:00"',
+        )
+    )
+    assert cfg_mod.load(p).deferral.tracking_required_since == "2026-10-17T00:00:00Z"
+    p.write_text(
+        base.replace("file_repos = []", 'file_repos = []\ntracking_required_since = "soon"')
+    )
+    with pytest.raises(ValueError, match="tracking_required_since"):
+        cfg_mod.load(p)

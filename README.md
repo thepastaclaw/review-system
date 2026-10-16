@@ -597,7 +597,43 @@ threads only when a reviewer stated that status. The verifier's kept set overrid
 reviewer (a kept finding is "still applies" even if a lane said otherwise; a dropped one
 is "withdrawn"); a defaulted withdrawal is answered but never resolves the thread.
 Threads a maintainer has already resolved are left alone. Reasons are capped at 1200
-chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded. Open bot
+chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded. A prior
+finding (above a nitpick) the review would lift as INTENTIONALLY_DEFERRED (the verifier's
+own row decides; a reviewer's only where the verifier has none) needs a tracking reference
+visible on the PR, as in the conversation lane below: the reconciliation row's `tracking`
+(a URL or `owner/repo#N` that appears in the finding's thread, the PR description or a PR
+comment), else an issue or PR the humans in the finding's own thread (resolved or not)
+point to as tracking (on a line with a cue: "tracked", "follow-up", "filed", "opened",
+"deferred to"; "it came in with #N" does not count, nor do commit links or the PR
+itself), else a link already on record for it (kv `defer.issue:…`, or an earlier
+conversation's `conceded` row). The PR description and comments count only when the row
+cites the reference. Without one
+the worker overrides the verifier (`_hold_untracked_deferrals`, after every verifier lane):
+the finding is carried again as it was and keeps counting (a verifier's APPROVE becomes
+COMMENT: it approved with the finding lifted, so no CI watch is kept for it either), its
+thread is answered
+"**Still applies**: Deferring this needs a tracking issue …", the review body ends with
+"⏸️ Needs a tracking issue before it can be deferred (n): <titles>", and event
+`defer.needs_tracking` names the held hashes. Post-merge audits skip this. Deferrals
+accepted under the old rule are grandfathered, so no existing PR flips to REQUEST_CHANGES:
+the rule took effect at `[deferral] tracking_required_since` (ISO-8601, normalized to UTC,
+whole seconds), or, unset, at the first start of a scheduling daemon or a live (not
+`--dry-run`) worker with this code, recorded once in kv `deferral.tracking_required_since`
+and never moved (shadow daemons, `tick --no-spawn` and dry runs only read it, so running
+them from a new checkout against the production DB before deploy fixes nothing). Set the
+config value explicitly for a controlled rollout. A finding deferred before that instant
+keeps lifting without tracking (event `defer.grandfathered`) when any of these predates it:
+a conversation's INTENTIONALLY_DEFERRED `conceded` row (by its run's start; old rows have
+no link line, the oldest an empty body), an INTENTIONALLY_DEFERRED `thread.answered` event
+from either path, the bot's own "**Deferred**" answer on the open thread, or the last
+review published before the cutoff (not a conversation's verdict follow-up or a CI
+update, neither of which has a verifier set) no longer
+carrying a finding posted earlier, matched by hash or by file and title (a verifier's
+deferral on a thread nobody replied to leaves no other trace). It is not grandfathered once
+a review after the cutoff carried it again: it was standing, so deferring it now is a new
+deferral. In a conversation, such a thread whose finding this commit's review does not
+stand on is treated as settled (the lane sees `already_settled_as`): a restated deferral is
+not re-vetted. Open bot
 threads nobody replied to get the same note and resolution when a reviewer explicitly
 withdrew that finding, so a dropped finding never lingers. If the commit already has a
 review (same sha), the standing review is not re-posted; the thread answers are the
@@ -631,9 +667,10 @@ verifier lanes):
   mirror so `git show <sha>` works in the worktree; a commit that cannot be fetched is
   disclosed to the model with the reason and never fails the run).
 - It answers per thread with `STILL_VALID | FIX_PENDING | WITHDRAWN |
-  INTENTIONALLY_DEFERRED | NO_REPLY` and free prose. The rules it is given: verify claims
-  against the code, never repeat a point already made, evaluate a proposed change on its
-  merits and say whether it resolves the concern, concede when wrong, stay silent
+  INTENTIONALLY_DEFERRED | DEFERRAL_NEEDS_TRACKING | NO_REPLY` and free prose. The rules
+  it is given: verify claims against the code, never repeat a point already made,
+  evaluate a proposed change on its merits and say whether it resolves the concern,
+  concede when wrong, stay silent
   (`NO_REPLY`) when a reply is addressed to someone else or there is nothing new to add.
   Severity cannot change in a reply. There is no `FIXED`: the checkout is the reviewed
   commit, so a change that would resolve the finding (linked, sketched, or "changed it"
@@ -643,8 +680,9 @@ verifier lanes):
   `FIXED` gets `FIX_PENDING` (dashpay/dash#7778 lifted a blocker on an unpushed change).
 - Posting: the prose is the comment (marker `thepastaclaw-thread-answer v1`, once per
   human reply and head, `@` defused, CodeRabbit retriggers discarded), with a quiet
-  trailing note for FIX_PENDING / WITHDRAWN / INTENTIONALLY_DEFERRED instead of a bold
-  verdict lead; WITHDRAWN threads are resolved (where the bot may). `NO_REPLY` posts
+  trailing note for FIX_PENDING / WITHDRAWN / INTENTIONALLY_DEFERRED (naming its tracking
+  issue) / DEFERRAL_NEEDS_TRACKING instead of a bold verdict lead; WITHDRAWN threads are
+  resolved (where the bot may). `NO_REPLY` posts
   nothing, is recorded as `thread.answered` with `action: no_reply`, and the decision is
   remembered per (finding, reply) in `kv` (`converse.silent:<repo>#<n>:<hash>`), so a later
   conversation on the same PR never posts a late second opinion to that message; the
@@ -653,6 +691,48 @@ verifier lanes):
   bots (`*[bot]` logins, CodeRabbit) are part of the transcript but never count as a human
   waiting for an answer, and the router does not queue a `review_reply` head for them at
   all, so no bot-to-bot loop can start.
+- Deferrals need a tracking issue (platform#5258: a MEMBER deferred a finding "to a change
+  of its own", it was lifted under an APPROVE, and no issue was ever filed). The PR author
+  counts as a maintainer by association, but the lane accepts a deferral only when it is
+  reasonable (not something the PR introduced, made worse, or is by nature responsible
+  for) **and tracked**. Its rules: a relevant issue or PR linked in the thread, the PR
+  description or a PR comment counts (complete or not; an unrelated link does not) →
+  `INTENTIONALLY_DEFERRED` with `tracking: {"url": …}`; reasonable but untracked →
+  `DEFERRAL_NEEDS_TRACKING`, whose reply asks for a link or for permission to file one in
+  the repo that owns the follow-up (the PR's, or a sister repo such as
+  dashpay/rust-dashcore); a maintainer answering "file it" → `INTENTIONALLY_DEFERRED` with
+  `tracking: {"file": {repo, title, body}}`. Code enforces it (`converse.accept_deferrals`),
+  for anything above a nitpick: a cited reference (URL, `owner/repo#N` or `#N`) must
+  actually appear in the thread, the PR description or a PR comment, and must not be the
+  PR itself; a lane that cites nothing is covered by a reference the maintainer's own
+  latest reply points to as tracking (same cues as above); a malformed `tracking` is
+  dropped, not a failed run. Otherwise the outcome becomes `DEFERRAL_NEEDS_TRACKING` with a system-written
+  ask ("Before I mark this deferred it needs a tracking issue for the follow-up. Link one,
+  or say so and I'll file it in `<repo>`."). The maintainer-spoke-last rule still applies
+  first. `DEFERRAL_NEEDS_TRACKING` lifts nothing; its note says the finding stands, and the
+  root gets ``> ⏸️ **Needs a tracking issue** (not yet deferred)``.
+- Filing (`worker._file_tracking_issues`; lanes stay read-only): only in a repo allowed by
+  `[deferral] file_owners` (default `["dashpay"]`) or `file_repos`; elsewhere the reply
+  asks the maintainer to file it. A retry never files twice: kv
+  `defer.issue:<repo>#<n>:<finding_hash>` holds the issue URL and is checked first; it
+  reads `pending` from just before `gh issue create` until the URL is known, so a create
+  that may have gone through (timeout, server error, no URL printed, a dead worker) is
+  never repeated (later attempts ask the maintainer to check and link it); a clean refusal
+  (permissions, validation) clears it. Then
+  `gh issue list -R <repo> --state open --search "<3 title terms> in:title"` (a failed
+  search files nothing): an open issue
+  whose title overlaps the proposed one by at least 0.6 (content-word Jaccard) is linked
+  instead (`defer.issue_linked`); otherwise `gh issue create` files it (`defer.issue_filed`)
+  with the lane's description plus the PR, the thread comment URL, the maintainer who asked
+  (no `@`) and a short quote of the finding, posted as the bot with no attribution footer.
+  The reply's note links it ("Filed <url> for the follow-up. Deferred on a maintainer's
+  call …") and the finding is lifted as any deferral. On failure (permissions, network):
+  event `defer.file_failed`, the reply asks the maintainer to file and link it, and the
+  finding stands. A thread already settled on this commit stays lifted either way, but a
+  maintainer can still have the bot file its issue there (a failure reply then just asks
+  for the link). The `conceded` row keeps the tracking link on a second line of its body
+  (a later row without one keeps the earlier link); the corrected review summary and the
+  root's Deferred line show it.
 - Lifted findings on threads that stay open (the bot has no write access, e.g.
   dashpay/dash, so `resolveReviewThread` is refused; deferrals are never resolved) would
   still read as an open 🔴. The bot edits its own root comment instead: a quoted status
@@ -711,9 +791,10 @@ verifier lanes):
   sha, so findings conceded in earlier conversations stay lifted. A thread a maintainer
   resolved by hand, without the bot conceding it, still counts. In this lane a deferral lifts a blocker only when a
   maintainer (OWNER, MEMBER or COLLABORATOR, the PR author included) is among the replies
-  since the bot's last answer, and its thread stays open as the record; otherwise the
-  reply is posted with a note that the blocker stands. (The full re-review path does not
-  apply this check yet: a reviewer's deferral drops the finding from the kept set.) A later
+  since the bot's last answer, and is tracked (see above), and its thread stays open as the
+  record; otherwise the reply is posted with a note that the blocker stands. (The full
+  re-review path applies the tracking rule but not the maintainer check: a reviewer's
+  tracked deferral drops the finding from the kept set.) A later
   full review of the same sha voids earlier concessions (it re-adjudicated them).
   Known gap: if the worker dies between posting a concession
   and recording it, that blocker keeps counting until the next push is reviewed.
@@ -1133,6 +1214,11 @@ handled inbox rows are still pruned after 30 days),
 `worktree_budget_gb` (run worktrees and shared sister checkouts together).
 `[context] sister_owners`, `sister_max_repos` (0 = no sister checkouts),
 `sister_budget_minutes` (see [Review context](#review-context-sister-repos-and-base-drift)).
+`[deferral] file_owners` / `file_repos` (where the bot may file a deferral's tracking
+issue) and `tracking_required_since` (see
+[the conversation lane](#replies-on-an-already-reviewed-commit-the-conversation-lane)). The
+grandfathering of older deferrals reads `thread.answered` events from before that instant,
+so a positive `[retention] event_days` can let one of them flip back to standing.
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 
