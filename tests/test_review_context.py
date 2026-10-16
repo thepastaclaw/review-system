@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from reviewsys import config as cfg_mod
-from reviewsys import gc, sister, worker
+from reviewsys import drift, gc, sister, worker
 from reviewsys.db import kv_get, kv_set, now, tx
 from reviewsys.github import PrMeta
 from reviewsys.lane import LaneSpec, argv_for
@@ -381,6 +381,63 @@ def test_gc_rechecks_a_checkout_a_run_picked_up_meanwhile(cfg, conn):
     assert sister.remove_unused(cfg, conn, path) and not path.exists()
 
 
+# ---- base drift (real git) ----
+
+
+def test_base_drift_lists_base_commits_conflicts_and_prs(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q", "-b", "main")
+    base = commit(repo, "start", **{"a.txt": "a\n", "b.txt": "1\n2\n3\n4\n5\n6\n", "c.txt": "c\n"})
+    git(repo, "checkout", "-q", "-b", "feature")
+    head = commit(repo, "the PR", **{"a.txt": "pr\n", "b.txt": "1\n2\n3\n4\n5\npr\n"})
+    git(repo, "checkout", "-q", "main")
+    m1 = commit(repo, "fix: same line (#11)", **{"a.txt": "base\n"})
+    commit(repo, "chore: elsewhere (#12)", **{"c.txt": "base\n"})
+    git(repo, "checkout", "-q", "-b", "side")
+    commit(repo, "side work", **{"b.txt": "base\n2\n3\n4\n5\n6\n"})
+    git(repo, "checkout", "-q", "main")
+    git(repo, "merge", "-q", "--no-ff", "-m", "Merge pull request #13 from x/side", "side")
+    merge = git(repo, "rev-parse", "HEAD")
+    git(repo, "update-ref", "refs/remotes/origin/main", "main")
+    git(repo, "checkout", "-q", "--detach", head)
+
+    out = drift.base_drift(repo, "main", base, head)
+    assert out == {
+        "base_branch": "main",
+        "base_tip": merge,
+        "merge_base": base,
+        "commits_behind": 4,
+        "conflicting_files": ["a.txt"],
+        "base_commits_touching_changed_files": [
+            {
+                "sha": merge,
+                "subject": "Merge pull request #13 from x/side",
+                "pr": 13,
+                "files": ["b.txt"],
+            },
+            {"sha": m1, "subject": "fix: same line (#11)", "pr": 11, "files": ["a.txt"]},
+        ],
+    }
+    # a PR on top of the current base: nothing behind, nothing to check
+    assert drift.base_drift(repo, "main", merge, merge)["commits_behind"] == 0
+    # a merge check git refuses (unrelated histories) leaves the rest of the evidence
+    git(repo, "checkout", "-q", "--orphan", "other")
+    commit(repo, "unrelated", **{"z.txt": "z\n"})
+    git(repo, "update-ref", "refs/remotes/origin/other", "other")
+    out = drift.base_drift(repo, "other", base, head)
+    assert out["commits_behind"] == 1 and out["conflicting_files"] is None
+    assert out["error"].startswith("merge check: git merge-tree")
+
+
+def test_pr_number_from_subjects():
+    assert drift.pr_number("Merge pull request #5 from a/b") == 5
+    assert drift.pr_number("Merge #7811: fix: thing") == 7811
+    assert drift.pr_number("feat(sdk): x (#4392)") == 4392
+    assert drift.pr_number("Merge bitcoin/bitcoin#27000: upstream") is None
+    assert drift.pr_number("refactor: no number") is None
+
+
 # ---- the context step ----
 
 
@@ -401,6 +458,7 @@ def _ctx(cfg, conn, gh, tmp_path, **kw) -> worker.RunContext:
         **kw,
     )
     ctx.worktree = wt_dir
+    ctx.merge_base = "b" * 40
     ctx.meta = PrMeta("T", "B", "v3.1-dev", "a" * 40, "x", "open", False, "u", False)
     return ctx
 
@@ -408,15 +466,25 @@ def _ctx(cfg, conn, gh, tmp_path, **kw) -> worker.RunContext:
 def test_context_failures_become_evidence_and_events(tmp_path, cfg, conn, gh, monkeypatch):
     ctx = _ctx(cfg, conn, gh, tmp_path)
     (ctx.worktree / "Cargo.lock").write_text("not [ toml")
+
+    def broken(*a, **k):
+        raise ReviewError(FailKind.INFRA, "git rev-list failed: not a git repository")
+
+    monkeypatch.setattr(drift, "base_drift", broken)
     worker._review_context(ctx)  # never raises
     assert "sister_repos" not in ctx.evidence
+    assert ctx.evidence["base_drift"]["base_branch"] == "v3.1-dev"
+    assert "not a git repository" in ctx.evidence["base_drift"]["error"]
     kinds = [r[0] for r in conn.execute("SELECT kind FROM events WHERE run_id=3 ORDER BY id")]
-    assert kinds == ["context.sister_failed"]
+    assert kinds == ["context.sister_failed", "context.base_drift_failed"]
 
 
-def test_context_records_sister_repos(tmp_path, cfg, conn, gh, monkeypatch):
+def test_context_records_sister_repos_and_skips_drift_on_audits(
+    tmp_path, cfg, conn, gh, monkeypatch
+):
     entries = [{"repo": "dashpay/x", "packages": [], "pinned": None, "default": None, "error": "e"}]
     monkeypatch.setattr(sister, "gather", lambda *a, **k: entries)
+    monkeypatch.setattr(drift, "base_drift", lambda *a: pytest.fail("no drift on an audit"))
     ctx = _ctx(cfg, conn, gh, tmp_path, audit={"mode": "full"})
     worker._review_context(ctx)
     assert ctx.evidence == {"sister_repos": entries}
@@ -448,14 +516,20 @@ def test_a_conversation_run_gathers_no_review_context(tmp_path, cfg, conn, gh, m
     ctx.run_dir.mkdir()
     ctx.conversation = True
     worker.step_context(ctx)
-    assert (ctx.run_dir / "evidence.json").exists()
+    assert "base_drift" not in ctx.evidence and (ctx.run_dir / "evidence.json").exists()
 
 
 def test_prompts_explain_the_context_only_when_present(cfg):
     assert context_notes({}) == ""
-    evidence = {"sister_repos": [{"repo": "dashpay/rust-dashcore"}]}
+    assert context_notes({"base_drift": {"base_branch": "x", "error": "e"}}) == ""
+    assert context_notes({"base_drift": {"commits_behind": 0}}) == ""
+    evidence = {
+        "sister_repos": [{"repo": "dashpay/rust-dashcore"}],
+        "base_drift": {"commits_behind": 3},
+    }
     notes = context_notes(evidence)
     assert "gh issue list -R <repo>" in notes and "Never edit them" in notes
+    assert "no longer merges cleanly" in notes
     kw = dict(
         repo="dashpay/platform",
         number=9,

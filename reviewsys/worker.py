@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from . import audit, converse, degraded, github, labels, lanepool, publish, quota, sister
+from . import audit, converse, degraded, drift, github, labels, lanepool, publish, quota, sister
 from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
@@ -210,6 +210,7 @@ class RunContext:
     mirror: Path | None = None
     meta: github.PrMeta | None = None
     base_sha: str = ""
+    merge_base: str | None = None  # of the head with the live base branch (not on an audit)
     selection: list[str] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
     triage: Triage | None = None
@@ -685,6 +686,7 @@ def step_worktree(ctx: RunContext) -> None:
     _gate_comment(ctx, "in_progress")
     ctx.worktree = _checkout_head(ctx)
     base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
+    ctx.merge_base = base
     ctx.coverage_from = base or f"{ctx.sha}~1"
     _record_worktree(ctx)
 
@@ -964,8 +966,9 @@ def step_context(ctx: RunContext) -> None:
 
 def _review_context(ctx: RunContext) -> None:
     """Evidence from beyond the PR's own range: the sister repos it builds against, checked
-    out for the lanes (`sister_repos`, sister.py). Best effort: what cannot be had is
-    recorded in the evidence and an event, never a failure."""
+    out for the lanes (`sister_repos`, sister.py), and how the base branch moved since it
+    branched (`base_drift`, drift.py; not on an audit, whose PR is in the base by now). Best
+    effort: what cannot be had is recorded in the evidence and an event, never a failure."""
     assert ctx.meta and ctx.worktree
     try:
         pins = sister.lock_pins(ctx.cfg, ctx.repo, ctx.worktree)
@@ -990,6 +993,15 @@ def _review_context(ctx: RunContext) -> None:
             _context_event(ctx, "context.sister_failed", f"{r['repo']}: {r['error']}")
     if repos:
         ctx.evidence["sister_repos"] = repos
+    if ctx.is_audit or not ctx.merge_base or not ctx.meta.base_ref:
+        return
+    try:
+        bd = drift.base_drift(ctx.worktree, ctx.meta.base_ref, ctx.merge_base, ctx.sha)
+    except Exception as exc:  # evidence only, never the run's problem
+        bd = {"base_branch": ctx.meta.base_ref, "error": f"{type(exc).__name__}: {exc}"[:300]}
+    ctx.evidence["base_drift"] = bd
+    if bd.get("error"):
+        _context_event(ctx, "context.base_drift_failed", bd["error"])
 
 
 def _context_event(ctx: RunContext, kind: str, detail: str) -> None:

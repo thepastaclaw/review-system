@@ -246,3 +246,64 @@ def pre_merge_base(worktree: Path, base_branch: str, merge_commit: str, sha: str
         return _git("merge-base", f"{merge_commit}^1", sha, cwd=worktree).strip() or None
     except ReviewError:
         return None
+
+
+# ---- base drift (drift.py): what landed on the base branch since the PR branched ----
+
+
+def rev_parse(repo_dir: Path, ref: str) -> str:
+    return _git("rev-parse", "--verify", f"{ref}^{{commit}}", cwd=repo_dir, timeout=60).strip()
+
+
+def rev_count(repo_dir: Path, rev_range: str) -> int:
+    return int(_git("rev-list", "--count", rev_range, cwd=repo_dir, timeout=120).strip() or 0)
+
+
+def changed_paths(repo_dir: Path, base: str, sha: str) -> list[str]:
+    """Every path the range `base..sha` touches; a rename counts as both of its names."""
+    out = _git("diff", "--no-renames", "--name-only", base, sha, cwd=repo_dir, timeout=300)
+    return [p for p in out.splitlines() if p]
+
+
+def first_parent_log(
+    repo_dir: Path, rev_range: str, *, max_count: int
+) -> list[tuple[str, str, set[str]]]:
+    """(sha, subject, paths) of the commits in `rev_range` along the first-parent line, newest
+    first: one entry per landed change, a merge commit carrying everything it brought in (its
+    diff to the first parent), so a merged PR shows as its merge with the PR number."""
+    out = _git(
+        "log",
+        "--first-parent",
+        "--diff-merges=first-parent",
+        "--no-renames",
+        "--name-only",
+        f"--max-count={max_count}",
+        "--format=%x00%H%x09%s",
+        rev_range,
+        cwd=repo_dir,
+        timeout=300,
+    )
+    commits = []
+    for chunk in out.split("\0"):
+        head, _, rest = chunk.partition("\n")
+        sha, sep, subject = head.partition("\t")
+        if sep:
+            commits.append((sha, subject, {p for p in rest.splitlines() if p}))
+    return commits
+
+
+def merge_conflicts(repo_dir: Path, base_ref: str, sha: str) -> list[str]:
+    """The paths that conflict when `sha` is merged onto `base_ref` (git >= 2.38; nothing is
+    written to any branch or the worktree). [] when it merges cleanly."""
+    out = _git(
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "--no-messages",
+        base_ref,
+        sha,
+        cwd=repo_dir,
+        timeout=300,
+        ok=(0, 1),  # 1: conflicts, listed after the tree id
+    )
+    return [p for p in out.splitlines()[1:] if p]

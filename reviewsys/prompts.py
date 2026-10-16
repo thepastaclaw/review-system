@@ -31,8 +31,8 @@ STATIC_REVIEW = (
     "still running; say what is pending instead.\n"
 )
 
-# Context the context step gathered beyond the PR (sister.py): each paragraph is only given
-# when its evidence is there.
+# Context the context step gathered beyond the PR (sister.py, drift.py): each paragraph is only
+# given when its evidence is there.
 SISTER_REPOS_NOTE = (
     "- Sister Dash repositories are checked out read-only for this review, at the paths in "
     "`sister_repos` in the evidence below. `pinned` is exactly the commit this PR builds "
@@ -42,6 +42,14 @@ SISTER_REPOS_NOTE = (
     "instead of assuming what that code does or cannot do, and search their open issues and "
     "PRs with `gh issue list -R <repo> --search ...` / `gh pr list -R <repo> --search ...`. "
     "Never edit them. A null `path` was not checked out (`error` / `skipped` says why).\n"
+)
+BASE_DRIFT_NOTE = (
+    "- `base_drift` in the evidence below is how the base branch moved since this PR branched "
+    "(`merge_base`): `commits_behind`, `conflicting_files` (the paths that conflict when the "
+    "head is merged onto the current base tip; non-empty means it no longer merges cleanly) "
+    "and `base_commits_touching_changed_files` (`git show <sha>` works here). Check whether "
+    "one of those commits already does what this PR does, supersedes it, or conflicts with "
+    "it; a branch that no longer merges cleanly is worth saying.\n"
 )
 
 RAW_JSON_CONTRACT = (
@@ -53,8 +61,12 @@ RAW_JSON_CONTRACT = (
 
 
 def context_notes(evidence: dict[str, Any]) -> str:
-    """How to use the sister checkouts in `evidence`, when it has them."""
-    return SISTER_REPOS_NOTE if evidence.get("sister_repos") else ""
+    """How to use the sister checkouts and base drift in `evidence`, when it has them."""
+    notes = SISTER_REPOS_NOTE if evidence.get("sister_repos") else ""
+    drift = evidence.get("base_drift")
+    if isinstance(drift, dict) and drift.get("commits_behind"):  # 0: nothing landed since
+        notes += BASE_DRIFT_NOTE
+    return notes
 
 
 def read_template(cfg: Config, rel: str) -> str:
