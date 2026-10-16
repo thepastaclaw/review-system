@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-16T23:26:00Z",
-  "generated_at": "2026-10-16T23:26:00Z",
+  "data_as_of": "2026-10-16T23:27:01Z",
+  "generated_at": "2026-10-16T23:27:01Z",
   "history": {
     "daily": [
       {
@@ -228,7 +228,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 481,
+            "n": 482,
             "p90_seconds": 1857
           }
         },
@@ -254,6 +254,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1221,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": 5389,
+        "ts": "2026-10-16T23:26:24Z"
+      },
+      {
+        "detail": "attempt 1 sha=4b4fb0a8",
+        "kind": "run.spawned",
+        "number": 1221,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": 5389,
+        "ts": "2026-10-16T23:26:08Z"
+      },
+      {
+        "detail": "b3a06b18 trigger=new_pr priority=0",
+        "kind": "head.queued",
+        "number": 5479,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-16T23:26:04Z"
+      },
       {
         "detail": "ok in 585s",
         "kind": "run.done",
@@ -549,30 +573,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-16T22:50:34Z"
-      },
-      {
-        "detail": "a75ab27e trigger=review_reply priority=1",
-        "kind": "head.queued",
-        "number": 770,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-16T22:50:34Z"
-      },
-      {
-        "detail": "ok in 315s",
-        "kind": "run.done",
-        "number": 770,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5382,
-        "ts": "2026-10-16T22:46:11Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch_green",
-        "number": 7918,
-        "repo": "dashpay/dash",
-        "run_id": 5364,
-        "ts": "2026-10-16T22:44:30Z"
       }
     ],
     "tokens_by_effort": [
@@ -1166,14 +1166,155 @@
       "findings_posted": 4458,
       "reviews": 5855,
       "reviews_imported": 2245,
-      "runs": 5388,
+      "runs": 5389,
       "tokens_in": 43127186665,
       "tokens_out": 571141201,
       "tokens_total": 43698327866
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "romchornyi",
+        "deadline_at": "2026-10-17T05:26:08Z",
+        "deadline_in_seconds": 21547,
+        "degraded": false,
+        "elapsed_seconds": 53,
+        "findings": null,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-10-16T23:26:53Z",
+        "id": 5389,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 37,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 38,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 37,
+            "state": "running"
+          }
+        ],
+        "number": 1221,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1221",
+        "priority": false,
+        "progress": 0.076,
+        "queue": "live",
+        "queued_at": "2026-10-16T22:55:42Z",
+        "remaining_seconds": 640,
+        "repo": "dashpay/dashwallet-ios",
+        "sha": "4b4fb0a8ba4293c4e1f67a6e626b9e8848d50354",
+        "started_at": "2026-10-16T23:26:08Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-16T23:26:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 7,
+            "started_at": "2026-10-16T23:26:13Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "CoinJoinMoveFundsViewModel.prepareCoinJoinInputs and prepareThenDrain introduce an intricate funds-movement sequence that consolidates selected account UTXOs, waits for finality, and performs a preauthorized asset-lock drain with partial-failure handling.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 7,
+            "started_at": "2026-10-16T23:26:13Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-16T23:26:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 38,
+            "started_at": "2026-10-16T23:26:23Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 38,
+            "started_at": "2026-10-16T23:26:23Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(coinjoin): consolidate mixed coins before moving them to Shielded",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1826
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1189,7 +1330,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1207,7 +1348,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-16T23:24:06Z",
+        "at": "2026-10-16T23:26:30Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1228,10 +1369,11 @@
       "done": 5783,
       "failed": 75,
       "queued": 1,
+      "running": 1,
       "superseded": 2164
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-16T23:22:19Z",
+    "ingest_last_at": "2026-10-16T23:26:08Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1241,7 +1383,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1253,7 +1395,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1265,29 +1407,29 @@
       }
     ],
     "last_run_done_at": "2026-10-16T23:23:11Z",
-    "last_run_started_at": "2026-10-16T23:14:42Z",
+    "last_run_started_at": "2026-10-16T23:26:08Z",
     "median_run_minutes": 9.616666666666667,
-    "notify_last_at": "2026-10-16T23:24:26Z",
-    "oldest_queued_at": "2026-10-16T22:55:42Z",
+    "notify_last_at": "2026-10-16T23:26:51Z",
+    "oldest_queued_at": "2026-10-16T23:26:04Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1818,
+        "age_seconds": 57,
         "attempts": 0,
-        "author": "romchornyi",
-        "eligible": true,
-        "eligible_at": "2026-10-16T23:25:42Z",
-        "eligible_in_seconds": 0,
-        "number": 1221,
+        "author": "HashEngineering",
+        "eligible": false,
+        "eligible_at": "2026-10-16T23:56:04Z",
+        "eligible_in_seconds": 1743,
+        "number": 5479,
         "position": 1,
-        "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1221",
-        "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1221#issuecomment-6226267545",
+        "pr_url": "https://github.com/dashpay/platform/pull/5479",
+        "prioritize_url": "https://github.com/dashpay/platform/pull/5479#issuecomment-new",
         "priority": false,
-        "queued_at": "2026-10-16T22:55:42Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dashwallet-ios",
-        "sha": "4b4fb0a8ba4293c4e1f67a6e626b9e8848d50354",
-        "title": "fix(coinjoin): consolidate mixed coins before moving them to Shielded",
+        "queued_at": "2026-10-16T23:26:04Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/platform",
+        "sha": "b3a06b187d97eea9fee3d9b2135f5cfe669b68d1",
+        "title": "feat(platform-wallet-storage): persist DashPay backfill coverage and outbound-account markers",
         "trigger": "new_pr"
       }
     ],
@@ -1298,7 +1440,7 @@
       "reviews": 145,
       "tokens": 1577336577
     },
-    "ts": "2026-10-16T23:26:00Z",
+    "ts": "2026-10-16T23:27:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.9,
       "low": 7.8,
@@ -1307,9 +1449,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 11.3,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.8833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
