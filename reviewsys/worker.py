@@ -3257,7 +3257,12 @@ def _conversation_verdict_update(
     assert ctx.meta
     own = ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
     if publish.EVENT_STATE[publish.transport_event(new_event, own_pr=own)] == state:
+        approved = new_event == "APPROVE" and (
+            labels.latest_verdict(ctx.conn, ctx.repo, ctx.number, ctx.sha) != "APPROVE"
+        )
         _record_verdict(ctx, phase, verified, new_event)
+        if approved:  # a bot-authored PR: the APPROVE exists only in our record
+            _watch_ci(ctx, known=[])
         return None
     titles = [
         t["title"]

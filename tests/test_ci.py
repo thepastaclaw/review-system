@@ -784,3 +784,36 @@ def test_a_bot_authored_pr_is_judged_on_its_recorded_approve(cfg, conn, gh, lane
     _ci_run(cfg, conn, gh, lanes)
     assert gh.posted_reviews[-1]["body"].startswith("<!-- thepastaclaw-review-update v1")
     assert labels.latest_verdict(conn, REPO, 1, HEAD) == "COMMENT"
+
+
+def test_a_conversation_approving_a_bot_authored_pr_watches_its_ci(cfg, conn, gh, lanes):
+    """On the bot's own PR the conversation's APPROVE is only recorded (COMMENT transport
+    equals the standing COMMENTED, nothing is posted); its CI is watched all the same."""
+    from tests.test_worker_e2e import (
+        KNST,
+        WITHDRAW,
+        _blocking,
+        _converse,
+        _finding_thread,
+        _full_strength_prior,
+        _seed_prior,
+    )
+
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    _full_strength_prior(conn)
+    gh.pr = {**gh.pr, "user": {"login": cfg.bot_login}}
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "event": "COMMENT",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    _ci(gh, _check("Tests", status="in_progress"))
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
+    assert len(gh.posted_reviews) == 1  # recorded, not posted
+    assert labels.latest_verdict(conn, REPO, 1, HEAD) == "APPROVE"
+    w = _watch(conn)
+    assert w is not None and w["known"] == []
