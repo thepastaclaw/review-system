@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
 
-from . import audit, converse, degraded, drift, github, labels, lanepool, publish, quota, sister
+from . import audit, ci, converse, degraded, drift, github, labels, lanepool, publish, quota, sister
 from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
@@ -291,6 +291,12 @@ class RunContext:
     @property
     def is_audit(self) -> bool:
         return self.audit is not None
+
+    @property
+    def is_ci_check(self) -> bool:
+        """A check failed after this head's APPROVE: the light CI-check run (ci.py), which
+        reviews nothing and leaves the review's gate comment as it is."""
+        return self.trigger == Trigger.CI_FAILED
 
     def check_cancel(self) -> None:
         if self.cancel_flag.is_set():
@@ -623,7 +629,7 @@ def _gate_defaults(ctx: RunContext, kw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
-    if ctx.dry_run or ctx.is_audit:
+    if ctx.dry_run or ctx.is_audit or ctx.is_ci_check:
         return
     with ctx.gate_lock:
         live = status == "in_progress"
@@ -654,7 +660,7 @@ def _gate_closed(ctx: RunContext, reason: str) -> None:
     """The PR closed or merged before this run could review it: an existing gate comment says
     so instead of a stale "queued" / "in progress" status that nothing else would replace (no
     newer head will be queued). Never creates a comment on a closed PR just to say that."""
-    if ctx.dry_run or ctx.is_audit:
+    if ctx.dry_run or ctx.is_audit or ctx.is_ci_check:
         return
     with ctx.gate_lock:
         ctx.gate_live_kw = None
@@ -748,10 +754,7 @@ def step_prep(ctx: RunContext) -> None:
     (`select.degraded` / `triage.degraded`)."""
     assert ctx.meta and ctx.worktree
     _step_start(ctx, StepName.SELECT)
-    files_raw = (
-        ctx.gh.api(f"repos/{ctx.repo}/pulls/{ctx.number}/files?per_page=100", paginate=True) or []
-    )
-    ctx.files = [f for f in files_raw if isinstance(f, dict)]
+    _fetch_files(ctx)
     lane = ctx.cfg.policy.triage
     if lane is not None and ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
         ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
@@ -769,6 +772,13 @@ def step_prep(ctx: RunContext) -> None:
         _step_start(ctx, StepName.TRIAGE)
         _end_triage(ctx, _triage(ctx, lane))
     _gate_comment(ctx, "in_progress")
+
+
+def _fetch_files(ctx: RunContext) -> None:
+    files_raw = (
+        ctx.gh.api(f"repos/{ctx.repo}/pulls/{ctx.number}/files?per_page=100", paginate=True) or []
+    )
+    ctx.files = [f for f in files_raw if isinstance(f, dict)]
 
 
 def _prep(ctx: RunContext, lane: LaneModel) -> prep_mod.Prep:
@@ -2348,6 +2358,37 @@ def _publish_step(
         phase2_skipped=phase2_skipped,
         **score,
     )
+    # the verifier weighed the checks that had failed when the context was read
+    _watch_ci(ctx, known=ci.failing_names(ctx.evidence.get("ci"), ctx.cfg.ci.ignore_re))
+
+
+def _watch_ci(ctx: RunContext, *, known: list[str]) -> None:
+    """Once an APPROVE stands on this head, watch its CI if checks are still running or
+    failed since `known` (ci.register). Best effort: the verdict is already published."""
+    if ctx.dry_run or ctx.is_audit:
+        return
+    try:
+        ci.register(
+            ctx.conn,
+            ctx.cfg,
+            ctx.gh,
+            repo=ctx.repo,
+            number=ctx.number,
+            sha=ctx.sha,
+            run_id=ctx.run_id,
+            known=known,
+        )
+    except Exception as exc:
+        log.warning("CI watch for %s#%s not registered: %s", ctx.repo, ctx.number, exc)
+        with contextlib.suppress(sqlite3.Error), tx(ctx.conn):
+            event(
+                ctx.conn,
+                "ci.watch_failed",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=str(exc)[:500],
+            )
 
 
 def _audit_publish(
@@ -2934,12 +2975,20 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     # no `posted` rows, but it is still this commit's publication (dashpay/dash#7861: missing
     # it left "the verifier record ... is not available" and a COMMENT that never cleared the
     # REQUEST_CHANGES it had just posted). Every run that writes a `reviews` row posted or
-    # recorded that review, except a conversation's own verdict follow-up.
+    # recorded that review, except a conversation's own verdict follow-up and a CI update
+    # (ci.py), neither of which reviewed anything.
     published = ctx.conn.execute(
         "SELECT MAX(rv.run_id) FROM reviews rv WHERE rv.repo=? AND rv.number=? AND rv.sha=? "
         "AND rv.phase=? AND NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id "
-        "AND s.name=?)",
-        (ctx.repo, ctx.number, ctx.sha, phase, StepName.CONVERSE.value),
+        "AND s.name IN (?, ?))",
+        (
+            ctx.repo,
+            ctx.number,
+            ctx.sha,
+            phase,
+            StepName.CONVERSE.value,
+            StepName.CI_CHECK.value,
+        ),
     ).fetchone()[0]
     run_id = max(
         [int(r["run_id"]) for r in rows if r["stage"] == "posted"]
@@ -3134,6 +3183,9 @@ def _conversation_verdict_update(
     left = sum(1 for sev in standing.findings.values() if sev != "nitpick")
     strength = _review_strength(ctx, standing.run_id)
     clear = standing.verified and standing.lifted_any and not left
+    # a code check failed after this commit's approval and looked related (ci.py): only a
+    # review that sees that failure may approve the commit again, not a discussion
+    ci_hold = kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)) is not None
     prov = publish.Provenance(
         reviewers=[],
         verifier=_lane_provenance(lm, "conversation"),
@@ -3144,7 +3196,7 @@ def _conversation_verdict_update(
     )
     verified = VerifierOutput(
         summary="",
-        review_action="APPROVE" if clear and strength == "ok" else "COMMENT",
+        review_action="APPROVE" if clear and strength == "ok" and not ci_hold else "COMMENT",
         findings=[],
         dropped=[],
         out_of_scope=[],
@@ -3167,6 +3219,11 @@ def _conversation_verdict_update(
         note = f"Not approved: {left} non-blocking finding(s) from {source} still stand."
     elif prov.degraded:
         note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
+    elif clear and ci_hold:
+        note = (
+            "Not approved: CI failed on this commit after its review, in checks that looked "
+            "related (see the CI follow-up); the next push gets a full review."
+        )
     elif clear and strength == "needs_fresh":
         queued = _request_fresh_audit(ctx)
         note = (
@@ -3238,13 +3295,225 @@ def _conversation_verdict_update(
             run_id=ctx.run_id,
             detail=f"{state} -> {result.event} on {ctx.sha[:8]} (conversation: {what} withdrawn or deferred)",
         )
+    if result.event == "APPROVE":
+        # nothing weighed CI for this approval: the discussion only lifted findings
+        _watch_ci(ctx, known=[])
     return result
+
+
+# ---- CI after the verdict: a check failed after this head's APPROVE (ci.py) ----
+
+
+def step_ci_check(ctx: RunContext) -> dict[str, Any]:
+    """The light run the `ci_watch` daemon task queues when a code check failed after this
+    head's APPROVE: no checkout, no review. Re-reads CI and the standing verdict, asks one
+    cheap lane whether the failure relates to the change, and when it does (or the lane
+    cannot tell) posts one follow-up review that moves the APPROVE to COMMENT. Unrelated: an
+    event, nothing posted. Never touches a REQUEST_CHANGES or COMMENT, never posts twice for a
+    head. Returns the step detail."""
+    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
+    _require_live(ctx, live)
+    ctx.meta = live
+    state = ci.read(ctx.gh, ctx.cfg, ctx.repo, ctx.sha)
+    if state.error is not None:
+        raise ReviewError(FailKind.INFRA, f"CI checks unreadable: {state.error}")
+    w = ci.load(ctx.conn, ctx.repo, ctx.number, ctx.sha) or {}
+    failing = state.unjudged(w.get("known") or [])
+    names = [str(c["name"]) for c in failing]
+    pending = bool(state.pending)
+    if not failing:  # re-run and passed since the daemon looked
+        _ci_done(ctx, "ci.recovered", "no failing check left to judge", pending=pending)
+        return {"outcome": "recovered"}
+    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    if held := _ci_held(ctx, reviews, {}):
+        return held
+    _fetch_files(ctx)
+    logs = ci.job_logs(ctx.gh, ctx.repo, failing)
+    text = ci.prompt(
+        repo=ctx.repo,
+        number=ctx.number,
+        base_ref=live.base_ref,
+        title=live.title,
+        body=live.body,
+        files=ctx.files,
+        failing=failing,
+        logs=logs,
+        review=_ci_review_summary(ctx, reviews),
+    )
+    j = _ci_judge(ctx, text, names)
+    ctx.check_cancel()  # a lane stopped by a cancel is no "could not judge"
+    detail = {"outcome": j.related, "checks": names, "method": j.method, "related": j.checks}
+    (ctx.run_dir / "ci_check.json").write_text(
+        json.dumps({**dataclasses.asdict(j), "failing": failing, "logs": logs}, indent=1)
+    )
+    if j.related == "no":
+        why = f"{', '.join(names)}: {j.reason}"
+        _ci_done(ctx, "ci.unrelated", why, judged=names, pending=pending)
+        return detail
+    # the lane ran for a minute or more: a push, a dismissal or another verdict since then
+    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
+    if held := _ci_held(ctx, github.reviews(ctx.gh, ctx.repo, ctx.number), detail):
+        return held
+    ctx.check_cancel()
+    if ctx.dry_run:
+        return {**detail, "posted": False}
+    result = publish.publish_ci_update(
+        ctx.gh,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        failing=failing,
+        related=j.related,
+        reason=j.reason,
+        lane=_lane_provenance(ctx.lane_model(ctx.cfg.policy.ci_check_lane), "ci-check"),
+        judged=j.judged,
+        logs_read=sum(1 for lg in logs if lg.get("tail")),
+        degraded=_degraded_provenance(ctx),
+    )
+    with tx(ctx.conn):
+        _ci_record_update(ctx, result.review_id, result.event)
+        _set_run_review(
+            ctx, blocker_count=0, review_id=result.review_id, review_url=result.review_url
+        )
+        event(
+            ctx.conn,
+            "review.verdict_updated",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"APPROVED -> {result.event} on {ctx.sha[:8]} (CI failed after the review: {', '.join(names)}; related={j.related})",
+        )
+        why = f"{j.related}: {', '.join(names)}: {j.reason or j.error or ''}"
+        _ci_end(ctx, "ci.related", why, pending=False)
+    return {**detail, "posted": True, "event": result.event}
+
+
+def _ci_held(
+    ctx: RunContext, reviews: list[dict[str, Any]], detail: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The step detail when the CI check has nothing to change (the watch ends, with an event
+    saying why), else None: while the bot's APPROVE stands on this exact head and the head
+    has no CI update yet. A COMMENT or REQUEST_CHANGES is never touched, a dismissal never
+    re-asserted, and a head gets one CI update (one posted just before a crash, which this
+    database missed, is recorded now)."""
+    bot = ctx.cfg.bot_login
+    kind, why = "ci.already_updated", ""
+    marker = publish.CI_UPDATE_MARKER.format(sha=ctx.sha)
+    posted = next(
+        (
+            r
+            for r in reviews
+            if (r.get("user") or {}).get("login") == bot and marker in str(r.get("body") or "")
+        ),
+        None,
+    )
+    if kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)):
+        why = "a CI update was already posted for this head"
+    elif posted is not None:
+        with tx(ctx.conn):
+            _ci_record_update(ctx, posted.get("id"), "COMMENT")
+        why = f"a CI update was already posted for this head (review {posted.get('id')})"
+    else:
+        state = publish.standing_verdict(reviews, ctx.sha, "final", bot)
+        assert ctx.meta
+        own = ctx.meta.author.lower() == bot.lower()
+        if state == "APPROVED" or (
+            # a bot-authored PR: GitHub shows COMMENTED, our record says APPROVE
+            own and labels.latest_verdict(ctx.conn, ctx.repo, ctx.number, ctx.sha) == "APPROVE"
+        ):
+            return None
+        kind, why = "ci.verdict_moved", f"the standing verdict is {state or 'none'}"
+    _ci_done(ctx, kind, why, pending=False)
+    return {**detail, "outcome": "no_approve", "reason": why}
+
+
+def _ci_record_update(ctx: RunContext, review_id: Any, event_name: str) -> None:
+    """Record the head's CI update: its verdict (the label follows) and the once-per-head
+    guard. Caller holds the write transaction."""
+    ctx.conn.execute(
+        "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+        (ctx.run_id, ctx.repo, ctx.number, ctx.sha, "final", review_id, event_name, now()),
+    )
+    kv_set(
+        ctx.conn,
+        ci.updated_key(ctx.repo, ctx.number, ctx.sha),
+        json.dumps({"review_id": review_id, "run_id": ctx.run_id, "at": now()}),
+    )
+
+
+def _ci_end(
+    ctx: RunContext, kind: str, why: str, *, pending: bool, judged: list[str] | None = None
+) -> None:
+    """The CI check is done with the head: say why, and watch on while checks still run.
+    Caller holds the write transaction."""
+    event(
+        ctx.conn,
+        kind,
+        repo=ctx.repo,
+        number=ctx.number,
+        run_id=ctx.run_id,
+        detail=f"{ctx.sha[:8]}: {why}",
+    )
+    ci.release(ctx.conn, ctx.repo, ctx.number, ctx.sha, judged=judged or [], pending=pending)
+
+
+def _ci_done(
+    ctx: RunContext, kind: str, why: str, *, pending: bool, judged: list[str] | None = None
+) -> None:
+    with tx(ctx.conn):
+        _ci_end(ctx, kind, why, pending=pending, judged=judged)
+
+
+def _ci_review_summary(ctx: RunContext, reviews: list[dict[str, Any]]) -> str:
+    """The body of the review the APPROVE came from, as the lane reads it."""
+    for r in reversed(reviews):
+        body = str(r.get("body") or "")
+        if (r.get("user") or {}).get("login") == ctx.cfg.bot_login and (
+            f"phase=final sha={ctx.sha}" in body and github.REVIEW_MARKER in body
+        ):
+            return ci.review_summary(body)
+    return ""
+
+
+def _ci_judge(ctx: RunContext, text: str, names: list[str]) -> ci.Judgement:
+    lane = ctx.cfg.policy.ci_check_lane
+
+    def attempt(first: int = 1) -> ci.Judgement:
+        return ci.judge(
+            ctx.cfg,
+            lane=ctx.lane_model(lane),
+            text=text,
+            names=names,
+            run_dir=ctx.run_dir,
+            runner=ctx.lane_runner,
+            should_stop=ctx.cancel_flag.is_set,
+            first_attempt=first,
+        )
+
+    j = attempt()
+    if j.infra_error and _degrade_on_side_lane_failure(ctx, "ci_check", lane.model, j.infra_error):
+        j = attempt(3)  # once more, on the stand-in (its artifacts numbered on)
+    if j.error:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "ci.check_degraded",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"related={j.related} method={j.method} error={j.error}",
+            )
+    return j
 
 
 def run(ctx: RunContext) -> RunStatus:
     pol = ctx.cfg.policy
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
     _detect_degraded(ctx)
+    if ctx.is_ci_check:
+        _step_start(ctx, StepName.CI_CHECK)
+        _step_end(ctx, StepName.CI_CHECK, "ok", step_ci_check(ctx))
+        return RunStatus.DONE
     standing = _standing_review(ctx) if ctx.trigger == Trigger.REVIEW_REPLY else None
     ctx.conversation = standing is not None
     ctx.check_cancel()

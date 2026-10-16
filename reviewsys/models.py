@@ -53,6 +53,8 @@ class Trigger(StrEnum):
     REVIEW_REPLY = "review_reply"  # a human replied under one of the bot's finding threads
     MANUAL = "manual"
     AUDIT = "audit"  # post-merge review of a PR merged without a clean review (audit queue)
+    # a check failed after the head's APPROVE: the light CI-check run, never a review (ci.py)
+    CI_FAILED = "ci_failed"
 
     @property
     def priority(self) -> bool:
@@ -84,6 +86,7 @@ class StepName(StrEnum):
     FRESH_PHASE2 = "fresh_phase2"
     FRESH_VERIFY2 = "fresh_verify2"
     PERSISTENCE = "persistence"  # audit: is each blocker still present on the base tip?
+    CI_CHECK = "ci_check"  # does a check that failed after an APPROVE relate to the change?
     PUBLISH = "publish"
 
 

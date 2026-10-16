@@ -29,6 +29,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
+| `ci.py` | CI after the verdict: watches an APPROVE until CI finishes; a related failure moves it to COMMENT via one cheap lane |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
 | `sister.py` | sister Dash repos (Cargo.lock pins + configured `sister_repos`) checked out read-only for the lanes, shared across runs |
 | `drift.py` | base drift: base commits since the merge base that touch the PR's files, merge conflicts with the current base |
@@ -776,6 +777,77 @@ Two things the label does not see: a human dismissing the bot's review on GitHub
 label keeps the verdict the bot last recorded), and a hand-edited `pastaclaw:*` label on
 a PR with no further activity (reconciliation only visits PRs that changed).
 
+## CI after the verdict
+
+Reviews often finish before CI does. At verdict time a failed code check is evidence the
+verifier weighs (skills prompts: a related failure comments, a flake may still approve); there
+is deliberately no "never approve on red" gate, because CI flakes. What changes after the
+verdict is handled by `ci.py`:
+
+- **Watch.** When a run publishes (or, on a bot-authored PR, records) an APPROVE, the worker
+  re-reads the head's checks (the context snapshot can be an hour old). If code checks are
+  still running, or one failed after the run read CI, it stores a watch in kv
+  `ci.watch:<repo>#<n>:<sha>` (`ci.watch`). The failures the verifier already saw are kept as
+  `known` and never judged again. A conversation that moves a verdict to APPROVE registers
+  one with nothing known (no lane weighed CI for it).
+- **`ci_watch` daemon task** (live daemon only, every `[ci] interval_seconds`, at most 30
+  heads' checks read per pass, least recently read first; it writes nothing to GitHub; every
+  check run is read, past the first page of 100, so a large matrix cannot hide one). Each
+  watch is re-read after its head's status and every write is a compare-and-set, so a
+  CI-check run settling a watch mid-pass is never overwritten with a stale copy. A
+  watch is dropped when the PR's head moved, the PR closed, the head's verdict is no longer
+  APPROVE, a CI update was already posted, or it is older than `[ci] watch_hours`
+  (`ci.watch_dropped` / `ci.watch_expired`). Checks still running: kept. All complete with
+  no new failure: dropped (`ci.watch_green`). A new failure (`failure`, `timed_out`,
+  `startup_failure`, `action_required`, or a commit status `error`), even with other checks
+  still running: the reviewed head is re-opened for a CI-check run (`ci.failed`,
+  `Trigger.CI_FAILED`, priority, no debounce).
+- **Meta checks never count**, pending or failed: names matching `[ci] ignore_checks` (a
+  case-insensitive regex; default `config.DEFAULT_CI_IGNORE`: PR title and semantic-commit
+  checks, codecov, policy, PR Hygiene, CodeRabbit / "CodeRabbit or PastaClaw review",
+  milestone, label and conflict bookkeeping, CLA, DCO; `review` only as a word, so a
+  deploy preview still counts).
+- **The CI-check run** (`worker.step_ci_check`, step `ci_check`) reviews nothing and needs no
+  checkout: it re-reads the checks (a re-run that passed ends it, `ci.recovered`) and the
+  standing verdict, then one lane on the triage model (`ModelPolicy.ci_check_lane`; the
+  selector model at low effort without triage) gets the failing checks, the last 200 lines
+  of up to three failed GitHub Actions jobs' logs (`gh api …/actions/jobs/<id>/logs`, best
+  effort), the changed files and the approving review's summary, and answers
+  `{"related": "yes|no|unclear", "reason", "checks"}`. A lane with no usable answer after two
+  attempts counts as `unclear` (`ci.check_degraded`); a quota failure flips the run to
+  degraded mode and retries on the stand-in, like triage.
+  - `yes` / `unclear`, and the bot's APPROVE still stands on this exact head: one follow-up
+    review, "CI failed after approval" (event `COMMENT`, no inline comments, the
+    `thepastaclaw-review-update v1` marker so `standing_verdict` counts it, plus
+    `thepastaclaw-ci-update v1 sha=…`), lists the failing checks and why they look related
+    (`review.verdict_updated`, `ci.related`). The verdict label follows (`commented`).
+  - `no`: nothing is posted (`ci.unrelated` with the lane's reason); while other checks still
+    run the watch goes on with the judged ones added to `known`.
+  - A REQUEST_CHANGES or COMMENT is never touched, a dismissed review never re-asserted
+    (`ci.verdict_moved`), and a head gets at most one CI update (`ci.already_updated`): kv
+    `ci.updated:<repo>#<n>:<sha>`, and the marker on GitHub (an update posted just before a
+    crash is recorded, not posted again). No re-review is queued; the next push gets one.
+  - After a CI update a conversation on that commit never approves it again (only a review,
+    which sees the failure, may), and the CI-check run never counts as the commit's
+    publication in the conversation's accounting (`_standing_findings`).
+  - A CI-check run gets two attempts; one that still fails (GitHub unreachable) leaves the
+    head `done` as its review left it, ends the watch and records `ci.check_failed`: it is
+    never a `failed` head and never pages. A cancel during the lane posts nothing.
+- A CI-check head is not in line for a review: it gets no queue comment, leaves the gate
+  comment the review wrote, has no progress estimate, and counts neither toward the backlog
+  rule nor the median run time behind queue ETAs. Whatever re-opens a reviewed commit (a
+  reply on a finding, the priority box, `enqueue`) while it waits takes the head over, and
+  the watch queues the CI check again afterwards if the APPROVE still stands and the check
+  still fails (a new review that approves registers a fresh watch instead); a mention or
+  review request changes nothing, as on any reviewed commit. While it runs, the head is
+  handed over too (a retry is their run) and a re-review is queued for right after it; a
+  reply waits for the run to end as usual, then becomes a conversation.
+- `reviewsys status` shows `ci watches: watching=N ci_check_queued=M`.
+
+A COMMENT follow-up does not clear an APPROVE from GitHub's merge box on repos where the bot
+has write access (GitHub counts a reviewer's latest APPROVE / REQUEST_CHANGES); the verdict
+label and the review timeline carry the move.
+
 ## Queue comment and priority requests
 
 As soon as a PR head is queued the daemon posts (and keeps updated, every
@@ -1014,7 +1086,7 @@ minute if it dies. `~/.reviewsys/mode` records live/shadow for the watchdog.
 ## Operations (on the box)
 
     R="$HOME/.reviewsys/venv/bin/reviewsys --config $HOME/.reviewsys/config.toml"
-    $R status [--json]            # queue counts, active runs, watchdog verdict
+    $R status [--json]            # queue counts, active runs, CI watches, watchdog verdict
     $R doctor                     # gh, claude, skills, proxy models
     $R enqueue OWNER/REPO N       # priority review of a PR's live head
     $R cancel --run-id N          # cooperative cancel of an active run
@@ -1049,6 +1121,9 @@ reviewsys process exports it as `CLAUDE_CONFIG_DIR`, so the session cleanup, gc 
 where the lanes write. It must match a launcher that forces its own: the box's
 `~/.openclaw/bin/claude` sets `~/.claude-proxy`, so the box config sets that; unset = inherited,
 else `~/.claude`).
+
+`[ci] enabled` / `interval_seconds` / `watch_hours` / `ignore_checks` (see
+[CI after the verdict](#ci-after-the-verdict)).
 
 `[retention] artifact_days` (0 = keep run artifacts forever, the default: they are the
 only per-lane record for later analysis; with lane transcripts a few hundred MB a day),

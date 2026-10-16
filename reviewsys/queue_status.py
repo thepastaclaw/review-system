@@ -87,12 +87,14 @@ def _ordinal(n: int) -> str:
 
 def queued_order(conn: sqlite3.Connection, *, ts: str | None = None) -> list[sqlite3.Row]:
     """Queued heads in the order the scheduler will pick them: eligible priority first, then
-    eligible normal, then heads still in debounce/backoff (by when they become eligible)."""
+    eligible normal, then heads still in debounce/backoff (by when they become eligible).
+    A reviewed head re-opened for its CI check (ci.py) is not in line for a review: its PR
+    keeps the gate comment the review left."""
     ts = ts or now()
     return conn.execute(
         "SELECT id, repo, number, sha, priority, eligible_at FROM heads WHERE status='queued' AND queue='live' "
-        "ORDER BY (eligible_at > ?) ASC, priority DESC, CASE WHEN eligible_at > ? THEN eligible_at ELSE queued_at END ASC",
-        (ts, ts),
+        "AND trigger<>? ORDER BY (eligible_at > ?) ASC, priority DESC, CASE WHEN eligible_at > ? THEN eligible_at ELSE queued_at END ASC",
+        (Trigger.CI_FAILED.value, ts, ts),
     ).fetchall()
 
 

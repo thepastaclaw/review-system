@@ -1452,3 +1452,115 @@ def publish_verdict_update(
         review_id=int(resp["id"]),
         review_url=str(resp.get("html_url") or "") or None,
     )
+
+
+# ---- CI after the verdict (ci.py) ----
+
+# beside UPDATE_MARKER (which makes `standing_verdict` count the follow-up): says it is the
+# head's CI update, of which there is at most one per commit
+CI_UPDATE_MARKER = "<!-- thepastaclaw-ci-update v1 sha={sha} -->"
+_CI_LEAD = {
+    "yes": "checks that failed after the review look related to this change.",
+    "unclear": "checks that failed after the review may relate to this change, and the "
+    "evidence does not rule it out.",
+}
+_CI_REASON = {"yes": "Why they look related", "unclear": "Why it is unclear"}
+_CI_REASON_MAX = 1200
+
+
+def _ci_check_line(c: dict[str, Any]) -> str:
+    name = str(c.get("name") or "?").replace("`", "")
+    label = f"[`{name}`]({c['url']})" if c.get("url") else f"`{name}`"
+    return f"- {label} ({c.get('conclusion') or 'failed'})"
+
+
+def render_ci_update(
+    *,
+    head_sha: str,
+    failing: list[dict[str, Any]],
+    related: str,
+    reason: str,
+    lane: dict[str, Any],
+    judged: bool,
+    logs_read: int,
+    degraded: dict[str, Any] | None = None,
+) -> str:
+    """The follow-up review that moves an APPROVE to COMMENT when CI failed after it.
+    `judged` False: the CI-check lane gave no answer, so the failure counts as unclear."""
+    title = f"CI failed after approval — commit {head_sha[:8]}"
+    if degraded:
+        title = f"{DEGRADED_BADGE} — {title}"
+    why = (
+        scrub_reply(reason, _CI_REASON_MAX)
+        if judged
+        else "the CI-check lane could not judge the failure, so it is treated as possibly related."
+    )
+    parts = [
+        UPDATE_MARKER.format(phase="final", sha=head_sha),
+        CI_UPDATE_MARKER.format(sha=head_sha),
+        f"## {title}",
+        "",
+        "The standing review approved this commit; this follow-up moves the verdict to "
+        f"`COMMENT`: {_CI_LEAD.get(related, _CI_LEAD['unclear'])}",
+        "",
+        "Failing checks:",
+        *(_ci_check_line(c) for c in failing),
+        "",
+    ]
+    if why:
+        parts += [f"{_CI_REASON.get(related, _CI_REASON['unclear'])}: {why}", ""]
+    parts += [
+        "_Nothing was re-reviewed: the findings of the standing review are unchanged. The next "
+        "push gets a full review; a re-run that passes does not restore the approval._",
+        "",
+        "<details>",
+        "<summary>Review provenance</summary>",
+        "",
+        f"Source: CI-check lane {_model_label(lane)} (agent: `{lane['agent']}`); no reviewer "
+        "or verifier lanes ran for this follow-up",
+        "",
+        *([_degraded_line(degraded)] if degraded else []),
+        "- Verdict moved because CI failed on this commit after the review; failure logs read: "
+        f"{logs_read} GitHub Actions job(s)",
+        "",
+        "</details>",
+    ]
+    return "\n".join(parts)
+
+
+def publish_ci_update(
+    gh: Gh,
+    *,
+    repo: str,
+    number: int,
+    head_sha: str,
+    failing: list[dict[str, Any]],
+    related: str,
+    reason: str,
+    lane: dict[str, Any],
+    judged: bool,
+    logs_read: int,
+    degraded: dict[str, Any] | None = None,
+) -> PublishResult:
+    """Post the CI follow-up review: always COMMENT, so it needs no own-PR transport rule."""
+    body = render_ci_update(
+        head_sha=head_sha,
+        failing=failing,
+        related=related,
+        reason=reason,
+        lane=lane,
+        judged=judged,
+        logs_read=logs_read,
+        degraded=degraded,
+    )
+    resp = github.post_review(
+        gh, repo, number, {"commit_id": head_sha, "body": body, "event": "COMMENT", "comments": []}
+    )
+    return PublishResult(
+        posted=True,
+        event="COMMENT",
+        transport_event="COMMENT",
+        body=body,
+        review_id=int(resp["id"]),
+        review_url=str(resp.get("html_url") or "") or None,
+    )
