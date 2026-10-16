@@ -185,6 +185,9 @@ class FakeGh(Gh):
         self.can_resolve = True
         self.comment_edits: list[tuple[int, str]] = []  # (comment id, new body) via PATCH
         self.review_edits: list[tuple[int, str]] = []  # (review id, new body) via PUT
+        self.open_issues: list[dict[str, Any]] = []  # what `gh issue list` finds
+        self.created_issues: list[dict[str, Any]] = []  # `gh issue create` calls
+        self.issue_create_error = ""  # set: `gh issue create` fails with this message
 
     def _runner(
         self, argv: Sequence[str], stdin: str | None, timeout: int
@@ -221,6 +224,15 @@ class FakeGh(Gh):
     def _dispatch(self, args: list[str], stdin: str | None) -> Any:
         if args[:2] == ["pr", "diff"]:
             return self.diff
+        if args[:2] == ["issue", "list"]:
+            return self.open_issues
+        if args[:2] == ["issue", "create"]:
+            if self.issue_create_error:
+                raise _GhFailure(self.issue_create_error)
+            repo, n = args[args.index("-R") + 1], 9000 + len(self.created_issues)
+            title = args[args.index("--title") + 1]
+            self.created_issues.append({"repo": repo, "title": title, "body": stdin, "number": n})
+            return f"https://github.com/{repo}/issues/{n}\n"
         if args[:2] == ["api", "graphql"]:
             q = next(a for a in args if a.startswith("query="))
             if "pullRequests(" in q:

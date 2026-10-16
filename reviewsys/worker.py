@@ -38,6 +38,7 @@ from .contract import (
     parse_verifier_output,
 )
 from .db import connect_existing, event, kv_get, kv_set, now, now_dt, tx
+from .dedupe import FINDING_MARKER_RE, content_tokens, title_similarity
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
@@ -230,6 +231,9 @@ class RunContext:
     coderabbit: dict[str, Any] = field(default_factory=dict)
     coderabbit_ids: list[int] = field(default_factory=list)
     prior: list[dict[str, Any]] = field(default_factory=list)
+    # the same prior findings in full, by the hash they are reconciled under (`prior` is what
+    # the prompt sees, without most bodies)
+    prior_findings: dict[str, Finding] = field(default_factory=dict)
     prior_sha: str | None = None
     has_prior_review: bool = False
     fresh_final: bool = False
@@ -967,6 +971,7 @@ def step_context(ctx: RunContext) -> None:
             )
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
+    ctx.prior_findings = {f.prior_hash or f.hash: f for f in prior}
     ctx.prior_threads = {h: t for h, t in replied.items() if h in seen}
     if not ctx.conversation:  # the conversation lane is given none of it
         _review_context(ctx)
@@ -1716,8 +1721,92 @@ def _verifier_lane(
         ctx.reviewers,
         lane_findings,
     )
+    _hold_untracked_deferrals(ctx, out, expected_phase)
     _record_findings(ctx, phase, "verified-fresh" if fresh_final else "verified", out.findings)
     return out
+
+
+def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_phase: str) -> None:
+    """A prior finding (above a nitpick) this review would lift as INTENTIONALLY_DEFERRED
+    keeps standing unless a tracking issue or PR is visible on the PR: the row's `tracking`
+    when the thread, description or PR comments show it, else a reference in the finding's
+    own thread (resolved or not) that its humans point to as tracking
+    (`converse.review_deferral_link`), else one already on record for it
+    (`_known_tracking`). Held, the finding is carried again as it
+    was, and the verifier's row for it becomes STILL_VALID (flagged `needs_tracking`) with a
+    reason asking for the issue, which is what its thread is answered with. This overrides
+    the verifier on purpose: a deferral nobody tracks is a finding nobody fixes. In place,
+    like `publish.attribute_sources`. Post-merge audits are left alone: nobody acts on a
+    merged PR's threads, and the audit reports its own findings."""
+    if ctx.is_audit:
+        return
+    recon = _reconciliation(ctx, expected_phase, out)
+    kept = {f.prior_hash for f in out.findings if f.prior_hash} | {f.hash for f in out.findings}
+    rows = {str(r["finding_hash"]): r for r in out.prior_reconciliation}
+    pr_text = _pr_text(ctx)
+    said = _finding_thread_texts(ctx)
+    held = []
+    for h, merged in recon.items():
+        # the verifier's own row decides; a reviewer's only where the verifier has none
+        row = rows.get(h, merged)
+        prior = ctx.prior_findings.get(h)
+        if (
+            row.get("status") != "INTENTIONALLY_DEFERRED"
+            or prior is None
+            or h in kept
+            or not converse.needs_tracking(prior.severity)
+        ):
+            continue
+        if converse.review_deferral_link(
+            row.get("tracking"), said.get(h, ""), pr_text=pr_text, repo=ctx.repo, number=ctx.number
+        ) or _known_tracking(ctx, h):
+            continue
+        out.findings.append(
+            dataclasses.replace(
+                prior, prior_hash=h, source="prior finding (deferral not tracked)", extra={}
+            )
+        )
+        rows[h] = {
+            **row,
+            "status": "STILL_VALID",
+            "reason": converse.UNTRACKED_DEFERRAL_REASON,
+            "needs_tracking": True,
+        }
+        held.append(h)
+    if held:
+        out.prior_reconciliation = list(rows.values())
+        _defer_event(ctx, "defer.needs_tracking", f"{expected_phase}: held {', '.join(held)}")
+
+
+def _finding_thread_texts(ctx: RunContext) -> dict[str, str]:
+    """finding hash -> what the humans said under that finding's thread: our own answers are
+    no evidence of tracking (an issue the bot filed is on record, `_known_tracking`). A
+    thread a maintainer resolved (often right after deferring) is only in the evidence, which
+    keeps the human replies alone."""
+    out = {}
+    for t in ctx.evidence.get("review_threads") or []:
+        cs = t.get("comments") or []
+        m = FINDING_MARKER_RE.search(str(cs[0].get("body") or "")) if cs else None
+        if m:
+            out[m.group(1)] = "\n".join(str(c.get("body") or "") for c in cs[1:])
+    out.update({h: converse.thread_text(t, humans_only=True) for h, t in ctx.open_threads.items()})
+    return out
+
+
+def _known_tracking(ctx: RunContext, h: str) -> str:
+    """A tracking link already on record for finding `h` on this PR: an issue the bot filed
+    (or linked) for it, or the link an earlier conversation's deferral rested on (the second
+    line of a `conceded` row's body)."""
+    filed = kv_get(ctx.conn, f"defer.issue:{ctx.repo}#{ctx.number}:{h}")
+    if filed:
+        return filed
+    rows = ctx.conn.execute(
+        "SELECT f.body FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
+        "hd.id=r.head_id WHERE hd.repo=? AND hd.number=? AND f.stage='conceded' AND f.hash=? "
+        "ORDER BY f.id DESC",
+        (ctx.repo, ctx.number, h),
+    ).fetchall()
+    return next((link for r in rows if (link := str(r["body"] or "").partition("\n")[2])), "")
 
 
 def _blind(outputs: dict[str, Any], *, seed: int) -> dict[str, Any]:
@@ -2079,7 +2168,7 @@ def _build_review(
     if head_row and head_row["status"] == "superseded":
         live = github.pr_meta(ctx.gh, ctx.repo, ctx.number).head_sha
         note = f"_This review was completed for commit `{ctx.sha[:8]}`; the PR has since moved to `{live[:8]}`. A fresh review of the new head is queued._"
-    return publish.build(
+    model = publish.build(
         ctx.gh,
         repo=ctx.repo,
         number=ctx.number,
@@ -2093,6 +2182,14 @@ def _build_review(
         superseded_note=note,
         rereview=rereview,
     )
+    held = [
+        ctx.prior_findings[str(r["finding_hash"])].title
+        for r in verified.prior_reconciliation
+        if r.get("needs_tracking") and str(r["finding_hash"]) in ctx.prior_findings
+    ]
+    if held:
+        model.extra_lines.append(publish.untracked_deferrals_line(held))
+    return model
 
 
 def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
@@ -2726,6 +2823,8 @@ NO_PHASE1_TRIVIAL_EFFORT = "low"
 # ---- conversation mode: answer replies on an already-reviewed commit ----
 
 LINKED_COMMIT_LIMIT = 5
+TRACKING_ISSUE_MATCH = 0.6  # title overlap at which an open issue already tracks a follow-up
+TRACKING_ISSUE_PENDING = "pending"  # kv: `gh issue create` started, its outcome not yet known
 
 
 def _standing_review(ctx: RunContext) -> dict[str, Any] | None:
@@ -2843,9 +2942,17 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     # follow-up must never be posted against an obsolete commit (the run ends superseded and
     # ingest queues the live one)
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    out = converse.accept_deferrals(out, threads, settled=set(settled))
+    out = converse.accept_deferrals(
+        out,
+        threads,
+        settled=set(settled),
+        repo=ctx.repo,
+        number=ctx.number,
+        pr_text=_pr_text(ctx),
+    )
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
+        out = _file_tracking_issues(ctx, out, threads, settled)
         answered = publish.answer_conversation(
             ctx.gh,
             ctx.repo,
@@ -2877,7 +2984,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
             )
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
-        _record_conceded(ctx, phase, {h: out.outcomes[h].status for h in lifted})
+        _record_conceded(ctx, phase, {h: out.outcomes[h] for h in lifted})
     kept = _standing_findings(ctx, phase, lifted=lifted)
     summary = _mark_lifted_in_review(ctx, phase, kept, reviews)
     update = None
@@ -2887,6 +2994,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     return {
         "answered": len(posted_ok),
         "outcomes": {h: o.status for h, o in out.outcomes.items()},
+        "tracking": {h: o.tracking_url for h, o in out.outcomes.items() if o.tracking_url},
         "linked_commits": {
             "fetched": [c["sha"] for c in fetched],
             "unfetched": [c["sha"] for c in unfetched],
@@ -2897,15 +3005,153 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _record_conceded(ctx: RunContext, phase: str, lifted: dict[str, str]) -> None:
+def _pr_text(ctx: RunContext) -> str:
+    """What a reader of the PR sees besides the review threads: its description and the PR
+    comments (where a deferral's tracking issue may be linked)."""
+    comments = [str(c.get("body") or "") for c in ctx.evidence.get("issue_comments") or []]
+    return "\n".join([ctx.meta.body if ctx.meta else "", *comments])
+
+
+def _file_tracking_issues(
+    ctx: RunContext,
+    out: converse.ConversationOutput,
+    threads: dict[str, dict[str, Any]],
+    settled: dict[str, str],
+) -> converse.ConversationOutput:
+    """File the tracking issue for every deferral a maintainer asked the bot to file. Filed
+    (or an open issue that already matches) -> the deferral stands with that link; not
+    filable -> DEFERRAL_NEEDS_TRACKING, with a reply asking the maintainer to file it (a
+    `settled` thread stays lifted either way, and its reply says nothing else)."""
+    outcomes = dict(out.outcomes)
+    for h, o in out.outcomes.items():
+        req = o.file_request
+        if o.status != "INTENTIONALLY_DEFERRED" or req is None:
+            continue
+        url, filed = _tracking_issue(ctx, h, req, threads[h])
+        if url:
+            outcomes[h] = dataclasses.replace(
+                o, tracking_url=url, tracking_filed=filed, file_request=None
+            )
+        else:
+            outcomes[h] = dataclasses.replace(
+                o,
+                status=converse.DEFERRAL_NEEDS_TRACKING,
+                reply=converse.filing_failed_reply(
+                    req.repo, allowed=ctx.cfg.deferral.may_file(req.repo), settled=h in settled
+                ),
+                file_request=None,
+            )
+    return converse.ConversationOutput(outcomes=outcomes)
+
+
+def _tracking_issue(
+    ctx: RunContext, h: str, req: converse.FileRequest, thread: dict[str, Any]
+) -> tuple[str, bool]:
+    """(url, filed now) of the issue tracking finding `h`'s follow-up, or ("", False) when it
+    cannot be had. Never files twice: kv holds the answer, and `pending` from just before
+    `gh issue create` until its URL is known. A create that may have gone through (a
+    timeout, a server error, no URL printed, or a worker that died) leaves `pending`, and
+    every later attempt asks the maintainer to check and link it instead; a create GitHub
+    refused outright (permissions, validation) clears it. An open issue whose title clearly
+    matches is linked instead of filing another; a search that fails files nothing."""
+    key = f"defer.issue:{ctx.repo}#{ctx.number}:{h}"
+    known = kv_get(ctx.conn, key)
+    if known == TRACKING_ISSUE_PENDING:
+        _defer_event(ctx, "defer.file_failed", f"{h}: an earlier attempt may have filed it")
+        return "", False
+    if known:
+        return known, False
+    if not ctx.cfg.deferral.may_file(req.repo):
+        _defer_event(
+            ctx, "defer.file_failed", f"{h}: {req.repo} is not in [deferral] file_owners/file_repos"
+        )
+        return "", False
+    try:
+        url = _matching_issue(ctx, req)
+    except ReviewError as exc:
+        _defer_event(ctx, "defer.file_failed", f"{h}: search in {req.repo}: {exc}")
+        return "", False
+    filed = not url
+    if filed:
+        with tx(ctx.conn):
+            kv_set(ctx.conn, key, TRACKING_ISSUE_PENDING)
+        try:
+            url = github.create_issue(ctx.gh, req.repo, req.title, _issue_body(ctx, req, thread))
+        except ReviewError as exc:
+            with tx(ctx.conn):
+                if exc.kind is FailKind.CONTRACT:  # refused: nothing was created
+                    ctx.conn.execute("DELETE FROM kv WHERE key=?", (key,))
+                event(
+                    ctx.conn,
+                    "defer.file_failed",
+                    repo=ctx.repo,
+                    number=ctx.number,
+                    run_id=ctx.run_id,
+                    detail=f"{h}: create in {req.repo}: {exc}",
+                )
+            return "", False
+    with tx(ctx.conn):
+        kv_set(ctx.conn, key, url)
+        event(
+            ctx.conn,
+            "defer.issue_filed" if filed else "defer.issue_linked",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{h}: {url}",
+        )
+    return url, filed
+
+
+def _issue_body(ctx: RunContext, req: converse.FileRequest, thread: dict[str, Any]) -> str:
+    asker = converse.maintainer_reply(thread) or {}
+    cid = asker.get("id") or thread.get("comment_id")
+    return publish.tracking_issue_body(
+        req.body,
+        repo=ctx.repo,
+        number=ctx.number,
+        comment_url=f"https://github.com/{ctx.repo}/pull/{ctx.number}#discussion_r{cid}",
+        asker=str(asker.get("author") or "a maintainer"),
+        severity=str(thread.get("severity") or "nitpick"),
+        title=str(thread.get("title") or ""),
+        finding=converse.finding_text(str(thread.get("body") or "")),
+    )
+
+
+def _matching_issue(ctx: RunContext, req: converse.FileRequest) -> str:
+    """An open issue in the target repo whose title clearly matches the one to file, or ""."""
+    # GitHub ANDs search terms: the three most distinctive words, so a reworded title that
+    # still passes the overlap threshold below is found
+    terms = sorted(content_tokens(req.title), key=len, reverse=True)[:3]
+    if not terms:
+        return ""
+    rows = github.open_issues_matching(ctx.gh, req.repo, " ".join(terms))
+    score, url = max(
+        (
+            (title_similarity(req.title, str(r.get("title") or "")), str(r.get("url") or ""))
+            for r in rows
+        ),
+        default=(0.0, ""),
+    )
+    return url if score >= TRACKING_ISSUE_MATCH else ""
+
+
+def _defer_event(ctx: RunContext, kind: str, detail: str) -> None:
+    with tx(ctx.conn):
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
+
+
+def _record_conceded(
+    ctx: RunContext, phase: str, lifted: dict[str, converse.ThreadOutcome]
+) -> None:
     """A finding the conversation withdrew or accepted as deferred gets a `conceded` findings
     row for this run (and so this sha), which `_standing_findings` honours on every later run.
-    `lifted` maps finding hash -> outcome, kept in the row's body. Caller holds the write
-    transaction."""
+    `lifted` maps finding hash -> outcome; the row's body keeps the status, plus a deferral's
+    tracking link on a second line. Caller holds the write transaction."""
     if not lifted:
         return
     rows = []
-    for h, status in lifted.items():
+    for h, o in lifted.items():
         t = ctx.open_threads.get(h) or {}
         rows.append(
             (
@@ -2920,7 +3166,7 @@ def _record_conceded(ctx: RunContext, phase: str, lifted: dict[str, str]) -> Non
                 None,
                 "general",
                 t.get("title") or h,
-                status,
+                o.status + (f"\n{o.tracking_url}" if o.tracking_url else ""),
             )
         )
     ctx.conn.executemany(_FINDINGS_INSERT, rows)
@@ -3038,11 +3284,16 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     # Each concession row's body is the outcome that lifted it (empty on rows older than that)
     gone: dict[str, tuple[str, str]] = {}
     outcome: dict[tuple[str, str] | str, str] = {}
+    tracking: dict[tuple[str, str] | str, str] = {}
     for r in rows:
         if r["stage"] == "conceded" and (run_id is None or int(r["run_id"]) > run_id):
             h, ident = str(r["hash"]), _identity(r["file"], r["title"])
             gone[h] = ident
-            outcome[h] = outcome[ident] = str(r["body"] or "")
+            status, _, link = str(r["body"] or "").partition("\n")
+            outcome[h] = outcome[ident] = status
+            # a later answer on a settled thread may not restate the link: keep the one known
+            tracking[h] = link or tracking.get(h, "")
+            tracking[ident] = link or tracking.get(ident, "")
     for h in lifted or set():
         t = ctx.open_threads.get(h) or {}
         gone[h] = _identity(t.get("path"), t.get("title"))
@@ -3061,6 +3312,7 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
                 file=ident[0],
                 title=titles.get(h) or h,
                 status=outcome.get(h) or outcome.get(ident) or "",
+                tracking=tracking.get(h) or tracking.get(ident) or "",
             )
             for h, (sev, ident) in sorted(pub.items())
             if h in lifted_hashes

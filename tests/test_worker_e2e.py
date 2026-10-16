@@ -12,7 +12,7 @@ import pytest
 from reviewsys import labels, publish, worker
 from reviewsys import lane as lane_mod
 from reviewsys.daemon import Daemon
-from reviewsys.db import kv_get, tx
+from reviewsys.db import kv_get, kv_set, tx
 from reviewsys.ingest import enqueue_head
 from reviewsys.models import RunStatus, Trigger
 from reviewsys.scheduler import schedule
@@ -1397,7 +1397,8 @@ def test_conversation_accepting_a_deferral_lifts_request_changes(cfg, conn, gh, 
     human = {
         "id": 901,
         "author": "knst",
-        "body": "the race predates this PR; draining the queue here would stall mainnet",
+        "body": "the race predates this PR; draining the queue here would stall mainnet. "
+        "Tracked in dashpay/platform#4321.",
         "created_at": "x",
         "association": "COLLABORATOR",
     }
@@ -1420,6 +1421,7 @@ def test_conversation_accepting_a_deferral_lifts_request_changes(cfg, conn, gh, 
                 "finding_hash": bh,
                 "status": "INTENTIONALLY_DEFERRED",
                 "reply": "Agreed, the race predates this PR; leaving it for a follow-up.",
+                "tracking": {"url": "dashpay/platform#4321"},
             }
         ]
     }
@@ -1428,7 +1430,10 @@ def test_conversation_accepting_a_deferral_lifts_request_changes(cfg, conn, gh, 
         enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
     (rid,) = schedule(conn, cfg, spawn=False)
     assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
-    assert gh.replies[0]["body"].endswith("no longer blocks this pull request._")
+    assert gh.replies[0]["body"].endswith(
+        "_Tracked in https://github.com/dashpay/platform/issues/4321. Deferred on a "
+        "maintainer's call: this finding no longer blocks this pull request._"
+    )
     # the thread stays open as the record of the deferral; only the verdict moves
     assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
     assert len(gh.posted_reviews) == 2
@@ -1514,7 +1519,13 @@ def test_deferring_one_of_two_blockers_corrects_the_standing_review(cfg, conn, g
             "body": _standing_body(b1["title"], b2["title"]),
         }
     )
-    defer = {"status": "INTENTIONALLY_DEFERRED", "reply": "Fine as a follow-up."}
+    gh.pr["body"] = "B\n\nThe second session's sync is tracked in #4321."
+    defer = {
+        "status": "INTENTIONALLY_DEFERRED",
+        "reply": "Fine as a follow-up.",
+        "tracking": {"url": "#4321"},
+    }
+    tracked = "https://github.com/dashpay/platform/issues/4321"
     rid = _converse(cfg, conn, gh, lanes, [{"finding_hash": h1, **defer}])
     assert len(gh.posted_reviews) == 1  # the other blocker still stands: no verdict update
     assert [e[0] for e in gh.review_edits] == [4242]
@@ -1524,7 +1535,7 @@ def test_deferring_one_of_two_blockers_corrects_the_standing_review(cfg, conn, g
         "**Updated after discussion:** 1 finding(s)" in body
         and "1 blocking finding(s) still stand" in body
     )
-    assert f"> - ⏭️ Deferred (maintainer decision): 🔴 {b1['title']}" in body
+    assert f"> - ⏭️ Deferred (maintainer decision): 🔴 {b1['title']} (tracked in {tracked})" in body
     assert (
         f"- [BLOCKING → DEFERRED by a maintainer; not blocking, do not fix in this PR] f.rs:11-12: {b1['title']}"
         in body
@@ -1567,7 +1578,7 @@ def test_deferring_one_of_two_blockers_corrects_the_standing_review(cfg, conn, g
     gh.threads[0] = _finding_thread(h1, b1["title"], 800, [KNST, complaint, ours, author])
     root = gh.threads[0]["comments"]["nodes"][0]
     root["body"] = publish.with_thread_status(
-        root["body"], status="INTENTIONALLY_DEFERRED", head_sha=HEAD
+        root["body"], status="INTENTIONALLY_DEFERRED", head_sha=HEAD, tracking_url=tracked
     )
     edits = len(gh.comment_edits)
     _converse(cfg, conn, gh, lanes, [{"finding_hash": h1, **defer}], first=False)
@@ -3228,3 +3239,297 @@ def test_reviewers_and_verifiers_are_told_to_review_statically_from_ci(cfg, conn
         assert all(s.sandbox_profile for s in lanes.calls)
     assert graded and all("This is a static review." in s.prompt for s in graded)
     assert all('"ci": {' in s.prompt and "--log-failed" in s.prompt for s in graded)
+
+
+# ---- deferrals need a tracking issue; the bot files it when a maintainer asks ----
+
+FILE_IT = {
+    "status": "INTENTIONALLY_DEFERRED",
+    "reply": "Agreed, the drainage costs predate this PR; deferring it.",
+    "tracking": {
+        "file": {
+            "repo": "dashpay/platform",
+            "title": "Account for drainage costs in fee estimation",
+            "body": "Fee estimation leaves out drainage costs (f.rs:11).",
+        }
+    },
+}
+
+
+def _deferral_thread(gh, conn, body="Deferred by decision; go ahead and file it."):
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="Estimation must be >= actual.")
+    gh.threads = [_finding_thread(bh, blocker["title"], 900, [{**KNST, "body": body}])]
+    _standing_final(gh)
+    return bh
+
+
+def _issue_calls(gh, verb):
+    return [c for c in gh.calls if c[:2] == ["issue", verb]]
+
+
+def test_conversation_files_the_tracking_issue_a_maintainer_asks_for(cfg, conn, gh, lanes):
+    bh = _deferral_thread(gh, conn)
+    gh.open_issues = [
+        {"number": 7, "title": "Flaky test", "url": "https://github.com/dashpay/platform/issues/7"}
+    ]
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}])
+    (issue,) = gh.created_issues
+    assert issue["repo"] == "dashpay/platform"
+    assert issue["title"] == "Account for drainage costs in fee estimation"
+    body = issue["body"]
+    assert body.startswith("Fee estimation leaves out drainage costs (f.rs:11).")
+    assert "Deferred from https://github.com/dashpay/platform/pull/1 " in body
+    assert "https://github.com/dashpay/platform/pull/1#discussion_r901" in body
+    assert "maintainer `knst`" in body and body.endswith(
+        "Fee estimation omits drainage costs**\n\n> body"
+    )
+    assert "Posted autonomously" not in body
+    url = "https://github.com/dashpay/platform/issues/9000"
+    reply = gh.replies[-1]["body"]
+    assert reply.endswith(
+        f"_Filed {url} for the follow-up. Deferred on a maintainer's call: this finding no "
+        "longer blocks this pull request._"
+    )
+    assert kv_get(conn, f"defer.issue:dashpay/platform#1:{bh}") == url
+    row = conn.execute("SELECT body FROM findings WHERE stage='conceded'").fetchone()
+    assert row["body"] == f"INTENTIONALLY_DEFERRED\n{url}"
+    assert len(gh.posted_reviews) == 2  # the blocker is lifted: the verdict moves
+    assert conn.execute("SELECT 1 FROM events WHERE kind='defer.issue_filed'").fetchone()
+    # a requeued run (the worker died after filing, before the reply and concession were
+    # recorded) never files twice, and does not even search again
+    with tx(conn):
+        conn.execute("DELETE FROM findings WHERE stage='conceded'")
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}], first=False)
+    assert len(gh.created_issues) == 1 and len(_issue_calls(gh, "list")) == 1
+    assert url in gh.replies[-1]["body"]
+
+
+def test_conversation_links_an_open_issue_that_already_tracks_the_follow_up(cfg, conn, gh, lanes):
+    bh = _deferral_thread(gh, conn)
+    existing = "https://github.com/dashpay/platform/issues/42"
+    gh.open_issues = [
+        {"number": 42, "title": "Fee estimation should account for drainage costs", "url": existing}
+    ]
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}])
+    assert not gh.created_issues and not _issue_calls(gh, "create")
+    (search,) = _issue_calls(gh, "list")
+    assert search[search.index("-R") + 1] == "dashpay/platform"
+    assert "in:title" in search[search.index("--search") + 1]
+    assert f"_Tracked in {existing}. Deferred" in gh.replies[-1]["body"]
+    assert kv_get(conn, f"defer.issue:dashpay/platform#1:{bh}") == existing
+    assert conn.execute("SELECT 1 FROM events WHERE kind='defer.issue_linked'").fetchone()
+
+
+@pytest.mark.parametrize(
+    "repo, error, says",
+    [
+        (
+            "dashpay/platform",
+            "HTTP 403: Resource not accessible by integration",
+            "I tried to file the tracking issue in `dashpay/platform`, but could not confirm",
+        ),
+        ("bitcoin/bitcoin", "", "I can't file issues in `bitcoin/bitcoin`."),
+    ],
+)
+def test_conversation_asks_the_maintainer_to_file_when_the_bot_cannot(
+    cfg, conn, gh, lanes, repo, error, says
+):
+    bh = _deferral_thread(gh, conn)
+    gh.issue_create_error = error
+    ask = {**FILE_IT, "tracking": {"file": {**FILE_IT["tracking"]["file"], "repo": repo}}}
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **ask}])
+    reply = gh.replies[-1]["body"]
+    assert says in reply and "link it here?" in reply
+    assert reply.endswith("until then the finding stands._")
+    if repo == "bitcoin/bitcoin":  # not allowlisted: GitHub is never asked
+        assert not _issue_calls(gh, "list") and not _issue_calls(gh, "create")
+    failed = conn.execute("SELECT detail FROM events WHERE kind='defer.file_failed'").fetchone()
+    assert failed and bh in failed["detail"]
+    assert kv_get(conn, f"defer.issue:dashpay/platform#1:{bh}") is None
+    assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
+    assert len(gh.posted_reviews) == 1
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
+def test_conversation_deferral_without_tracking_keeps_the_blocker_and_asks(cfg, conn, gh, lanes):
+    """platform#5258: a MEMBER deferred "to a change of its own", the lane accepted it, and
+    the finding was buried under an APPROVE with no issue ever filed."""
+    bh = _deferral_thread(gh, conn, body="deferred by decision, to a change of its own")
+    defer = {"status": "INTENTIONALLY_DEFERRED", "reply": "Understood, deferring."}
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **defer}])
+    reply = gh.replies[-1]["body"]
+    assert "Before I mark this deferred it needs a tracking issue" in reply
+    assert "I'll file it in `dashpay/platform`" in reply and "Understood" not in reply
+    root = gh.threads[0]["comments"]["nodes"][0]["body"]
+    assert "⏸️ **Needs a tracking issue** (not yet deferred)" in root
+    assert not gh.created_issues and len(gh.posted_reviews) == 1
+    assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
+
+
+def _full_review_deferral(gh, conn, lanes, reply_body):
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    t = _finding_thread(bh, blocker["title"], 900, [{**KNST, "body": reply_body}])
+    gh.threads = [t]
+    deferred = {
+        "finding_hash": bh,
+        "status": "INTENTIONALLY_DEFERRED",
+        "reason": "Pre-existing; fine to defer.",
+    }
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [deferred],
+    }
+    lanes.verifier["default"] = {**_verifier([]), "prior_finding_reconciliation": [deferred]}
+    return bh, blocker
+
+
+def test_full_review_keeps_a_deferred_finding_standing_until_it_is_tracked(cfg, conn, gh, lanes):
+    """The verifier lifting a prior finding as INTENTIONALLY_DEFERRED is the same deferral: with
+    no tracking reference visible on the PR it does not lift, and the review says why."""
+    bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here, a follow-up later")
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    (review,) = gh.posted_reviews
+    assert review["event"] == "REQUEST_CHANGES"  # the blocker stands: Phase 2 deferred
+    assert "phase=preliminary" in review["body"]
+    assert (
+        f"_⏸️ Needs a tracking issue before it can be deferred (1): {blocker['title']}. "
+        "Link one in the finding's thread, or ask there and PastaClaw files it._"
+    ) in review["body"]
+    (answer,) = gh.replies
+    assert (
+        "**Still applies** (re-reviewed at `aaaaaaaa`): Deferring this needs a tracking issue"
+        in answer["body"]
+    )
+    held = conn.execute("SELECT detail FROM events WHERE kind='defer.needs_tracking'").fetchone()
+    assert held and bh in held["detail"]
+    kept = conn.execute(
+        "SELECT severity FROM findings WHERE phase='verify1' AND stage='verified' AND hash=?",
+        (bh,),
+    ).fetchone()
+    assert kept["severity"] == "blocking"
+    prompt = next(c.prompt for c in _reviewer_calls(lanes))
+    assert "give the row a `tracking` field" in prompt
+
+
+def test_full_review_lifts_a_deferral_tracked_in_its_thread(cfg, conn, gh, lanes):
+    _full_review_deferral(
+        gh, conn, lanes, "pre-existing; tracked in https://github.com/dashpay/platform/issues/4321"
+    )
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    review = gh.posted_reviews[-1]
+    assert review["event"] != "REQUEST_CHANGES" and "phase=final" in review["body"]
+    assert "Needs a tracking issue" not in review["body"]
+    assert "**Deferred** (re-reviewed at `aaaaaaaa`): Pre-existing" in gh.replies[0]["body"]
+    assert not conn.execute("SELECT 1 FROM events WHERE kind='defer.needs_tracking'").fetchone()
+
+
+@pytest.mark.parametrize("source", ["resolved_thread", "filed_by_the_bot"])
+def test_full_review_finds_tracking_on_resolved_threads_and_on_record(cfg, conn, gh, lanes, source):
+    """A maintainer often resolves the thread right after deferring, and the issue the bot
+    filed is linked only in its own reply: neither may make a tracked deferral stand again."""
+    reply = "pre-existing; tracked in #4321" if source == "resolved_thread" else "defer it"
+    bh, _ = _full_review_deferral(gh, conn, lanes, reply)
+    if source == "resolved_thread":
+        gh.threads[0]["isResolved"] = True
+    else:
+        with tx(conn):
+            kv_set(conn, f"defer.issue:dashpay/platform#1:{bh}", "https://x/issues/9")
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    review = gh.posted_reviews[-1]
+    assert review["event"] != "REQUEST_CHANGES" and "Needs a tracking issue" not in review["body"]
+    assert not conn.execute("SELECT 1 FROM events WHERE kind='defer.needs_tracking'").fetchone()
+
+
+def test_a_create_that_may_have_gone_through_is_never_retried(cfg, conn, gh, lanes):
+    """A timeout, a server error or no printed URL may still have created the issue: the
+    pending marker makes every later attempt ask the maintainer instead of filing again. A
+    clean refusal (403) clears it, so a later attempt may file."""
+    bh = _deferral_thread(gh, conn)
+    key = f"defer.issue:dashpay/platform#1:{bh}"
+    gh.issue_create_error = "HTTP 502: Bad Gateway"
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}])
+    assert kv_get(conn, key) == worker.TRACKING_ISSUE_PENDING
+    gh.issue_create_error = ""
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}], first=False)
+    assert len(_issue_calls(gh, "create")) == 1 and not gh.created_issues
+    assert "could not confirm it was filed" in gh.replies[-1]["body"]
+    with tx(conn):
+        conn.execute("DELETE FROM kv WHERE key=?", (key,))
+    gh.issue_create_error = "HTTP 403: Resource not accessible by integration"
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}], first=False)
+    assert kv_get(conn, key) is None
+    gh.issue_create_error = ""
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}], first=False)
+    assert len(gh.created_issues) == 1 and kv_get(conn, key).endswith("/issues/9000")
+
+
+def test_full_review_reads_the_verifiers_own_row_first(cfg, conn, gh, lanes):
+    """A reviewer's row with a reason must not stand in for the verifier's own decision: the
+    verifier deferred (untracked) while a reviewer said STILL_VALID."""
+    bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here")
+    lanes.reviewer["default"] = {
+        **lanes.reviewer["default"],
+        "findings": [{**blocker, "finding_hash": bh}],
+        "prior_finding_reconciliation": [
+            {"finding_hash": bh, "status": "STILL_VALID", "reason": "Still there."}
+        ],
+    }
+    lanes.verifier["default"] = {
+        **_verifier([]),
+        "prior_finding_reconciliation": [{"finding_hash": bh, "status": "INTENTIONALLY_DEFERRED"}],
+    }
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert conn.execute("SELECT 1 FROM events WHERE kind='defer.needs_tracking'").fetchone()
+
+
+def test_a_settled_deferral_can_still_have_its_issue_filed(cfg, conn, gh, lanes):
+    """A deferral lifted before tracking was required stays lifted; a maintainer may still
+    ask the bot to file its issue, and a failure there says nothing about the finding
+    standing (it does not)."""
+    bh = _deferral_thread(gh, conn, body="out of scope")
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        # an earlier conversation's concession, from before tracking was required (a run
+        # after the publication, so it counts)
+        conn.execute(
+            worker._FINDINGS_INSERT,
+            (
+                _new_run(conn),
+                "final",
+                "conceded",
+                bh,
+                "f.rs",
+                11,
+                11,
+                "blocking",
+                None,
+                "general",
+                _blocking()["title"],
+                "INTENTIONALLY_DEFERRED",
+            ),
+        )
+    gh.issue_create_error = "HTTP 502: Bad Gateway"
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}], first=False)
+    assert len(_issue_calls(gh, "create")) == 1
+    reply = gh.replies[-1]["body"]
+    assert "could not confirm it was filed" in reply
+    assert "finding stands" not in reply and "Not deferred yet" not in reply
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
+
+
+def _new_run(conn):
+    (hid,) = conn.execute("SELECT id FROM heads LIMIT 1").fetchone()
+    return conn.execute(
+        "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
+        "VALUES (?,2,'done','t2','2026-09-08T00:00:00Z','2026-09-08T00:00:00Z')",
+        (hid,),
+    ).lastrowid

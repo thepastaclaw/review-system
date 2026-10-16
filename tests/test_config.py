@@ -82,3 +82,17 @@ def test_event_retention_defaults_to_forever_and_parses(tmp_path, skills_dir):
     lines = [ln for ln in p.read_text().splitlines() if not ln.startswith("event_days")]
     p.write_text("\n".join(lines))
     assert cfg_mod.load(p).event_retention_days == 0
+
+
+def test_deferral_filing_allowlist(tmp_path, skills_dir):
+    p = _write(tmp_path, skills_dir, "max_concurrent = 2")
+    d = cfg_mod.load(p).deferral
+    assert d.may_file("dashpay/platform") and d.may_file("DashPay/rust-dashcore")
+    assert not d.may_file("bitcoin/bitcoin")
+    # a box config.toml predating the section files in dashpay repos, as a fresh one does
+    head, _, _ = p.read_text().partition("[deferral]")
+    p.write_text(head)
+    assert cfg_mod.load(p).deferral.may_file("dashpay/platform")
+    p.write_text(head + '[deferral]\nfile_owners = []\nfile_repos = ["bitcoin/bitcoin"]\n')
+    d = cfg_mod.load(p).deferral
+    assert d.may_file("bitcoin/bitcoin") and not d.may_file("dashpay/platform")

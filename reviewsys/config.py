@@ -291,6 +291,23 @@ class ContextConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class DeferralConfig:
+    """Where the bot may file the tracking issue a deferred finding needs (converse.py): a
+    maintainer who defers a finding and asks the bot to file the follow-up gets it filed only
+    in a repository listed here (by owner, or by full name); anywhere else the bot asks the
+    maintainer to file it. Both empty: the bot never files."""
+
+    file_owners: tuple[str, ...] = ("dashpay",)
+    file_repos: tuple[str, ...] = ()
+
+    def may_file(self, repo: str) -> bool:
+        owner = repo.split("/", 1)[0].lower()
+        return owner in {o.lower() for o in self.file_owners} or repo.lower() in {
+            r.lower() for r in self.file_repos
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     # paths
     db_path: Path
@@ -364,6 +381,7 @@ class Config:
     audit: AuditConfig = field(default_factory=AuditConfig)
     context: ContextConfig = field(default_factory=ContextConfig)
     ci: CiConfig = field(default_factory=CiConfig)
+    deferral: DeferralConfig = field(default_factory=DeferralConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -583,6 +601,13 @@ watch_hours = 12
 # Unset = the built-in list (config.DEFAULT_CI_IGNORE: PR title, semantic commits, codecov,
 # policy, review bots, ...)
 # ignore_checks = "title|semantic|codecov|policy|coderabbit|pastaclaw|review"
+
+[deferral]
+# a maintainer who defers a finding can ask the bot to file the follow-up's tracking issue;
+# it files only in repositories of these owners (or listed by full name), else it asks the
+# maintainer to file it
+file_owners = ["dashpay"]
+file_repos = []
 """
 
 
@@ -905,6 +930,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         audit=_audit(t.get("audit") or {}),
         context=_context(t.get("context") or {}),
         ci=_ci(t.get("ci") or {}),
+        deferral=_deferral(t.get("deferral") or {}),
     )
 
 
@@ -966,4 +992,11 @@ def _ci(c: dict[str, Any]) -> CiConfig:
         interval_seconds=max(30, int(c.get("interval_seconds", 180))),
         watch_hours=max(1, int(c.get("watch_hours", 12))),
         ignore_checks=pattern,
+    )
+
+
+def _deferral(d: dict[str, Any]) -> DeferralConfig:
+    return DeferralConfig(
+        file_owners=tuple(str(x) for x in d.get("file_owners", ("dashpay",)) or ()),
+        file_repos=tuple(str(x) for x in d.get("file_repos") or ()),
     )

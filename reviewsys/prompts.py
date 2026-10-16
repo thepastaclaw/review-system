@@ -135,6 +135,7 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         f"- Emit exactly one `prior_finding_reconciliation` array. Reconcile every supplied `finding_hash` exactly once with exactly one status from {' | '.join(REVALIDATION_STATUSES)}. Do not omit, duplicate, or invent hashes.\n"
         "- A STILL_VALID prior finding MUST appear exactly once in `findings`, even when its lines did not change. Its finding object MUST include the supplied `finding_hash`, and its `title` MUST equal the supplied `original_title` byte-for-byte. Do not append `(carried forward...)`, status text, hash text, or any other suffix or prefix.\n"
         "- FIXED, OUTDATED, WITHDRAWN, and INTENTIONALLY_DEFERRED reconcile the prior identity without requiring a `findings` entry. Do not also carry one of those identities in `findings`; that contradicts the reconciliation status.\n"
+        "- INTENTIONALLY_DEFERRED (above a nitpick) also needs the follow-up to be tracked: give the row a `tracking` field with the issue or pull request that tracks it (a URL or `owner/repo#N`), as linked in the finding's thread, the PR description or a PR comment. Without a tracking reference visible on the PR the orchestrator keeps the finding standing and asks for one.\n"
         "- Keep new findings separate: omit `finding_hash` unless the finding is the exact STILL_VALID carry-forward for that supplied prior identity.\n"
         "### Prior findings requiring cumulative adjudication\n\n"
         "```json\n" + json.dumps(prior, indent=2) + "\n```\n"

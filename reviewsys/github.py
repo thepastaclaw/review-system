@@ -18,6 +18,7 @@ REVIEW_MARKER = "<!-- thepastaclaw-review v1 -->"
 # stand-in models were in use; prefixes gate comments, queue comments and review titles
 DEGRADED_BADGE = "⚠️ DEGRADED"
 CODERABBIT_USER = "coderabbitai[bot]"
+ISSUE_URL_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/issues/\d+")
 
 NON_ACTIONABLE_CR = (
     "confirmed as addressed",
@@ -579,6 +580,34 @@ def post_reply(gh: Gh, repo: str, number: int, comment_id: int, body: str) -> No
         method="POST",
         body={"body": body},
     )
+
+
+def open_issues_matching(gh: Gh, repo: str, terms: str) -> list[dict[str, Any]]:
+    """Open issues in `repo` whose title matches the search `terms`: [{number, title, url}]."""
+    rows = gh.json(
+        "issue",
+        "list",
+        "-R",
+        repo,
+        "--state",
+        "open",
+        "--search",
+        f"{terms} in:title",
+        "--json",
+        "number,title,url",
+        "--limit",
+        "20",
+    )
+    return [r for r in rows or [] if isinstance(r, dict)]
+
+
+def create_issue(gh: Gh, repo: str, title: str, body: str) -> str:
+    """Open an issue in `repo`; returns its URL. The body goes in on stdin (no argv limit)."""
+    out = gh.run("issue", "create", "-R", repo, "--title", title, "--body-file", "-", stdin=body)
+    m = ISSUE_URL_RE.search(out)
+    if not m:  # it exited 0, so the issue may well exist: not a clean refusal
+        raise ReviewError(FailKind.INFRA, f"gh issue create printed no issue URL: {out[:200]}")
+    return m.group(0)
 
 
 def edit_review_comment(gh: Gh, repo: str, comment_id: int, body: str) -> None:

@@ -263,6 +263,16 @@ def _jaccard(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+def content_tokens(text: str) -> set[str]:
+    """The words of free text that carry its meaning: normalized, stopwords dropped."""
+    return _content_tokens(normalize_finding_text(text))
+
+
+def title_similarity(a: str, b: str) -> float:
+    """Content-word overlap (Jaccard, 0..1) of two free-text titles."""
+    return _jaccard(normalize_finding_text(a), normalize_finding_text(b))
+
+
 def find_duplicate(
     f: Finding, records: list[ExistingComment]
 ) -> tuple[ExistingComment | None, str | None]:
