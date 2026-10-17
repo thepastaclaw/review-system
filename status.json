@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T06:16:01Z",
-  "generated_at": "2026-10-17T06:16:01Z",
+  "data_as_of": "2026-10-17T06:17:01Z",
+  "generated_at": "2026-10-17T06:17:01Z",
   "history": {
     "daily": [
       {
@@ -206,7 +206,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 10869,
+        "count": 10870,
         "severity": "blocking"
       },
       {
@@ -259,6 +259,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "gc.run",
+        "number": null,
+        "repo": null,
+        "run_id": null,
+        "ts": "2026-10-17T06:16:14Z"
+      },
       {
         "detail": null,
         "kind": "phase1.skipped_repo",
@@ -570,14 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5421,
         "ts": "2026-10-17T04:57:22Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch_green",
-        "number": 774,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5420,
-        "ts": "2026-10-17T04:56:37Z"
       }
     ],
     "tokens_by_effort": [
@@ -607,9 +607,9 @@
       },
       {
         "effort": "high",
-        "lanes": 13325,
-        "tokens_in": 13109454918,
-        "tokens_out": 124032870
+        "lanes": 13326,
+        "tokens_in": 13110378894,
+        "tokens_out": 124040536
       },
       {
         "effort": "low",
@@ -655,14 +655,19 @@
         "tokens_out": 37174584
       },
       {
-        "avg_tokens_per_lane": 1209839.0,
-        "lanes": 14525,
+        "avg_tokens_per_lane": 1209820.0,
+        "lanes": 14526,
         "model": "gpt-6.1-sol",
-        "tokens_in": 17484654558,
-        "tokens_out": 88254507
+        "tokens_in": 17485578534,
+        "tokens_out": 88262173
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 5427,
+        "tokens_in": 923976,
+        "tokens_out": 7666
+      },
       {
         "run_id": 5426,
         "tokens_in": 5788483,
@@ -1157,24 +1162,19 @@
         "run_id": 5325,
         "tokens_in": 6250104,
         "tokens_out": 54146
-      },
-      {
-        "run_id": 5324,
-        "tokens_in": 13210651,
-        "tokens_out": 66753
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11252665,
+      "avg_tokens_per_completed_review": 11252904,
       "completed_reviews": 3903,
-      "findings": 26046,
+      "findings": 26047,
       "findings_posted": 4510,
       "reviews": 5891,
       "reviews_imported": 2245,
       "runs": 5427,
-      "tokens_in": 43346671340,
-      "tokens_out": 572479994,
-      "tokens_total": 43919151334
+      "tokens_in": 43347595316,
+      "tokens_out": 572487660,
+      "tokens_total": 43920082976
     }
   },
   "live": {
@@ -1183,35 +1183,46 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-17T12:14:35Z",
-        "deadline_in_seconds": 21514,
+        "deadline_in_seconds": 21454,
         "degraded": false,
-        "elapsed_seconds": 86,
+        "elapsed_seconds": 146,
         "findings": null,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-17T06:15:51Z",
+        "heartbeat_at": "2026-10-17T06:16:51Z",
         "id": 5427,
-        "lanes": [],
+        "lanes": [
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 923976,
+            "tokens_out": 7666
+          }
+        ],
         "live_lanes": [
           {
             "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "general",
-            "since_seconds": 75,
+            "role": "verifier",
+            "since_seconds": 8,
             "state": "running"
           }
         ],
         "number": 776,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/776",
         "priority": true,
-        "progress": 0.293,
+        "progress": 0.471,
         "queue": "live",
         "queued_at": "2026-10-17T06:14:34Z",
-        "remaining_seconds": 207,
+        "remaining_seconds": 163,
         "repo": "PastaPastaPasta/yappr",
         "sha": "5672dd7dcd2cce1cfa08460b5c06d19d2fd59036",
         "started_at": "2026-10-17T06:14:35Z",
@@ -1267,24 +1278,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 75,
+            "seconds": 127,
             "started_at": "2026-10-17T06:14:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 8,
+            "started_at": "2026-10-17T06:16:53Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "feat: release safety and privacy (blocked notifications, EXIF strip, image proxy, media denylist)",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 923976,
+        "tokens_out": 7666,
         "trigger": "review_reply",
         "upcoming": [
-          "verify2",
           "fresh_phase2",
           "fresh_verify2",
           "publish"
@@ -1349,7 +1364,7 @@
       "superseded": 2165
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-17T06:12:22Z",
+    "ingest_last_at": "2026-10-17T06:16:12Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1385,7 +1400,7 @@
     "last_run_done_at": "2026-10-17T06:10:45Z",
     "last_run_started_at": "2026-10-17T06:14:35Z",
     "median_run_minutes": 5.433333333333334,
-    "notify_last_at": "2026-10-17T06:14:30Z",
+    "notify_last_at": "2026-10-17T06:16:35Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1396,7 +1411,7 @@
       "reviews": 31,
       "tokens": 197323647
     },
-    "ts": "2026-10-17T06:16:01Z",
+    "ts": "2026-10-17T06:17:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.0,
       "low": 7.8,
@@ -1407,7 +1422,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 1.4333333333333333,
+      "idle_minutes": 2.433333333333333,
       "ingest_stale": false,
       "stuck": false
     }
