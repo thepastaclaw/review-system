@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T05:51:01Z",
-  "generated_at": "2026-10-17T05:51:01Z",
+  "data_as_of": "2026-10-17T05:52:00Z",
+  "generated_at": "2026-10-17T05:52:00Z",
   "history": {
     "daily": [
       {
@@ -249,9 +249,9 @@
             "p90_seconds": 83
           },
           "wait": {
-            "median_seconds": 9,
-            "n": 497,
-            "p90_seconds": 320
+            "median_seconds": 8,
+            "n": 498,
+            "p90_seconds": 319
           }
         }
       },
@@ -259,6 +259,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=c101ec41",
+        "kind": "run.spawned",
+        "number": 776,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5425,
+        "ts": "2026-10-17T05:51:50Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 776,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-17T05:51:50Z"
+      },
+      {
+        "detail": "c101ec41 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 776,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-17T05:51:50Z"
+      },
       {
         "detail": "ok in 199s",
         "kind": "run.done",
@@ -554,30 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-17T04:39:39Z"
-      },
-      {
-        "detail": "62fbd8e4 trigger=review_reply priority=1",
-        "kind": "head.queued",
-        "number": 774,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-17T04:39:39Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 775,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5419,
-        "ts": "2026-10-17T04:37:43Z"
-      },
-      {
-        "detail": "attempt 1 sha=6b6d8de7",
-        "kind": "run.spawned",
-        "number": 775,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5419,
-        "ts": "2026-10-17T04:37:32Z"
       }
     ],
     "tokens_by_effort": [
@@ -1171,14 +1171,94 @@
       "findings_posted": 4508,
       "reviews": 5889,
       "reviews_imported": 2245,
-      "runs": 5424,
+      "runs": 5425,
       "tokens_in": 43339184848,
       "tokens_out": 572434777,
       "tokens_total": 43911619625
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-17T11:51:50Z",
+        "deadline_in_seconds": 21590,
+        "degraded": false,
+        "elapsed_seconds": 10,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-17T05:51:51Z",
+        "id": 5425,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 776,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/776",
+        "priority": true,
+        "progress": 0.018,
+        "queue": "live",
+        "queued_at": "2026-10-17T05:51:49Z",
+        "remaining_seconds": 544,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "c101ec41a9a7aae171988a1abad19d90a7f5736a",
+        "started_at": "2026-10-17T05:51:50Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-17T05:51:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-17T05:51:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The changes are large and cross-cutting across image sanitization, media loading, and notification filtering, but the diff does not change consensus, funds movement, cryptography, signatures or key handling, peer-facing network deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-17T05:51:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-17T05:51:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat: release safety and privacy (blocked notifications, EXIF strip, image proxy, media denylist)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1194,7 +1274,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1232,6 +1312,7 @@
       "closed": 394,
       "done": 5814,
       "failed": 75,
+      "running": 1,
       "superseded": 2165
     },
     "ingest_error_streak": 0,
@@ -1269,9 +1350,9 @@
       }
     ],
     "last_run_done_at": "2026-10-17T05:48:19Z",
-    "last_run_started_at": "2026-10-17T05:45:00Z",
+    "last_run_started_at": "2026-10-17T05:51:50Z",
     "median_run_minutes": 6.233333333333333,
-    "notify_last_at": "2026-10-17T05:49:39Z",
+    "notify_last_at": "2026-10-17T05:51:45Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1282,7 +1363,7 @@
       "reviews": 29,
       "tokens": 189791938
     },
-    "ts": "2026-10-17T05:51:01Z",
+    "ts": "2026-10-17T05:52:00Z",
     "typical_minutes_by_tier": {
       "critical": 24.0,
       "low": 7.8,
@@ -1291,9 +1372,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 6.016666666666667,
+      "idle_minutes": 0.16666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
