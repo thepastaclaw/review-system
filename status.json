@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T18:51:01Z",
-  "generated_at": "2026-10-17T18:51:01Z",
+  "data_as_of": "2026-10-17T18:52:01Z",
+  "generated_at": "2026-10-17T18:52:01Z",
   "history": {
     "daily": [
       {
@@ -250,8 +250,8 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 532,
-            "p90_seconds": 317
+            "n": 533,
+            "p90_seconds": 316
           }
         }
       },
@@ -259,6 +259,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=eefbece2",
+        "kind": "run.spawned",
+        "number": 782,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5485,
+        "ts": "2026-10-17T18:51:51Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 782,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-17T18:51:51Z"
+      },
+      {
+        "detail": "eefbece2 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 782,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-17T18:51:51Z"
+      },
       {
         "detail": "ok in 466s",
         "kind": "run.done",
@@ -554,30 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-17T18:14:06Z"
-      },
-      {
-        "detail": "ok in 407s",
-        "kind": "run.done",
-        "number": 783,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5479,
-        "ts": "2026-10-17T18:03:18Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 783,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5479,
-        "ts": "2026-10-17T18:03:17Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 783,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5479,
-        "ts": "2026-10-17T18:03:17Z"
       }
     ],
     "tokens_by_effort": [
@@ -1171,14 +1171,89 @@
       "findings_posted": 4561,
       "reviews": 5948,
       "reviews_imported": 2245,
-      "runs": 5484,
+      "runs": 5485,
       "tokens_in": 43674595406,
       "tokens_out": 574536407,
       "tokens_total": 44249131813
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T00:51:51Z",
+        "deadline_in_seconds": 21590,
+        "degraded": false,
+        "elapsed_seconds": 10,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-17T18:51:51Z",
+        "id": 5485,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 782,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/782",
+        "priority": true,
+        "progress": 0.033,
+        "queue": "live",
+        "queued_at": "2026-10-17T18:51:50Z",
+        "remaining_seconds": 292,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "eefbece209b66e3040bb08dd188e91e85555c123",
+        "started_at": "2026-10-17T18:51:51Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-17T18:51:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-17T18:51:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a substantial cross-cutting monitoring and deployment-tooling change, but its read-only probes, incident automation, and configuration validation do not themselves modify any qualifying critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 2,
+            "started_at": "2026-10-17T18:51:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-17T18:51:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(ops): monitor deployed sites and Platform health",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1194,7 +1269,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1232,6 +1307,7 @@
       "closed": 395,
       "done": 5871,
       "failed": 75,
+      "running": 1,
       "superseded": 2166
     },
     "ingest_error_streak": 0,
@@ -1269,9 +1345,9 @@
       }
     ],
     "last_run_done_at": "2026-10-17T18:45:56Z",
-    "last_run_started_at": "2026-10-17T18:38:09Z",
+    "last_run_started_at": "2026-10-17T18:51:51Z",
     "median_run_minutes": 6.783333333333333,
-    "notify_last_at": "2026-10-17T18:49:40Z",
+    "notify_last_at": "2026-10-17T18:51:46Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1282,7 +1358,7 @@
       "reviews": 89,
       "tokens": 527304126
     },
-    "ts": "2026-10-17T18:51:01Z",
+    "ts": "2026-10-17T18:52:01Z",
     "typical_minutes_by_tier": {
       "critical": 23.7,
       "low": 6.7,
@@ -1291,9 +1367,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 12.866666666666667,
+      "idle_minutes": 0.16666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
