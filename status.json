@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T16:59:01Z",
-  "generated_at": "2026-10-17T16:59:01Z",
+  "data_as_of": "2026-10-17T17:00:00Z",
+  "generated_at": "2026-10-17T17:00:00Z",
   "history": {
     "daily": [
       {
@@ -250,8 +250,8 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 525,
-            "p90_seconds": 261
+            "n": 526,
+            "p90_seconds": 258
           }
         }
       },
@@ -259,6 +259,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1608,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5473,
+        "ts": "2026-10-17T16:59:49Z"
+      },
+      {
+        "detail": "attempt 1 sha=a6d5a5fa",
+        "kind": "run.spawned",
+        "number": 1608,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5473,
+        "ts": "2026-10-17T16:59:34Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 1608,
+        "repo": "dashpay/dash-wallet",
+        "run_id": null,
+        "ts": "2026-10-17T16:59:34Z"
+      },
+      {
+        "detail": "a6d5a5fa trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 1608,
+        "repo": "dashpay/dash-wallet",
+        "run_id": null,
+        "ts": "2026-10-17T16:59:34Z"
+      },
       {
         "detail": null,
         "kind": "ci.watch_dropped",
@@ -370,38 +402,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5467,
         "ts": "2026-10-17T16:26:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5467,
-        "ts": "2026-10-17T16:26:43Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5467,
-        "ts": "2026-10-17T16:26:43Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5467,
-        "ts": "2026-10-17T16:26:43Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5467,
-        "ts": "2026-10-17T16:26:43Z"
       },
       {
         "detail": null,
@@ -1171,14 +1171,155 @@
       "findings_posted": 4547,
       "reviews": 5936,
       "reviews_imported": 2245,
-      "runs": 5472,
+      "runs": 5473,
       "tokens_in": 43617180931,
       "tokens_out": 574151372,
       "tokens_total": 44191332303
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-17T22:59:34Z",
+        "deadline_in_seconds": 21574,
+        "degraded": false,
+        "elapsed_seconds": 26,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-17T16:59:49Z",
+        "id": 5473,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 11,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 11,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 12,
+            "state": "running"
+          }
+        ],
+        "number": 1608,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1608",
+        "priority": true,
+        "progress": 0.035,
+        "queue": "live",
+        "queued_at": "2026-10-17T16:59:33Z",
+        "remaining_seconds": 710,
+        "repo": "dashpay/dash-wallet",
+        "sha": "a6d5a5fa740afed5e5cba64b3af4bb2ac9a16513",
+        "started_at": "2026-10-17T16:59:34Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-17T16:59:35Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-17T16:59:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate change directly alters payment destination selection in ContactPaymentAddressProvider.kt, send completion handling in SendCoinsViewModel.kt, and contact key derivation and advancement in FriendChainAccess.java, touching funds movement and key handling.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-17T16:59:40Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-17T16:59:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 12,
+            "started_at": "2026-10-17T16:59:48Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 12,
+            "started_at": "2026-10-17T16:59:48Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(dashpay): give each contact payment a new address after the cutover",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1194,7 +1335,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1232,6 +1373,7 @@
       "closed": 394,
       "done": 5859,
       "failed": 75,
+      "running": 1,
       "superseded": 2165
     },
     "ingest_error_streak": 0,
@@ -1245,7 +1387,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1257,7 +1399,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1269,9 +1411,9 @@
       }
     ],
     "last_run_done_at": "2026-10-17T16:37:55Z",
-    "last_run_started_at": "2026-10-17T16:30:55Z",
+    "last_run_started_at": "2026-10-17T16:59:34Z",
     "median_run_minutes": 5.983333333333333,
-    "notify_last_at": "2026-10-17T16:57:23Z",
+    "notify_last_at": "2026-10-17T16:59:29Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1282,7 +1424,7 @@
       "reviews": 77,
       "tokens": 469504616
     },
-    "ts": "2026-10-17T16:59:01Z",
+    "ts": "2026-10-17T17:00:00Z",
     "typical_minutes_by_tier": {
       "critical": 23.7,
       "low": 7.3,
@@ -1291,9 +1433,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 28.1,
+      "idle_minutes": 0.43333333333333335,
       "ingest_stale": false,
       "stuck": false
     }
