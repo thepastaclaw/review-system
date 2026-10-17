@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T22:55:01Z",
-  "generated_at": "2026-10-17T22:55:01Z",
+  "data_as_of": "2026-10-17T22:56:01Z",
+  "generated_at": "2026-10-17T22:56:01Z",
   "history": {
     "daily": [
       {
@@ -250,7 +250,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 550,
+            "n": 551,
             "p90_seconds": 313
           }
         }
@@ -259,6 +259,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 786,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5517,
+        "ts": "2026-10-17T22:55:16Z"
+      },
+      {
+        "detail": "attempt 1 sha=06a8e3b4",
+        "kind": "run.spawned",
+        "number": 786,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5517,
+        "ts": "2026-10-17T22:55:05Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 786,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-17T22:55:05Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 786,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-17T22:55:04Z"
+      },
       {
         "detail": "4afcc7c1 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -546,38 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-17T22:27:36Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-17T22:27:35Z"
-      },
-      {
-        "detail": "372c3fb5 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-17T22:27:30Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-17T22:25:31Z"
-      },
-      {
-        "detail": "ok in 243s",
-        "kind": "run.done",
-        "number": 789,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5512,
-        "ts": "2026-10-17T22:23:58Z"
       }
     ],
     "tokens_by_effort": [
@@ -1171,14 +1171,125 @@
       "findings_posted": 4604,
       "reviews": 5976,
       "reviews_imported": 2245,
-      "runs": 5516,
+      "runs": 5517,
       "tokens_in": 43825325343,
       "tokens_out": 575567461,
       "tokens_total": 44400892804
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T04:55:05Z",
+        "deadline_in_seconds": 21544,
+        "degraded": false,
+        "elapsed_seconds": 56,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-17T22:55:50Z",
+        "id": 5517,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 43,
+            "state": "running"
+          }
+        ],
+        "number": 786,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/786",
+        "priority": true,
+        "progress": 0.12,
+        "queue": "live",
+        "queued_at": "2026-10-17T22:54:17Z",
+        "remaining_seconds": 408,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "06a8e3b41b3f9bfe25fcab8a32cb02a6be1f4603",
+        "started_at": "2026-10-17T22:55:05Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-17T22:55:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-17T22:55:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate change directly introduces cryptographic sealing in lib/crypto/hpke.ts and lib/crypto/passkey-vault.ts, plus private-key storage, recovery, and session reconstruction in lib/auth/passkey-vault.ts, clearly meeting the critical-surface threshold.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-17T22:55:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-17T22:55:13Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-17T22:55:16Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 43,
+            "started_at": "2026-10-17T22:55:18Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(auth): sign in with a passkey (passkey vault v1, D10)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 48
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1194,7 +1305,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1232,7 +1343,8 @@
       "closed": 396,
       "done": 5899,
       "failed": 75,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2172
     },
     "ingest_error_streak": 0,
@@ -1258,7 +1370,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1270,40 +1382,21 @@
       }
     ],
     "last_run_done_at": "2026-10-17T22:47:24Z",
-    "last_run_started_at": "2026-10-17T22:42:42Z",
+    "last_run_started_at": "2026-10-17T22:55:05Z",
     "median_run_minutes": 5.7,
     "notify_last_at": "2026-10-17T22:54:59Z",
     "oldest_queued_at": "2026-10-17T22:54:17Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 44,
+        "age_seconds": 104,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-17T23:24:17Z",
-        "eligible_in_seconds": 1756,
-        "number": 786,
-        "position": 1,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/786",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/786#issuecomment-6239932920",
-        "priority": false,
-        "queued_at": "2026-10-17T22:54:17Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "06a8e3b41b3f9bfe25fcab8a32cb02a6be1f4603",
-        "title": "feat(auth): sign in with a passkey (passkey vault v1, D10)",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 44,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-17T23:24:17Z",
-        "eligible_in_seconds": 1756,
+        "eligible_in_seconds": 1696,
         "number": 791,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/791",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/791#issuecomment-6242369964",
         "priority": false,
@@ -1322,7 +1415,7 @@
       "reviews": 120,
       "tokens": 679065117
     },
-    "ts": "2026-10-17T22:55:01Z",
+    "ts": "2026-10-17T22:56:01Z",
     "typical_minutes_by_tier": {
       "critical": 22.4,
       "low": 6.5,
@@ -1331,9 +1424,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 12.316666666666666,
+      "idle_minutes": 0.9333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
