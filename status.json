@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T12:17:01Z",
-  "generated_at": "2026-10-17T12:17:01Z",
+  "data_as_of": "2026-10-17T12:18:01Z",
+  "generated_at": "2026-10-17T12:18:01Z",
   "history": {
     "daily": [
       {
@@ -259,6 +259,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5471,
+        "repo": "dashpay/platform",
+        "run_id": 5453,
+        "ts": "2026-10-17T12:17:30Z"
+      },
       {
         "detail": "attempt 1 sha=eac9f8c7",
         "kind": "run.spawned",
@@ -570,14 +578,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-17T09:18:16Z"
-      },
-      {
-        "detail": "ok in 607s",
-        "kind": "run.done",
-        "number": 776,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5451,
-        "ts": "2026-10-17T09:15:25Z"
       }
     ],
     "tokens_by_effort": [
@@ -1183,24 +1183,45 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-17T18:16:56Z",
-        "deadline_in_seconds": 21595,
+        "deadline_in_seconds": 21535,
         "degraded": false,
-        "elapsed_seconds": 5,
+        "elapsed_seconds": 65,
         "findings": null,
         "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-17T12:16:56Z",
+        "heartbeat_at": "2026-10-17T12:17:56Z",
         "id": 5453,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 31,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 30,
+            "state": "running"
+          }
+        ],
         "number": 5471,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5471",
         "priority": false,
-        "progress": 0.007,
+        "progress": 0.09,
         "queue": "live",
         "queued_at": "2026-10-17T11:46:02Z",
-        "remaining_seconds": 718,
+        "remaining_seconds": 658,
         "repo": "dashpay/platform",
         "sha": "eac9f8c78513291d8d770a29eca25c857179b400",
         "started_at": "2026-10-17T12:16:56Z",
@@ -1209,21 +1230,69 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 4,
+            "seconds": 14,
             "started_at": "2026-10-17T12:16:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 8,
+            "started_at": "2026-10-17T12:17:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large diff primarily relocates existing invitation codec, key handling, proof reconstruction and claim logic into rs-sdk, with contained retry and error-mapping adjustments rather than a substantial change to critical-surface behavior.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-17T12:17:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-10-17T12:17:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 32,
+            "started_at": "2026-10-17T12:17:29Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat(sdk): move the DashPay invitation link codec and claim into rs-sdk",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1299,7 +1368,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1325,17 +1394,17 @@
     "last_run_done_at": "2026-10-17T10:21:00Z",
     "last_run_started_at": "2026-10-17T12:16:56Z",
     "median_run_minutes": 5.8,
-    "notify_last_at": "2026-10-17T12:15:15Z",
+    "notify_last_at": "2026-10-17T12:17:38Z",
     "oldest_queued_at": "2026-10-17T11:49:53Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1628,
+        "age_seconds": 1688,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-17T12:19:53Z",
-        "eligible_in_seconds": 172,
+        "eligible_in_seconds": 112,
         "number": 5470,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5470",
@@ -1349,12 +1418,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 488,
+        "age_seconds": 548,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-17T12:38:53Z",
-        "eligible_in_seconds": 1312,
+        "eligible_in_seconds": 1252,
         "number": 1616,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
@@ -1375,7 +1444,7 @@
       "reviews": 57,
       "tokens": 308022934
     },
-    "ts": "2026-10-17T12:17:01Z",
+    "ts": "2026-10-17T12:18:01Z",
     "typical_minutes_by_tier": {
       "critical": 23.9,
       "low": 7.8,
@@ -1386,7 +1455,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.08333333333333333,
+      "idle_minutes": 1.0833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
