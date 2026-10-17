@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T04:52:01Z",
-  "generated_at": "2026-10-17T04:52:01Z",
+  "data_as_of": "2026-10-17T04:53:01Z",
+  "generated_at": "2026-10-17T04:53:01Z",
   "history": {
     "daily": [
       {
@@ -233,7 +233,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 483,
+            "n": 484,
             "p90_seconds": 1857
           }
         },
@@ -259,6 +259,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=c89ff0b8",
+        "kind": "run.spawned",
+        "number": 5481,
+        "repo": "dashpay/platform",
+        "run_id": 5422,
+        "ts": "2026-10-17T04:52:49Z"
+      },
       {
         "detail": null,
         "kind": "phase1.skipped_repo",
@@ -570,14 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-17T04:28:33Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 776,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-17T04:28:33Z"
       }
     ],
     "tokens_by_effort": [
@@ -607,9 +607,9 @@
       },
       {
         "effort": "high",
-        "lanes": 13308,
-        "tokens_in": 13074365085,
-        "tokens_out": 123862169
+        "lanes": 13309,
+        "tokens_in": 13075921252,
+        "tokens_out": 123867494
       },
       {
         "effort": "low",
@@ -655,14 +655,19 @@
         "tokens_out": 37174584
       },
       {
-        "avg_tokens_per_lane": 1209054.0,
-        "lanes": 14503,
+        "avg_tokens_per_lane": 1209078.0,
+        "lanes": 14504,
         "model": "gpt-6.1-sol",
-        "tokens_in": 17446847647,
-        "tokens_out": 88058596
+        "tokens_in": 17448403814,
+        "tokens_out": 88063921
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 5421,
+        "tokens_in": 1556167,
+        "tokens_out": 5325
+      },
       {
         "run_id": 5420,
         "tokens_in": 1995361,
@@ -1157,24 +1162,19 @@
         "run_id": 5318,
         "tokens_in": 34317069,
         "tokens_out": 89986
-      },
-      {
-        "run_id": 5317,
-        "tokens_in": 48363326,
-        "tokens_out": 259418
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11255393,
+      "avg_tokens_per_completed_review": 11255794,
       "completed_reviews": 3897,
       "findings": 25988,
       "findings_posted": 4494,
       "reviews": 5885,
       "reviews_imported": 2245,
-      "runs": 5421,
-      "tokens_in": 43290053923,
-      "tokens_out": 572214360,
-      "tokens_total": 43862268283
+      "runs": 5422,
+      "tokens_in": 43291610090,
+      "tokens_out": 572219685,
+      "tokens_total": 43863829775
     }
   },
   "live": {
@@ -1183,35 +1183,46 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-17T10:51:08Z",
-        "deadline_in_seconds": 21547,
+        "deadline_in_seconds": 21487,
         "degraded": false,
-        "elapsed_seconds": 53,
+        "elapsed_seconds": 113,
         "findings": null,
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-17T04:51:53Z",
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-17T04:52:54Z",
         "id": 5421,
-        "lanes": [],
+        "lanes": [
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 1556167,
+            "tokens_out": 5325
+          }
+        ],
         "live_lanes": [
           {
             "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "general",
-            "since_seconds": 42,
+            "role": "verifier",
+            "since_seconds": 0,
             "state": "running"
           }
         ],
         "number": 775,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/775",
         "priority": true,
-        "progress": 0.18,
+        "progress": 0.396,
         "queue": "live",
         "queued_at": "2026-10-17T04:51:06Z",
-        "remaining_seconds": 241,
+        "remaining_seconds": 172,
         "repo": "PastaPastaPasta/yappr",
         "sha": "6472e2b954ad21eaf24991b5faf870c9e445bd5e",
         "started_at": "2026-10-17T04:51:08Z",
@@ -1267,29 +1278,84 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 42,
+            "seconds": 102,
             "started_at": "2026-10-17T04:51:19Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 0,
+            "started_at": "2026-10-17T04:53:01Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "feat(moderation): moderate storefront and blog contracts from the app",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 1556167,
+        "tokens_out": 5325,
         "trigger": "review_reply",
         "upcoming": [
-          "verify2",
           "fresh_phase2",
           "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 2
+      },
+      {
+        "attempt": 1,
+        "author": "shumkov",
+        "deadline_at": "2026-10-17T10:52:49Z",
+        "deadline_in_seconds": 21588,
+        "degraded": false,
+        "elapsed_seconds": 12,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-17T04:52:50Z",
+        "id": 5422,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5481,
+        "overdue": false,
+        "phase": "worktree",
+        "pr_url": "https://github.com/dashpay/platform/pull/5481",
+        "priority": false,
+        "progress": 0.016,
+        "queue": "live",
+        "queued_at": "2026-10-17T04:22:26Z",
+        "remaining_seconds": 721,
+        "repo": "dashpay/platform",
+        "sha": "c89ff0b816b82a3b0cce541b43fdd1894734d236",
+        "started_at": "2026-10-17T04:52:49Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 11,
+            "started_at": "2026-10-17T04:52:50Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "chore: merge v5.0-dev into v5.1-dev",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "select",
+          "triage",
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1823
       }
     ],
     "audit": {
@@ -1307,7 +1373,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1345,12 +1411,12 @@
       "closed": 394,
       "done": 5810,
       "failed": 75,
-      "queued": 2,
-      "running": 1,
+      "queued": 1,
+      "running": 2,
       "superseded": 2164
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-17T04:48:55Z",
+    "ingest_last_at": "2026-10-17T04:52:49Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1384,40 +1450,21 @@
       }
     ],
     "last_run_done_at": "2026-10-17T04:46:40Z",
-    "last_run_started_at": "2026-10-17T04:51:08Z",
+    "last_run_started_at": "2026-10-17T04:52:49Z",
     "median_run_minutes": 6.233333333333333,
     "notify_last_at": "2026-10-17T04:51:02Z",
-    "oldest_queued_at": "2026-10-17T04:22:26Z",
+    "oldest_queued_at": "2026-10-17T04:37:26Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1775,
-        "attempts": 0,
-        "author": "shumkov",
-        "eligible": false,
-        "eligible_at": "2026-10-17T04:52:26Z",
-        "eligible_in_seconds": 25,
-        "number": 5481,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5481",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5481#issuecomment-6229612589",
-        "priority": false,
-        "queued_at": "2026-10-17T04:22:26Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "c89ff0b816b82a3b0cce541b43fdd1894734d236",
-        "title": "chore: merge v5.0-dev into v5.1-dev",
-        "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 875,
+        "age_seconds": 935,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-17T05:07:26Z",
-        "eligible_in_seconds": 925,
+        "eligible_in_seconds": 865,
         "number": 776,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/776",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/776#issuecomment-6229194327",
         "priority": false,
@@ -1436,7 +1483,7 @@
       "reviews": 25,
       "tokens": 140440596
     },
-    "ts": "2026-10-17T04:52:01Z",
+    "ts": "2026-10-17T04:53:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.0,
       "low": 7.8,
@@ -1445,9 +1492,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 1,
+      "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.8833333333333333,
+      "idle_minutes": 0.2,
       "ingest_stale": false,
       "stuck": false
     }
