@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T22:19:00Z",
-  "generated_at": "2026-10-17T22:19:00Z",
+  "data_as_of": "2026-10-17T22:20:01Z",
+  "generated_at": "2026-10-17T22:20:01Z",
   "history": {
     "daily": [
       {
@@ -233,7 +233,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 494,
+            "n": 495,
             "p90_seconds": 1858
           }
         },
@@ -259,6 +259,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=ce3f1b35",
+        "kind": "run.spawned",
+        "number": 789,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5512,
+        "ts": "2026-10-17T22:19:54Z"
+      },
       {
         "detail": "ok in 288s",
         "kind": "run.done",
@@ -570,14 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5508,
         "ts": "2026-10-17T21:40:19Z"
-      },
-      {
-        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
-        "kind": "compare.selected",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5508,
-        "ts": "2026-10-17T21:40:19Z"
       }
     ],
     "tokens_by_effort": [
@@ -607,9 +607,9 @@
       },
       {
         "effort": "high",
-        "lanes": 13544,
-        "tokens_in": 13393891208,
-        "tokens_out": 126033800
+        "lanes": 13545,
+        "tokens_in": 13400930855,
+        "tokens_out": 126072494
       },
       {
         "effort": "low",
@@ -641,11 +641,11 @@
         "tokens_out": 259385
       },
       {
-        "avg_tokens_per_lane": 3510653.0,
-        "lanes": 1187,
+        "avg_tokens_per_lane": 3513656.0,
+        "lanes": 1188,
         "model": "gemini-3.8-flash-high",
-        "tokens_in": 4139944296,
-        "tokens_out": 27200634
+        "tokens_in": 4146983943,
+        "tokens_out": 27239328
       },
       {
         "avg_tokens_per_lane": 924690.0,
@@ -665,8 +665,8 @@
     "tokens_by_run": [
       {
         "run_id": 5511,
-        "tokens_in": 5708095,
-        "tokens_out": 26241
+        "tokens_in": 12747742,
+        "tokens_out": 64935
       },
       {
         "run_id": 5510,
@@ -1165,16 +1165,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11133678,
+      "avg_tokens_per_completed_review": 11135454,
       "completed_reviews": 3986,
       "findings": 26406,
       "findings_posted": 4595,
       "reviews": 5970,
       "reviews_imported": 2245,
-      "runs": 5511,
-      "tokens_in": 43803408379,
-      "tokens_out": 575433103,
-      "tokens_total": 44378841482
+      "runs": 5512,
+      "tokens_in": 43810448026,
+      "tokens_out": 575471797,
+      "tokens_total": 44385919823
     }
   },
   "live": {
@@ -1183,12 +1183,12 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-18T04:12:19Z",
-        "deadline_in_seconds": 21199,
+        "deadline_in_seconds": 21138,
         "degraded": false,
-        "elapsed_seconds": 401,
+        "elapsed_seconds": 462,
         "findings": null,
         "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-17T22:18:52Z",
+        "heartbeat_at": "2026-10-17T22:19:53Z",
         "id": 5511,
         "lanes": [
           {
@@ -1210,29 +1210,39 @@
             "status": "completed",
             "tokens_in": 2943798,
             "tokens_out": 11543
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 7039647,
+            "tokens_out": 38694
           }
         ],
         "live_lanes": [
           {
             "effort": "high",
             "line_position": null,
-            "model": "gemini-3.8-flash-high",
-            "phase": "phase1",
-            "pool": "gemini",
-            "role": "general",
-            "since_seconds": 386,
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 45,
             "state": "running"
           }
         ],
         "number": 1616,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
         "priority": false,
-        "progress": 0.582,
+        "progress": 0.688,
         "queue": "live",
         "queued_at": "2026-10-17T21:41:22Z",
-        "remaining_seconds": 287,
+        "remaining_seconds": 209,
         "repo": "dashpay/dash-wallet",
         "sha": "b0961dbd433538bcf09147f64108449fb700c29c",
         "started_at": "2026-10-17T22:12:19Z",
@@ -1295,27 +1305,102 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 387,
+            "seconds": 403,
             "started_at": "2026-10-17T22:12:33Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 45,
+            "started_at": "2026-10-17T22:19:16Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "Merge master into feat/kotlin-sdk-phase-1 (v11.9.1, DashSpend lost-reply recovery ported to SDK)",
-        "tokens_in": 5708095,
-        "tokens_out": 26241,
+        "tokens_in": 12747742,
+        "tokens_out": 64935,
         "trigger": "new_push",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1857
+      },
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T04:19:54Z",
+        "deadline_in_seconds": 21593,
+        "degraded": false,
+        "elapsed_seconds": 7,
+        "findings": null,
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-17T22:19:54Z",
+        "id": 5512,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 789,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/789",
+        "priority": false,
+        "progress": 0.013,
+        "queue": "live",
+        "queued_at": "2026-10-17T21:49:05Z",
+        "remaining_seconds": 525,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "ce3f1b3599c8187911a00037d8b0daf04ac5b125",
+        "started_at": "2026-10-17T22:19:54Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-17T22:19:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-17T22:19:58Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The cross-cutting changes adapt verification scripts, cleanup tools, seeders, and tests to release contract behavior, but do not clearly introduce large or intricate changes to funds movement, cryptography, key handling, or another critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-17T22:19:58Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "normal",
+        "title": "chore: adapt batteries and seeders for the release contract cut",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "context",
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1849
       }
     ],
     "audit": {
@@ -1333,7 +1418,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1351,7 +1436,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-17T22:17:51Z",
+        "at": "2026-10-17T22:19:55Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1371,12 +1456,11 @@
       "closed": 396,
       "done": 5893,
       "failed": 75,
-      "queued": 1,
-      "running": 1,
+      "running": 2,
       "superseded": 2170
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-17T22:16:05Z",
+    "ingest_last_at": "2026-10-17T22:19:54Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1386,7 +1470,7 @@
       },
       {
         "pool": "gemini",
-        "running": 1,
+        "running": 0,
         "slots": 6,
         "waiting": 0
       },
@@ -1398,7 +1482,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1410,32 +1494,12 @@
       }
     ],
     "last_run_done_at": "2026-10-17T22:14:02Z",
-    "last_run_started_at": "2026-10-17T22:12:19Z",
+    "last_run_started_at": "2026-10-17T22:19:54Z",
     "median_run_minutes": 6.216666666666667,
     "notify_last_at": "2026-10-17T22:18:11Z",
-    "oldest_queued_at": "2026-10-17T21:49:05Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1795,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-17T22:19:05Z",
-        "eligible_in_seconds": 5,
-        "number": 789,
-        "position": 1,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/789",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/789#issuecomment-6241249054",
-        "priority": false,
-        "queued_at": "2026-10-17T21:49:05Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "ce3f1b3599c8187911a00037d8b0daf04ac5b125",
-        "title": "chore: adapt batteries and seeders for the release contract cut",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-17",
       "failed": 0,
@@ -1443,7 +1507,7 @@
       "reviews": 114,
       "tokens": 651279459
     },
-    "ts": "2026-10-17T22:19:00Z",
+    "ts": "2026-10-17T22:20:01Z",
     "typical_minutes_by_tier": {
       "critical": 22.5,
       "low": 6.5,
@@ -1452,9 +1516,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 1,
+      "active": 2,
       "eligible": 0,
-      "idle_minutes": 6.683333333333334,
+      "idle_minutes": 0.11666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
