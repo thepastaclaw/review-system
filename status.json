@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T23:09:01Z",
-  "generated_at": "2026-10-17T23:09:01Z",
+  "data_as_of": "2026-10-17T23:10:01Z",
+  "generated_at": "2026-10-17T23:10:01Z",
   "history": {
     "daily": [
       {
@@ -250,8 +250,8 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 552,
-            "p90_seconds": 309
+            "n": 553,
+            "p90_seconds": 316
           }
         }
       },
@@ -259,6 +259,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 792,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5520,
+        "ts": "2026-10-17T23:09:57Z"
+      },
+      {
+        "detail": "attempt 1 sha=e3860fdf",
+        "kind": "run.spawned",
+        "number": 792,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5520,
+        "ts": "2026-10-17T23:09:42Z"
+      },
+      {
+        "detail": "df36d37b trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 786,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-17T23:09:41Z"
+      },
       {
         "detail": "ok in 418s",
         "kind": "run.done",
@@ -554,30 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-17T22:42:42Z"
-      },
-      {
-        "detail": "head 9447 superseded by 12cae406",
-        "kind": "head.superseded",
-        "number": 791,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-17T22:42:42Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5515,
-        "ts": "2026-10-17T22:39:22Z"
-      },
-      {
-        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
-        "kind": "compare.selected",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5515,
-        "ts": "2026-10-17T22:39:22Z"
       }
     ],
     "tokens_by_effort": [
@@ -1171,14 +1171,125 @@
       "findings_posted": 4606,
       "reviews": 5978,
       "reviews_imported": 2245,
-      "runs": 5519,
+      "runs": 5520,
       "tokens_in": 43833983955,
       "tokens_out": 575620240,
       "tokens_total": 44409604195
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T05:09:42Z",
+        "deadline_in_seconds": 21581,
+        "degraded": false,
+        "elapsed_seconds": 19,
+        "findings": null,
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-17T23:09:57Z",
+        "id": 5520,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 3,
+            "state": "running"
+          }
+        ],
+        "number": 792,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/792",
+        "priority": true,
+        "progress": 0.06,
+        "queue": "live",
+        "queued_at": "2026-10-17T23:02:00Z",
+        "remaining_seconds": 295,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "e3860fdfec9cdf99c0c57b9c37946d11de12cc88",
+        "started_at": "2026-10-17T23:09:42Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-17T23:09:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-17T23:09:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The cross-cutting changes amend application-level blog ownership, deletion permissions, moderation policies, queries, and UI, but do not change protocol consensus rules, funds movement, cryptography, key handling, network deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-17T23:09:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-17T23:09:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-17T23:09:57Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 3,
+            "started_at": "2026-10-17T23:09:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(blog): amend v9 ownership and settled moderation",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "manual",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 462
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1194,7 +1305,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1233,10 +1344,11 @@
       "done": 5901,
       "failed": 75,
       "queued": 2,
+      "running": 1,
       "superseded": 2174
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-17T23:05:52Z",
+    "ingest_last_at": "2026-10-17T23:09:42Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1258,7 +1370,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1270,19 +1382,19 @@
       }
     ],
     "last_run_done_at": "2026-10-17T23:06:38Z",
-    "last_run_started_at": "2026-10-17T22:59:40Z",
+    "last_run_started_at": "2026-10-17T23:09:42Z",
     "median_run_minutes": 5.7,
     "notify_last_at": "2026-10-17T23:08:18Z",
     "oldest_queued_at": "2026-10-17T23:02:00Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 421,
+        "age_seconds": 481,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-17T23:32:00Z",
-        "eligible_in_seconds": 1379,
+        "eligible_in_seconds": 1319,
         "number": 791,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/791",
@@ -1296,22 +1408,22 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 421,
+        "age_seconds": 20,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
-        "eligible_at": "2026-10-17T23:32:00Z",
-        "eligible_in_seconds": 1379,
-        "number": 792,
+        "eligible_at": "2026-10-17T23:39:41Z",
+        "eligible_in_seconds": 1780,
+        "number": 786,
         "position": 2,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/792",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/792#issuecomment-6242432589",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/786",
+        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/786#issuecomment-6239932920",
         "priority": false,
-        "queued_at": "2026-10-17T23:02:00Z",
+        "queued_at": "2026-10-17T23:09:41Z",
         "reason": "debounce (more pushes may follow)",
         "repo": "PastaPastaPasta/yappr",
-        "sha": "e3860fdfec9cdf99c0c57b9c37946d11de12cc88",
-        "title": "feat(blog): amend v9 ownership and settled moderation",
+        "sha": "df36d37b6fffded52a68a582aecc5c4b0405c691",
+        "title": "feat(auth): sign in with a passkey (passkey vault v1, D10)",
         "trigger": "new_push"
       }
     ],
@@ -1322,7 +1434,7 @@
       "reviews": 122,
       "tokens": 685484121
     },
-    "ts": "2026-10-17T23:09:01Z",
+    "ts": "2026-10-17T23:10:01Z",
     "typical_minutes_by_tier": {
       "critical": 22.4,
       "low": 6.5,
@@ -1331,9 +1443,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 9.35,
+      "idle_minutes": 0.31666666666666665,
       "ingest_stale": false,
       "stuck": false
     }
