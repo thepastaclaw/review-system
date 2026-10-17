@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T13:10:01Z",
-  "generated_at": "2026-10-17T13:10:01Z",
+  "data_as_of": "2026-10-17T13:11:01Z",
+  "generated_at": "2026-10-17T13:11:01Z",
   "history": {
     "daily": [
       {
@@ -250,8 +250,8 @@
           },
           "wait": {
             "median_seconds": 8,
-            "n": 520,
-            "p90_seconds": 274
+            "n": 521,
+            "p90_seconds": 270
           }
         }
       },
@@ -259,6 +259,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5470,
+        "repo": "dashpay/platform",
+        "run_id": 5456,
+        "ts": "2026-10-17T13:10:38Z"
+      },
+      {
+        "detail": "attempt 1 sha=f8632c0f",
+        "kind": "run.spawned",
+        "number": 5470,
+        "repo": "dashpay/platform",
+        "run_id": 5456,
+        "ts": "2026-10-17T13:10:10Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5470,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-17T13:10:10Z"
+      },
       {
         "detail": "f8632c0f trigger=new_push priority=0",
         "kind": "head.queued",
@@ -554,30 +578,6 @@
         "repo": "dashpay/platform",
         "run_id": 5454,
         "ts": "2026-10-17T12:20:48Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-17T12:20:26Z"
-      },
-      {
-        "detail": "attempt 1 sha=d1e9edc8",
-        "kind": "run.spawned",
-        "number": 5470,
-        "repo": "dashpay/platform",
-        "run_id": 5454,
-        "ts": "2026-10-17T12:20:24Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 5471,
-        "repo": "dashpay/platform",
-        "run_id": 5453,
-        "ts": "2026-10-17T12:17:30Z"
       }
     ],
     "tokens_by_effort": [
@@ -1171,14 +1171,132 @@
       "findings_posted": 4531,
       "reviews": 5919,
       "reviews_imported": 2245,
-      "runs": 5455,
+      "runs": 5456,
       "tokens_in": 43515994622,
       "tokens_out": 573508243,
       "tokens_total": 44089502865
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-17T19:10:10Z",
+        "deadline_in_seconds": 21549,
+        "degraded": false,
+        "elapsed_seconds": 51,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-17T13:10:55Z",
+        "id": 5456,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 22,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 23,
+            "state": "running"
+          }
+        ],
+        "number": 5470,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5470",
+        "priority": true,
+        "progress": 0.078,
+        "queue": "live",
+        "queued_at": "2026-10-17T13:09:20Z",
+        "remaining_seconds": 606,
+        "repo": "dashpay/platform",
+        "sha": "f8632c0f6543a4c57c4515f8b9137afa26916d24",
+        "started_at": "2026-10-17T13:10:10Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 12,
+            "started_at": "2026-10-17T13:10:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-17T13:10:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This substantial SDK extraction changes profile construction, partial-update merging, querying and caching, but delegates signing to existing SDK methods rather than changing cryptography, signature rules or key handling.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-17T13:10:23Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-17T13:10:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 25,
+            "started_at": "2026-10-17T13:10:36Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(sdk): move DashPay profile create, update and fetch into rs-sdk",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 50
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1194,7 +1312,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1232,7 +1350,7 @@
       "closed": 394,
       "done": 5842,
       "failed": 75,
-      "queued": 1,
+      "running": 1,
       "superseded": 2165
     },
     "ingest_error_streak": 0,
@@ -1246,7 +1364,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1270,32 +1388,12 @@
       }
     ],
     "last_run_done_at": "2026-10-17T13:01:38Z",
-    "last_run_started_at": "2026-10-17T12:39:11Z",
+    "last_run_started_at": "2026-10-17T13:10:10Z",
     "median_run_minutes": 7.433333333333334,
-    "notify_last_at": "2026-10-17T13:07:43Z",
-    "oldest_queued_at": "2026-10-17T13:09:20Z",
+    "notify_last_at": "2026-10-17T13:10:04Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 41,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-17T13:39:20Z",
-        "eligible_in_seconds": 1759,
-        "number": 5470,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5470",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5470#issuecomment-6209030770",
-        "priority": false,
-        "queued_at": "2026-10-17T13:09:20Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "f8632c0f6543a4c57c4515f8b9137afa26916d24",
-        "title": "feat(sdk): move DashPay profile create, update and fetch into rs-sdk",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-17",
       "failed": 0,
@@ -1303,7 +1401,7 @@
       "reviews": 60,
       "tokens": 367675178
     },
-    "ts": "2026-10-17T13:10:01Z",
+    "ts": "2026-10-17T13:11:01Z",
     "typical_minutes_by_tier": {
       "critical": 23.8,
       "low": 7.8,
@@ -1312,9 +1410,9 @@
       "unknown": 0.7
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 30.833333333333332,
+      "idle_minutes": 0.85,
       "ingest_stale": false,
       "stuck": false
     }
