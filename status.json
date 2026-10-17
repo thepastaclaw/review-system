@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-17T05:45:01Z",
-  "generated_at": "2026-10-17T05:45:01Z",
+  "data_as_of": "2026-10-17T05:46:01Z",
+  "generated_at": "2026-10-17T05:46:01Z",
   "history": {
     "daily": [
       {
@@ -259,6 +259,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 776,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5424,
+        "ts": "2026-10-17T05:45:11Z"
+      },
       {
         "detail": "attempt 1 sha=a4f1ea95",
         "kind": "run.spawned",
@@ -570,14 +578,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-17T04:37:26Z"
-      },
-      {
-        "detail": "ok in 998s",
-        "kind": "run.done",
-        "number": 1605,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5412,
-        "ts": "2026-10-17T04:36:04Z"
       }
     ],
     "tokens_by_effort": [
@@ -1183,24 +1183,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-17T11:45:00Z",
-        "deadline_in_seconds": 21599,
+        "deadline_in_seconds": 21539,
         "degraded": false,
-        "elapsed_seconds": 1,
+        "elapsed_seconds": 61,
         "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-17T05:45:00Z",
+        "heartbeat_age_seconds": 16,
+        "heartbeat_at": "2026-10-17T05:45:45Z",
         "id": 5424,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 49,
+            "state": "running"
+          }
+        ],
         "number": 776,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/776",
         "priority": true,
-        "progress": null,
+        "progress": 0.204,
         "queue": "live",
         "queued_at": "2026-10-17T05:44:57Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 237,
         "repo": "PastaPastaPasta/yappr",
         "sha": "a4f1ea95469f1aafc87db7e510258b1933e0754e",
         "started_at": "2026-10-17T05:45:00Z",
@@ -1209,17 +1220,75 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 0,
+            "seconds": 3,
             "started_at": "2026-10-17T05:45:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-17T05:45:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff makes large, cross-cutting changes to image metadata parsing, media loading, uploads and notification filtering, but does not change consensus, funds movement, cryptography, key handling, peer-facing network deserialization or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-17T05:45:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-17T05:45:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-17T05:45:11Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 49,
+            "started_at": "2026-10-17T05:45:12Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat: release safety and privacy (blocked notifications, EXIF strip, image proxy, media denylist)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 3
       }
     ],
@@ -1280,7 +1349,7 @@
       "superseded": 2165
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-17T05:42:07Z",
+    "ingest_last_at": "2026-10-17T05:45:56Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1302,7 +1371,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1327,7 +1396,7 @@
       "reviews": 28,
       "tokens": 188058588
     },
-    "ts": "2026-10-17T05:45:01Z",
+    "ts": "2026-10-17T05:46:01Z",
     "typical_minutes_by_tier": {
       "critical": 24.0,
       "low": 7.8,
@@ -1338,7 +1407,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.016666666666666666,
+      "idle_minutes": 1.0166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
