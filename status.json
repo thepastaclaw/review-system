@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T13:09:00Z",
-  "generated_at": "2026-10-18T13:09:00Z",
+  "data_as_of": "2026-10-18T13:10:03Z",
+  "generated_at": "2026-10-18T13:10:04Z",
   "history": {
     "daily": [
       {
@@ -265,6 +265,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5483,
+        "repo": "dashpay/platform",
+        "run_id": 5614,
+        "ts": "2026-10-18T13:09:12Z"
+      },
+      {
         "detail": "attempt 1 sha=5d49af62",
         "kind": "run.spawned",
         "number": 5483,
@@ -447,14 +455,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5609,
         "ts": "2026-10-18T12:38:05Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5609,
-        "ts": "2026-10-18T12:38:04Z"
       },
       {
         "detail": null,
@@ -1188,35 +1188,45 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-18T19:08:41Z",
-        "deadline_in_seconds": 21581,
+        "deadline_in_seconds": 21518,
         "degraded": false,
-        "elapsed_seconds": 19,
+        "elapsed_seconds": 82,
         "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-10-18T13:08:56Z",
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-18T13:09:57Z",
         "id": 5614,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 6,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 51,
             "state": "running"
           }
         ],
         "number": 5483,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5483",
         "priority": true,
-        "progress": null,
+        "progress": 0.123,
         "queue": "live",
         "queued_at": "2026-10-18T13:08:31Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 582,
         "repo": "dashpay/platform",
         "sha": "5d49af622e75bb38d156e6fd36300c1c81df6d21",
         "started_at": "2026-10-18T13:08:41Z",
@@ -1230,26 +1240,68 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 6,
+            "seconds": 8,
             "started_at": "2026-10-18T13:08:54Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds contained but nontrivial client-side proof-query fallback logic across five vote verifiers and regression tests, without the large or intricate critical-surface changes required for critical.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-18T13:08:54Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 6,
-            "started_at": "2026-10-18T13:08:54Z",
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-10-18T13:09:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 52,
+            "started_at": "2026-10-18T13:09:11Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix(sdk): verify no-limit vote queries against the page Drive proves",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 10
       }
     ],
@@ -1286,7 +1338,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T13:07:18Z",
+        "at": "2026-10-18T13:09:23Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1320,7 +1372,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1332,7 +1384,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 8,
         "waiting": 0
       },
@@ -1357,7 +1409,7 @@
       "reviews": 81,
       "tokens": 523095851
     },
-    "ts": "2026-10-18T13:09:00Z",
+    "ts": "2026-10-18T13:10:03Z",
     "typical_minutes_by_tier": {
       "critical": 20.2,
       "low": 6.5,
@@ -1368,7 +1420,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.31666666666666665,
+      "idle_minutes": 1.3666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
