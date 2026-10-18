@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T10:44:01Z",
-  "generated_at": "2026-10-18T10:44:01Z",
+  "data_as_of": "2026-10-18T10:45:00Z",
+  "generated_at": "2026-10-18T10:45:01Z",
   "history": {
     "daily": [
       {
@@ -264,6 +264,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 803,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5602,
+        "ts": "2026-10-18T10:44:08Z"
+      },
+      {
+        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
+        "kind": "compare.selected",
+        "number": 803,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5602,
+        "ts": "2026-10-18T10:44:08Z"
+      },
       {
         "detail": "attempt 1 sha=9fa7811f",
         "kind": "run.spawned",
@@ -567,22 +583,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5601,
         "ts": "2026-10-18T10:36:42Z"
-      },
-      {
-        "detail": "9fa7811f trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 803,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-18T10:36:16Z"
-      },
-      {
-        "detail": "head 9552 superseded by 9fa7811f",
-        "kind": "head.superseded",
-        "number": 803,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-18T10:36:16Z"
       }
     ],
     "tokens_by_effort": [
@@ -1188,35 +1188,45 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-18T16:43:57Z",
-        "deadline_in_seconds": 21596,
+        "deadline_in_seconds": 21537,
         "degraded": false,
-        "elapsed_seconds": 4,
+        "elapsed_seconds": 63,
         "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-10-18T10:43:57Z",
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-10-18T10:44:58Z",
         "id": 5602,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6-astra",
+            "phase": "phase2",
+            "pool": "compare",
+            "role": "general",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 1,
+            "role": "general",
+            "since_seconds": 51,
             "state": "running"
           }
         ],
         "number": 803,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/803",
         "priority": true,
-        "progress": 0.012,
+        "progress": 0.169,
         "queue": "live",
         "queued_at": "2026-10-18T10:36:16Z",
-        "remaining_seconds": 341,
+        "remaining_seconds": 310,
         "repo": "PastaPastaPasta/yappr",
         "sha": "9fa7811f2c393fa777d130dc03c4cf664c90cd3b",
         "started_at": "2026-10-18T10:43:57Z",
@@ -1239,21 +1249,57 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, cross-cutting diff directly changes private-key destruction in lib/secure-storage.ts, wallet-key lifecycle fencing in lib/app-connect/session-manager.ts, and concurrent restoration/logout handling in vendor/platform-auth/src/core/controller.ts, meeting the intricate-change and critical key-handling criteria.",
+              "tier": "critical"
+            },
             "name": "triage",
-            "seconds": 1,
+            "seconds": 4,
             "started_at": "2026-10-18T10:44:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T10:44:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T10:44:08Z",
+            "status": "skipped"
+          },
+          {
+            "comparison_left": 1,
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 51,
+            "started_at": "2026-10-18T10:44:09Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix: resolve auth, blog, accessibility and moderation QA",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "manual",
         "upcoming": [
-          "context",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1321,7 +1367,7 @@
     "lane_pools": [
       {
         "pool": "compare",
-        "running": 0,
+        "running": 1,
         "slots": 2,
         "waiting": 0
       },
@@ -1353,7 +1399,7 @@
     "last_run_done_at": "2026-10-18T10:37:42Z",
     "last_run_started_at": "2026-10-18T10:43:57Z",
     "median_run_minutes": 5.566666666666666,
-    "notify_last_at": "2026-10-18T10:42:35Z",
+    "notify_last_at": "2026-10-18T10:44:58Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1364,7 +1410,7 @@
       "reviews": 70,
       "tokens": 432364778
     },
-    "ts": "2026-10-18T10:44:01Z",
+    "ts": "2026-10-18T10:45:00Z",
     "typical_minutes_by_tier": {
       "critical": 20.8,
       "low": 6.5,
@@ -1375,7 +1421,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.06666666666666667,
+      "idle_minutes": 1.0666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
