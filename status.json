@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T05:12:05Z",
-  "generated_at": "2026-10-18T05:12:06Z",
+  "data_as_of": "2026-10-18T05:13:01Z",
+  "generated_at": "2026-10-18T05:13:01Z",
   "history": {
     "daily": [
       {
@@ -264,6 +264,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5396,
+        "repo": "dashpay/platform",
+        "run_id": 5568,
+        "ts": "2026-10-18T05:12:19Z"
+      },
       {
         "detail": "attempt 1 sha=1651bd31",
         "kind": "run.spawned",
@@ -575,14 +583,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-10-18T04:01:54Z"
-      },
-      {
-        "detail": "ok in 597s",
-        "kind": "run.done",
-        "number": 7923,
-        "repo": "dashpay/dash",
-        "run_id": 5561,
-        "ts": "2026-10-18T04:01:21Z"
       }
     ],
     "tokens_by_effort": [
@@ -1188,35 +1188,105 @@
         "attempt": 1,
         "author": "llbartekll",
         "deadline_at": "2026-10-18T11:11:38Z",
-        "deadline_in_seconds": 21573,
+        "deadline_in_seconds": 21517,
         "degraded": false,
-        "elapsed_seconds": 27,
+        "elapsed_seconds": 83,
         "findings": null,
-        "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-10-18T05:11:53Z",
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-18T05:12:54Z",
         "id": 5568,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 41,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 42,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 5,
+            "role": "architecture-layering",
+            "since_seconds": 42,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 43,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 41,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 39,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 40,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 40,
             "state": "running"
           }
         ],
         "number": 5396,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5396",
         "priority": false,
-        "progress": 0.042,
+        "progress": 0.117,
         "queue": "live",
         "queued_at": "2026-10-18T04:41:30Z",
-        "remaining_seconds": 611,
+        "remaining_seconds": 623,
         "repo": "dashpay/platform",
         "sha": "1651bd31c78b92c10bb529230b5f47e86633c3b3",
         "started_at": "2026-10-18T05:11:38Z",
@@ -1230,29 +1300,89 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 6,
+            "seconds": 7,
             "started_at": "2026-10-18T05:11:59Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate changes in wallet/asset_lock/build.rs and wallet/shielded/fund_from_asset_lock.rs alter coin selection, Core funds movement, and restart-safe completion, while V019__asset_lock_operation_id.rs changes persisted recovery state.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-18T05:12:00Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 5,
-            "started_at": "2026-10-18T05:12:00Z",
+            "name": "context",
+            "seconds": 10,
+            "started_at": "2026-10-18T05:12:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "ffi-engineer",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 6,
+            "name": "phase2",
+            "seconds": 43,
+            "started_at": "2026-10-18T05:12:18Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 43,
+            "started_at": "2026-10-18T05:12:18Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(platform-wallet)!: drain Core balance with restart-safe shielded recovery",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1327,7 +1457,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1339,7 +1469,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 6,
         "slots": 8,
         "waiting": 0
       },
@@ -1353,17 +1483,17 @@
     "last_run_done_at": "2026-10-18T05:06:12Z",
     "last_run_started_at": "2026-10-18T05:11:38Z",
     "median_run_minutes": 6.316666666666666,
-    "notify_last_at": "2026-10-18T05:10:34Z",
+    "notify_last_at": "2026-10-18T05:12:41Z",
     "oldest_queued_at": "2026-10-18T05:07:39Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 266,
+        "age_seconds": 322,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-10-18T05:37:39Z",
-        "eligible_in_seconds": 1534,
+        "eligible_in_seconds": 1478,
         "number": 7907,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7907",
@@ -1384,7 +1514,7 @@
       "reviews": 37,
       "tokens": 156360579
     },
-    "ts": "2026-10-18T05:12:05Z",
+    "ts": "2026-10-18T05:13:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.4,
       "low": 6.5,
@@ -1395,7 +1525,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.45,
+      "idle_minutes": 1.3833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
