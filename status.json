@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T07:18:01Z",
-  "generated_at": "2026-10-18T07:18:01Z",
+  "data_as_of": "2026-10-18T07:19:01Z",
+  "generated_at": "2026-10-18T07:19:01Z",
   "history": {
     "daily": [
       {
@@ -238,7 +238,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 505,
+            "n": 506,
             "p90_seconds": 1857
           }
         },
@@ -264,6 +264,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1616,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5585,
+        "ts": "2026-10-18T07:18:23Z"
+      },
+      {
+        "detail": "attempt 1 sha=82422089",
+        "kind": "run.spawned",
+        "number": 1616,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5585,
+        "ts": "2026-10-18T07:18:09Z"
+      },
+      {
+        "detail": "4c719b39 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 7907,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-10-18T07:18:03Z"
+      },
+      {
+        "detail": "head 9529 superseded by 4c719b39",
+        "kind": "head.superseded",
+        "number": 7907,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-10-18T07:18:03Z"
+      },
       {
         "detail": "ok in 548s",
         "kind": "run.done",
@@ -551,38 +583,6 @@
         "repo": "dashpay/platform",
         "run_id": 5574,
         "ts": "2026-10-18T06:07:37Z"
-      },
-      {
-        "detail": "ok in 644s",
-        "kind": "run.done",
-        "number": 5454,
-        "repo": "dashpay/platform",
-        "run_id": 5579,
-        "ts": "2026-10-18T06:06:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch",
-        "number": 5454,
-        "repo": "dashpay/platform",
-        "run_id": 5579,
-        "ts": "2026-10-18T06:06:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 7903,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-18T06:04:24Z"
-      },
-      {
-        "detail": "ok in 650s",
-        "kind": "run.done",
-        "number": 7903,
-        "repo": "dashpay/dash",
-        "run_id": 5577,
-        "ts": "2026-10-18T06:04:10Z"
       }
     ],
     "tokens_by_effort": [
@@ -1176,14 +1176,155 @@
       "findings_posted": 4663,
       "reviews": 6037,
       "reviews_imported": 2245,
-      "runs": 5584,
+      "runs": 5585,
       "tokens_in": 44193788397,
       "tokens_out": 578846405,
       "tokens_total": 44772634802
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-18T13:18:09Z",
+        "deadline_in_seconds": 21548,
+        "degraded": false,
+        "elapsed_seconds": 52,
+        "findings": null,
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-18T07:18:54Z",
+        "id": 5585,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 38,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 39,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 38,
+            "state": "running"
+          }
+        ],
+        "number": 1616,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
+        "priority": false,
+        "progress": 0.081,
+        "queue": "live",
+        "queued_at": "2026-10-18T06:47:29Z",
+        "remaining_seconds": 591,
+        "repo": "dashpay/dash-wallet",
+        "sha": "82422089a7357fad82b83730a07ff472208b99c7",
+        "started_at": "2026-10-18T07:18:09Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-18T07:18:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-18T07:18:13Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff makes intricate changes to funds movement in SendCoinsTaskRunner.kt, PendingDirectPaymentVerifier.kt, and PendingPaymentEngine.kt, including SDK transaction submission, reservation retention and release, and recovery after lost merchant replies.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-18T07:18:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T07:18:19Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 39,
+            "started_at": "2026-10-18T07:18:22Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 39,
+            "started_at": "2026-10-18T07:18:22Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "Merge master into feat/kotlin-sdk-phase-1 (v11.9.1, DashSpend lost-reply recovery ported to SDK)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1840
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1340,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1217,7 +1358,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T07:16:04Z",
+        "at": "2026-10-18T07:18:30Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1237,11 +1378,12 @@
       "closed": 398,
       "done": 5960,
       "failed": 75,
-      "queued": 2,
-      "superseded": 2185
+      "queued": 1,
+      "running": 1,
+      "superseded": 2186
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-18T07:14:16Z",
+    "ingest_last_at": "2026-10-18T07:18:09Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1251,7 +1393,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1263,7 +1405,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
@@ -1275,47 +1417,28 @@
       }
     ],
     "last_run_done_at": "2026-10-18T07:15:49Z",
-    "last_run_started_at": "2026-10-18T07:06:40Z",
+    "last_run_started_at": "2026-10-18T07:18:09Z",
     "median_run_minutes": 9.133333333333333,
     "notify_last_at": "2026-10-18T07:17:04Z",
-    "oldest_queued_at": "2026-10-18T06:47:29Z",
+    "oldest_queued_at": "2026-10-18T07:18:03Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1832,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": true,
-        "eligible_at": "2026-10-18T07:17:29Z",
-        "eligible_in_seconds": 0,
-        "number": 1616,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1616#issuecomment-6110687896",
-        "priority": false,
-        "queued_at": "2026-10-18T06:47:29Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash-wallet",
-        "sha": "82422089a7357fad82b83730a07ff472208b99c7",
-        "title": "Merge master into feat/kotlin-sdk-phase-1 (v11.9.1, DashSpend lost-reply recovery ported to SDK)",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1367,
+        "age_seconds": 58,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
-        "eligible_at": "2026-10-18T07:25:14Z",
-        "eligible_in_seconds": 433,
+        "eligible_at": "2026-10-18T07:48:03Z",
+        "eligible_in_seconds": 1742,
         "number": 7907,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7907",
         "prioritize_url": "https://github.com/dashpay/dash/issues/7907#issuecomment-6213292465",
         "priority": false,
-        "queued_at": "2026-10-18T06:55:14Z",
+        "queued_at": "2026-10-18T07:18:03Z",
         "reason": "debounce (more pushes may follow)",
         "repo": "dashpay/dash",
-        "sha": "ba5b287e6ef4f1be5bde54a72a5898751371a6e6",
+        "sha": "4c719b396c3e92fa783a383bf68d362eff3fcff2",
         "title": "backport: bitcoin#27884, bitcoin#28070, bitcoin#28157",
         "trigger": "new_push"
       }
@@ -1327,7 +1450,7 @@
       "reviews": 54,
       "tokens": 325940990
     },
-    "ts": "2026-10-18T07:18:01Z",
+    "ts": "2026-10-18T07:19:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.1,
       "low": 6.5,
@@ -1336,9 +1459,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 11.35,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.8666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
