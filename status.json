@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T02:24:01Z",
-  "generated_at": "2026-10-18T02:24:01Z",
+  "data_as_of": "2026-10-18T02:25:01Z",
+  "generated_at": "2026-10-18T02:25:01Z",
   "history": {
     "daily": [
       {
@@ -264,6 +264,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1616,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5555,
+        "ts": "2026-10-18T02:24:07Z"
+      },
       {
         "detail": null,
         "kind": "degraded.run",
@@ -566,14 +574,6 @@
         "number": 791,
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5551,
-        "ts": "2026-10-18T01:55:40Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 791,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
         "ts": "2026-10-18T01:55:40Z"
       },
       {
@@ -1188,12 +1188,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-18T08:15:17Z",
-        "deadline_in_seconds": 21076,
+        "deadline_in_seconds": 21016,
         "degraded": true,
-        "elapsed_seconds": 524,
+        "elapsed_seconds": 584,
         "findings": null,
         "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-10-18T02:23:48Z",
+        "heartbeat_at": "2026-10-18T02:24:48Z",
         "id": 5554,
         "lanes": [],
         "live_lanes": [
@@ -1204,7 +1204,7 @@
             "phase": "phase2",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 511,
+            "since_seconds": 571,
             "state": "running"
           }
         ],
@@ -1213,7 +1213,7 @@
         "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/786",
         "priority": true,
-        "progress": 0.769,
+        "progress": 0.788,
         "queue": "live",
         "queued_at": "2026-10-18T02:15:14Z",
         "remaining_seconds": 157,
@@ -1278,7 +1278,7 @@
             ],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 511,
+            "seconds": 571,
             "started_at": "2026-10-18T02:15:30Z",
             "status": "running"
           }
@@ -1298,35 +1298,55 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-18T08:23:52Z",
-        "deadline_in_seconds": 21591,
+        "deadline_in_seconds": 21531,
         "degraded": true,
-        "elapsed_seconds": 9,
+        "elapsed_seconds": 69,
         "findings": null,
-        "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-10-18T02:23:52Z",
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-10-18T02:24:53Z",
         "id": 5555,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 54,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "muse-spark-1.3-contributor",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "muse",
-            "role": "prep",
-            "since_seconds": 4,
+            "role": "general",
+            "since_seconds": 55,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase2",
+            "pool": "muse",
+            "role": "security-auditor",
+            "since_seconds": 54,
             "state": "running"
           }
         ],
         "number": 1616,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
         "priority": false,
-        "progress": 0.015,
+        "progress": 0.102,
         "queue": "live",
         "queued_at": "2026-10-18T01:53:22Z",
-        "remaining_seconds": 601,
+        "remaining_seconds": 610,
         "repo": "dashpay/dash-wallet",
         "sha": "3beeb8cb4d169ebf13d8663ea66872762018ec4b",
         "started_at": "2026-10-18T02:23:52Z",
@@ -1340,29 +1360,75 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
             "name": "select",
             "seconds": 5,
             "started_at": "2026-10-18T02:23:56Z",
-            "status": "running"
+            "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:muse-spark-1.3-contributor",
+              "reasoning": "Large +14k-line merge rewrites BIP70 fund movement via SendCoinsTaskRunner.kt and the new SdkPendingPaymentEngine reservation/broadcast path.",
+              "tier": "critical"
+            },
             "name": "triage",
             "seconds": 4,
             "started_at": "2026-10-18T02:23:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-18T02:24:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 55,
+            "started_at": "2026-10-18T02:24:06Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 55,
+            "started_at": "2026-10-18T02:24:06Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "Merge master into feat/kotlin-sdk-phase-1 (v11.9.1, DashSpend lost-reply recovery ported to SDK)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1438,7 +1504,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1456,7 +1522,7 @@
       },
       {
         "pool": "muse",
-        "running": 2,
+        "running": 3,
         "slots": 20,
         "waiting": 0
       }
@@ -1464,17 +1530,17 @@
     "last_run_done_at": "2026-10-18T02:06:43Z",
     "last_run_started_at": "2026-10-18T02:23:52Z",
     "median_run_minutes": 5.8,
-    "notify_last_at": "2026-10-18T02:22:08Z",
+    "notify_last_at": "2026-10-18T02:24:13Z",
     "oldest_queued_at": "2026-10-18T02:12:23Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 698,
+        "age_seconds": 758,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-18T02:42:23Z",
-        "eligible_in_seconds": 1102,
+        "eligible_in_seconds": 1042,
         "number": 791,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/791",
@@ -1495,7 +1561,7 @@
       "reviews": 24,
       "tokens": 98628752
     },
-    "ts": "2026-10-18T02:24:01Z",
+    "ts": "2026-10-18T02:25:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.6,
       "low": 6.5,
@@ -1506,7 +1572,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.15,
+      "idle_minutes": 1.15,
       "ingest_stale": false,
       "stuck": false
     }
