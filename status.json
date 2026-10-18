@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T13:29:01Z",
-  "generated_at": "2026-10-18T13:29:01Z",
+  "data_as_of": "2026-10-18T13:30:01Z",
+  "generated_at": "2026-10-18T13:30:01Z",
   "history": {
     "daily": [
       {
@@ -255,7 +255,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 605,
+            "n": 606,
             "p90_seconds": 344
           }
         }
@@ -264,6 +264,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5483,
+        "repo": "dashpay/platform",
+        "run_id": 5615,
+        "ts": "2026-10-18T13:29:51Z"
+      },
+      {
+        "detail": "attempt 1 sha=8c450b01",
+        "kind": "run.spawned",
+        "number": 5483,
+        "repo": "dashpay/platform",
+        "run_id": 5615,
+        "ts": "2026-10-18T13:29:27Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5483,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T13:29:26Z"
+      },
+      {
+        "detail": "8c450b01 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 5483,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T13:29:26Z"
+      },
       {
         "detail": null,
         "kind": "ci.watch_dropped",
@@ -471,38 +503,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5609,
         "ts": "2026-10-18T12:38:05Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5609,
-        "ts": "2026-10-18T12:38:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5609,
-        "ts": "2026-10-18T12:38:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5609,
-        "ts": "2026-10-18T12:38:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5609,
-        "ts": "2026-10-18T12:38:04Z"
       },
       {
         "detail": null,
@@ -1176,14 +1176,135 @@
       "findings_posted": 4696,
       "reviews": 6064,
       "reviews_imported": 2245,
-      "runs": 5614,
+      "runs": 5615,
       "tokens_in": 44417835620,
       "tokens_out": 580172582,
       "tokens_total": 44998008202
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-18T19:29:27Z",
+        "deadline_in_seconds": 21566,
+        "degraded": false,
+        "elapsed_seconds": 34,
+        "findings": null,
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-18T13:29:57Z",
+        "id": 5615,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 9,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 10,
+            "state": "running"
+          }
+        ],
+        "number": 5483,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5483",
+        "priority": true,
+        "progress": 0.048,
+        "queue": "live",
+        "queued_at": "2026-10-18T13:29:25Z",
+        "remaining_seconds": 675,
+        "repo": "dashpay/platform",
+        "sha": "8c450b0109488427c705753524a2e4cf9acc0201",
+        "started_at": "2026-10-18T13:29:27Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 10,
+            "started_at": "2026-10-18T13:29:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-18T13:29:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The production diff makes a contained change to five client-side proof verifiers using an existing helper, with substantial regression tests but no large or intricate cryptographic or consensus implementation changes.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-18T13:29:38Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 6,
+            "started_at": "2026-10-18T13:29:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 11,
+            "started_at": "2026-10-18T13:29:50Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(sdk): verify no-limit vote queries against the page Drive proves",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1320,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1217,7 +1338,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T13:27:40Z",
+        "at": "2026-10-18T13:29:48Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1237,6 +1358,7 @@
       "closed": 401,
       "done": 5987,
       "failed": 75,
+      "running": 1,
       "superseded": 2193
     },
     "ingest_error_streak": 0,
@@ -1250,7 +1372,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1274,9 +1396,9 @@
       }
     ],
     "last_run_done_at": "2026-10-18T13:20:10Z",
-    "last_run_started_at": "2026-10-18T13:08:41Z",
+    "last_run_started_at": "2026-10-18T13:29:27Z",
     "median_run_minutes": 8.25,
-    "notify_last_at": "2026-10-18T13:27:15Z",
+    "notify_last_at": "2026-10-18T13:29:21Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1287,7 +1409,7 @@
       "reviews": 82,
       "tokens": 535582852
     },
-    "ts": "2026-10-18T13:29:01Z",
+    "ts": "2026-10-18T13:30:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.2,
       "low": 6.5,
@@ -1296,9 +1418,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 20.333333333333332,
+      "idle_minutes": 0.5666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
