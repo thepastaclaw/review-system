@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T01:44:00Z",
-  "generated_at": "2026-10-18T01:44:00Z",
+  "data_as_of": "2026-10-18T01:45:01Z",
+  "generated_at": "2026-10-18T01:45:02Z",
   "history": {
     "daily": [
       {
@@ -255,8 +255,8 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 575,
-            "p90_seconds": 321
+            "n": 576,
+            "p90_seconds": 320
           }
         }
       },
@@ -264,6 +264,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 791,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5549,
+        "ts": "2026-10-18T01:44:42Z"
+      },
+      {
+        "detail": "attempt 1 sha=6f5467c1",
+        "kind": "run.spawned",
+        "number": 791,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5549,
+        "ts": "2026-10-18T01:44:28Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 791,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-18T01:44:28Z"
+      },
+      {
+        "detail": "6f5467c1 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 791,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-18T01:44:28Z"
+      },
       {
         "detail": "ok in 213s",
         "kind": "run.done",
@@ -551,38 +583,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5543,
         "ts": "2026-10-18T01:27:12Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 794,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5544,
-        "ts": "2026-10-18T01:27:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-18T01:27:02Z"
-      },
-      {
-        "detail": "attempt 1 sha=2e775621",
-        "kind": "run.spawned",
-        "number": 794,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5544,
-        "ts": "2026-10-18T01:27:01Z"
-      },
-      {
-        "detail": "attempt 1 sha=8aab13d6",
-        "kind": "run.spawned",
-        "number": 793,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5543,
-        "ts": "2026-10-18T01:27:01Z"
       }
     ],
     "tokens_by_effort": [
@@ -1176,14 +1176,125 @@
       "findings_posted": 4643,
       "reviews": 6006,
       "reviews_imported": 2245,
-      "runs": 5548,
+      "runs": 5549,
       "tokens_in": 43953205416,
       "tokens_out": 576415591,
       "tokens_total": 44529621007
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T07:44:28Z",
+        "deadline_in_seconds": 21567,
+        "degraded": false,
+        "elapsed_seconds": 33,
+        "findings": null,
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-10-18T01:44:58Z",
+        "id": 5549,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 17,
+            "state": "running"
+          }
+        ],
+        "number": 791,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/791",
+        "priority": true,
+        "progress": 0.077,
+        "queue": "live",
+        "queued_at": "2026-10-18T01:44:26Z",
+        "remaining_seconds": 394,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "6f5467c143c8c9587b763177b07d83171b91ed12",
+        "started_at": "2026-10-18T01:44:28Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-18T01:44:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-18T01:44:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate rewrite directly changes cryptography in lib/private-feed/crypto.ts (CEK derivation, LKH revocation, grant payloads and content AAD) and secret-key handling in lib/services/private-feed-key-store.ts, alongside cross-device renewal and history-key transfer.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-18T01:44:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T01:44:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T01:44:42Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 17,
+            "started_at": "2026-10-18T01:44:44Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(private-feeds): multi-feed client for social v17 (crypto v2, renewal, follower move)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1310,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1217,7 +1328,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T01:41:47Z",
+        "at": "2026-10-18T01:44:02Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1237,6 +1348,7 @@
       "closed": 396,
       "done": 5929,
       "failed": 75,
+      "running": 1,
       "superseded": 2177
     },
     "ingest_error_streak": 0,
@@ -1262,7 +1374,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1274,9 +1386,9 @@
       }
     ],
     "last_run_done_at": "2026-10-18T01:40:53Z",
-    "last_run_started_at": "2026-10-18T01:37:20Z",
+    "last_run_started_at": "2026-10-18T01:44:28Z",
     "median_run_minutes": 5.8,
-    "notify_last_at": "2026-10-18T01:42:14Z",
+    "notify_last_at": "2026-10-18T01:44:22Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1287,7 +1399,7 @@
       "reviews": 20,
       "tokens": 84765594
     },
-    "ts": "2026-10-18T01:44:00Z",
+    "ts": "2026-10-18T01:45:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.6,
       "low": 6.5,
@@ -1296,9 +1408,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 6.666666666666667,
+      "idle_minutes": 0.55,
       "ingest_stale": false,
       "stuck": false
     }
