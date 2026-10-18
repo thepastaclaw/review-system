@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T04:41:01Z",
-  "generated_at": "2026-10-18T04:41:01Z",
+  "data_as_of": "2026-10-18T04:42:01Z",
+  "generated_at": "2026-10-18T04:42:01Z",
   "history": {
     "daily": [
       {
@@ -264,6 +264,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "1651bd31 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 5396,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T04:41:30Z"
+      },
       {
         "detail": null,
         "kind": "phase1.skipped_repo",
@@ -575,14 +583,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-18T03:36:50Z"
-      },
-      {
-        "detail": "head 9502 superseded by c5680c8e",
-        "kind": "head.superseded",
-        "number": 796,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-18T03:36:50Z"
       }
     ],
     "tokens_by_effort": [
@@ -600,9 +600,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 13235,
-        "tokens_in": 28023180375,
-        "tokens_out": 424679428
+        "lanes": 13236,
+        "tokens_in": 28024171863,
+        "tokens_out": 424689529
       },
       {
         "effort": "medium",
@@ -660,14 +660,19 @@
         "tokens_out": 37402669
       },
       {
-        "avg_tokens_per_lane": 1207899.0,
-        "lanes": 14932,
+        "avg_tokens_per_lane": 1207885.0,
+        "lanes": 14933,
         "model": "gpt-6.1-sol",
-        "tokens_in": 17945229102,
-        "tokens_out": 91117198
+        "tokens_in": 17946220590,
+        "tokens_out": 91127299
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 5566,
+        "tokens_in": 991488,
+        "tokens_out": 10101
+      },
       {
         "run_id": 5565,
         "tokens_in": 3912297,
@@ -1162,24 +1167,19 @@
         "run_id": 5463,
         "tokens_in": 1093461,
         "tokens_out": 6931
-      },
-      {
-        "run_id": 5462,
-        "tokens_in": 1599352,
-        "tokens_out": 7567
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11046792,
+      "avg_tokens_per_completed_review": 11047040,
       "completed_reviews": 4037,
       "findings": 26658,
       "findings_posted": 4656,
       "reviews": 6019,
       "reviews_imported": 2245,
       "runs": 5566,
-      "tokens_in": 44018305245,
-      "tokens_out": 577594839,
-      "tokens_total": 44595900084
+      "tokens_in": 44019296733,
+      "tokens_out": 577604940,
+      "tokens_total": 44596901673
     }
   },
   "live": {
@@ -1188,35 +1188,46 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-18T10:39:14Z",
-        "deadline_in_seconds": 21493,
+        "deadline_in_seconds": 21433,
         "degraded": false,
-        "elapsed_seconds": 107,
+        "elapsed_seconds": 167,
         "findings": null,
         "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-18T04:41:00Z",
+        "heartbeat_at": "2026-10-18T04:42:00Z",
         "id": 5566,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "xhigh",
-            "line_position": null,
             "model": "gpt-6.1-sol",
             "phase": "phase2",
-            "pool": "gpt",
             "role": "general",
-            "since_seconds": 96,
+            "status": "completed",
+            "tokens_in": 991488,
+            "tokens_out": 10101
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 5,
             "state": "running"
           }
         ],
         "number": 796,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/796",
         "priority": true,
-        "progress": 0.275,
+        "progress": 0.537,
         "queue": "live",
         "queued_at": "2026-10-18T04:39:13Z",
-        "remaining_seconds": 282,
+        "remaining_seconds": 144,
         "repo": "PastaPastaPasta/yappr",
         "sha": "0913f5e7cd7b719061580d3652b78aaadef24136",
         "started_at": "2026-10-18T04:39:14Z",
@@ -1272,24 +1283,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 96,
+            "seconds": 151,
             "started_at": "2026-10-18T04:39:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 5,
+            "started_at": "2026-10-18T04:41:56Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "fix(passkeys): harden the vault after the security review",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 991488,
+        "tokens_out": 10101,
         "trigger": "review_reply",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1
@@ -1348,11 +1363,12 @@
       "closed": 398,
       "done": 5942,
       "failed": 75,
+      "queued": 1,
       "running": 1,
       "superseded": 2182
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-18T04:37:45Z",
+    "ingest_last_at": "2026-10-18T04:41:35Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1388,10 +1404,30 @@
     "last_run_done_at": "2026-10-18T04:29:00Z",
     "last_run_started_at": "2026-10-18T04:39:14Z",
     "median_run_minutes": 5.866666666666666,
-    "notify_last_at": "2026-10-18T04:39:09Z",
-    "oldest_queued_at": null,
+    "notify_last_at": "2026-10-18T04:41:35Z",
+    "oldest_queued_at": "2026-10-18T04:41:30Z",
     "priority_queued": 0,
-    "queued": [],
+    "queued": [
+      {
+        "age_seconds": 31,
+        "attempts": 0,
+        "author": "llbartekll",
+        "eligible": false,
+        "eligible_at": "2026-10-18T05:11:30Z",
+        "eligible_in_seconds": 1769,
+        "number": 5396,
+        "position": 1,
+        "pr_url": "https://github.com/dashpay/platform/pull/5396",
+        "prioritize_url": "https://github.com/dashpay/platform/issues/5396#issuecomment-6132416924",
+        "priority": false,
+        "queued_at": "2026-10-18T04:41:30Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/platform",
+        "sha": "1651bd31c78b92c10bb529230b5f47e86633c3b3",
+        "title": "fix(platform-wallet)!: drain Core balance with restart-safe shielded recovery",
+        "trigger": "new_push"
+      }
+    ],
     "today": {
       "day": "2026-10-18",
       "failed": 0,
@@ -1399,7 +1435,7 @@
       "reviews": 35,
       "tokens": 149206272
     },
-    "ts": "2026-10-18T04:41:01Z",
+    "ts": "2026-10-18T04:42:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.6,
       "low": 6.5,
@@ -1410,7 +1446,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 1.7833333333333334,
+      "idle_minutes": 2.783333333333333,
       "ingest_stale": false,
       "stuck": false
     }
