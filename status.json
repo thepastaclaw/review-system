@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T19:02:01Z",
-  "generated_at": "2026-10-18T19:02:01Z",
+  "data_as_of": "2026-10-18T19:03:01Z",
+  "generated_at": "2026-10-18T19:03:01Z",
   "history": {
     "daily": [
       {
@@ -238,7 +238,7 @@
           },
           "wait": {
             "median_seconds": 1819,
-            "n": 477,
+            "n": 476,
             "p90_seconds": 1857
           }
         },
@@ -255,7 +255,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 606,
+            "n": 607,
             "p90_seconds": 340
           }
         }
@@ -264,6 +264,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": 5634,
+        "ts": "2026-10-18T19:02:47Z"
+      },
+      {
+        "detail": "attempt 1 sha=094bba93",
+        "kind": "run.spawned",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": 5634,
+        "ts": "2026-10-18T19:02:20Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T19:02:20Z"
+      },
+      {
+        "detail": "094bba93 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T19:02:10Z"
+      },
       {
         "detail": "ok in 751s",
         "kind": "run.done",
@@ -327,38 +359,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5632,
         "ts": "2026-10-18T18:32:10Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5632,
-        "ts": "2026-10-18T18:32:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5632,
-        "ts": "2026-10-18T18:32:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5632,
-        "ts": "2026-10-18T18:32:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5632,
-        "ts": "2026-10-18T18:32:09Z"
       },
       {
         "detail": null,
@@ -1176,14 +1176,133 @@
       "findings_posted": 4714,
       "reviews": 6081,
       "reviews_imported": 2245,
-      "runs": 5633,
+      "runs": 5634,
       "tokens_in": 44589561533,
       "tokens_out": 581522680,
       "tokens_total": 45171084213
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-19T01:02:20Z",
+        "deadline_in_seconds": 21559,
+        "degraded": false,
+        "elapsed_seconds": 41,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-18T19:02:50Z",
+        "id": 5634,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 13,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 14,
+            "state": "running"
+          }
+        ],
+        "number": 5486,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5486",
+        "priority": true,
+        "progress": 0.067,
+        "queue": "live",
+        "queued_at": "2026-10-18T19:02:10Z",
+        "remaining_seconds": 569,
+        "repo": "dashpay/platform",
+        "sha": "094bba93ba1864473cbae3f9a107c933847f6b15",
+        "started_at": "2026-10-18T19:02:20Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 11,
+            "started_at": "2026-10-18T19:02:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-18T19:02:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds substantial schema-parsing logic and corpus coverage, but the diff does not activate consensus behavior or change another critical runtime surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-18T19:02:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-18T19:02:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 15,
+            "started_at": "2026-10-18T19:02:46Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(dpp): contract corpus test and typed validation schema for document types",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 10
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1318,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1217,7 +1336,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T19:00:36Z",
+        "at": "2026-10-18T19:02:41Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1237,10 +1356,11 @@
       "closed": 402,
       "done": 6004,
       "failed": 75,
+      "running": 1,
       "superseded": 2196
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-18T18:58:29Z",
+    "ingest_last_at": "2026-10-18T19:02:14Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1250,7 +1370,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1274,9 +1394,9 @@
       }
     ],
     "last_run_done_at": "2026-10-18T18:54:15Z",
-    "last_run_started_at": "2026-10-18T18:41:44Z",
+    "last_run_started_at": "2026-10-18T19:02:20Z",
     "median_run_minutes": 8.566666666666666,
-    "notify_last_at": "2026-10-18T18:59:51Z",
+    "notify_last_at": "2026-10-18T19:02:14Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1287,7 +1407,7 @@
       "reviews": 101,
       "tokens": 708658863
     },
-    "ts": "2026-10-18T19:02:01Z",
+    "ts": "2026-10-18T19:03:01Z",
     "typical_minutes_by_tier": {
       "critical": 19.1,
       "low": 6.5,
@@ -1296,9 +1416,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 20.283333333333335,
+      "idle_minutes": 0.6833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
