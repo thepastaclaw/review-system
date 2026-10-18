@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T12:48:00Z",
-  "generated_at": "2026-10-18T12:48:00Z",
+  "data_as_of": "2026-10-18T12:49:01Z",
+  "generated_at": "2026-10-18T12:49:01Z",
   "history": {
     "daily": [
       {
@@ -255,7 +255,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 603,
+            "n": 604,
             "p90_seconds": 340
           }
         }
@@ -264,6 +264,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5482,
+        "repo": "dashpay/platform",
+        "run_id": 5611,
+        "ts": "2026-10-18T12:48:29Z"
+      },
+      {
+        "detail": "attempt 1 sha=5a8a5478",
+        "kind": "run.spawned",
+        "number": 5482,
+        "repo": "dashpay/platform",
+        "run_id": 5611,
+        "ts": "2026-10-18T12:48:03Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5482,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T12:48:02Z"
+      },
+      {
+        "detail": "5a8a5478 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 5482,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T12:48:02Z"
+      },
       {
         "detail": "b976b553 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -551,38 +583,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5609,
         "ts": "2026-10-18T12:38:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5609,
-        "ts": "2026-10-18T12:38:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5609,
-        "ts": "2026-10-18T12:38:04Z"
-      },
-      {
-        "detail": "ok in 569s",
-        "kind": "run.done",
-        "number": 1607,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5610,
-        "ts": "2026-10-18T12:34:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-18T12:31:21Z"
       }
     ],
     "tokens_by_effort": [
@@ -1176,14 +1176,133 @@
       "findings_posted": 4695,
       "reviews": 6061,
       "reviews_imported": 2245,
-      "runs": 5610,
+      "runs": 5611,
       "tokens_in": 44377137273,
       "tokens_out": 579859703,
       "tokens_total": 44956996976
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-18T18:48:03Z",
+        "deadline_in_seconds": 21542,
+        "degraded": false,
+        "elapsed_seconds": 58,
+        "findings": null,
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-18T12:48:48Z",
+        "id": 5611,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 32,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 31,
+            "state": "running"
+          }
+        ],
+        "number": 5482,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5482",
+        "priority": true,
+        "progress": 0.081,
+        "queue": "live",
+        "queued_at": "2026-10-18T12:48:01Z",
+        "remaining_seconds": 655,
+        "repo": "dashpay/platform",
+        "sha": "5a8a5478516ea2c86317512de0737ea24f669b24",
+        "started_at": "2026-10-18T12:48:03Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 13,
+            "started_at": "2026-10-18T12:48:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-18T12:48:16Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The SDK change introduces pagination, cursor handling, response validation, and bounded concurrent lookups with substantial tests, but does not change a critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-18T12:48:16Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-18T12:48:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 33,
+            "started_at": "2026-10-18T12:48:28Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(sdk): read contested DPNS names as the bare labels Drive returns",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1318,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1238,6 +1357,7 @@
       "done": 5984,
       "failed": 75,
       "queued": 1,
+      "running": 1,
       "superseded": 2193
     },
     "ingest_error_streak": 0,
@@ -1251,7 +1371,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1275,19 +1395,19 @@
       }
     ],
     "last_run_done_at": "2026-10-18T12:38:05Z",
-    "last_run_started_at": "2026-10-18T12:25:14Z",
+    "last_run_started_at": "2026-10-18T12:48:03Z",
     "median_run_minutes": 5.416666666666667,
     "notify_last_at": "2026-10-18T12:47:57Z",
     "oldest_queued_at": "2026-10-18T12:45:49Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 131,
+        "age_seconds": 192,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-18T13:15:49Z",
-        "eligible_in_seconds": 1669,
+        "eligible_in_seconds": 1608,
         "number": 803,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/803",
@@ -1308,7 +1428,7 @@
       "reviews": 79,
       "tokens": 507022319
     },
-    "ts": "2026-10-18T12:48:00Z",
+    "ts": "2026-10-18T12:49:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.2,
       "low": 6.5,
@@ -1317,9 +1437,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 22.766666666666666,
+      "idle_minutes": 0.9666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
