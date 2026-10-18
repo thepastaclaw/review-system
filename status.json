@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T22:52:00Z",
-  "generated_at": "2026-10-18T22:52:01Z",
+  "data_as_of": "2026-10-18T22:53:01Z",
+  "generated_at": "2026-10-18T22:53:01Z",
   "history": {
     "daily": [
       {
@@ -255,7 +255,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 609,
+            "n": 610,
             "p90_seconds": 341
           }
         }
@@ -264,6 +264,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 810,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5651,
+        "ts": "2026-10-18T22:52:31Z"
+      },
+      {
+        "detail": "attempt 1 sha=e600c2c2",
+        "kind": "run.spawned",
+        "number": 810,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5651,
+        "ts": "2026-10-18T22:52:22Z"
+      },
       {
         "detail": "e600c2c2 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -375,22 +391,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5645,
         "ts": "2026-10-18T22:33:54Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5645,
-        "ts": "2026-10-18T22:33:53Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5645,
-        "ts": "2026-10-18T22:33:53Z"
       },
       {
         "detail": null,
@@ -1176,14 +1176,127 @@
       "findings_posted": 4728,
       "reviews": 6097,
       "reviews_imported": 2245,
-      "runs": 5650,
+      "runs": 5651,
       "tokens_in": 44660679359,
       "tokens_out": 582510704,
       "tokens_total": 45243190063
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-19T04:52:22Z",
+        "deadline_in_seconds": 21561,
+        "degraded": false,
+        "elapsed_seconds": 39,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-18T22:52:52Z",
+        "id": 5651,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 29,
+            "state": "running"
+          }
+        ],
+        "number": 810,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/810",
+        "priority": true,
+        "progress": 0.147,
+        "queue": "live",
+        "queued_at": "2026-10-18T22:49:26Z",
+        "remaining_seconds": 225,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "e600c2c2a6c49b1bc7ef2441508f7d5b3ff06068",
+        "started_at": "2026-10-18T22:52:22Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-18T22:52:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-18T22:52:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The broad changes include intricate reply reconciliation, DM hide-boundary caching, bounded link-preview fetching, and accessibility fixes, but the diff does not clearly change consensus, funds, cryptography, key handling, peer-facing network deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 2,
+            "started_at": "2026-10-18T22:52:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-18T22:52:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T22:52:31Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 29,
+            "started_at": "2026-10-18T22:52:32Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix: resolve testnet web QA findings",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_requested",
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 176
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1312,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1237,7 +1350,8 @@
       "closed": 402,
       "done": 6019,
       "failed": 75,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2200
     },
     "ingest_error_streak": 0,
@@ -1263,7 +1377,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1275,19 +1389,19 @@
       }
     ],
     "last_run_done_at": "2026-10-18T22:46:39Z",
-    "last_run_started_at": "2026-10-18T22:37:38Z",
+    "last_run_started_at": "2026-10-18T22:52:22Z",
     "median_run_minutes": 7.866666666666666,
-    "notify_last_at": "2026-10-18T22:50:09Z",
+    "notify_last_at": "2026-10-18T22:52:18Z",
     "oldest_queued_at": "2026-10-18T22:29:37Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1343,
+        "age_seconds": 1404,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-18T22:59:37Z",
-        "eligible_in_seconds": 457,
+        "eligible_in_seconds": 396,
         "number": 1621,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1621",
@@ -1299,25 +1413,6 @@
         "sha": "501bbbf52512e478d7a2f5310d8799c64673a875",
         "title": "feat(home): include the shielded balance in the home screen total",
         "trigger": "new_push"
-      },
-      {
-        "age_seconds": 154,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-18T23:19:26Z",
-        "eligible_in_seconds": 1646,
-        "number": 810,
-        "position": 2,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/810",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/810#issuecomment-6255950767",
-        "priority": false,
-        "queued_at": "2026-10-18T22:49:26Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "e600c2c2a6c49b1bc7ef2441508f7d5b3ff06068",
-        "title": "fix: resolve testnet web QA findings",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1327,7 +1422,7 @@
       "reviews": 117,
       "tokens": 780764713
     },
-    "ts": "2026-10-18T22:52:00Z",
+    "ts": "2026-10-18T22:53:01Z",
     "typical_minutes_by_tier": {
       "critical": 19.0,
       "low": 6.5,
@@ -1336,9 +1431,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 14.366666666666667,
+      "idle_minutes": 0.65,
       "ingest_stale": false,
       "stuck": false
     }
