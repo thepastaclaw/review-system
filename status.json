@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T20:34:01Z",
-  "generated_at": "2026-10-18T20:34:01Z",
+  "data_as_of": "2026-10-18T20:35:01Z",
+  "generated_at": "2026-10-18T20:35:01Z",
   "history": {
     "daily": [
       {
@@ -265,6 +265,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 807,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5637,
+        "ts": "2026-10-18T20:34:08Z"
+      },
+      {
         "detail": "attempt 1 sha=5c5c3f5c",
         "kind": "run.spawned",
         "number": 807,
@@ -303,14 +311,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5636,
         "ts": "2026-10-18T20:25:51Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5636,
-        "ts": "2026-10-18T20:25:50Z"
       },
       {
         "detail": null,
@@ -1188,24 +1188,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-19T02:33:59Z",
-        "deadline_in_seconds": 21598,
+        "deadline_in_seconds": 21538,
         "degraded": false,
-        "elapsed_seconds": 2,
+        "elapsed_seconds": 62,
         "findings": null,
         "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-10-18T20:33:59Z",
+        "heartbeat_at": "2026-10-18T20:34:59Z",
         "id": 5637,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 52,
+            "state": "running"
+          }
+        ],
         "number": 807,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/807",
         "priority": true,
-        "progress": 0.004,
+        "progress": 0.202,
         "queue": "live",
         "queued_at": "2026-10-18T20:30:04Z",
-        "remaining_seconds": 455,
+        "remaining_seconds": 245,
         "repo": "PastaPastaPasta/yappr",
         "sha": "5c5c3f5c4df37940ede058086d8426f61fafecd9",
         "started_at": "2026-10-18T20:33:59Z",
@@ -1214,22 +1225,73 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 2,
+            "seconds": 3,
             "started_at": "2026-10-18T20:33:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-18T20:34:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff spans staging deployment isolation, build configuration, monitoring, and test-wallet network validation, but does not itself introduce large or intricate changes to funds movement, cryptography, key handling, or another qualifying critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-18T20:34:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-18T20:34:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T20:34:08Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 52,
+            "started_at": "2026-10-18T20:34:09Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "chore: rehearse the testnet release at /staging",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "manual",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase2",
           "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 235
@@ -1268,7 +1330,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T20:32:12Z",
+        "at": "2026-10-18T20:34:20Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1315,7 +1377,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1329,17 +1391,17 @@
     "last_run_done_at": "2026-10-18T20:25:51Z",
     "last_run_started_at": "2026-10-18T20:33:59Z",
     "median_run_minutes": 10.583333333333334,
-    "notify_last_at": "2026-10-18T20:32:33Z",
+    "notify_last_at": "2026-10-18T20:34:41Z",
     "oldest_queued_at": "2026-10-18T20:10:35Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1406,
+        "age_seconds": 1466,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-18T20:40:35Z",
-        "eligible_in_seconds": 394,
+        "eligible_in_seconds": 334,
         "number": 7889,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7889",
@@ -1353,12 +1415,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 241,
+        "age_seconds": 301,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-10-18T21:00:00Z",
-        "eligible_in_seconds": 1559,
+        "eligible_in_seconds": 1499,
         "number": 7924,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7924",
@@ -1379,7 +1441,7 @@
       "reviews": 104,
       "tokens": 736087277
     },
-    "ts": "2026-10-18T20:34:01Z",
+    "ts": "2026-10-18T20:35:01Z",
     "typical_minutes_by_tier": {
       "critical": 19.1,
       "low": 6.5,
@@ -1390,7 +1452,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.03333333333333333,
+      "idle_minutes": 1.0333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
