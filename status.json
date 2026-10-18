@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T09:53:01Z",
-  "generated_at": "2026-10-18T09:53:01Z",
+  "data_as_of": "2026-10-18T09:54:01Z",
+  "generated_at": "2026-10-18T09:54:01Z",
   "history": {
     "daily": [
       {
@@ -255,7 +255,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 597,
+            "n": 598,
             "p90_seconds": 340
           }
         }
@@ -264,6 +264,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=99734b7a",
+        "kind": "run.spawned",
+        "number": 800,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5596,
+        "ts": "2026-10-18T09:53:55Z"
+      },
+      {
+        "detail": "bc9862d8 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 802,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-18T09:53:49Z"
+      },
+      {
+        "detail": "head 9543 superseded by bc9862d8",
+        "kind": "head.superseded",
+        "number": 802,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-18T09:53:49Z"
+      },
       {
         "detail": null,
         "kind": "ci.watch_dropped",
@@ -559,30 +583,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5590,
         "ts": "2026-10-18T09:19:47Z"
-      },
-      {
-        "detail": "attempt 1 sha=050685ae",
-        "kind": "run.spawned",
-        "number": 799,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5590,
-        "ts": "2026-10-18T09:19:37Z"
-      },
-      {
-        "detail": "050685ae checkbox ticked by PastaPastaPasta",
-        "kind": "head.priority_requested",
-        "number": 799,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-18T09:18:27Z"
-      },
-      {
-        "detail": "050685ae trigger=new_pr priority=0",
-        "kind": "head.queued",
-        "number": 799,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-18T09:11:49Z"
       }
     ],
     "tokens_by_effort": [
@@ -1176,14 +1176,90 @@
       "findings_posted": 4669,
       "reviews": 6047,
       "reviews_imported": 2245,
-      "runs": 5595,
+      "runs": 5596,
       "tokens_in": 44231583727,
       "tokens_out": 579091104,
       "tokens_total": 44810674831
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T15:53:55Z",
+        "deadline_in_seconds": 21594,
+        "degraded": false,
+        "elapsed_seconds": 6,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-18T09:53:55Z",
+        "id": 5596,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "low",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "triage",
+            "pool": "gpt",
+            "role": "triage",
+            "since_seconds": 1,
+            "state": "running"
+          }
+        ],
+        "number": 800,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/800",
+        "priority": true,
+        "progress": 0.017,
+        "queue": "live",
+        "queued_at": "2026-10-18T09:50:00Z",
+        "remaining_seconds": 343,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "99734b7ae3952195ff62142722259311725132d6",
+        "started_at": "2026-10-18T09:53:55Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-18T09:53:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-18T09:54:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "triage",
+            "seconds": 1,
+            "started_at": "2026-10-18T09:54:00Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "fix: resolve messaging, private-feed, social and store QA findings",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "mention",
+        "upcoming": [
+          "context",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 235
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1275,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1217,7 +1293,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T09:51:47Z",
+        "at": "2026-10-18T09:53:57Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1237,11 +1313,12 @@
       "closed": 399,
       "done": 5970,
       "failed": 75,
-      "queued": 4,
-      "superseded": 2188
+      "queued": 3,
+      "running": 1,
+      "superseded": 2189
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-18T09:50:00Z",
+    "ingest_last_at": "2026-10-18T09:53:50Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1263,7 +1340,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1275,19 +1352,19 @@
       }
     ],
     "last_run_done_at": "2026-10-18T09:44:47Z",
-    "last_run_started_at": "2026-10-18T09:44:25Z",
+    "last_run_started_at": "2026-10-18T09:53:55Z",
     "median_run_minutes": 8.583333333333334,
-    "notify_last_at": "2026-10-18T09:51:00Z",
+    "notify_last_at": "2026-10-18T09:53:50Z",
     "oldest_queued_at": "2026-10-18T09:26:39Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1582,
+        "age_seconds": 1642,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-18T09:56:39Z",
-        "eligible_in_seconds": 218,
+        "eligible_in_seconds": 158,
         "number": 7887,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7887",
@@ -1301,33 +1378,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 413,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-18T10:16:08Z",
-        "eligible_in_seconds": 1387,
-        "number": 802,
-        "position": 2,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/802",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/802#issuecomment-6248425314",
-        "priority": false,
-        "queued_at": "2026-10-18T09:46:08Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "b78353ee2568c5b6270a220038ab93c2558ef8ba",
-        "title": "perf: stream the SDK before hydration (UX-01)",
-        "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 185,
+        "age_seconds": 245,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-18T10:19:56Z",
-        "eligible_in_seconds": 1615,
+        "eligible_in_seconds": 1555,
         "number": 1616,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
         "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1616#issuecomment-6110687896",
         "priority": false,
@@ -1339,22 +1397,22 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 181,
+        "age_seconds": 12,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
-        "eligible_at": "2026-10-18T10:20:00Z",
-        "eligible_in_seconds": 1619,
-        "number": 800,
-        "position": 4,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/800",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/800#issuecomment-6248293445",
+        "eligible_at": "2026-10-18T10:23:49Z",
+        "eligible_in_seconds": 1788,
+        "number": 802,
+        "position": 3,
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/802",
+        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/802#issuecomment-6248425314",
         "priority": false,
-        "queued_at": "2026-10-18T09:50:00Z",
+        "queued_at": "2026-10-18T09:53:49Z",
         "reason": "debounce (more pushes may follow)",
         "repo": "PastaPastaPasta/yappr",
-        "sha": "99734b7ae3952195ff62142722259311725132d6",
-        "title": "fix: resolve messaging, private-feed, social and store QA findings",
+        "sha": "bc9862d8618dd9a3b0cf2fe8d0f6409cb0ec0ed3",
+        "title": "perf: stream the SDK before hydration (UX-01)",
         "trigger": "new_push"
       }
     ],
@@ -1365,7 +1423,7 @@
       "reviews": 65,
       "tokens": 363981019
     },
-    "ts": "2026-10-18T09:53:01Z",
+    "ts": "2026-10-18T09:54:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.1,
       "low": 6.5,
@@ -1374,9 +1432,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 8.6,
+      "idle_minutes": 0.1,
       "ingest_stale": false,
       "stuck": false
     }
