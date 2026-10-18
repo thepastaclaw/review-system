@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T04:57:01Z",
-  "generated_at": "2026-10-18T04:57:02Z",
+  "data_as_of": "2026-10-18T04:58:01Z",
+  "generated_at": "2026-10-18T04:58:01Z",
   "history": {
     "daily": [
       {
@@ -255,8 +255,8 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 584,
-            "p90_seconds": 316
+            "n": 585,
+            "p90_seconds": 315
           }
         }
       },
@@ -264,6 +264,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=5e041832",
+        "kind": "run.spawned",
+        "number": 796,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5567,
+        "ts": "2026-10-18T04:57:46Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 796,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": null,
+        "ts": "2026-10-18T04:57:46Z"
+      },
       {
         "detail": "5e041832 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -567,22 +583,6 @@
         "repo": "dashpay/dash",
         "run_id": 5561,
         "ts": "2026-10-18T03:51:39Z"
-      },
-      {
-        "detail": "attempt 1 sha=478fd119",
-        "kind": "run.spawned",
-        "number": 7923,
-        "repo": "dashpay/dash",
-        "run_id": 5561,
-        "ts": "2026-10-18T03:51:24Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 7916,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-18T03:45:24Z"
       }
     ],
     "tokens_by_effort": [
@@ -1176,14 +1176,89 @@
       "findings_posted": 4657,
       "reviews": 6020,
       "reviews_imported": 2245,
-      "runs": 5566,
+      "runs": 5567,
       "tokens_in": 44021831047,
       "tokens_out": 577630647,
       "tokens_total": 44599461694
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T10:57:46Z",
+        "deadline_in_seconds": 21585,
+        "degraded": false,
+        "elapsed_seconds": 15,
+        "findings": null,
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-10-18T04:57:46Z",
+        "id": 5567,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 796,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/796",
+        "priority": true,
+        "progress": 0.034,
+        "queue": "live",
+        "queued_at": "2026-10-18T04:56:17Z",
+        "remaining_seconds": 421,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "5e041832306b57e3fa41f537ebc14543b722ca43",
+        "started_at": "2026-10-18T04:57:46Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 8,
+            "started_at": "2026-10-18T04:57:47Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-18T04:57:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff makes intricate, cross-file changes to cryptographic key handling in lib/auth/passkey-vault.ts, including PRF-based recipient verification before sealing session keys, pending-enrolment trust and lifecycle management, and passkey cleanup across asynchronous authentication flows.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-18T04:57:56Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 0,
+            "started_at": "2026-10-18T04:58:01Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(passkeys): harden the vault after the security review",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 89
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1274,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1237,7 +1312,8 @@
       "closed": 398,
       "done": 5943,
       "failed": 75,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2182
     },
     "ingest_error_streak": 0,
@@ -1275,19 +1351,19 @@
       }
     ],
     "last_run_done_at": "2026-10-18T04:48:22Z",
-    "last_run_started_at": "2026-10-18T04:39:14Z",
+    "last_run_started_at": "2026-10-18T04:57:46Z",
     "median_run_minutes": 6.0,
-    "notify_last_at": "2026-10-18T04:54:57Z",
+    "notify_last_at": "2026-10-18T04:57:20Z",
     "oldest_queued_at": "2026-10-18T04:41:30Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 931,
+        "age_seconds": 991,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-10-18T05:11:30Z",
-        "eligible_in_seconds": 869,
+        "eligible_in_seconds": 809,
         "number": 5396,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5396",
@@ -1299,25 +1375,6 @@
         "sha": "1651bd31c78b92c10bb529230b5f47e86633c3b3",
         "title": "fix(platform-wallet)!: drain Core balance with restart-safe shielded recovery",
         "trigger": "new_push"
-      },
-      {
-        "age_seconds": 44,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-18T05:26:17Z",
-        "eligible_in_seconds": 1756,
-        "number": 796,
-        "position": 2,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/796",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/796#issuecomment-6245163735",
-        "priority": false,
-        "queued_at": "2026-10-18T04:56:17Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "5e041832306b57e3fa41f537ebc14543b722ca43",
-        "title": "fix(passkeys): harden the vault after the security review",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1327,7 +1384,7 @@
       "reviews": 36,
       "tokens": 152767882
     },
-    "ts": "2026-10-18T04:57:01Z",
+    "ts": "2026-10-18T04:58:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.6,
       "low": 6.5,
@@ -1336,9 +1393,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 17.783333333333335,
+      "idle_minutes": 0.25,
       "ingest_stale": false,
       "stuck": false
     }
