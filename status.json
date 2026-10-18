@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T00:23:01Z",
-  "generated_at": "2026-10-18T00:23:01Z",
+  "data_as_of": "2026-10-18T00:24:01Z",
+  "generated_at": "2026-10-18T00:24:01Z",
   "history": {
     "daily": [
       {
@@ -264,6 +264,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 786,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5531,
+        "ts": "2026-10-18T00:23:12Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 791,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5532,
+        "ts": "2026-10-18T00:23:12Z"
+      },
+      {
+        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
+        "kind": "compare.selected",
+        "number": 791,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5532,
+        "ts": "2026-10-18T00:23:12Z"
+      },
       {
         "detail": "attempt 1 sha=6d987c31",
         "kind": "run.spawned",
@@ -559,30 +583,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5528,
         "ts": "2026-10-17T23:52:11Z"
-      },
-      {
-        "detail": "attempt 1 sha=488d0846",
-        "kind": "run.spawned",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5528,
-        "ts": "2026-10-17T23:51:59Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-17T23:51:59Z"
-      },
-      {
-        "detail": "488d0846 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 786,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-17T23:51:13Z"
       }
     ],
     "tokens_by_effort": [
@@ -1188,70 +1188,231 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-18T06:22:59Z",
-        "deadline_in_seconds": 21598,
+        "deadline_in_seconds": 21538,
         "degraded": false,
-        "elapsed_seconds": 2,
+        "elapsed_seconds": 62,
         "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-18T00:23:00Z",
+        "heartbeat_age_seconds": 16,
+        "heartbeat_at": "2026-10-18T00:23:45Z",
         "id": 5531,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 47,
+            "state": "running"
+          }
+        ],
         "number": 786,
         "overdue": false,
-        "phase": null,
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/786",
         "priority": true,
-        "progress": null,
+        "progress": 0.142,
         "queue": "live",
         "queued_at": "2026-10-18T00:22:07Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 375,
         "repo": "PastaPastaPasta/yappr",
         "sha": "fd41a9f8a1696ff032f228171e578fe787e60241",
         "started_at": "2026-10-18T00:22:59Z",
         "status": "running",
-        "steps": [],
-        "tier": null,
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-18T00:23:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-18T00:23:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff introduces cryptographic sealing and key derivation in lib/crypto/hpke.ts and lib/crypto/passkey-vault.ts, plus vault key recovery, re-sealing, and authentication-key handling in lib/auth/passkey-vault.ts, directly changing cryptography and key-handling surfaces.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 2,
+            "started_at": "2026-10-18T00:23:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T00:23:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T00:23:12Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 47,
+            "started_at": "2026-10-18T00:23:14Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
         "title": "feat(auth): sign in with a passkey (passkey vault v1, D10)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 52
       },
       {
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-18T06:22:59Z",
-        "deadline_in_seconds": 21598,
+        "deadline_in_seconds": 21538,
         "degraded": false,
-        "elapsed_seconds": 2,
+        "elapsed_seconds": 62,
         "findings": null,
         "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-18T00:23:00Z",
+        "heartbeat_at": "2026-10-18T00:24:00Z",
         "id": 5532,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 48,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6-astra",
+            "phase": "phase2",
+            "pool": "compare",
+            "role": "general",
+            "since_seconds": 47,
+            "state": "running"
+          }
+        ],
         "number": 791,
         "overdue": false,
-        "phase": null,
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/791",
         "priority": true,
-        "progress": null,
+        "progress": 0.142,
         "queue": "live",
         "queued_at": "2026-10-18T00:22:07Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 374,
         "repo": "PastaPastaPasta/yappr",
         "sha": "6d987c31e23c577217d090923949c349c917a9ee",
         "started_at": "2026-10-18T00:22:59Z",
         "status": "running",
-        "steps": [],
-        "tier": null,
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 2,
+            "started_at": "2026-10-18T00:23:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-18T00:23:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff directly changes cryptography and key handling in lib/private-feed/crypto.ts and lib/services/private-feed-key-store.ts, including CEK derivation, LKH revocation, authenticated encryption, grant payloads, and renewal history keys.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-18T00:23:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T00:23:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T00:23:12Z",
+            "status": "skipped"
+          },
+          {
+            "comparison_left": 1,
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 48,
+            "started_at": "2026-10-18T00:23:13Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
         "title": "feat(private-feeds): multi-feed client for social v17 (crypto v2, renewal, follower move)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 52
       }
     ],
@@ -1288,7 +1449,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T00:20:35Z",
+        "at": "2026-10-18T00:23:02Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1317,7 +1478,7 @@
     "lane_pools": [
       {
         "pool": "compare",
-        "running": 0,
+        "running": 1,
         "slots": 2,
         "waiting": 0
       },
@@ -1335,7 +1496,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
@@ -1354,12 +1515,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1683,
+        "age_seconds": 1743,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-18T00:24:58Z",
-        "eligible_in_seconds": 117,
+        "eligible_in_seconds": 57,
         "number": 1616,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
@@ -1373,12 +1534,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 302,
+        "age_seconds": 362,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-18T00:47:59Z",
-        "eligible_in_seconds": 1498,
+        "eligible_in_seconds": 1438,
         "number": 5483,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5483",
@@ -1392,12 +1553,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 299,
+        "age_seconds": 359,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-18T00:48:02Z",
-        "eligible_in_seconds": 1501,
+        "eligible_in_seconds": 1441,
         "number": 789,
         "position": 3,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/789",
@@ -1418,7 +1579,7 @@
       "reviews": 2,
       "tokens": 11282294
     },
-    "ts": "2026-10-18T00:23:01Z",
+    "ts": "2026-10-18T00:24:01Z",
     "typical_minutes_by_tier": {
       "critical": 21.8,
       "low": 6.5,
@@ -1429,7 +1590,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.03333333333333333,
+      "idle_minutes": 1.0333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
