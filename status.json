@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T21:55:01Z",
-  "generated_at": "2026-10-18T21:55:01Z",
+  "data_as_of": "2026-10-18T21:56:00Z",
+  "generated_at": "2026-10-18T21:56:01Z",
   "history": {
     "daily": [
       {
@@ -255,8 +255,8 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 603,
-            "p90_seconds": 338
+            "n": 604,
+            "p90_seconds": 340
           }
         }
       },
@@ -264,6 +264,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 808,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5641,
+        "ts": "2026-10-18T21:55:14Z"
+      },
+      {
+        "detail": "attempt 1 sha=6ec9a3aa",
+        "kind": "run.spawned",
+        "number": 808,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5641,
+        "ts": "2026-10-18T21:55:02Z"
+      },
       {
         "detail": "6ec9a3aa trigger=new_pr priority=0",
         "kind": "head.queued",
@@ -543,22 +559,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5636,
         "ts": "2026-10-18T20:25:51Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5636,
-        "ts": "2026-10-18T20:25:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5636,
-        "ts": "2026-10-18T20:25:50Z"
       },
       {
         "detail": null,
@@ -1176,14 +1176,127 @@
       "findings_posted": 4718,
       "reviews": 6088,
       "reviews_imported": 2245,
-      "runs": 5640,
+      "runs": 5641,
       "tokens_in": 44624010425,
       "tokens_out": 582178967,
       "tokens_total": 45206189392
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-19T03:55:02Z",
+        "deadline_in_seconds": 21542,
+        "degraded": false,
+        "elapsed_seconds": 58,
+        "findings": null,
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-18T21:55:47Z",
+        "id": 5641,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 45,
+            "state": "running"
+          }
+        ],
+        "number": 808,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/808",
+        "priority": true,
+        "progress": 0.188,
+        "queue": "live",
+        "queued_at": "2026-10-18T21:47:04Z",
+        "remaining_seconds": 250,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "6ec9a3aab503f6210bcde0f3fe946d270e049bce",
+        "started_at": "2026-10-18T21:55:02Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-18T21:55:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-18T21:55:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff changes browser request deadlines, cancellation and response-body handling alongside thread error recovery across multiple modules, but does not modify an intricate critical surface such as consensus, funds movement, cryptography, key handling, peer-facing deserialization or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-18T21:55:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T21:55:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T21:55:14Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 45,
+            "started_at": "2026-10-18T21:55:15Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix: bound browser DAPI requests and recover failed thread loads",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "manual",
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 478
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1312,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1217,7 +1330,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T21:52:51Z",
+        "at": "2026-10-18T21:55:03Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1237,11 +1350,12 @@
       "closed": 402,
       "done": 6010,
       "failed": 75,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2197
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-18T21:51:05Z",
+    "ingest_last_at": "2026-10-18T21:55:02Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1263,7 +1377,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1275,40 +1389,21 @@
       }
     ],
     "last_run_done_at": "2026-10-18T21:28:16Z",
-    "last_run_started_at": "2026-10-18T21:28:06Z",
+    "last_run_started_at": "2026-10-18T21:55:02Z",
     "median_run_minutes": 8.566666666666666,
     "notify_last_at": "2026-10-18T21:53:52Z",
     "oldest_queued_at": "2026-10-18T21:47:01Z",
-    "priority_queued": 1,
+    "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 477,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-10-18T21:53:57Z",
-        "eligible_in_seconds": 0,
-        "number": 808,
-        "position": 1,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/808",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/808#issuecomment-6255578879",
-        "priority": true,
-        "queued_at": "2026-10-18T21:47:04Z",
-        "reason": "waiting for a review slot",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "6ec9a3aab503f6210bcde0f3fe946d270e049bce",
-        "title": "fix: bound browser DAPI requests and recover failed thread loads",
-        "trigger": "manual"
-      },
-      {
-        "age_seconds": 480,
+        "age_seconds": 539,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-18T22:17:01Z",
-        "eligible_in_seconds": 1320,
+        "eligible_in_seconds": 1261,
         "number": 1616,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
         "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1616#issuecomment-6110687896",
         "priority": false,
@@ -1327,7 +1422,7 @@
       "reviews": 108,
       "tokens": 743764042
     },
-    "ts": "2026-10-18T21:55:01Z",
+    "ts": "2026-10-18T21:56:00Z",
     "typical_minutes_by_tier": {
       "critical": 19.1,
       "low": 6.5,
@@ -1336,9 +1431,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 26.916666666666668,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.9666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
