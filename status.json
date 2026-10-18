@@ -1,12 +1,12 @@
 {
-  "data_as_of": "2026-10-18T16:38:01Z",
-  "generated_at": "2026-10-18T16:38:01Z",
+  "data_as_of": "2026-10-18T16:39:01Z",
+  "generated_at": "2026-10-18T16:39:01Z",
   "history": {
     "daily": [
       {
-        "avg_seconds": 474.47252574857777,
+        "avg_seconds": 474.66304162922114,
         "day": "2026-10-18",
-        "reviews": 91
+        "reviews": 92
       },
       {
         "avg_seconds": 419.2999991889183,
@@ -227,13 +227,13 @@
       "paths": {
         "normal": {
           "duration": {
-            "median_seconds": 926,
-            "n": 428,
-            "p90_seconds": 3150
+            "median_seconds": 921,
+            "n": 429,
+            "p90_seconds": 3141
           },
           "slot_wait": {
             "median_seconds": 0,
-            "n": 428,
+            "n": 429,
             "p90_seconds": 22
           },
           "wait": {
@@ -264,6 +264,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "ok in 491s",
+        "kind": "run.done",
+        "number": 1616,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5624,
+        "ts": "2026-10-18T16:38:02Z"
+      },
       {
         "detail": null,
         "kind": "thread.answered",
@@ -575,14 +583,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5624,
         "ts": "2026-10-18T16:35:00Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-18T16:33:42Z"
       }
     ],
     "tokens_by_effort": [
@@ -1170,8 +1170,8 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11015844,
-      "completed_reviews": 4093,
+      "avg_tokens_per_completed_review": 11013153,
+      "completed_reviews": 4094,
       "findings": 26945,
       "findings_posted": 4704,
       "reviews": 6073,
@@ -1183,200 +1183,7 @@
     }
   },
   "live": {
-    "active": [
-      {
-        "attempt": 1,
-        "author": "HashEngineering",
-        "deadline_at": "2026-10-18T22:29:50Z",
-        "deadline_in_seconds": 21109,
-        "degraded": false,
-        "elapsed_seconds": 491,
-        "findings": {
-          "blocking": 1,
-          "nitpick": 0,
-          "suggestion": 0
-        },
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-18T16:37:56Z",
-        "id": 5624,
-        "lanes": [
-          {
-            "attempt": 1,
-            "effort": "xhigh",
-            "model": "gpt-6.1-sol",
-            "phase": "phase2",
-            "role": "security-auditor",
-            "status": "completed",
-            "tokens_in": 1128743,
-            "tokens_out": 10914
-          },
-          {
-            "attempt": 1,
-            "effort": "xhigh",
-            "model": "gpt-6-astra",
-            "phase": "phase2",
-            "role": "security-auditor",
-            "status": "completed",
-            "tokens_in": 1195242,
-            "tokens_out": 10034
-          },
-          {
-            "attempt": 1,
-            "effort": "xhigh",
-            "model": "gpt-6.1-sol",
-            "phase": "phase2",
-            "role": "general",
-            "status": "completed",
-            "tokens_in": 3339556,
-            "tokens_out": 14834
-          },
-          {
-            "attempt": 1,
-            "effort": "xhigh",
-            "model": "gpt-6-astra",
-            "phase": "phase2",
-            "role": "general",
-            "status": "completed",
-            "tokens_in": 2586290,
-            "tokens_out": 15170
-          },
-          {
-            "attempt": 1,
-            "effort": "high",
-            "model": "gemini-3.8-flash-high",
-            "phase": "phase1",
-            "role": "general",
-            "status": "completed",
-            "tokens_in": 2407835,
-            "tokens_out": 40124
-          },
-          {
-            "attempt": 1,
-            "effort": "high",
-            "model": "gpt-6.1-sol",
-            "phase": "verify2",
-            "role": "verifier",
-            "status": "completed",
-            "tokens_in": 591873,
-            "tokens_out": 10290
-          }
-        ],
-        "live_lanes": [],
-        "number": 1616,
-        "overdue": false,
-        "phase": "publish",
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1616",
-        "priority": false,
-        "progress": 0.99,
-        "queue": "live",
-        "queued_at": "2026-10-18T15:59:04Z",
-        "remaining_seconds": 0,
-        "repo": "dashpay/dash-wallet",
-        "sha": "61d38f9aa4155bddceefd0d53f44f0fe3e6ffc3a",
-        "started_at": "2026-10-18T16:29:50Z",
-        "status": "running",
-        "steps": [
-          {
-            "info": {},
-            "name": "worktree",
-            "seconds": 3,
-            "started_at": "2026-10-18T16:29:52Z",
-            "status": "ok"
-          },
-          {
-            "info": {
-              "selection": [
-                "security-auditor"
-              ]
-            },
-            "name": "select",
-            "seconds": 4,
-            "started_at": "2026-10-18T16:29:55Z",
-            "status": "ok"
-          },
-          {
-            "info": {
-              "method": "llm:gpt-6.1-sol",
-              "reasoning": "The large, intricate changes in SendCoinsTaskRunner.kt, PendingDirectPaymentVerifier.kt and PendingPaymentEngine.kt directly alter transaction submission, SDK reservation ownership, broadcast and recovery, affecting funds movement and duplicate-payment prevention.",
-              "tier": "critical"
-            },
-            "name": "triage",
-            "seconds": 3,
-            "started_at": "2026-10-18T16:29:56Z",
-            "status": "ok"
-          },
-          {
-            "info": {},
-            "name": "context",
-            "seconds": 4,
-            "started_at": "2026-10-18T16:30:00Z",
-            "status": "ok"
-          },
-          {
-            "comparison_left": 2,
-            "info": {
-              "roles": [
-                "general",
-                "security-auditor",
-                "general#2",
-                "security-auditor#2"
-              ]
-            },
-            "lanes_done": 2,
-            "lanes_left": [
-              "general#2",
-              "security-auditor#2"
-            ],
-            "lanes_total": 4,
-            "name": "phase2",
-            "seconds": 296,
-            "started_at": "2026-10-18T16:30:04Z",
-            "status": "ok"
-          },
-          {
-            "info": {
-              "roles": [
-                "general"
-              ]
-            },
-            "lanes_done": 1,
-            "lanes_left": [],
-            "lanes_total": 1,
-            "name": "phase1",
-            "seconds": 341,
-            "started_at": "2026-10-18T16:30:04Z",
-            "status": "ok"
-          },
-          {
-            "info": {
-              "blockers": 1,
-              "findings": 1
-            },
-            "name": "verify2",
-            "seconds": 127,
-            "started_at": "2026-10-18T16:35:45Z",
-            "status": "ok"
-          },
-          {
-            "info": {
-              "event": "REQUEST_CHANGES",
-              "posted": true
-            },
-            "name": "publish",
-            "seconds": 9,
-            "started_at": "2026-10-18T16:37:52Z",
-            "status": "ok"
-          }
-        ],
-        "tier": "critical",
-        "title": "Merge master into feat/kotlin-sdk-phase-1 (v11.9.1, DashSpend lost-reply recovery ported to SDK)",
-        "tokens_in": 11249539,
-        "tokens_out": 101366,
-        "trigger": "new_push",
-        "upcoming": [],
-        "wait_seconds": 1846
-      }
-    ],
+    "active": [],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1392,7 +1199,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 0,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1428,9 +1235,8 @@
     "failed_heads_24h": 0,
     "heads": {
       "closed": 401,
-      "done": 5995,
+      "done": 5996,
       "failed": 75,
-      "running": 1,
       "superseded": 2194
     },
     "ingest_error_streak": 0,
@@ -1467,10 +1273,10 @@
         "waiting": 0
       }
     ],
-    "last_run_done_at": "2026-10-18T16:12:42Z",
+    "last_run_done_at": "2026-10-18T16:38:02Z",
     "last_run_started_at": "2026-10-18T16:29:50Z",
     "median_run_minutes": 9.5,
-    "notify_last_at": "2026-10-18T16:35:44Z",
+    "notify_last_at": "2026-10-18T16:38:07Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1478,21 +1284,21 @@
       "day": "2026-10-18",
       "failed": 0,
       "findings_posted": 88,
-      "reviews": 91,
-      "tokens": 614072995
+      "reviews": 92,
+      "tokens": 625423900
     },
-    "ts": "2026-10-18T16:38:01Z",
+    "ts": "2026-10-18T16:39:01Z",
     "typical_minutes_by_tier": {
-      "critical": 19.8,
+      "critical": 19.7,
       "low": 6.5,
       "normal": 12.4,
       "trivial": 2.1,
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 1,
+      "active": 0,
       "eligible": 0,
-      "idle_minutes": 8.183333333333334,
+      "idle_minutes": 9.183333333333334,
       "ingest_stale": false,
       "stuck": false
     }
