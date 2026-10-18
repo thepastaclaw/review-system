@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T18:41:01Z",
-  "generated_at": "2026-10-18T18:41:01Z",
+  "data_as_of": "2026-10-18T18:42:01Z",
+  "generated_at": "2026-10-18T18:42:01Z",
   "history": {
     "daily": [
       {
@@ -255,7 +255,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 605,
+            "n": 606,
             "p90_seconds": 340
           }
         }
@@ -264,6 +264,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=fabf8541",
+        "kind": "run.spawned",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": 5633,
+        "ts": "2026-10-18T18:41:44Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T18:41:44Z"
+      },
+      {
+        "detail": "fabf8541 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-18T18:41:44Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -287,30 +311,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5632,
         "ts": "2026-10-18T18:32:10Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5632,
-        "ts": "2026-10-18T18:32:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5632,
-        "ts": "2026-10-18T18:32:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5632,
-        "ts": "2026-10-18T18:32:09Z"
       },
       {
         "detail": null,
@@ -1176,14 +1176,88 @@
       "findings_posted": 4713,
       "reviews": 6080,
       "reviews_imported": 2245,
-      "runs": 5632,
+      "runs": 5633,
       "tokens_in": 44578367589,
       "tokens_out": 581425044,
       "tokens_total": 45159792633
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-19T00:41:44Z",
+        "deadline_in_seconds": 21583,
+        "degraded": false,
+        "elapsed_seconds": 17,
+        "findings": null,
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-10-18T18:41:59Z",
+        "id": 5633,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5486,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/platform/pull/5486",
+        "priority": true,
+        "progress": 0.048,
+        "queue": "live",
+        "queued_at": "2026-10-18T18:41:42Z",
+        "remaining_seconds": 339,
+        "repo": "dashpay/platform",
+        "sha": "fabf854188bdf327b108fdaf6b8b83a63cdcfa3a",
+        "started_at": "2026-10-18T18:41:44Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 12,
+            "started_at": "2026-10-18T18:41:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-18T18:41:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds substantial schema parsing and reference-resolution logic plus corpus tests, but does not alter active consensus rules, network deserialization, or persisted storage formats.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-18T18:41:57Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(dpp): contract corpus test and typed validation schema for document types",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "context",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1273,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1237,6 +1311,7 @@
       "closed": 402,
       "done": 6003,
       "failed": 75,
+      "running": 1,
       "superseded": 2196
     },
     "ingest_error_streak": 0,
@@ -1274,9 +1349,9 @@
       }
     ],
     "last_run_done_at": "2026-10-18T18:34:13Z",
-    "last_run_started_at": "2026-10-18T18:24:18Z",
+    "last_run_started_at": "2026-10-18T18:41:44Z",
     "median_run_minutes": 8.566666666666666,
-    "notify_last_at": "2026-10-18T18:39:33Z",
+    "notify_last_at": "2026-10-18T18:41:38Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1287,7 +1362,7 @@
       "reviews": 100,
       "tokens": 697367283
     },
-    "ts": "2026-10-18T18:41:01Z",
+    "ts": "2026-10-18T18:42:01Z",
     "typical_minutes_by_tier": {
       "critical": 19.1,
       "low": 6.5,
@@ -1296,9 +1371,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 16.716666666666665,
+      "idle_minutes": 0.2833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
