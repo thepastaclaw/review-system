@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T03:15:00Z",
-  "generated_at": "2026-10-18T03:15:00Z",
+  "data_as_of": "2026-10-18T03:16:00Z",
+  "generated_at": "2026-10-18T03:16:01Z",
   "history": {
     "daily": [
       {
@@ -265,6 +265,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 791,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5558,
+        "ts": "2026-10-18T03:15:08Z"
+      },
+      {
         "detail": "attempt 1 sha=19e08582",
         "kind": "run.spawned",
         "number": 791,
@@ -351,14 +359,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5555,
         "ts": "2026-10-18T03:03:33Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5555,
-        "ts": "2026-10-18T03:03:31Z"
       },
       {
         "detail": null,
@@ -1188,24 +1188,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-18T09:14:56Z",
-        "deadline_in_seconds": 21596,
+        "deadline_in_seconds": 21536,
         "degraded": false,
-        "elapsed_seconds": 4,
+        "elapsed_seconds": 64,
         "findings": null,
         "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-10-18T03:14:57Z",
+        "heartbeat_at": "2026-10-18T03:15:57Z",
         "id": 5558,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 50,
+            "state": "running"
+          }
+        ],
         "number": 791,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/791",
         "priority": true,
-        "progress": null,
+        "progress": 0.162,
         "queue": "live",
         "queued_at": "2026-10-18T03:13:50Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 330,
         "repo": "PastaPastaPasta/yappr",
         "sha": "19e08582a6f77472b05ab22806289c926ad5f3ea",
         "started_at": "2026-10-18T03:14:56Z",
@@ -1216,15 +1227,71 @@
             "name": "worktree",
             "seconds": 3,
             "started_at": "2026-10-18T03:14:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-18T03:15:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff directly changes cryptography and key handling in lib/private-feed/crypto.ts and lib/services/private-feed-key-store.ts, including CEK derivation, LKH revocation, grant payloads, authenticated content binding, and renewal history keys.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 2,
+            "started_at": "2026-10-18T03:15:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T03:15:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T03:15:08Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 50,
+            "started_at": "2026-10-18T03:15:10Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(private-feeds): multi-feed client for social v17 (crypto v2, renewal, follower move)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 66
       }
     ],
@@ -1261,7 +1328,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-18T03:13:24Z",
+        "at": "2026-10-18T03:15:44Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1308,7 +1375,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1327,12 +1394,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 755,
+        "age_seconds": 815,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-10-18T03:32:25Z",
-        "eligible_in_seconds": 1045,
+        "eligible_in_seconds": 985,
         "number": 7734,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7734",
@@ -1346,12 +1413,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 310,
+        "age_seconds": 370,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-10-18T03:39:50Z",
-        "eligible_in_seconds": 1490,
+        "eligible_in_seconds": 1430,
         "number": 7892,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7892",
@@ -1372,7 +1439,7 @@
       "reviews": 27,
       "tokens": 128908033
     },
-    "ts": "2026-10-18T03:15:00Z",
+    "ts": "2026-10-18T03:16:00Z",
     "typical_minutes_by_tier": {
       "critical": 21.6,
       "low": 6.5,
@@ -1383,7 +1450,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.06666666666666667,
+      "idle_minutes": 1.0666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
