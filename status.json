@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T11:48:01Z",
-  "generated_at": "2026-10-18T11:48:01Z",
+  "data_as_of": "2026-10-18T11:49:01Z",
+  "generated_at": "2026-10-18T11:49:01Z",
   "history": {
     "daily": [
       {
@@ -255,7 +255,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 601,
+            "n": 602,
             "p90_seconds": 340
           }
         }
@@ -264,6 +264,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 803,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5605,
+        "ts": "2026-10-18T11:48:54Z"
+      },
+      {
+        "detail": "attempt 1 sha=159aab9b",
+        "kind": "run.spawned",
+        "number": 803,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5605,
+        "ts": "2026-10-18T11:48:42Z"
+      },
       {
         "detail": "159aab9b trigger=new_push priority=0",
         "kind": "head.queued",
@@ -511,22 +527,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 5600,
         "ts": "2026-10-18T10:37:42Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5600,
-        "ts": "2026-10-18T10:37:41Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 5600,
-        "ts": "2026-10-18T10:37:41Z"
       },
       {
         "detail": null,
@@ -1176,14 +1176,125 @@
       "findings_posted": 4686,
       "reviews": 6055,
       "reviews_imported": 2245,
-      "runs": 5604,
+      "runs": 5605,
       "tokens_in": 44316705952,
       "tokens_out": 579473293,
       "tokens_total": 44896179245
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-18T17:48:42Z",
+        "deadline_in_seconds": 21581,
+        "degraded": false,
+        "elapsed_seconds": 19,
+        "findings": null,
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-18T11:48:57Z",
+        "id": 5605,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 6,
+            "state": "running"
+          }
+        ],
+        "number": 803,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/803",
+        "priority": true,
+        "progress": 0.05,
+        "queue": "live",
+        "queued_at": "2026-10-18T11:41:04Z",
+        "remaining_seconds": 357,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "159aab9b00a171acb98b9490e596bd9abcb2134b",
+        "started_at": "2026-10-18T11:48:42Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-18T11:48:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-18T11:48:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate cross-tab authentication changes directly alter private-key destruction and retention in lib/secure-storage.ts, wallet-key lifecycle fencing in lib/app-connect/session-manager.ts, and concurrent restore/logout handling in vendor/platform-auth/src/core/controller.ts.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-18T11:48:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-18T11:48:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-18T11:48:54Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 6,
+            "started_at": "2026-10-18T11:48:55Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix: resolve auth, blog, accessibility and moderation QA",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "manual",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 458
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1199,7 +1310,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1237,11 +1348,12 @@
       "closed": 400,
       "done": 5978,
       "failed": 75,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2193
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-18T11:44:52Z",
+    "ingest_last_at": "2026-10-18T11:48:42Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1263,7 +1375,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1275,19 +1387,19 @@
       }
     ],
     "last_run_done_at": "2026-10-18T11:30:17Z",
-    "last_run_started_at": "2026-10-18T11:22:02Z",
+    "last_run_started_at": "2026-10-18T11:48:42Z",
     "median_run_minutes": 5.333333333333333,
     "notify_last_at": "2026-10-18T11:46:58Z",
     "oldest_queued_at": "2026-10-18T11:29:32Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1109,
+        "age_seconds": 1169,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-18T11:59:32Z",
-        "eligible_in_seconds": 691,
+        "eligible_in_seconds": 631,
         "number": 5485,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5485",
@@ -1299,25 +1411,6 @@
         "sha": "adfbd3809aa94ba8698c8f6fe607ce98568612bb",
         "title": "fix(sdk): verify no-limit proposer, distribution and group queries against the page Drive proves",
         "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 417,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-18T12:11:04Z",
-        "eligible_in_seconds": 1383,
-        "number": 803,
-        "position": 2,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/803",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/803#issuecomment-6248592990",
-        "priority": false,
-        "queued_at": "2026-10-18T11:41:04Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "159aab9b00a171acb98b9490e596bd9abcb2134b",
-        "title": "fix: resolve auth, blog, accessibility and moderation QA",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1327,7 +1420,7 @@
       "reviews": 73,
       "tokens": 446204588
     },
-    "ts": "2026-10-18T11:48:01Z",
+    "ts": "2026-10-18T11:49:01Z",
     "typical_minutes_by_tier": {
       "critical": 20.7,
       "low": 6.5,
@@ -1336,9 +1429,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 25.983333333333334,
+      "idle_minutes": 0.31666666666666665,
       "ingest_stale": false,
       "stuck": false
     }
