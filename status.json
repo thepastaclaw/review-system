@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-18T21:05:01Z",
-  "generated_at": "2026-10-18T21:05:01Z",
+  "data_as_of": "2026-10-18T21:06:00Z",
+  "generated_at": "2026-10-18T21:06:01Z",
   "history": {
     "daily": [
       {
@@ -219,7 +219,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 13669,
+        "count": 13670,
         "severity": "suggestion"
       }
     ],
@@ -612,9 +612,9 @@
       },
       {
         "effort": "high",
-        "lanes": 13928,
-        "tokens_in": 13841565136,
-        "tokens_out": 129571807
+        "lanes": 13930,
+        "tokens_in": 13842179265,
+        "tokens_out": 129579511
       },
       {
         "effort": "low",
@@ -660,18 +660,18 @@
         "tokens_out": 37629987
       },
       {
-        "avg_tokens_per_lane": 1201824.0,
-        "lanes": 15283,
+        "avg_tokens_per_lane": 1201707.0,
+        "lanes": 15285,
         "model": "gpt-6.1-sol",
-        "tokens_in": 18274272354,
-        "tokens_out": 93197420
+        "tokens_in": 18274886483,
+        "tokens_out": 93205124
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 5639,
-        "tokens_in": 763504,
-        "tokens_out": 42991
+        "tokens_in": 1377633,
+        "tokens_out": 50695
       },
       {
         "run_id": 5638,
@@ -1170,16 +1170,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 11004231,
+      "avg_tokens_per_completed_review": 11004383,
       "completed_reviews": 4108,
-      "findings": 27053,
+      "findings": 27054,
       "findings_posted": 4718,
       "reviews": 6086,
       "reviews_imported": 2245,
       "runs": 5639,
-      "tokens_in": 44623213273,
-      "tokens_out": 582168606,
-      "tokens_total": 45205381879
+      "tokens_in": 44623827402,
+      "tokens_out": 582176310,
+      "tokens_total": 45206003712
     }
   },
   "live": {
@@ -1188,16 +1188,16 @@
         "attempt": 1,
         "author": "DCG-Claude",
         "deadline_at": "2026-10-19T03:00:54Z",
-        "deadline_in_seconds": 21353,
+        "deadline_in_seconds": 21294,
         "degraded": false,
-        "elapsed_seconds": 247,
+        "elapsed_seconds": 306,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-18T21:04:56Z",
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-10-18T21:05:58Z",
         "id": 5639,
         "lanes": [
           {
@@ -1249,6 +1249,26 @@
             "status": "completed",
             "tokens_in": 71928,
             "tokens_out": 613
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 208478,
+            "tokens_out": 3177
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "backport-reviewer",
+            "status": "completed",
+            "tokens_in": 405651,
+            "tokens_out": 4527
           }
         ],
         "live_lanes": [
@@ -1256,32 +1276,22 @@
             "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "backport-reviewer",
-            "since_seconds": 21,
-            "state": "running"
-          },
-          {
-            "effort": "high",
-            "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "phase2",
-            "pool": "gpt",
-            "role": "general",
-            "since_seconds": 22,
+            "role": "verifier",
+            "since_seconds": 2,
             "state": "running"
           }
         ],
         "number": 7924,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/dashpay/dash/pull/7924",
         "priority": false,
-        "progress": 0.604,
+        "progress": 0.782,
         "queue": "live",
         "queued_at": "2026-10-18T20:30:00Z",
-        "remaining_seconds": 162,
+        "remaining_seconds": 85,
         "repo": "dashpay/dash",
         "sha": "473dca227ce78cdcd4bf9b7182f2483573be2ae1",
         "started_at": "2026-10-18T21:00:54Z",
@@ -1368,25 +1378,28 @@
                 "dash-core-commit-history"
               ]
             },
-            "lanes_done": 1,
-            "lanes_left": [
-              "general",
-              "backport-reviewer"
-            ],
+            "lanes_done": 3,
+            "lanes_left": [],
             "lanes_total": 3,
             "name": "phase2",
-            "seconds": 22,
+            "seconds": 79,
             "started_at": "2026-10-18T21:04:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 2,
+            "started_at": "2026-10-18T21:05:58Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "backport: bitcoin#28148, bitcoin#28428, bitcoin#23536, bitcoin#28364",
-        "tokens_in": 763504,
-        "tokens_out": 42991,
+        "tokens_in": 1377633,
+        "tokens_out": 50695,
         "trigger": "new_pr",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1854
@@ -1471,7 +1484,7 @@
       },
       {
         "pool": "gpt",
-        "running": 2,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1485,7 +1498,7 @@
     "last_run_done_at": "2026-10-18T20:57:46Z",
     "last_run_started_at": "2026-10-18T21:00:54Z",
     "median_run_minutes": 10.283333333333333,
-    "notify_last_at": "2026-10-18T21:03:24Z",
+    "notify_last_at": "2026-10-18T21:05:47Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1496,7 +1509,7 @@
       "reviews": 106,
       "tokens": 742150034
     },
-    "ts": "2026-10-18T21:05:01Z",
+    "ts": "2026-10-18T21:06:00Z",
     "typical_minutes_by_tier": {
       "critical": 19.1,
       "low": 6.5,
@@ -1507,7 +1520,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 4.116666666666666,
+      "idle_minutes": 5.1,
       "ingest_stale": false,
       "stuck": false
     }
