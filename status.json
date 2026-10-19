@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-19T03:50:01Z",
-  "generated_at": "2026-10-19T03:50:01Z",
+  "data_as_of": "2026-10-19T03:51:01Z",
+  "generated_at": "2026-10-19T03:51:01Z",
   "history": {
     "daily": [
       {
@@ -269,6 +269,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": 5663,
+        "ts": "2026-10-19T03:50:15Z"
+      },
       {
         "detail": "attempt 1 sha=e6fa3f50",
         "kind": "run.spawned",
@@ -576,14 +584,6 @@
       {
         "detail": "ok in 63s",
         "kind": "run.done",
-        "number": 811,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5658,
-        "ts": "2026-10-19T00:16:31Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch",
         "number": 811,
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5658,
@@ -1193,35 +1193,45 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-19T09:49:38Z",
-        "deadline_in_seconds": 21577,
+        "deadline_in_seconds": 21517,
         "degraded": false,
-        "elapsed_seconds": 23,
+        "elapsed_seconds": 83,
         "findings": null,
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-19T03:49:53Z",
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-19T03:50:54Z",
         "id": 5663,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 11,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 46,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 45,
             "state": "running"
           }
         ],
         "number": 5486,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5486",
         "priority": true,
-        "progress": null,
+        "progress": 0.145,
         "queue": "live",
         "queued_at": "2026-10-19T03:49:36Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 489,
         "repo": "dashpay/platform",
         "sha": "e6fa3f50f28344c588783038a771feb97125455f",
         "started_at": "2026-10-19T03:49:38Z",
@@ -1235,26 +1245,66 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality"
+              ]
+            },
             "name": "select",
-            "seconds": 11,
+            "seconds": 15,
             "started_at": "2026-10-19T03:49:50Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a substantial and intricate Rust schema-conversion implementation with extensive corpus and behavioral tests, but it does not itself alter consensus behavior, funds, cryptography, networking, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 15,
+            "started_at": "2026-10-19T03:49:50Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 11,
-            "started_at": "2026-10-19T03:49:50Z",
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-10-19T03:50:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 47,
+            "started_at": "2026-10-19T03:50:14Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat(dpp): contract corpus test and typed validation schema for document types",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1315,7 +1365,7 @@
       "superseded": 2202
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-19T03:47:23Z",
+    "ingest_last_at": "2026-10-19T03:50:55Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1325,7 +1375,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1337,7 +1387,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 8,
         "waiting": 0
       },
@@ -1362,7 +1412,7 @@
       "reviews": 6,
       "tokens": 9253848
     },
-    "ts": "2026-10-19T03:50:01Z",
+    "ts": "2026-10-19T03:51:01Z",
     "typical_minutes_by_tier": {
       "critical": 19.0,
       "low": 6.5,
@@ -1373,7 +1423,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.38333333333333336,
+      "idle_minutes": 1.3833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
