@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-19T01:21:01Z",
-  "generated_at": "2026-10-19T01:21:01Z",
+  "data_as_of": "2026-10-19T01:22:01Z",
+  "generated_at": "2026-10-19T01:22:01Z",
   "history": {
     "daily": [
       {
@@ -259,9 +259,9 @@
             "p90_seconds": 5
           },
           "wait": {
-            "median_seconds": 7,
-            "n": 611,
-            "p90_seconds": 397
+            "median_seconds": 8,
+            "n": 612,
+            "p90_seconds": 396
           }
         }
       },
@@ -269,6 +269,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 812,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5661,
+        "ts": "2026-10-19T01:21:50Z"
+      },
+      {
+        "detail": "attempt 1 sha=f807c120",
+        "kind": "run.spawned",
+        "number": 812,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5661,
+        "ts": "2026-10-19T01:21:39Z"
+      },
       {
         "detail": "f807c120 checkbox ticked by PastaPastaPasta",
         "kind": "head.priority_requested",
@@ -572,22 +588,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5656,
         "ts": "2026-10-18T23:44:03Z"
-      },
-      {
-        "detail": "4b9b0bc9 checkbox ticked by PastaPastaPasta",
-        "kind": "head.priority_requested",
-        "number": 810,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-18T23:42:55Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-18T23:37:59Z"
       }
     ],
     "tokens_by_effort": [
@@ -1181,14 +1181,127 @@
       "findings_posted": 4733,
       "reviews": 6105,
       "reviews_imported": 2245,
-      "runs": 5660,
+      "runs": 5661,
       "tokens_in": 44693210222,
       "tokens_out": 582733084,
       "tokens_total": 45275943306
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-19T07:21:39Z",
+        "deadline_in_seconds": 21578,
+        "degraded": false,
+        "elapsed_seconds": 22,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-19T01:21:55Z",
+        "id": 5661,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 10,
+            "state": "running"
+          }
+        ],
+        "number": 812,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/812",
+        "priority": true,
+        "progress": 0.086,
+        "queue": "live",
+        "queued_at": "2026-10-19T01:17:32Z",
+        "remaining_seconds": 234,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "f807c12007e699bb06a28ae53f8ef6c1d16f14f0",
+        "started_at": "2026-10-19T01:21:39Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-19T01:21:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-19T01:21:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff adds cross-cutting moderator UI authorization guidance and election-result formatting with tests, but does not itself change key handling, signatures, funds movement, or another critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 2,
+            "started_at": "2026-10-19T01:21:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-19T01:21:48Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-19T01:21:50Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 10,
+            "started_at": "2026-10-19T01:21:51Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix: guide wallet moderators and clarify election results",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "priority_request",
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 247
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1204,7 +1317,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1222,7 +1335,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-19T01:19:20Z",
+        "at": "2026-10-19T01:21:43Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1242,11 +1355,11 @@
       "closed": 402,
       "done": 6027,
       "failed": 75,
-      "queued": 1,
+      "running": 1,
       "superseded": 2202
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-19T01:17:32Z",
+    "ingest_last_at": "2026-10-19T01:21:39Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1268,7 +1381,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1280,32 +1393,12 @@
       }
     ],
     "last_run_done_at": "2026-10-19T01:08:38Z",
-    "last_run_started_at": "2026-10-19T01:04:54Z",
+    "last_run_started_at": "2026-10-19T01:21:39Z",
     "median_run_minutes": 5.033333333333333,
     "notify_last_at": "2026-10-19T01:20:01Z",
-    "oldest_queued_at": "2026-10-19T01:17:32Z",
-    "priority_queued": 1,
-    "queued": [
-      {
-        "age_seconds": 209,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-10-19T01:20:26Z",
-        "eligible_in_seconds": 0,
-        "number": 812,
-        "position": 1,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/812",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/812#issuecomment-6257551196",
-        "priority": true,
-        "queued_at": "2026-10-19T01:17:32Z",
-        "reason": "waiting for a review slot",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "f807c12007e699bb06a28ae53f8ef6c1d16f14f0",
-        "title": "fix: guide wallet moderators and clarify election results",
-        "trigger": "priority_request"
-      }
-    ],
+    "oldest_queued_at": null,
+    "priority_queued": 0,
+    "queued": [],
     "today": {
       "day": "2026-10-19",
       "failed": 0,
@@ -1313,7 +1406,7 @@
       "reviews": 4,
       "tokens": 6089770
     },
-    "ts": "2026-10-19T01:21:01Z",
+    "ts": "2026-10-19T01:22:01Z",
     "typical_minutes_by_tier": {
       "critical": 18.9,
       "low": 6.5,
@@ -1322,9 +1415,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 16.116666666666667,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.36666666666666664,
       "ingest_stale": false,
       "stuck": false
     }
