@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-19T05:38:01Z",
-  "generated_at": "2026-10-19T05:38:01Z",
+  "data_as_of": "2026-10-19T05:39:01Z",
+  "generated_at": "2026-10-19T05:39:02Z",
   "history": {
     "daily": [
       {
@@ -216,7 +216,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 11689,
+        "count": 11710,
         "severity": "blocking"
       },
       {
@@ -224,7 +224,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 13722,
+        "count": 13723,
         "severity": "suggestion"
       }
     ],
@@ -269,6 +269,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "phase=phase2 kept=2 dropped=0",
+        "kind": "compare.lanes",
+        "number": 1607,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5669,
+        "ts": "2026-10-19T05:38:20Z"
+      },
       {
         "detail": null,
         "kind": "run.cancelled",
@@ -580,14 +588,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-19T04:40:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 5256,
-        "repo": "dashpay/platform",
-        "run_id": 5665,
-        "ts": "2026-10-19T04:37:39Z"
       }
     ],
     "tokens_by_effort": [
@@ -605,9 +605,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 13388,
-        "tokens_in": 28320102967,
-        "tokens_out": 426814057
+        "lanes": 13389,
+        "tokens_in": 28323793793,
+        "tokens_out": 426841008
       },
       {
         "effort": "medium",
@@ -665,18 +665,18 @@
         "tokens_out": 37688017
       },
       {
-        "avg_tokens_per_lane": 1200240.0,
-        "lanes": 15395,
+        "avg_tokens_per_lane": 1200403.0,
+        "lanes": 15396,
         "model": "gpt-6.1-sol",
-        "tokens_in": 18383795809,
-        "tokens_out": 93894908
+        "tokens_in": 18387486635,
+        "tokens_out": 93921859
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 5669,
-        "tokens_in": 14192943,
-        "tokens_out": 126186
+        "tokens_in": 17883769,
+        "tokens_out": 153137
       },
       {
         "run_id": 5668,
@@ -1175,16 +1175,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 10974386,
+      "avg_tokens_per_completed_review": 10975285,
       "completed_reviews": 4135,
-      "findings": 27174,
+      "findings": 27196,
       "findings_posted": 4740,
       "reviews": 6111,
       "reviews_imported": 2245,
       "runs": 5669,
-      "tokens_in": 44795616116,
-      "tokens_out": 583470144,
-      "tokens_total": 45379086260
+      "tokens_in": 44799306942,
+      "tokens_out": 583497095,
+      "tokens_total": 45382804037
     }
   },
   "live": {
@@ -1193,12 +1193,12 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-19T11:22:13Z",
-        "deadline_in_seconds": 20652,
+        "deadline_in_seconds": 20592,
         "degraded": false,
-        "elapsed_seconds": 948,
+        "elapsed_seconds": 1008,
         "findings": null,
-        "heartbeat_age_seconds": 15,
-        "heartbeat_at": "2026-10-19T05:37:46Z",
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-19T05:38:48Z",
         "id": 5669,
         "lanes": [
           {
@@ -1240,29 +1240,39 @@
             "status": "completed",
             "tokens_in": 4470077,
             "tokens_out": 31271
+          },
+          {
+            "attempt": 1,
+            "effort": "xhigh",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "security-auditor",
+            "status": "completed",
+            "tokens_in": 3690826,
+            "tokens_out": 26951
           }
         ],
         "live_lanes": [
           {
-            "effort": "xhigh",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "security-auditor",
-            "since_seconds": 934,
+            "role": "verifier",
+            "since_seconds": 41,
             "state": "running"
           }
         ],
         "number": 1607,
-        "overdue": true,
-        "phase": "phase2",
+        "overdue": false,
+        "phase": "verify2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1607",
         "priority": false,
-        "progress": 0.788,
+        "progress": 0.825,
         "queue": "live",
         "queued_at": "2026-10-19T04:51:28Z",
-        "remaining_seconds": 255,
+        "remaining_seconds": 214,
         "repo": "dashpay/dash-wallet",
         "sha": "3e607c000b7b47a5052676bc2079e3a4ded72aa0",
         "started_at": "2026-10-19T05:22:13Z",
@@ -1305,22 +1315,25 @@
             "status": "ok"
           },
           {
-            "comparison_left": 0,
+            "comparison_left": 2,
             "info": {
               "roles": [
                 "general",
-                "security-auditor"
+                "security-auditor",
+                "general#2",
+                "security-auditor#2"
               ]
             },
-            "lanes_done": 1,
+            "lanes_done": 2,
             "lanes_left": [
-              "security-auditor"
+              "general#2",
+              "security-auditor#2"
             ],
-            "lanes_total": 2,
+            "lanes_total": 4,
             "name": "phase2",
-            "seconds": 935,
+            "seconds": 954,
             "started_at": "2026-10-19T05:22:26Z",
-            "status": "running"
+            "status": "ok"
           },
           {
             "info": {
@@ -1335,15 +1348,21 @@
             "seconds": 377,
             "started_at": "2026-10-19T05:22:26Z",
             "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 41,
+            "started_at": "2026-10-19T05:38:20Z",
+            "status": "running"
           }
         ],
         "tier": "critical",
         "title": "fix(cutover): migrate CoinJoin funds through bounded consolidation",
-        "tokens_in": 14192943,
-        "tokens_out": 126186,
+        "tokens_in": 17883769,
+        "tokens_out": 153137,
         "trigger": "new_push",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1845
@@ -1448,12 +1467,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 748,
+        "age_seconds": 808,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-19T05:55:33Z",
-        "eligible_in_seconds": 1052,
+        "eligible_in_seconds": 992,
         "number": 5486,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5486",
@@ -1474,7 +1493,7 @@
       "reviews": 11,
       "tokens": 90208727
     },
-    "ts": "2026-10-19T05:38:01Z",
+    "ts": "2026-10-19T05:39:01Z",
     "typical_minutes_by_tier": {
       "critical": 18.9,
       "low": 6.4,
@@ -1485,7 +1504,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 15.8,
+      "idle_minutes": 16.8,
       "ingest_stale": false,
       "stuck": false
     }
