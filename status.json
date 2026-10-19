@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-19T05:20:01Z",
-  "generated_at": "2026-10-19T05:20:01Z",
+  "data_as_of": "2026-10-19T05:21:00Z",
+  "generated_at": "2026-10-19T05:21:00Z",
   "history": {
     "daily": [
       {
@@ -269,6 +269,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5486,
+        "repo": "dashpay/platform",
+        "run_id": 5668,
+        "ts": "2026-10-19T05:20:21Z"
+      },
       {
         "detail": "attempt 1 sha=a049718a",
         "kind": "run.spawned",
@@ -580,14 +588,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-19T02:39:15Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch_green",
-        "number": 812,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5662,
-        "ts": "2026-10-19T01:48:40Z"
       }
     ],
     "tokens_by_effort": [
@@ -1193,12 +1193,12 @@
         "attempt": 1,
         "author": "abaranouski",
         "deadline_at": "2026-10-19T11:06:53Z",
-        "deadline_in_seconds": 20812,
+        "deadline_in_seconds": 20753,
         "degraded": false,
-        "elapsed_seconds": 788,
+        "elapsed_seconds": 847,
         "findings": null,
-        "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-10-19T05:19:58Z",
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-10-19T05:20:58Z",
         "id": 5666,
         "lanes": [
           {
@@ -1240,7 +1240,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 39,
+            "since_seconds": 98,
             "state": "running"
           }
         ],
@@ -1249,10 +1249,10 @@
         "phase": "verify2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1584",
         "priority": false,
-        "progress": 0.788,
+        "progress": 0.847,
         "queue": "live",
         "queued_at": "2026-10-19T04:36:11Z",
-        "remaining_seconds": 212,
+        "remaining_seconds": 153,
         "repo": "dashpay/dash-wallet",
         "sha": "c2cbc2e80783dc009e64c5af3a8a6b9529bd9551",
         "started_at": "2026-10-19T05:06:53Z",
@@ -1326,7 +1326,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 39,
+            "seconds": 98,
             "started_at": "2026-10-19T05:19:22Z",
             "status": "running"
           }
@@ -1345,24 +1345,45 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-10-19T11:19:48Z",
-        "deadline_in_seconds": 21587,
+        "deadline_in_seconds": 21528,
         "degraded": false,
-        "elapsed_seconds": 13,
+        "elapsed_seconds": 72,
         "findings": null,
-        "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-10-19T05:19:48Z",
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-19T05:20:48Z",
         "id": 5668,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 39,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "rust-quality",
+            "since_seconds": 38,
+            "state": "running"
+          }
+        ],
         "number": 5486,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5486",
         "priority": true,
-        "progress": null,
+        "progress": 0.124,
         "queue": "live",
         "queued_at": "2026-10-19T05:19:46Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 509,
         "repo": "dashpay/platform",
         "sha": "a049718a17987b67522082dd762b1fdd9fc5f816",
         "started_at": "2026-10-19T05:19:48Z",
@@ -1371,17 +1392,71 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 12,
+            "seconds": 13,
             "started_at": "2026-10-19T05:19:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 9,
+            "started_at": "2026-10-19T05:20:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a substantial new Rust schema-parsing and corpus-test implementation with meaningful allocation, parsing, and validation-adjacent logic, but it does not itself alter consensus behavior, persistence formats, or other critical surfaces.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-19T05:20:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-10-19T05:20:12Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 40,
+            "started_at": "2026-10-19T05:20:20Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat(dpp): contract corpus test and typed validation schema for document types",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1453,7 +1528,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 2,
         "slots": 6,
         "waiting": 0
       },
@@ -1484,12 +1559,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1713,
+        "age_seconds": 1772,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-19T05:21:28Z",
-        "eligible_in_seconds": 87,
+        "eligible_in_seconds": 28,
         "number": 1607,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1607",
@@ -1510,7 +1585,7 @@
       "reviews": 10,
       "tokens": 64502575
     },
-    "ts": "2026-10-19T05:20:01Z",
+    "ts": "2026-10-19T05:21:00Z",
     "typical_minutes_by_tier": {
       "critical": 19.0,
       "low": 6.5,
@@ -1521,7 +1596,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.21666666666666667,
+      "idle_minutes": 1.2,
       "ingest_stale": false,
       "stuck": false
     }
