@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-19T01:02:01Z",
-  "generated_at": "2026-10-19T01:02:01Z",
+  "data_as_of": "2026-10-19T01:03:01Z",
+  "generated_at": "2026-10-19T01:03:01Z",
   "history": {
     "daily": [
       {
@@ -269,6 +269,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7925,
+        "repo": "dashpay/dash",
+        "run_id": 5659,
+        "ts": "2026-10-19T01:02:16Z"
+      },
       {
         "detail": "attempt 1 sha=a9adc470",
         "kind": "run.spawned",
@@ -580,14 +588,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5654,
         "ts": "2026-10-18T23:12:54Z"
-      },
-      {
-        "detail": "571cbdfc checkbox ticked by PastaPastaPasta",
-        "kind": "head.priority_requested",
-        "number": 810,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-10-18T23:11:48Z"
       }
     ],
     "tokens_by_effort": [
@@ -1193,24 +1193,35 @@
         "attempt": 1,
         "author": "DCG-Claude",
         "deadline_at": "2026-10-19T07:01:59Z",
-        "deadline_in_seconds": 21598,
+        "deadline_in_seconds": 21538,
         "degraded": false,
-        "elapsed_seconds": 2,
+        "elapsed_seconds": 62,
         "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-10-19T01:01:59Z",
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-10-19T01:03:00Z",
         "id": 5659,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 45,
+            "state": "running"
+          }
+        ],
         "number": 7925,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7925",
         "priority": false,
-        "progress": 0.003,
+        "progress": 0.092,
         "queue": "live",
         "queued_at": "2026-10-19T00:30:56Z",
-        "remaining_seconds": 711,
+        "remaining_seconds": 610,
         "repo": "dashpay/dash",
         "sha": "a9adc470d4932df6fa3aad3f38f9dffe3c4dbfdb",
         "started_at": "2026-10-19T01:01:59Z",
@@ -1219,21 +1230,65 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 2,
+            "seconds": 8,
             "started_at": "2026-10-19T01:01:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "backport-reviewer",
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-19T01:02:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The changes add substantial ASN mapping logic and adapt seed-generation tooling, but do not modify consensus, funds handling, cryptography, peer-facing network deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-19T01:02:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-19T01:02:12Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 46,
+            "started_at": "2026-10-19T01:02:15Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "backport: bitcoin#20237, bitcoin#24417, bitcoin#24864, bitcoin#25911, bitcoin#29561",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_pr",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1274,7 +1329,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-19T01:00:35Z",
+        "at": "2026-10-19T01:02:47Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1308,7 +1363,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1334,7 +1389,7 @@
     "last_run_done_at": "2026-10-19T00:16:31Z",
     "last_run_started_at": "2026-10-19T01:01:59Z",
     "median_run_minutes": 5.033333333333333,
-    "notify_last_at": "2026-10-19T01:00:09Z",
+    "notify_last_at": "2026-10-19T01:02:20Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1345,7 +1400,7 @@
       "reviews": 2,
       "tokens": 3416278
     },
-    "ts": "2026-10-19T01:02:01Z",
+    "ts": "2026-10-19T01:03:01Z",
     "typical_minutes_by_tier": {
       "critical": 18.9,
       "low": 6.5,
@@ -1356,7 +1411,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.03333333333333333,
+      "idle_minutes": 1.0333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
