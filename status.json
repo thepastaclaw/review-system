@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-19T05:07:01Z",
-  "generated_at": "2026-10-19T05:07:01Z",
+  "data_as_of": "2026-10-19T05:08:01Z",
+  "generated_at": "2026-10-19T05:08:01Z",
   "history": {
     "daily": [
       {
@@ -269,6 +269,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1584,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5666,
+        "ts": "2026-10-19T05:07:12Z"
+      },
       {
         "detail": "attempt 1 sha=c2cbc2e8",
         "kind": "run.spawned",
@@ -580,14 +588,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5661,
         "ts": "2026-10-19T01:23:55Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 812,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5661,
-        "ts": "2026-10-19T01:21:50Z"
       }
     ],
     "tokens_by_effort": [
@@ -1193,35 +1193,55 @@
         "attempt": 1,
         "author": "abaranouski",
         "deadline_at": "2026-10-19T11:06:53Z",
-        "deadline_in_seconds": 21592,
+        "deadline_in_seconds": 21532,
         "degraded": false,
-        "elapsed_seconds": 8,
+        "elapsed_seconds": 68,
         "findings": null,
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-10-19T05:06:53Z",
+        "heartbeat_age_seconds": 7,
+        "heartbeat_at": "2026-10-19T05:07:54Z",
         "id": 5666,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 49,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 4,
+            "role": "general",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 49,
             "state": "running"
           }
         ],
         "number": 1584,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1584",
         "priority": false,
-        "progress": 0.012,
+        "progress": 0.106,
         "queue": "live",
         "queued_at": "2026-10-19T04:36:11Z",
-        "remaining_seconds": 679,
+        "remaining_seconds": 572,
         "repo": "dashpay/dash-wallet",
         "sha": "c2cbc2e80783dc009e64c5af3a8a6b9529bd9551",
         "started_at": "2026-10-19T05:06:53Z",
@@ -1235,29 +1255,75 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 5,
+            "seconds": 10,
             "started_at": "2026-10-19T05:06:56Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a large, cross-cutting change that directly alters Dash Platform funding, fee calculation, transaction creation, top-ups, and recovery flows in files such as SdkTransparentUsernameCreation.kt, SdkShieldedUsernameCreation.kt, CreateIdentityService.kt, and BlockchainServiceImpl.kt.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-19T05:06:57Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 4,
-            "started_at": "2026-10-19T05:06:57Z",
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-19T05:07:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 50,
+            "started_at": "2026-10-19T05:07:11Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 50,
+            "started_at": "2026-10-19T05:07:11Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix: gate contested-username fee on the live Platform protocol version",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1297,7 +1363,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-19T05:05:29Z",
+        "at": "2026-10-19T05:07:37Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1332,7 +1398,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1344,7 +1410,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
@@ -1358,17 +1424,17 @@
     "last_run_done_at": "2026-10-19T05:05:26Z",
     "last_run_started_at": "2026-10-19T05:06:53Z",
     "median_run_minutes": 5.033333333333333,
-    "notify_last_at": "2026-10-19T05:05:50Z",
+    "notify_last_at": "2026-10-19T05:07:58Z",
     "oldest_queued_at": "2026-10-19T04:51:28Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 933,
+        "age_seconds": 993,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-19T05:21:28Z",
-        "eligible_in_seconds": 867,
+        "eligible_in_seconds": 807,
         "number": 1607,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1607",
@@ -1389,7 +1455,7 @@
       "reviews": 9,
       "tokens": 64502575
     },
-    "ts": "2026-10-19T05:07:01Z",
+    "ts": "2026-10-19T05:08:01Z",
     "typical_minutes_by_tier": {
       "critical": 19.0,
       "low": 6.5,
@@ -1400,7 +1466,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.13333333333333333,
+      "idle_minutes": 1.1333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
