@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-19T08:50:01Z",
-  "generated_at": "2026-10-19T08:50:01Z",
+  "data_as_of": "2026-10-19T08:51:01Z",
+  "generated_at": "2026-10-19T08:51:01Z",
   "history": {
     "daily": [
       {
@@ -269,6 +269,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1607,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 5677,
+        "ts": "2026-10-19T08:50:11Z"
+      },
       {
         "detail": "attempt 1 sha=40bd747b",
         "kind": "run.spawned",
@@ -580,14 +588,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": null,
         "ts": "2026-10-19T07:19:21Z"
-      },
-      {
-        "detail": "ok in 14s",
-        "kind": "run.done",
-        "number": 5486,
-        "repo": "dashpay/platform",
-        "run_id": 5672,
-        "ts": "2026-10-19T07:07:23Z"
       }
     ],
     "tokens_by_effort": [
@@ -1193,35 +1193,55 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-19T14:49:51Z",
-        "deadline_in_seconds": 21590,
+        "deadline_in_seconds": 21530,
         "degraded": false,
-        "elapsed_seconds": 10,
+        "elapsed_seconds": 70,
         "findings": null,
         "heartbeat_age_seconds": 10,
-        "heartbeat_at": "2026-10-19T08:49:51Z",
+        "heartbeat_at": "2026-10-19T08:50:51Z",
         "id": 5677,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
+            "line_position": null,
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "pool": "gemini",
+            "role": "general",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 5,
+            "role": "general",
+            "since_seconds": 51,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 50,
             "state": "running"
           }
         ],
         "number": 1607,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1607",
         "priority": true,
-        "progress": null,
+        "progress": 0.124,
         "queue": "live",
         "queued_at": "2026-10-19T08:49:39Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 493,
         "repo": "dashpay/dash-wallet",
         "sha": "40bd747b4de01c3a6d96d2c70c58f856651cf2e8",
         "started_at": "2026-10-19T08:49:51Z",
@@ -1235,26 +1255,78 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 6,
+            "seconds": 10,
             "started_at": "2026-10-19T08:49:55Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff directly changes funds movement and coin selection in CoinJoinConsolidation.kt, CoinJoinFundsMigrationService.kt, SdkL1SendService.kt, and ShieldedBalanceServiceImpl.kt, including transaction construction, signing, destination handling, persistence, and broadcast recovery.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-19T08:49:56Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 5,
-            "started_at": "2026-10-19T08:49:56Z",
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-19T08:50:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 51,
+            "started_at": "2026-10-19T08:50:10Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 51,
+            "started_at": "2026-10-19T08:50:10Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(cutover): migrate CoinJoin funds through bounded consolidation",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 12
       }
     ],
@@ -1291,7 +1363,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-19T08:48:01Z",
+        "at": "2026-10-19T08:50:18Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1326,7 +1398,7 @@
       },
       {
         "pool": "gemini",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1338,7 +1410,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
@@ -1357,12 +1429,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1363,
+        "age_seconds": 1423,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-19T08:57:18Z",
-        "eligible_in_seconds": 437,
+        "eligible_in_seconds": 377,
         "number": 5465,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5465",
@@ -1376,12 +1448,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 462,
+        "age_seconds": 522,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-19T09:12:19Z",
-        "eligible_in_seconds": 1338,
+        "eligible_in_seconds": 1278,
         "number": 5476,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5476",
@@ -1395,12 +1467,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 235,
+        "age_seconds": 295,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-19T09:16:06Z",
-        "eligible_in_seconds": 1565,
+        "eligible_in_seconds": 1505,
         "number": 5460,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5460",
@@ -1421,9 +1493,9 @@
       "reviews": 18,
       "tokens": 173625655
     },
-    "ts": "2026-10-19T08:50:01Z",
+    "ts": "2026-10-19T08:51:01Z",
     "typical_minutes_by_tier": {
-      "critical": 18.6,
+      "critical": 18.7,
       "low": 6.5,
       "normal": 11.8,
       "trivial": 1.9,
@@ -1432,7 +1504,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.16666666666666666,
+      "idle_minutes": 1.1666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
