@@ -326,8 +326,10 @@ def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict
 
                 trigger = Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.MANUAL
                 with tx(conn):
-                    enqueue_head(conn, cfg, p["repo"], p["number"], p["head_sha"], trigger)
-                continue
+                    res = enqueue_head(conn, cfg, p["repo"], p["number"], p["head_sha"], trigger)
+                if res != "noop":
+                    continue
+                # nothing to re-open (the box predates a force-push): note it, once
             rendered = github.gate_body(
                 "closed",
                 p["head_sha"],

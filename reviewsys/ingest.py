@@ -143,9 +143,13 @@ def enqueue_head(
         and existing["status"] == HeadStatus.CLOSED
         and existing["reason"] == SKIP_LABEL_REASON
     )
-    if labelled and trigger == Trigger.REVIEW_REPLY and (existing is None or skip_closed):
+    if (
+        labelled
+        and trigger == Trigger.REVIEW_REPLY
+        and (existing is None or existing["status"] in (HeadStatus.CLOSED, HeadStatus.SUPERSEDED))
+    ):
         # an answer under a finding of an older commit ("fixed in ...") asks for no review of
-        # this one; on a labelled PR it only re-opens a commit that was reviewed
+        # this one; on a labelled PR it only reaches a commit that was (being) reviewed
         return "noop"
     if existing and existing["queue"] == "audit":
         return "noop"  # the PR merged: its head belongs to the audit queue now

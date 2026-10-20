@@ -695,6 +695,12 @@ def test_reply_on_a_labelled_pr_reviews_no_new_commit(cfg, conn, gh):
     ingest_prs(conn, cfg, gh)
     with tx(conn):
         assert enqueue_head(conn, cfg, "dashpay/platform", 18, b, Trigger.REVIEW_REPLY) == "noop"
+        # nor does one on a commit whose automatic head closed for another reason
+        conn.execute(
+            "UPDATE heads SET status='closed', reason='pr_draft' WHERE number=18 AND sha=?", (a,)
+        )
+        assert enqueue_head(conn, cfg, "dashpay/platform", 18, a, Trigger.REVIEW_REPLY) == "noop"
+        conn.execute("UPDATE heads SET status='done', reason=NULL WHERE number=18 AND sha=?", (a,))
         # a reviewed commit still gets its conversation
         assert enqueue_head(conn, cfg, "dashpay/platform", 18, a, Trigger.REVIEW_REPLY) == (
             "requeued"
@@ -713,6 +719,23 @@ def test_box_ticked_before_the_label_is_honoured_not_erased(cfg, conn, gh):
     row = conn.execute("SELECT status, trigger FROM heads WHERE number=19").fetchone()
     assert tuple(row) == ("queued", "manual")
     assert SKIP_LABEL_NOTE not in gh.routes[ep]["body"]
+
+
+def test_ticked_box_with_nothing_to_reopen_is_noted_once(cfg, conn, gh):
+    sha = "c" * 40
+    gh.open_prs["dashpay/platform"] = [pr(22, sha, labels=SKIP)]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):  # left superseded by a force-push back to this commit
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) "
+            "VALUES ('dashpay/platform', 22, ?, 'new_pr', 0, 'superseded', ?, ?)",
+            (sha, now(), now()),
+        )
+    ep = _gate(conn, gh, 22)
+    gh.routes[ep]["body"] += "\n- [x] **Request normal review** — click when ready."
+    update_queue_comments(conn, cfg, gh)
+    assert SKIP_LABEL_NOTE in gh.routes[ep]["body"]
+    assert kv_get(conn, "queue.skip_noted:dashpay/platform#22") == sha
 
 
 def test_lagging_poll_leaves_a_newer_requested_review_alone(cfg, conn, gh):
