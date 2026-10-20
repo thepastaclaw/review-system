@@ -352,6 +352,8 @@ class Config:
     watchdog_minutes: int
     comment_budget: int
     backlog_skip_phase1_above: int  # queued heads above this -> runs skip Phase 1 (0 disables)
+    # PR labels (case-insensitive) that turn automatic reviews off for that PR, see ingest.py
+    skip_labels: tuple[str, ...]
     # reviewer lanes one phase of one run runs at once (1 = sequential, the pre-v0.19 flow;
     # 0 = every lane of the phase at once). Model pools (lanepool.py) still bound the machine.
     phase_parallelism: int
@@ -484,6 +486,9 @@ DEFAULT_LANE_DENY_EXEC = (
     "~/.local/bin/sccache",
 )
 
+# [scheduling] skip_labels when a box config.toml predates the knob
+DEFAULT_SKIP_LABELS = ("tag:skip-review",)
+
 # correction turns per reviewer/verifier lane ([lanes] correction_turns); a box config.toml
 # predating the knob gets the default
 DEFAULT_CORRECTION_TURNS = 2
@@ -535,6 +540,9 @@ comment_budget = 10
 # when more heads than this are queued, new runs skip the Phase-1 reviewers and go
 # straight to Phase 2; 0 disables. Disclosed in the review and the gate comment.
 backlog_skip_phase1_above = 10
+# a PR carrying one of these labels gets no automatic review (new PR, push, post-merge audit)
+# until the label is removed; an explicit request (@mention, review request) still runs
+skip_labels = ["tag:skip-review"]
 # the general reviewer and the specialists of one phase run side by side, at most this
 # many at once per run (1 = one after another, 0 = all of them); the model pools below
 # still bound the machine
@@ -908,6 +916,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         watchdog_minutes=int(s["watchdog_minutes"]),
         comment_budget=int(s.get("comment_budget", settings.get("comment_budget", 10))),
         backlog_skip_phase1_above=int(s.get("backlog_skip_phase1_above", 10)),
+        skip_labels=_skip_labels(s.get("skip_labels", DEFAULT_SKIP_LABELS)),
         phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
         lane_pools={
             str(k): max(1, int(v))
@@ -944,6 +953,11 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         ci=_ci(t.get("ci") or {}),
         deferral=_deferral(t.get("deferral") or {}),
     )
+
+
+def _skip_labels(value: Any) -> tuple[str, ...]:
+    """`[scheduling] skip_labels`, lower-cased: GitHub label names are case-insensitive."""
+    return tuple(x.lower() for x in _strings(value) if x)
 
 
 def _deny_exec(value: Any) -> tuple[str, ...]:

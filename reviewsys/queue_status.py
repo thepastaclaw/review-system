@@ -223,7 +223,7 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     deferred = conn.execute(
         "SELECT p.repo,p.number,p.head_sha,p.is_draft,h.id,h.priority,h.status FROM prs p "
         "LEFT JOIN heads h ON h.repo=p.repo AND h.number=p.number AND h.sha=p.head_sha "
-        "WHERE p.state='open' AND ((p.is_draft=1 AND (h.status IS NULL OR h.status!='queued')) "
+        "WHERE p.state='open' AND p.skip_label=0 AND ((p.is_draft=1 AND (h.status IS NULL OR h.status!='queued')) "
         "OR (h.status='queued' AND h.eligible_at>? AND h.priority=0 AND h.attempts=0))",
         (ts,),
     ).fetchall()
@@ -253,6 +253,7 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
                 stats["deferred"] += 1
         except Exception as exc:
             log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
+    _note_skip_labels(conn, cfg, gh, stats)
     # max_runs counts audit runs too
     active = conn.execute(
         "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
@@ -288,6 +289,44 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
             continue
         stats["written"] += 1
     return stats
+
+
+SKIP_LABEL_NOTE = "a label on the PR turns automatic review off"
+
+
+def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict[str, int]) -> None:
+    """A labelled PR's gate comment, left by a review that ended or never started ("queued",
+    "starts in 30 min"), says the PR is not reviewed instead. Never creates one: the label asks
+    for quiet. Left alone while a run is in flight (a requested review, or one still winding
+    down after ingest closed its head) and when a requested review finished on the commit (its
+    body stands). Each (PR, commit) is checked once, so a labelled PR costs no read per pass."""
+    from .ingest import skip_noted_key
+
+    rows = conn.execute(
+        "SELECT p.repo,p.number,p.head_sha FROM prs p WHERE p.state='open' AND p.skip_label=1 "
+        "AND NOT EXISTS (SELECT 1 FROM heads h WHERE h.repo=p.repo AND h.number=p.number "
+        "AND h.queue='live' AND (h.status IN ('queued','running') "
+        "OR (h.sha=p.head_sha AND h.status IN ('done','failed')))) "
+        "AND NOT EXISTS (SELECT 1 FROM runs r JOIN heads h ON h.id=r.head_id "
+        "WHERE h.repo=p.repo AND h.number=p.number AND r.status IN ('spawned','running'))"
+    ).fetchall()
+    for p in rows:
+        key = skip_noted_key(p["repo"], p["number"])
+        if kv_get(conn, key) == p["head_sha"]:
+            continue
+        if stats["written"] >= MAX_WRITES_PER_PASS:
+            stats["deferred"] += 1
+            continue
+        try:
+            c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
+            rendered = github.gate_body("closed", p["head_sha"], reason=SKIP_LABEL_NOTE)
+            if c and str(c.get("body") or "") != rendered:
+                _write(conn, gh, p["repo"], p["number"], c, rendered)
+                stats["written"] += 1
+            with tx(conn):
+                kv_set(conn, key, p["head_sha"])
+        except Exception as exc:
+            log.warning("skip-label comment %s#%s failed: %s", p["repo"], p["number"], exc)
 
 
 def _editor(gh: Gh, comment: dict[str, Any]) -> str:

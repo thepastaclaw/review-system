@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -128,6 +128,10 @@ MIGRATIONS: dict[int, str] = {
     # and the exporter look them up by run and kind; without this they scan the whole table
     6: """
     CREATE INDEX IF NOT EXISTS events_run ON events (run_id, kind);
+    """,
+    # the PR carries a `[scheduling] skip_labels` label: no automatic review (see ingest.py)
+    7: """
+    ALTER TABLE prs ADD COLUMN skip_label INTEGER NOT NULL DEFAULT 0;
     """,
 }
 
