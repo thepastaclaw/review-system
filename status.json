@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-20T03:13:01Z",
-  "generated_at": "2026-10-20T03:13:01Z",
+  "data_as_of": "2026-10-20T03:14:01Z",
+  "generated_at": "2026-10-20T03:14:01Z",
   "history": {
     "daily": [
       {
@@ -274,6 +274,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 816,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 5770,
+        "ts": "2026-10-20T03:13:22Z"
+      },
       {
         "detail": "attempt 1 sha=c7f9b20c",
         "kind": "run.spawned",
@@ -585,14 +593,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": null,
         "ts": "2026-10-19T23:48:37Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_fallback",
-        "number": 5487,
-        "repo": "dashpay/platform",
-        "run_id": 5766,
-        "ts": "2026-10-19T23:29:14Z"
       }
     ],
     "tokens_by_effort": [
@@ -1198,24 +1198,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-20T09:12:57Z",
-        "deadline_in_seconds": 21596,
+        "deadline_in_seconds": 21536,
         "degraded": false,
-        "elapsed_seconds": 4,
+        "elapsed_seconds": 64,
         "findings": null,
         "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-10-20T03:12:57Z",
+        "heartbeat_at": "2026-10-20T03:13:57Z",
         "id": 5770,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 38,
+            "state": "running"
+          }
+        ],
         "number": 816,
         "overdue": false,
-        "phase": "select",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/816",
         "priority": false,
-        "progress": 0.001,
+        "progress": 0.086,
         "queue": "live",
         "queued_at": "2026-10-20T02:42:30Z",
-        "remaining_seconds": 4000,
+        "remaining_seconds": 679,
         "repo": "PastaPastaPasta/yappr",
         "sha": "c7f9b20ca36e90d525b21bc41283612d673aa3b5",
         "started_at": "2026-10-20T03:12:57Z",
@@ -1229,23 +1240,65 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": []
+            },
             "name": "select",
             "seconds": 1,
             "started_at": "2026-10-20T03:13:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large cross-cutting diff directly changes consensus-governing moderation contract parameters and registered action fees that control peer-facing state transitions and funds movement, notably in the contract JSON files and registered-contract fee logic.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 17,
+            "started_at": "2026-10-20T03:13:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-10-20T03:13:19Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-20T03:13:22Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 38,
+            "started_at": "2026-10-20T03:13:23Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(moderation): one-day moderator window (D39) and D41 moderation parameters",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "triage",
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1332,7 +1385,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1346,17 +1399,17 @@
     "last_run_done_at": "2026-10-20T00:33:10Z",
     "last_run_started_at": "2026-10-20T03:12:57Z",
     "median_run_minutes": 28.216666666666665,
-    "notify_last_at": "2026-10-20T03:11:42Z",
+    "notify_last_at": "2026-10-20T03:13:58Z",
     "oldest_queued_at": "2026-10-20T03:00:16Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 765,
+        "age_seconds": 825,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-20T03:30:16Z",
-        "eligible_in_seconds": 1035,
+        "eligible_in_seconds": 975,
         "number": 821,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/821",
@@ -1370,12 +1423,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 79,
+        "age_seconds": 139,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-20T03:41:42Z",
-        "eligible_in_seconds": 1721,
+        "eligible_in_seconds": 1661,
         "number": 815,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/815",
@@ -1396,7 +1449,7 @@
       "reviews": 1,
       "tokens": 1575454
     },
-    "ts": "2026-10-20T03:13:01Z",
+    "ts": "2026-10-20T03:14:01Z",
     "typical_minutes_by_tier": {
       "critical": 17.6,
       "low": 6.4,
@@ -1407,7 +1460,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.06666666666666667,
+      "idle_minutes": 1.0666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
