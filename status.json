@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-20T18:32:00Z",
-  "generated_at": "2026-10-20T18:32:01Z",
+  "data_as_of": "2026-10-20T18:33:01Z",
+  "generated_at": "2026-10-20T18:33:02Z",
   "history": {
     "daily": [
       {
@@ -237,14 +237,14 @@
       "paths": {
         "normal": {
           "duration": {
-            "median_seconds": 836,
-            "n": 384,
-            "p90_seconds": 3848
+            "median_seconds": 833,
+            "n": 383,
+            "p90_seconds": 3853
           },
           "slot_wait": {
             "median_seconds": 0,
-            "n": 384,
-            "p90_seconds": 192
+            "n": 383,
+            "p90_seconds": 194
           },
           "wait": {
             "median_seconds": 1817,
@@ -274,6 +274,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=30bcd541",
+        "kind": "run.spawned",
+        "number": 5479,
+        "repo": "dashpay/platform",
+        "run_id": 5914,
+        "ts": "2026-10-20T18:32:40Z"
+      },
       {
         "detail": "ok in 2339s",
         "kind": "run.done",
@@ -584,14 +592,6 @@
         "number": 73,
         "repo": "dashpay/base-sdk",
         "run_id": 5909,
-        "ts": "2026-10-20T17:37:26Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_fallback",
-        "number": 74,
-        "repo": "dashpay/base-sdk",
-        "run_id": 5910,
         "ts": "2026-10-20T17:37:26Z"
       }
     ],
@@ -1186,14 +1186,89 @@
       "findings_posted": 5059,
       "reviews": 6290,
       "reviews_imported": 2245,
-      "runs": 5913,
+      "runs": 5914,
       "tokens_in": 47529965126,
       "tokens_out": 613535592,
       "tokens_total": 48143500718
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-21T00:32:40Z",
+        "deadline_in_seconds": 21579,
+        "degraded": false,
+        "elapsed_seconds": 21,
+        "findings": null,
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-10-20T18:32:56Z",
+        "id": 5914,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "low",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "prep",
+            "pool": "gpt",
+            "role": "prep",
+            "since_seconds": 3,
+            "state": "running"
+          }
+        ],
+        "number": 5479,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/platform/pull/5479",
+        "priority": false,
+        "progress": 0.023,
+        "queue": "live",
+        "queued_at": "2026-10-20T18:02:40Z",
+        "remaining_seconds": 902,
+        "repo": "dashpay/platform",
+        "sha": "30bcd541822d60dc4e4287acafe505cbe6a59e5b",
+        "started_at": "2026-10-20T18:32:40Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 15,
+            "started_at": "2026-10-20T18:32:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-20T18:32:57Z",
+            "status": "running"
+          },
+          {
+            "info": {},
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-20T18:32:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "feat(platform-wallet-storage): persist DashPay backfill coverage and outbound-account markers",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1800
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1209,7 +1284,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1227,7 +1302,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-20T18:30:36Z",
+        "at": "2026-10-20T18:32:42Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1247,7 +1322,8 @@
       "closed": 464,
       "done": 6211,
       "failed": 75,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2305
     },
     "ingest_error_streak": 0,
@@ -1273,7 +1349,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1285,40 +1361,21 @@
       }
     ],
     "last_run_done_at": "2026-10-20T18:31:03Z",
-    "last_run_started_at": "2026-10-20T17:52:03Z",
+    "last_run_started_at": "2026-10-20T18:32:40Z",
     "median_run_minutes": 16.783333333333335,
     "notify_last_at": "2026-10-20T18:30:56Z",
-    "oldest_queued_at": "2026-10-20T18:02:40Z",
+    "oldest_queued_at": "2026-10-20T18:17:55Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1760,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-10-20T18:32:40Z",
-        "eligible_in_seconds": 40,
-        "number": 5479,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5479",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5479#issuecomment-6226615413",
-        "priority": false,
-        "queued_at": "2026-10-20T18:02:40Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "30bcd541822d60dc4e4287acafe505cbe6a59e5b",
-        "title": "feat(platform-wallet-storage): persist DashPay backfill coverage and outbound-account markers",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 845,
+        "age_seconds": 906,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-10-20T18:47:55Z",
-        "eligible_in_seconds": 955,
+        "eligible_in_seconds": 894,
         "number": 7927,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7927",
         "prioritize_url": "https://github.com/dashpay/dash/issues/7927#issuecomment-6298025453",
         "priority": false,
@@ -1337,7 +1394,7 @@
       "reviews": 118,
       "tokens": 1103184565
     },
-    "ts": "2026-10-20T18:32:00Z",
+    "ts": "2026-10-20T18:33:01Z",
     "typical_minutes_by_tier": {
       "critical": 16.5,
       "low": 7.3,
@@ -1346,9 +1403,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 39.95,
+      "idle_minutes": 0.36666666666666664,
       "ingest_stale": false,
       "stuck": false
     }
