@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-20T07:51:01Z",
-  "generated_at": "2026-10-20T07:51:01Z",
+  "data_as_of": "2026-10-20T07:52:00Z",
+  "generated_at": "2026-10-20T07:52:01Z",
   "history": {
     "daily": [
       {
@@ -274,6 +274,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_fallback",
+        "number": 4706,
+        "repo": "dashpay/platform",
+        "run_id": 5822,
+        "ts": "2026-10-20T07:51:27Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 4706,
+        "repo": "dashpay/platform",
+        "run_id": 5822,
+        "ts": "2026-10-20T07:51:24Z"
+      },
       {
         "detail": "attempt 1 sha=a04ffca0",
         "kind": "run.spawned",
@@ -577,22 +593,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 5815,
         "ts": "2026-10-20T07:35:23Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 820,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5819,
-        "ts": "2026-10-20T07:34:49Z"
-      },
-      {
-        "detail": "attempt 1 sha=9495532c",
-        "kind": "run.spawned",
-        "number": 820,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 5819,
-        "ts": "2026-10-20T07:34:16Z"
       }
     ],
     "tokens_by_effort": [
@@ -622,7 +622,7 @@
       },
       {
         "effort": "high",
-        "lanes": 14534,
+        "lanes": 14538,
         "tokens_in": 14265913747,
         "tokens_out": 132812262
       },
@@ -656,8 +656,8 @@
         "tokens_out": 259385
       },
       {
-        "avg_tokens_per_lane": 3050937.0,
-        "lanes": 1494,
+        "avg_tokens_per_lane": 3042790.0,
+        "lanes": 1498,
         "model": "gemini-3.8-flash-high",
         "tokens_in": 4527808257,
         "tokens_out": 30290908
@@ -678,6 +678,11 @@
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 5822,
+        "tokens_in": 0,
+        "tokens_out": 0
+      },
       {
         "run_id": 5821,
         "tokens_in": 700362,
@@ -1172,11 +1177,6 @@
         "run_id": 5719,
         "tokens_in": 15583064,
         "tokens_out": 174434
-      },
-      {
-        "run_id": 5718,
-        "tokens_in": 3476664,
-        "tokens_out": 134040
       }
     ],
     "totals": {
@@ -1198,35 +1198,136 @@
         "attempt": 1,
         "author": "DCG-Claude",
         "deadline_at": "2026-10-20T13:50:16Z",
-        "deadline_in_seconds": 21555,
+        "deadline_in_seconds": 21496,
         "degraded": false,
-        "elapsed_seconds": 45,
+        "elapsed_seconds": 104,
         "findings": null,
-        "heartbeat_age_seconds": 15,
-        "heartbeat_at": "2026-10-20T07:50:46Z",
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-20T07:51:47Z",
         "id": 5822,
-        "lanes": [],
+        "lanes": [
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "rust-quality",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "general",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          },
+          {
+            "attempt": 2,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "rust-quality",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          },
+          {
+            "attempt": 2,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "general",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          }
+        ],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 32,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 33,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 31,
+            "role": "architecture-layering",
+            "since_seconds": 34,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 35,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 35,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 37,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 36,
             "state": "running"
           }
         ],
         "number": 4706,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/4706",
         "priority": true,
-        "progress": null,
+        "progress": 0.034,
         "queue": "live",
         "queued_at": "2026-10-20T07:50:12Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 2945,
         "repo": "dashpay/platform",
         "sha": "a04ffca0148f44fe6a32997d1c13cb33d4584f05",
         "started_at": "2026-10-20T07:50:16Z",
@@ -1240,26 +1341,89 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 32,
+            "seconds": 44,
             "started_at": "2026-10-20T07:50:29Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, cross-cutting diff changes consensus-critical fee calculation and protocol version dispatch while moving storage-refund funds through owner-crediting logic in `Drive::calculate_fee_v1` and `credit_storage_refunds_to_owners_operations`.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 43,
+            "started_at": "2026-10-20T07:50:30Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 31,
-            "started_at": "2026-10-20T07:50:30Z",
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-10-20T07:51:15Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 5,
+            "name": "phase2",
+            "seconds": 37,
+            "started_at": "2026-10-20T07:51:23Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 37,
+            "started_at": "2026-10-20T07:51:23Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(platform)!: require fee history for storage refunds and credit their recorded owners",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 4
       }
     ],
@@ -1280,12 +1444,12 @@
     "capacity": {
       "live_in_flight": 1,
       "max_runs": 30,
-      "maximum": 12,
-      "priority_overflow": 3,
-      "reason": "3 of 4 OpenAI accounts usable",
-      "scale": 3,
-      "typical": 9,
-      "usable_accounts": 3
+      "maximum": 4,
+      "priority_overflow": 1,
+      "reason": "1 of 4 OpenAI accounts usable",
+      "scale": 1,
+      "typical": 3,
+      "usable_accounts": 1
     },
     "ci_watches": {
       "queued": 0,
@@ -1296,7 +1460,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-20T07:49:48Z",
+        "at": "2026-10-20T07:51:58Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1343,13 +1507,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
-        "slots": 12,
+        "running": 5,
+        "slots": 4,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1362,12 +1526,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1308,
+        "age_seconds": 1367,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-20T07:59:13Z",
-        "eligible_in_seconds": 492,
+        "eligible_in_seconds": 433,
         "number": 841,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/841",
@@ -1381,12 +1545,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 805,
+        "age_seconds": 864,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-20T08:07:36Z",
-        "eligible_in_seconds": 995,
+        "eligible_in_seconds": 936,
         "number": 844,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/844",
@@ -1400,12 +1564,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 562,
+        "age_seconds": 621,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-20T08:11:39Z",
-        "eligible_in_seconds": 1238,
+        "eligible_in_seconds": 1179,
         "number": 3417,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/3417",
@@ -1419,12 +1583,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 319,
+        "age_seconds": 378,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-20T08:15:42Z",
-        "eligible_in_seconds": 1481,
+        "eligible_in_seconds": 1422,
         "number": 828,
         "position": 4,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/828",
@@ -1438,12 +1602,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 96,
+        "age_seconds": 155,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-20T08:19:25Z",
-        "eligible_in_seconds": 1704,
+        "eligible_in_seconds": 1645,
         "number": 843,
         "position": 5,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/843",
@@ -1457,12 +1621,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 96,
+        "age_seconds": 155,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-20T08:19:25Z",
-        "eligible_in_seconds": 1704,
+        "eligible_in_seconds": 1645,
         "number": 821,
         "position": 6,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/821",
@@ -1483,7 +1647,7 @@
       "reviews": 45,
       "tokens": 214925167
     },
-    "ts": "2026-10-20T07:51:01Z",
+    "ts": "2026-10-20T07:52:00Z",
     "typical_minutes_by_tier": {
       "critical": 16.8,
       "low": 6.4,
@@ -1494,7 +1658,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.75,
+      "idle_minutes": 1.75,
       "ingest_stale": false,
       "stuck": false
     }
