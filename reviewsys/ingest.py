@@ -87,10 +87,10 @@ def skip_label(cfg: Config, labels: tuple[str, ...]) -> str | None:
 
 # a head ingest closed because the PR carries a skip label; re-opened when the label goes
 SKIP_LABEL_REASON = "pr_skip_label"
+# heads the ingest pass creates on its own; every other trigger is someone asking for a review
+AUTOMATIC_TRIGGERS = frozenset({Trigger.NEW_PR.value, Trigger.NEW_PUSH.value})
 # what a skip label refuses: the heads nobody asked for (a new PR or push, a CI check)
-SKIPPABLE_TRIGGERS = frozenset(
-    {Trigger.NEW_PR.value, Trigger.NEW_PUSH.value, Trigger.CI_FAILED.value}
-)
+SKIPPABLE_TRIGGERS = AUTOMATIC_TRIGGERS | {Trigger.CI_FAILED.value}
 
 
 def skip_noted_key(repo: str, number: int) -> str:
@@ -131,12 +131,22 @@ def enqueue_head(
     (the CI check is re-queued by its watch if still needed), or, while it runs, right after.
     """
     ts = ts or now()
-    if trigger.value in SKIPPABLE_TRIGGERS and _has_skip_label(conn, repo, number):
+    labelled = _has_skip_label(conn, repo, number)
+    if labelled and trigger in SKIPPABLE_TRIGGERS:
         return "noop"
     existing = conn.execute(
         "SELECT id, status, priority, queue, trigger, reason FROM heads WHERE repo=? AND number=? AND sha=?",
         (repo, number, sha),
     ).fetchone()
+    skip_closed = (
+        existing is not None
+        and existing["status"] == HeadStatus.CLOSED
+        and existing["reason"] == SKIP_LABEL_REASON
+    )
+    if labelled and trigger == Trigger.REVIEW_REPLY and (existing is None or skip_closed):
+        # an answer under a finding of an older commit ("fixed in ...") asks for no review of
+        # this one; on a labelled PR it only re-opens a commit that was reviewed
+        return "noop"
     if existing and existing["queue"] == "audit":
         return "noop"  # the PR merged: its head belongs to the audit queue now
     if trigger == Trigger.CI_FAILED:
@@ -145,13 +155,21 @@ def enqueue_head(
             return "noop"
         return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
     priority = 1 if trigger.priority else 0
-    if (
-        existing
-        and existing["status"] == HeadStatus.CLOSED
-        and existing["reason"] == SKIP_LABEL_REASON
-    ):
+    eligible = ts if priority else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
+    if existing and skip_closed:
         # closed only because of a skip label: the label is gone (ingest) or someone asked
-        return _reopen_skipped(conn, cfg, existing["id"], repo, number, sha, trigger, ts)
+        supersede_other_heads(conn, repo, number, sha, ts)
+        return _requeue(
+            conn,
+            existing["id"],
+            repo,
+            number,
+            sha,
+            trigger,
+            ts,
+            priority=priority,
+            eligible=eligible,
+        )
     if existing and existing["trigger"] == Trigger.CI_FAILED.value and trigger in REOPENING:
         taken = _take_over_ci_check(conn, existing, trigger, ts)
         if taken:
@@ -177,7 +195,6 @@ def enqueue_head(
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
     supersede_other_heads(conn, repo, number, sha, ts)
-    eligible = ts if priority else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
     conn.execute(
         "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
         (repo, number, sha, trigger.value, priority, HeadStatus.QUEUED.value, ts, eligible),
@@ -193,13 +210,22 @@ def enqueue_head(
 
 
 def supersede_other_heads(
-    conn: sqlite3.Connection, repo: str, number: int, sha: str, ts: str
+    conn: sqlite3.Connection,
+    repo: str,
+    number: int,
+    sha: str,
+    ts: str,
+    *,
+    triggers: frozenset[str] | None = None,
 ) -> None:
-    """End the PR's queued and running live heads for commits other than `sha`."""
+    """End the PR's queued and running live heads for commits other than `sha` (only those
+    with one of `triggers`, when given)."""
     for row in conn.execute(
-        "SELECT id FROM heads WHERE repo=? AND number=? AND sha<>? AND status IN ('queued','running') AND queue='live'",
+        "SELECT id, trigger FROM heads WHERE repo=? AND number=? AND sha<>? AND status IN ('queued','running') AND queue='live'",
         (repo, number, sha),
     ).fetchall():
+        if triggers is not None and row["trigger"] not in triggers:
+            continue
         conn.execute(
             "UPDATE heads SET status='superseded', superseded_at=?, finished_at=?, reason=? WHERE id=?",
             (ts, ts, f"new head {sha[:8]}", row["id"]),
@@ -221,11 +247,14 @@ def _requeue(
     sha: str,
     trigger: Trigger,
     ts: str,
+    *,
+    priority: int = 1,
+    eligible: str | None = None,
 ) -> str:
-    """Re-open a finished head at the front of the line."""
+    """Re-open a finished head, by default at the front of the line."""
     conn.execute(
-        "UPDATE heads SET status='queued', priority=1, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
-        (trigger.value, ts, ts, head_id),
+        "UPDATE heads SET status='queued', priority=?, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
+        (priority, trigger.value, ts, eligible or ts, head_id),
     )
     event(
         conn,
@@ -233,35 +262,6 @@ def _requeue(
         repo=repo,
         number=number,
         detail=f"{sha[:8]} re-opened by {trigger.value}",
-    )
-    return "requeued"
-
-
-def _reopen_skipped(
-    conn: sqlite3.Connection,
-    cfg: Config,
-    head_id: int,
-    repo: str,
-    number: int,
-    sha: str,
-    trigger: Trigger,
-    ts: str,
-) -> str:
-    """Re-open a head closed for a skip label as if it had just been queued: an automatic
-    trigger waits out the debounce, a request goes to the front."""
-    priority = 1 if trigger.priority else 0
-    eligible = ts if priority else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
-    supersede_other_heads(conn, repo, number, sha, ts)
-    conn.execute(
-        "UPDATE heads SET status='queued', priority=?, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
-        (priority, trigger.value, ts, eligible, head_id),
-    )
-    event(
-        conn,
-        "head.requeued",
-        repo=repo,
-        number=number,
-        detail=f"{sha[:8]} skip label gone or overridden, trigger={trigger.value}",
     )
     return "requeued"
 
@@ -291,10 +291,6 @@ def _take_over_ci_check(
             kv_set(conn, f"rereview.after_run:{run['id']}", "1")
             return "promoted"
     return None
-
-
-# heads the ingest pass creates on its own; every other trigger is someone asking for a review
-AUTOMATIC_TRIGGERS = frozenset({Trigger.NEW_PR.value, Trigger.NEW_PUSH.value})
 
 
 def close_pr_heads(
@@ -328,14 +324,15 @@ def close_pr_heads(
 
 
 def skip_pr_heads(conn: sqlite3.Connection, repo: str, number: int, sha: str, *, ts: str) -> int:
-    """The PR carries a skip label: end the reviews nobody asked for. Heads of older commits
-    are superseded (as a push would; a requested review there may still publish), a new PR/push
-    head of `sha` closes (re-opened when the label goes), and a queued or running CI check goes
-    back to the review it re-opened, its watch ended. A review someone asked for on `sha` runs
-    on. Returns how many heads ended."""
+    """The PR carries a skip label: end the reviews nobody asked for. Automatic heads of other
+    commits are superseded (as a push would), a new PR/push head of `sha` closes (re-opened
+    when the label goes), and a queued or running CI check goes back to the review it
+    re-opened, its watch ended. A review someone asked for runs on, whatever its commit: the
+    poll can lag the router, so `sha` may be older than the request's. Returns how many heads
+    of `sha` ended."""
     from . import ci  # ci imports this module
 
-    supersede_other_heads(conn, repo, number, sha, ts)
+    supersede_other_heads(conn, repo, number, sha, ts, triggers=SKIPPABLE_TRIGGERS)
     n = 0
     for row in conn.execute(
         "SELECT id, trigger FROM heads WHERE repo=? AND number=? AND sha=? AND status IN ('queued','running') AND queue='live'",

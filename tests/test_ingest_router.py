@@ -4,7 +4,12 @@ from datetime import timedelta
 from reviewsys.db import kv_get, kv_set, now, parse_ts, tx
 from reviewsys.ingest import enqueue_head, ingest_notifications, ingest_prs
 from reviewsys.models import Trigger
-from reviewsys.queue_status import PRIORITY_BOX, queued_order, update_queue_comments
+from reviewsys.queue_status import (
+    PRIORITY_BOX,
+    SKIP_LABEL_NOTE,
+    queued_order,
+    update_queue_comments,
+)
 from reviewsys.router import route_inbox
 
 
@@ -505,10 +510,30 @@ def _labels(*names):
     return {"nodes": [{"name": n} for n in names]}
 
 
+SKIP = _labels("tag:skip-review")
+
+
+def _gate(conn, gh, n):
+    with tx(conn):
+        kv_set(conn, f"queue.comment_id:dashpay/platform#{n}", str(n))
+    ep = f"repos/dashpay/platform/issues/comments/{n}"
+    gh.routes[ep] = {
+        "id": n,
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-gate v1 -->\n🕓 queued",
+    }
+    return ep
+
+
+def _heads(conn, n):
+    return [
+        tuple(r)
+        for r in conn.execute("SELECT sha, status FROM heads WHERE number=? ORDER BY id", (n,))
+    ]
+
+
 def test_skip_label_closes_automatic_heads_until_removed(cfg, conn, gh):
     """dashpay/base-sdk marks PRs `tag:skip-review` that must not be reviewed agentically."""
-    from reviewsys.queue_status import SKIP_LABEL_NOTE
-
     sha = "8" * 40
     # labelled from the start: no head at all
     gh.open_prs["dashpay/platform"] = [pr(8, sha, labels=_labels("topic:P2P", "tag:skip-review"))]
@@ -518,14 +543,7 @@ def test_skip_label_closes_automatic_heads_until_removed(cfg, conn, gh):
     gh.open_prs["dashpay/platform"] = [pr(8, sha)]
     assert ingest_prs(conn, cfg, gh)["dashpay/platform"]["created"] == 1
     # labelled while waiting (case-insensitive): closed, and its gate comment says why
-    with tx(conn):
-        kv_set(conn, "queue.comment_id:dashpay/platform#8", "8")
-    ep = "repos/dashpay/platform/issues/comments/8"
-    gh.routes[ep] = {
-        "id": 8,
-        "user": {"login": "thepastaclaw"},
-        "body": "<!-- thepastaclaw-gate v1 -->\n🕓 queued",
-    }
+    ep = _gate(conn, gh, 8)
     gh.open_prs["dashpay/platform"] = [pr(8, sha, labels=_labels("Tag:Skip-Review"))]
     assert ingest_prs(conn, cfg, gh)["dashpay/platform"]["skipped"] == 1
     row = conn.execute("SELECT status, reason FROM heads WHERE number=8").fetchone()
@@ -552,7 +570,7 @@ def test_explicit_request_on_a_skip_labelled_pr_still_runs(cfg, conn, gh):
     sha = "9" * 40
     gh.open_prs["dashpay/platform"] = [pr(9, sha)]
     ingest_prs(conn, cfg, gh)
-    gh.open_prs["dashpay/platform"] = [pr(9, sha, labels=_labels("tag:skip-review"))]
+    gh.open_prs["dashpay/platform"] = [pr(9, sha, labels=SKIP)]
     ingest_prs(conn, cfg, gh)
     with tx(conn):
         res = enqueue_head(conn, cfg, "dashpay/platform", 9, sha, Trigger.MENTION)
@@ -563,28 +581,6 @@ def test_explicit_request_on_a_skip_labelled_pr_still_runs(cfg, conn, gh):
     assert conn.execute("SELECT status FROM heads WHERE number=9").fetchone()[0] == "queued"
 
 
-SKIP = {"nodes": [{"name": "tag:skip-review"}]}
-
-
-def _gate(conn, gh, n):
-    with tx(conn):
-        kv_set(conn, f"queue.comment_id:dashpay/platform#{n}", str(n))
-    ep = f"repos/dashpay/platform/issues/comments/{n}"
-    gh.routes[ep] = {
-        "id": n,
-        "user": {"login": "thepastaclaw"},
-        "body": "<!-- thepastaclaw-gate v1 -->\n🕓 queued",
-    }
-    return ep
-
-
-def _heads(conn, n):
-    return [
-        tuple(r)
-        for r in conn.execute("SELECT sha, status FROM heads WHERE number=? ORDER BY id", (n,))
-    ]
-
-
 def test_labelled_draft_gets_no_comment(cfg, conn, gh):
     gh.open_prs["dashpay/platform"] = [pr(11, "a" * 40, isDraft=True, labels=SKIP)]
     ingest_prs(conn, cfg, gh)
@@ -593,22 +589,18 @@ def test_labelled_draft_gets_no_comment(cfg, conn, gh):
 
 
 def test_relabel_on_the_same_commit_notes_again(cfg, conn, gh):
-    from reviewsys.queue_status import SKIP_LABEL_NOTE
-
     sha = "b" * 40
     gh.open_prs["dashpay/platform"] = [pr(12, sha)]
     ingest_prs(conn, cfg, gh)
     ep = _gate(conn, gh, 12)
-    for labels, noted in ((SKIP, True), (None, False), (SKIP, True)):
-        gh.open_prs["dashpay/platform"] = [pr(12, sha, **({"labels": labels} if labels else {}))]
+    for labels, noted in ((SKIP, True), (_labels(), False), (SKIP, True)):
+        gh.open_prs["dashpay/platform"] = [pr(12, sha, labels=labels)]
         ingest_prs(conn, cfg, gh)
         update_queue_comments(conn, cfg, gh)
         assert (SKIP_LABEL_NOTE in gh.routes[ep]["body"]) is noted
 
 
 def test_label_and_push_in_one_poll_notes_the_comment(cfg, conn, gh):
-    from reviewsys.queue_status import SKIP_LABEL_NOTE
-
     gh.open_prs["dashpay/platform"] = [pr(13, "c" * 40)]
     ingest_prs(conn, cfg, gh)
     ep = _gate(conn, gh, 13)
@@ -639,16 +631,20 @@ def test_skip_label_ends_a_ci_check_and_refuses_new_ones(cfg, conn, gh):
     assert ingest_prs(conn, cfg, gh)["dashpay/platform"]["requeued"] == 0
 
 
-def test_requested_review_of_an_older_commit_is_superseded_not_closed(cfg, conn, gh):
-    """A superseded head past verify2 still publishes; a closed one is cancelled."""
-    gh.open_prs["dashpay/platform"] = [pr(15, "f" * 40, labels=SKIP)]
+def test_skip_label_ends_only_automatic_heads_of_other_commits(cfg, conn, gh):
+    """A requested review of another commit runs on (the worker retires it if the commit is
+    really stale); an automatic one is superseded as a push would."""
+    gh.open_prs["dashpay/platform"] = [pr(15, "f" * 40)]
     ingest_prs(conn, cfg, gh)
-    with tx(conn):
-        enqueue_head(conn, cfg, "dashpay/platform", 15, "f" * 40, Trigger.MENTION)
-        conn.execute("UPDATE heads SET status='running' WHERE number=15")
+    with tx(conn):  # as the router leaves it beside the automatic head (no supersede)
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) "
+            "VALUES ('dashpay/platform', 15, ?, 'mention', 1, 'queued', ?, ?)",
+            ("0" * 40, now(), now()),
+        )
     gh.open_prs["dashpay/platform"] = [pr(15, "1" * 40, labels=SKIP)]
     ingest_prs(conn, cfg, gh)
-    assert _heads(conn, 15) == [("f" * 40, "superseded")]
+    assert _heads(conn, 15) == [("f" * 40, "superseded"), ("0" * 40, "queued")]
 
 
 def test_reopened_head_supersedes_the_other_commit(cfg, conn, gh):
@@ -665,8 +661,6 @@ def test_reopened_head_supersedes_the_other_commit(cfg, conn, gh):
 
 
 def test_no_note_while_a_run_winds_down(cfg, conn, gh):
-    from reviewsys.queue_status import SKIP_LABEL_NOTE
-
     sha = "4" * 40
     gh.open_prs["dashpay/platform"] = [pr(17, sha)]
     ingest_prs(conn, cfg, gh)
@@ -688,6 +682,59 @@ def test_no_note_while_a_run_winds_down(cfg, conn, gh):
         conn.execute("UPDATE runs SET status='cancelled' WHERE head_id=?", (head,))
     update_queue_comments(conn, cfg, gh)
     assert SKIP_LABEL_NOTE in gh.routes[ep]["body"]
+
+
+def test_reply_on_a_labelled_pr_reviews_no_new_commit(cfg, conn, gh):
+    """ "Fixed in abc" under a finding of an older commit is no request to review this one."""
+    a, b = "5" * 40, "6" * 40
+    gh.open_prs["dashpay/platform"] = [pr(18, a)]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE number=18")
+    gh.open_prs["dashpay/platform"] = [pr(18, b, labels=SKIP)]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        assert enqueue_head(conn, cfg, "dashpay/platform", 18, b, Trigger.REVIEW_REPLY) == "noop"
+        # a reviewed commit still gets its conversation
+        assert enqueue_head(conn, cfg, "dashpay/platform", 18, a, Trigger.REVIEW_REPLY) == (
+            "requeued"
+        )
+
+
+def test_box_ticked_before_the_label_is_honoured_not_erased(cfg, conn, gh):
+    sha = "7" * 40
+    gh.open_prs["dashpay/platform"] = [pr(19, sha)]
+    ingest_prs(conn, cfg, gh)
+    ep = _gate(conn, gh, 19)
+    gh.routes[ep]["body"] += "\n- [x] **Request normal review** — click when ready."
+    gh.open_prs["dashpay/platform"] = [pr(19, sha, labels=SKIP)]
+    ingest_prs(conn, cfg, gh)
+    update_queue_comments(conn, cfg, gh)
+    row = conn.execute("SELECT status, trigger FROM heads WHERE number=19").fetchone()
+    assert tuple(row) == ("queued", "manual")
+    assert SKIP_LABEL_NOTE not in gh.routes[ep]["body"]
+
+
+def test_lagging_poll_leaves_a_newer_requested_review_alone(cfg, conn, gh):
+    """The router saw commit B over REST; the next GraphQL poll still reports A."""
+    a, b = "8" * 40, "9" * 40
+    gh.open_prs["dashpay/platform"] = [pr(20, a, labels=SKIP)]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 20, b, Trigger.MENTION)
+    ingest_prs(conn, cfg, gh)
+    assert _heads(conn, 20) == [(b, "queued")]
+
+
+def test_no_ci_watch_on_a_labelled_pr(cfg, conn, gh):
+    from reviewsys import ci
+
+    gh.open_prs["dashpay/platform"] = [pr(21, "a" * 40, labels=SKIP)]
+    ingest_prs(conn, cfg, gh)
+    res = ci.register(
+        conn, cfg, gh, repo="dashpay/platform", number=21, sha="a" * 40, run_id=1, known=[]
+    )
+    assert res == "skip label"
 
 
 def test_skip_labels_config(tmp_path, skills_dir):

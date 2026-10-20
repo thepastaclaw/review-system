@@ -149,6 +149,11 @@ def register(
     running or failed since. Returns what it did: `watching`, or why not."""
     if not cfg.ci.enabled:
         return "disabled"
+    pr = conn.execute(
+        "SELECT skip_label FROM prs WHERE repo=? AND number=?", (repo, number)
+    ).fetchone()
+    if pr and pr["skip_label"]:
+        return "skip label"  # a CI failure would only be refused (ingest.SKIPPABLE_TRIGGERS)
     if labels.latest_verdict(conn, repo, number, sha) != "APPROVE":
         return "not approved"
     if kv_get(conn, updated_key(repo, number, sha)):

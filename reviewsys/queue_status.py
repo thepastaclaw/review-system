@@ -319,8 +319,21 @@ def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict
             continue
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
-            rendered = github.gate_body("closed", p["head_sha"], reason=SKIP_LABEL_NOTE)
-            if c and str(c.get("body") or "") != rendered:
+            body = str(c.get("body") or "") if c else ""
+            if normal_requested(body) or priority_requested(body):
+                # a box ticked before the label landed is a request: honour it, never erase it
+                from .ingest import enqueue_head
+
+                trigger = Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.MANUAL
+                with tx(conn):
+                    enqueue_head(conn, cfg, p["repo"], p["number"], p["head_sha"], trigger)
+                continue
+            rendered = github.gate_body(
+                "closed",
+                p["head_sha"],
+                reason=f"{SKIP_LABEL_NOTE}; `@{cfg.bot_login} review` still asks for one",
+            )
+            if c and body != rendered:
                 _write(conn, gh, p["repo"], p["number"], c, rendered)
                 stats["written"] += 1
             with tx(conn):

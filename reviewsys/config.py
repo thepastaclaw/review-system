@@ -957,7 +957,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
 
 def _skip_labels(value: Any) -> tuple[str, ...]:
     """`[scheduling] skip_labels`, lower-cased: GitHub label names are case-insensitive."""
-    return tuple(x.lower() for x in _strings(value) if x)
+    return tuple(x.lower() for x in _strings(value))
 
 
 def _deny_exec(value: Any) -> tuple[str, ...]:
