@@ -825,6 +825,32 @@ off), and discloses it: the provenance starts with "Ad hoc review: this reposito
 no PastaClaw review skill …" and the gate comment carries "ad hoc (no repo skill)".
 Open-PR polling still covers only enabled repos; ad hoc is mention-driven by design.
 
+## Skip label (PRs that must not be reviewed)
+
+A PR carrying a label from `[scheduling] skip_labels` (default `["tag:skip-review"]`,
+matched case-insensitively; `[]` turns the feature off) gets no automatic review. Ingest
+records the flag on `prs.skip_label` and, while it is set:
+
+- queues no head for a new PR or push, and `enqueue_head` refuses every automatic trigger
+  (`new_pr`, `new_push`, `ci_failed`); no CI watch is registered, so a CI failure after an
+  APPROVE re-checks nothing;
+- lets a reply under a finding re-open only a commit that was reviewed, never start a review
+  of a new one ("fixed in abc" is no request);
+- ends what is in flight: automatic heads of other commits are superseded (as a push would),
+  a new PR/push head of the current commit is closed (`pr_skip_label`, event
+  `head.skip_label`), and a CI check goes back to the review it re-opened with its watch
+  ended. A requested review runs on whatever its commit (the poll can lag the router);
+- is checked before the draft rule, so a labelled draft gets no "draft" comment either;
+- leaves the PR out of the post-merge audit.
+
+An existing gate comment is rewritten once per commit to "Not reviewed — a label on the PR
+turns automatic review off; `@thepastaclaw review` still asks for one" (no boxes; no comment
+is ever created), but not while a run is still in flight or after a requested review
+finished on the commit. A box ticked on the comment before the label landed is honoured as
+a request instead of being overwritten. An explicit request
+(`@thepastaclaw review`, a review request) still runs, like on a draft. Removing the label
+re-queues the current commit as a normal head, behind the push debounce.
+
 ## Verdict labels (filtering by the bot's approval)
 
 GitHub counts a review toward the merge decision only when the reviewer has write

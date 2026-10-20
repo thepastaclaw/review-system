@@ -28,6 +28,7 @@ def _pr(
     repo="dashpay/platform",
     author="QuantumExplorer",
     head=HEAD,
+    labels=(),
 ):
     return audit.MergedPr(
         repo=repo,
@@ -41,6 +42,7 @@ def _pr(
         merge_commit=MERGE,
         size=120,
         reviews=list(reviews),
+        labels=tuple(labels),
     )
 
 
@@ -115,6 +117,10 @@ def test_enqueue_creates_audit_head_and_is_idempotent(cfg, conn):
         )
         assert (
             audit.enqueue(conn, cfg, _pr(9, author="dependabot[bot]"), source="seed", rank=1)
+            == "excluded"
+        )
+        assert (
+            audit.enqueue(conn, cfg, _pr(11, labels=["Tag:Skip-Review"]), source="seed", rank=1)
             == "excluded"
         )
         assert (
