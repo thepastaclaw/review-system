@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-21T11:19:01Z",
-  "generated_at": "2026-10-21T11:19:01Z",
+  "data_as_of": "2026-10-21T11:20:01Z",
+  "generated_at": "2026-10-21T11:20:01Z",
   "history": {
     "daily": [
       {
@@ -253,7 +253,7 @@
           },
           "wait": {
             "median_seconds": 1818,
-            "n": 390,
+            "n": 391,
             "p90_seconds": 1854
           }
         },
@@ -279,6 +279,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=6e8006e9",
+        "kind": "run.spawned",
+        "number": 5512,
+        "repo": "dashpay/platform",
+        "run_id": 5955,
+        "ts": "2026-10-21T11:19:18Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -558,14 +566,6 @@
         "repo": "dashpay/dashwallet-ios",
         "run_id": 5949,
         "ts": "2026-10-21T10:36:11Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1205,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 5949,
-        "ts": "2026-10-21T10:36:09Z"
       },
       {
         "detail": null,
@@ -1191,7 +1191,7 @@
       "findings_posted": 5089,
       "reviews": 6324,
       "reviews_imported": 2245,
-      "runs": 5954,
+      "runs": 5955,
       "tokens_in": 47902358187,
       "tokens_out": 618851173,
       "tokens_total": 48521209360
@@ -1203,12 +1203,12 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-10-21T17:11:10Z",
-        "deadline_in_seconds": 21129,
+        "deadline_in_seconds": 21069,
         "degraded": false,
-        "elapsed_seconds": 471,
+        "elapsed_seconds": 531,
         "findings": null,
         "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-10-21T11:18:59Z",
+        "heartbeat_at": "2026-10-21T11:19:59Z",
         "id": 5954,
         "lanes": [
           {
@@ -1270,7 +1270,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 451,
+            "since_seconds": 511,
             "state": "running"
           }
         ],
@@ -1279,10 +1279,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1221",
         "priority": false,
-        "progress": 0.404,
+        "progress": 0.456,
         "queue": "live",
         "queued_at": "2026-10-21T10:41:00Z",
-        "remaining_seconds": 693,
+        "remaining_seconds": 633,
         "repo": "dashpay/dashwallet-ios",
         "sha": "b73e0401fafd0a26073909e9860cd7fa29b381f8",
         "started_at": "2026-10-21T11:11:10Z",
@@ -1353,7 +1353,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 453,
+            "seconds": 513,
             "started_at": "2026-10-21T11:11:28Z",
             "status": "running"
           }
@@ -1368,6 +1368,87 @@
           "publish"
         ],
         "wait_seconds": 1810
+      },
+      {
+        "attempt": 1,
+        "author": "llbartekll",
+        "deadline_at": "2026-10-21T17:19:18Z",
+        "deadline_in_seconds": 21557,
+        "degraded": false,
+        "elapsed_seconds": 43,
+        "findings": null,
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-21T11:19:48Z",
+        "id": 5955,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5512,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5512",
+        "priority": false,
+        "progress": 0.05,
+        "queue": "live",
+        "queued_at": "2026-10-21T10:48:57Z",
+        "remaining_seconds": 824,
+        "repo": "dashpay/platform",
+        "sha": "6e8006e9716becf0d7adc4096f6f72efa9a5d447",
+        "started_at": "2026-10-21T11:19:18Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-10-21T11:19:18Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 29,
+            "started_at": "2026-10-21T11:19:24Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a substantial Swift concurrency and lifecycle change involving asynchronous FFI invocation, shutdown coordination, and race prevention, but it does not itself alter consensus, funds movement, cryptography, key handling, peer-facing deserialization, or storage migration logic.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 29,
+            "started_at": "2026-10-21T11:19:24Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-21T11:19:54Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(swift-sdk)!: start SPV off the main thread",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1821
       }
     ],
     "audit": {
@@ -1385,7 +1466,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1423,8 +1504,8 @@
       "closed": 466,
       "done": 6245,
       "failed": 75,
-      "queued": 3,
-      "running": 1,
+      "queued": 2,
+      "running": 2,
       "superseded": 2310
     },
     "ingest_error_streak": 0,
@@ -1462,40 +1543,21 @@
       }
     ],
     "last_run_done_at": "2026-10-21T11:07:14Z",
-    "last_run_started_at": "2026-10-21T11:11:10Z",
+    "last_run_started_at": "2026-10-21T11:19:18Z",
     "median_run_minutes": 19.683333333333334,
-    "notify_last_at": "2026-10-21T11:17:06Z",
-    "oldest_queued_at": "2026-10-21T10:48:57Z",
+    "notify_last_at": "2026-10-21T11:19:14Z",
+    "oldest_queued_at": "2026-10-21T11:08:42Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1804,
-        "attempts": 0,
-        "author": "llbartekll",
-        "eligible": true,
-        "eligible_at": "2026-10-21T11:18:57Z",
-        "eligible_in_seconds": 0,
-        "number": 5512,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5512",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5512#issuecomment-6314170132",
-        "priority": false,
-        "queued_at": "2026-10-21T10:48:57Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "6e8006e9716becf0d7adc4096f6f72efa9a5d447",
-        "title": "fix(swift-sdk)!: start SPV off the main thread",
-        "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 619,
+        "age_seconds": 679,
         "attempts": 0,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-10-21T11:38:42Z",
-        "eligible_in_seconds": 1181,
+        "eligible_in_seconds": 1121,
         "number": 1523,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1523",
         "prioritize_url": "https://github.com/dashpay/tenderdash/issues/1523#issuecomment-5909739822",
         "priority": false,
@@ -1507,14 +1569,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 382,
+        "age_seconds": 442,
         "attempts": 0,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-10-21T11:42:39Z",
-        "eligible_in_seconds": 1418,
+        "eligible_in_seconds": 1358,
         "number": 1513,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1513",
         "prioritize_url": "https://github.com/dashpay/tenderdash/issues/1513#issuecomment-5816306452",
         "priority": false,
@@ -1533,7 +1595,7 @@
       "reviews": 31,
       "tokens": 282033679
     },
-    "ts": "2026-10-21T11:19:01Z",
+    "ts": "2026-10-21T11:20:01Z",
     "typical_minutes_by_tier": {
       "critical": 14.8,
       "low": 6.5,
@@ -1542,9 +1604,9 @@
       "unknown": 0.5
     },
     "watchdog": {
-      "active": 1,
-      "eligible": 1,
-      "idle_minutes": 7.85,
+      "active": 2,
+      "eligible": 0,
+      "idle_minutes": 0.7166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
