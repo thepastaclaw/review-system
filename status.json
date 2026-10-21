@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-21T15:02:00Z",
-  "generated_at": "2026-10-21T15:02:01Z",
+  "data_as_of": "2026-10-21T15:03:00Z",
+  "generated_at": "2026-10-21T15:03:01Z",
   "history": {
     "daily": [
       {
@@ -242,18 +242,18 @@
       "paths": {
         "normal": {
           "duration": {
-            "median_seconds": 814,
-            "n": 327,
-            "p90_seconds": 3879
+            "median_seconds": 810,
+            "n": 326,
+            "p90_seconds": 3884
           },
           "slot_wait": {
             "median_seconds": 0,
-            "n": 327,
-            "p90_seconds": 47
+            "n": 326,
+            "p90_seconds": 48
           },
           "wait": {
             "median_seconds": 1817,
-            "n": 383,
+            "n": 382,
             "p90_seconds": 1854
           }
         },
@@ -279,6 +279,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_fallback",
+        "number": 5460,
+        "repo": "dashpay/platform",
+        "run_id": 5981,
+        "ts": "2026-10-21T15:02:15Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5460,
+        "repo": "dashpay/platform",
+        "run_id": 5981,
+        "ts": "2026-10-21T15:02:13Z"
+      },
       {
         "detail": "attempt 1 sha=e09f238a",
         "kind": "run.spawned",
@@ -582,22 +598,6 @@
         "repo": "dashpay/platform",
         "run_id": 5977,
         "ts": "2026-10-21T14:14:12Z"
-      },
-      {
-        "detail": "attempt 1 sha=4ba7785b",
-        "kind": "run.spawned",
-        "number": 5517,
-        "repo": "dashpay/platform",
-        "run_id": 5977,
-        "ts": "2026-10-21T14:13:40Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_fallback",
-        "number": 5514,
-        "repo": "dashpay/platform",
-        "run_id": 5976,
-        "ts": "2026-10-21T14:06:04Z"
       }
     ],
     "tokens_by_effort": [
@@ -627,7 +627,7 @@
       },
       {
         "effort": "high",
-        "lanes": 15299,
+        "lanes": 15303,
         "tokens_in": 14648545978,
         "tokens_out": 136056744
       },
@@ -661,8 +661,8 @@
         "tokens_out": 259385
       },
       {
-        "avg_tokens_per_lane": 2475882.0,
-        "lanes": 1841,
+        "avg_tokens_per_lane": 2470514.0,
+        "lanes": 1845,
         "model": "gemini-3.8-flash-high",
         "tokens_in": 4527808257,
         "tokens_out": 30290908
@@ -683,6 +683,11 @@
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 5981,
+        "tokens_in": 0,
+        "tokens_out": 0
+      },
       {
         "run_id": 5980,
         "tokens_in": 25542,
@@ -1177,11 +1182,6 @@
         "run_id": 5876,
         "tokens_in": 117944,
         "tokens_out": 790
-      },
-      {
-        "run_id": 5874,
-        "tokens_in": 2030974,
-        "tokens_out": 58444
       }
     ],
     "totals": {
@@ -1203,35 +1203,136 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-10-21T21:01:49Z",
-        "deadline_in_seconds": 21589,
+        "deadline_in_seconds": 21529,
         "degraded": false,
-        "elapsed_seconds": 11,
+        "elapsed_seconds": 71,
         "findings": null,
         "heartbeat_age_seconds": 11,
-        "heartbeat_at": "2026-10-21T15:01:49Z",
+        "heartbeat_at": "2026-10-21T15:02:49Z",
         "id": 5981,
-        "lanes": [],
+        "lanes": [
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "rust-quality",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "general",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          },
+          {
+            "attempt": 2,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "rust-quality",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          },
+          {
+            "attempt": 2,
+            "effort": "high",
+            "model": "gemini-3.8-flash-high",
+            "phase": "phase1",
+            "role": "general",
+            "status": "failed",
+            "tokens_in": 0,
+            "tokens_out": 0
+          }
+        ],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 44,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 45,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 3,
+            "role": "architecture-layering",
+            "since_seconds": 45,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 48,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 44,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 46,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 47,
             "state": "running"
           }
         ],
         "number": 5460,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5460",
         "priority": true,
-        "progress": null,
+        "progress": 0.058,
         "queue": "live",
         "queued_at": "2026-10-21T15:01:47Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1147,
         "repo": "dashpay/platform",
         "sha": "e09f238ae0bcde25a51dfa58f7406ad9850913e0",
         "started_at": "2026-10-21T15:01:49Z",
@@ -1245,26 +1346,89 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 4,
+            "seconds": 7,
             "started_at": "2026-10-21T15:01:56Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The cross-cutting retry and recovery changes directly alter funds-movement submission and persisted asset-lock state, notably AssetLockManager::upgrade_to_persisted_chain_lock_proof and upgrade_to_chain_lock_proof in packages/rs-platform-wallet/src/wallet/asset_lock/sync/proof.rs.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-21T15:01:57Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 3,
-            "started_at": "2026-10-21T15:01:57Z",
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-21T15:02:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 5,
+            "name": "phase2",
+            "seconds": 48,
+            "started_at": "2026-10-21T15:02:12Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 48,
+            "started_at": "2026-10-21T15:02:12Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(platform-wallet): retry an oversized InstantSend asset-lock transition with a ChainLock proof",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1325,7 +1489,7 @@
       "superseded": 2315
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-21T14:58:51Z",
+    "ingest_last_at": "2026-10-21T15:02:53Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1347,13 +1511,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 5,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1372,7 +1536,7 @@
       "reviews": 56,
       "tokens": 591282368
     },
-    "ts": "2026-10-21T15:02:00Z",
+    "ts": "2026-10-21T15:03:00Z",
     "typical_minutes_by_tier": {
       "critical": 14.8,
       "low": 6.7,
@@ -1383,7 +1547,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.18333333333333332,
+      "idle_minutes": 1.1833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
