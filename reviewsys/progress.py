@@ -50,6 +50,7 @@ ORDER = (
     "persistence",
     "converse",
     "ci_check",
+    "carry",
 )
 LABELS = {
     "worktree": "checkout",
@@ -67,6 +68,7 @@ LABELS = {
     "persistence": "persistence",
     "converse": "conversation",
     "ci_check": "CI check",
+    "carry": "carried over",
 }
 PROFILE_RUNS = 40
 MIN_PROFILE_RUNS = 5  # below this a tier borrows the all-tier profile

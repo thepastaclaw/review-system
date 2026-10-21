@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import os
 import shutil
 import subprocess
+import threading
 from pathlib import Path
 
 from ..models import FailKind, ReviewError
+
+
+def _env() -> dict[str, str]:
+    return {
+        "GIT_TERMINAL_PROMPT": "0",
+        "GODEBUG": "netdns=go",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
+        "HOME": str(Path.home()),
+    }
 
 
 def _git(
@@ -23,12 +34,7 @@ def _git(
             text=True,
             timeout=timeout,
             check=False,
-            env={
-                "GIT_TERMINAL_PROMPT": "0",
-                "GODEBUG": "netdns=go",
-                "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin",
-                "HOME": str(Path.home()),
-            },
+            env=_env(),
         )
     except subprocess.TimeoutExpired as exc:
         raise ReviewError(FailKind.INFRA, f"git {args[0]} timed out") from exc
@@ -263,6 +269,32 @@ def changed_paths(repo_dir: Path, base: str, sha: str) -> list[str]:
     """Every path the range `base..sha` touches; a rename counts as both of its names."""
     out = _git("diff", "--no-renames", "--name-only", base, sha, cwd=repo_dir, timeout=300)
     return [p for p in out.splitlines() if p]
+
+
+def diff_print(repo_dir: Path, base: str, sha: str) -> str | None:
+    """sha256 of the PR's own diff, `base..sha`: equal for two commits exactly when every
+    changed file holds the same content and the same patch against its merge base, whatever
+    the base or the history underneath (an empty commit, a merge of the base, a rebase onto
+    it). `--full-index` pins binary files by blob id; no user or system git config shapes the
+    output. Raw bytes: a diff need not be UTF-8. None when git cannot say."""
+    digest = hashlib.sha256()
+    argv = ["git", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames"]
+    argv += ["--full-index", base, sha]
+    env = {**_env(), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
+    with subprocess.Popen(
+        argv, cwd=str(repo_dir), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env
+    ) as proc:
+        out = proc.stdout
+        assert out is not None
+        timer = threading.Timer(300, proc.kill)  # a killed git exits non-zero: no print
+        timer.start()
+        try:
+            for chunk in iter(lambda: out.read(1 << 20), b""):  # streamed: a diff can be huge
+                digest.update(chunk)
+            code = proc.wait()
+        finally:
+            timer.cancel()
+    return digest.hexdigest() if code == 0 else None
 
 
 def first_parent_log(

@@ -14,11 +14,11 @@ from .db import fmt_ts, kv_get, now, now_dt, parse_ts
 def median_run_minutes(conn: sqlite3.Connection) -> float | None:
     """Median wall-clock minutes of the last 20 completed live runs, or None before the first
     one. Audit runs (forced Phase 2 plus a persistence check) would inflate every live ETA,
-    and CI checks (one lane, ci.py) deflate it."""
+    and CI checks (one lane, ci.py) and carried-over heads (no lane, worker._carry) deflate it."""
     recent_done = conn.execute(
         "SELECT r.started_at, r.finished_at FROM runs r JOIN heads h ON h.id=r.head_id "
         "WHERE r.status='done' AND h.queue='live' AND NOT EXISTS (SELECT 1 FROM steps s "
-        "WHERE s.run_id=r.id AND s.name='ci_check') ORDER BY r.finished_at DESC LIMIT 20"
+        "WHERE s.run_id=r.id AND s.name IN ('ci_check','carry')) ORDER BY r.finished_at DESC LIMIT 20"
     ).fetchall()
     durations = sorted(
         (parse_ts(r["finished_at"]) - parse_ts(r["started_at"])).total_seconds() / 60

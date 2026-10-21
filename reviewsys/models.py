@@ -74,6 +74,7 @@ class Phase(StrEnum):
 
 class StepName(StrEnum):
     WORKTREE = "worktree"
+    CARRY = "carry"  # the push left the PR's diff as reviewed: that review stands, no lanes
     SELECT = "select"
     TRIAGE = "triage"
     CONTEXT = "context"

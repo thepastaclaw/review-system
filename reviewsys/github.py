@@ -531,6 +531,7 @@ def gate_body(
     points: int | None = None,
     block_above: int | None = None,
     progress: dict[str, Any] | None = None,
+    carried_from: str | None = None,
 ) -> str:
     s = sha[:8]
     t = f" · triage: {tier}" if tier else ""
@@ -566,6 +567,12 @@ def gate_body(
         head = warn or ("⛔" if n else "✅")
         scope = " — Phase 1 only" if phase2_skipped else ""
         return f"{GATE_MARKER}\n{head} Final review complete{scope} — {'no blockers' if not n else f'{n} blocking finding(s)'} (commit {s}){t}"
+    if status == "carried":  # the push left the PR's diff as reviewed (worker._carry)
+        return (
+            f"{GATE_MARKER}\n♻️ No change to this PR's diff since commit {(carried_from or '')[:8]} "
+            f"(an empty commit, a merge of the base or a rebase onto it): that review stands"
+            f" — {reason or 'see it above'} (commit {s})"
+        )
     if status == "closed":  # the PR closed or merged before its review finished
         return f"{GATE_MARKER}\n⏹️ Not reviewed — {reason or 'the PR is closed'} (commit {s})"
     if status == "failed":
