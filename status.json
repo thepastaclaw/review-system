@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-21T01:00:01Z",
-  "generated_at": "2026-10-21T01:00:01Z",
+  "data_as_of": "2026-10-21T01:01:00Z",
+  "generated_at": "2026-10-21T01:01:00Z",
   "history": {
     "daily": [
       {
@@ -265,8 +265,8 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 492,
-            "p90_seconds": 434
+            "n": 493,
+            "p90_seconds": 425
           }
         }
       },
@@ -274,6 +274,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=4a276684",
+        "kind": "run.spawned",
+        "number": 74,
+        "repo": "dashpay/base-sdk",
+        "run_id": 5923,
+        "ts": "2026-10-21T01:00:49Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 74,
+        "repo": "dashpay/base-sdk",
+        "run_id": null,
+        "ts": "2026-10-21T01:00:49Z"
+      },
+      {
+        "detail": "4a276684 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 74,
+        "repo": "dashpay/base-sdk",
+        "run_id": null,
+        "ts": "2026-10-21T01:00:43Z"
+      },
       {
         "detail": "ba72d273 trigger=new_pr priority=0",
         "kind": "head.queued",
@@ -569,30 +593,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-10-20T20:08:54Z"
-      },
-      {
-        "detail": "ok in 1380s",
-        "kind": "run.done",
-        "number": 5497,
-        "repo": "dashpay/platform",
-        "run_id": 5918,
-        "ts": "2026-10-20T19:58:36Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_fallback",
-        "number": 7927,
-        "repo": "dashpay/dash",
-        "run_id": 5919,
-        "ts": "2026-10-20T19:55:27Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 7927,
-        "repo": "dashpay/dash",
-        "run_id": 5919,
-        "ts": "2026-10-20T19:55:26Z"
       }
     ],
     "tokens_by_effort": [
@@ -1186,14 +1186,86 @@
       "findings_posted": 5068,
       "reviews": 6298,
       "reviews_imported": 2245,
-      "runs": 5922,
+      "runs": 5923,
       "tokens_in": 47618572420,
       "tokens_out": 615326931,
       "tokens_total": 48233899351
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-21T07:00:49Z",
+        "deadline_in_seconds": 21589,
+        "degraded": false,
+        "elapsed_seconds": 11,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-21T01:00:49Z",
+        "id": 5923,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 74,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/base-sdk/pull/74",
+        "priority": true,
+        "progress": 0.019,
+        "queue": "live",
+        "queued_at": "2026-10-21T01:00:43Z",
+        "remaining_seconds": 569,
+        "repo": "dashpay/base-sdk",
+        "sha": "4a2766843762e5f056ba672c414a55a9ac3f6c4e",
+        "started_at": "2026-10-21T01:00:49Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-21T01:00:50Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-21T01:00:53Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff changes peer-facing deserialization in pkgs/p2p_core/src/msg/mod.rs, but the six payload types use straightforward existing codecs and corpus tests rather than introducing large or intricate parsing logic.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-21T01:00:53Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "normal",
+        "title": "p2p_core%feat!: type the control messages the reference implementation sends with a payload",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "context",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 6
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1209,7 +1281,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1248,10 +1320,11 @@
       "done": 6219,
       "failed": 75,
       "queued": 1,
+      "running": 1,
       "superseded": 2306
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-21T00:57:00Z",
+    "ingest_last_at": "2026-10-21T01:00:43Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1285,19 +1358,19 @@
       }
     ],
     "last_run_done_at": "2026-10-20T23:32:49Z",
-    "last_run_started_at": "2026-10-20T23:27:37Z",
+    "last_run_started_at": "2026-10-21T01:00:49Z",
     "median_run_minutes": 22.05,
-    "notify_last_at": "2026-10-21T00:57:40Z",
+    "notify_last_at": "2026-10-21T01:00:43Z",
     "oldest_queued_at": "2026-10-21T00:34:39Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1522,
+        "age_seconds": 1581,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-10-21T01:04:39Z",
-        "eligible_in_seconds": 278,
+        "eligible_in_seconds": 219,
         "number": 1632,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1632",
@@ -1318,7 +1391,7 @@
       "reviews": 0,
       "tokens": 0
     },
-    "ts": "2026-10-21T01:00:01Z",
+    "ts": "2026-10-21T01:01:00Z",
     "typical_minutes_by_tier": {
       "critical": 15.7,
       "low": 7.3,
@@ -1327,9 +1400,9 @@
       "unknown": 0.5
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 92.4,
+      "idle_minutes": 0.18333333333333332,
       "ingest_stale": false,
       "stuck": false
     }
