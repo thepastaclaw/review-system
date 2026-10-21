@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-21T15:01:01Z",
-  "generated_at": "2026-10-21T15:01:01Z",
+  "data_as_of": "2026-10-21T15:02:00Z",
+  "generated_at": "2026-10-21T15:02:01Z",
   "history": {
     "daily": [
       {
@@ -270,7 +270,7 @@
           },
           "wait": {
             "median_seconds": 7,
-            "n": 464,
+            "n": 465,
             "p90_seconds": 340
           }
         }
@@ -279,6 +279,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=e09f238a",
+        "kind": "run.spawned",
+        "number": 5460,
+        "repo": "dashpay/platform",
+        "run_id": 5981,
+        "ts": "2026-10-21T15:01:49Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5460,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-21T15:01:49Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5460,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-21T15:01:48Z"
+      },
+      {
+        "detail": "e09f238a trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 5460,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-21T15:01:48Z"
+      },
       {
         "detail": "ok in 1470s",
         "kind": "run.done",
@@ -566,38 +598,6 @@
         "repo": "dashpay/platform",
         "run_id": 5976,
         "ts": "2026-10-21T14:06:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 5514,
-        "repo": "dashpay/platform",
-        "run_id": 5976,
-        "ts": "2026-10-21T14:06:02Z"
-      },
-      {
-        "detail": "attempt 1 sha=675a7ea9",
-        "kind": "run.spawned",
-        "number": 5514,
-        "repo": "dashpay/platform",
-        "run_id": 5976,
-        "ts": "2026-10-21T14:05:29Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_fallback",
-        "number": 5460,
-        "repo": "dashpay/platform",
-        "run_id": 5975,
-        "ts": "2026-10-21T14:00:48Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 5460,
-        "repo": "dashpay/platform",
-        "run_id": 5975,
-        "ts": "2026-10-21T14:00:46Z"
       }
     ],
     "tokens_by_effort": [
@@ -1191,14 +1191,83 @@
       "findings_posted": 5131,
       "reviews": 6347,
       "reviews_imported": 2245,
-      "runs": 5980,
+      "runs": 5981,
       "tokens_in": 48235221502,
       "tokens_out": 622815602,
       "tokens_total": 48858037104
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "romchornyi",
+        "deadline_at": "2026-10-21T21:01:49Z",
+        "deadline_in_seconds": 21589,
+        "degraded": false,
+        "elapsed_seconds": 11,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-21T15:01:49Z",
+        "id": 5981,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "low",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "prep",
+            "pool": "gpt",
+            "role": "prep",
+            "since_seconds": 3,
+            "state": "running"
+          }
+        ],
+        "number": 5460,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/platform/pull/5460",
+        "priority": true,
+        "progress": null,
+        "queue": "live",
+        "queued_at": "2026-10-21T15:01:47Z",
+        "remaining_seconds": null,
+        "repo": "dashpay/platform",
+        "sha": "e09f238ae0bcde25a51dfa58f7406ad9850913e0",
+        "started_at": "2026-10-21T15:01:49Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-10-21T15:01:50Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-21T15:01:56Z",
+            "status": "running"
+          },
+          {
+            "info": {},
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-21T15:01:57Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "fix(platform-wallet): retry an oversized InstantSend asset-lock transition with a ChainLock proof",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1214,7 +1283,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1232,7 +1301,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-21T14:59:14Z",
+        "at": "2026-10-21T15:01:21Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1252,6 +1321,7 @@
       "closed": 466,
       "done": 6268,
       "failed": 75,
+      "running": 1,
       "superseded": 2315
     },
     "ingest_error_streak": 0,
@@ -1277,7 +1347,7 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 12,
         "waiting": 0
       },
@@ -1289,9 +1359,9 @@
       }
     ],
     "last_run_done_at": "2026-10-21T14:58:32Z",
-    "last_run_started_at": "2026-10-21T14:43:34Z",
+    "last_run_started_at": "2026-10-21T15:01:49Z",
     "median_run_minutes": 34.28333333333333,
-    "notify_last_at": "2026-10-21T14:59:35Z",
+    "notify_last_at": "2026-10-21T15:01:42Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1302,7 +1372,7 @@
       "reviews": 56,
       "tokens": 591282368
     },
-    "ts": "2026-10-21T15:01:01Z",
+    "ts": "2026-10-21T15:02:00Z",
     "typical_minutes_by_tier": {
       "critical": 14.8,
       "low": 6.7,
@@ -1311,9 +1381,9 @@
       "unknown": 0.5
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 17.45,
+      "idle_minutes": 0.18333333333333332,
       "ingest_stale": false,
       "stuck": false
     }
