@@ -17,7 +17,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
-| `worker.py` | one run: worktree → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
+| `worker.py` | one run: worktree → (unchanged diff: carry the earlier review, done) → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
 | `prep.py` | one cheap lane answers both pre-review questions: the effort tier and the discretionary specialists |
 | `triage.py` | the tier guide and rules (trivial/low/normal/critical); the tier picks each phase's `--effort`; runs alone when there are no specialists to choose |
 | `select.py` | specialist selection: the selector lane (runs alone without triage) and the heuristic fallback |
@@ -850,6 +850,65 @@ finished on the commit. A box ticked on the comment before the label landed is h
 a request instead of being overwritten. An explicit request
 (`@thepastaclaw review`, a review request) still runs, like on a draft. Removing the label
 re-queues the current commit as a normal head, behind the push debounce.
+
+## Unchanged diff: the earlier review stands
+
+A push that leaves the PR's own diff as it was (an empty commit, a merge of the base, a
+rebase onto it) changes nothing a reviewer read. dashpay's PR Hygiene controller
+(`dashpay/stale_prs_are_bad`, `carried_heads`) already counts the bot's review of the
+earlier commit for the new one, so reviewing it again only cost lanes and a 1–3 h wait.
+Measured over 2026-09-03..10-21: 32 of 2,644 back-to-back reviews of a PR read a diff
+identical to the one before (14 identical trees, 18 base merges or rebases), about 20 h of
+runs.
+
+Every live review run (not a conversation) records `heads.diff_print` after checkout:
+sha256 of `git diff --full-index --no-renames <merge base> <head>` as raw bytes, with no
+user or system git config. Two commits share
+it exactly when every changed file holds the same content and the same patch against its
+merge base, whatever the base or the history underneath. A conflict resolution inside a
+merge commit changes the diff and gets a full review. When git cannot say, there is no
+print, and a missing print never counts as unchanged.
+
+A run on an automatic head (`new_pr`, `new_push`) stops after checkout (step `carry`,
+event `head.carried`) when all of these hold:
+
+- the **immediately preceding** head on the PR has the same print;
+- that head has a review, or carries one;
+- the newest review is a **final** review on the primary models: not preliminary (its
+  Phase 2 is still owed, and the hygiene controller only counts final reviews), not
+  degraded, and not downgraded by a CI update (the push after those may win the full
+  verdict back).
+
+Then:
+
+- `heads.carried_from` names the reviewed commit. No lane runs and no review is posted.
+  The gate comment says "No change to this PR's diff since commit X (an empty commit, a
+  merge of the base or a rebase onto it): that review stands — approved / changes
+  requested / commented".
+- `ingest.carried_from` resolves it for everything that asks for "the verdict on this
+  commit": the verdict label (`labels.verdict_for`), the post-merge audit's clean check (a
+  PR merged right after a clean rebase is not audited), and the CI watch. A carried
+  APPROVE is watched like any other. When CI goes red, the commit is queued for a review
+  of its own (priority, trigger `manual`) instead of the light CI check, which judges a
+  review of this commit, and there is none. Red CI after a rebase is exactly what the base
+  can break underneath an unchanged diff. Every failing check counts, including one that
+  also failed on the earlier commit. The watch ends there: the review reads CI itself and
+  watches anew if it approves. A carried commit whose own review failed for good is never
+  re-opened by its watch.
+- A person asking always gets a review. `@thepastaclaw review` or a review request on a
+  carried commit re-opens it, unlike on a commit reviewed itself. A head promoted by a
+  mention, while queued or while its run checks out, is not carried: the run re-reads the
+  trigger in the transaction that would carry. One that lands after the carry, while the
+  run finishes, queues a review for when it ends. A head superseded during checkout
+  carries nothing. Once the commit has a review of its own, that
+  review takes over from the carried one.
+- A reply under a finding on a carried commit runs a full review, as before. The
+  conversation lane answers only on a commit whose own final review stands.
+- A predecessor superseded before any run recorded its print breaks the chain: what
+  changed in between is unknown, so the next commit starts over.
+- Carried runs take seconds. They are left out of the run-time median behind the queue
+  ETA, and out of the dashboard's path timing. The label pass picks up a finished carry
+  (it writes no `reviews` row) so the verdict label the push cleared comes back.
 
 ## Verdict labels (filtering by the bot's approval)
 

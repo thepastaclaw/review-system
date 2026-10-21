@@ -42,7 +42,7 @@ from .config import Config, LaneModel
 from .contract import parse_json_object
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
-from .ingest import enqueue_head
+from .ingest import carried_from, enqueue_head
 from .lane import LaneSpec, run_claude_lane
 from .models import Trigger
 from .triage import pr_block
@@ -154,7 +154,7 @@ def register(
     ).fetchone()
     if pr and pr["skip_label"]:
         return "skip label"  # a CI failure would only be refused (ingest.SKIPPABLE_TRIGGERS)
-    if labels.latest_verdict(conn, repo, number, sha) != "APPROVE":
+    if labels.verdict_for(conn, repo, number, sha) != "APPROVE":
         return "not approved"
     if kv_get(conn, updated_key(repo, number, sha)):
         return "already updated"  # one CI update per head, ever
@@ -313,7 +313,7 @@ def _stale(
         return None
     if at - parse_ts(str(w["posted_at"])) > timedelta(hours=cfg.ci.watch_hours):
         return "ci.watch_expired", f"no CI decision within {cfg.ci.watch_hours} h of the verdict"
-    verdict = labels.latest_verdict(conn, repo, number, sha)
+    verdict = labels.verdict_for(conn, repo, number, sha)
     if verdict != "APPROVE":
         return "ci.watch_dropped", f"the standing verdict is {verdict or 'none'}: nothing to change"
     return None
@@ -341,12 +341,29 @@ def _enqueue(
     conn: sqlite3.Connection, cfg: Config, key: str, raw: str, w: dict[str, Any], names: list[str]
 ) -> tuple[str, bool] | None:
     """Re-open the reviewed head for its CI-check run; the watch is dropped instead when the
-    head is not a finished review any more (its last run failed for good, or it closed)."""
+    head is not a finished review any more (its last run failed for good, or it closed). A
+    carried-over APPROVE (worker._carry) gets a review of its own instead, and the watch ends:
+    the CI check judges a review of this commit and there is none; the review reads CI itself
+    and watches anew if it approves."""
     repo, number, sha = w["repo"], w["number"], w["sha"]
+    failed = f"{sha[:8]}: {', '.join(names)} failed after the APPROVE"
     with tx(conn):
         if kv_get(conn, key) != raw:
             return None
-        if enqueue_head(conn, cfg, repo, number, sha, Trigger.CI_FAILED) == "requeued":
+        carried = carried_from(conn, repo, number, sha)
+        if carried:
+            done = conn.execute(
+                "SELECT 1 FROM heads WHERE repo=? AND number=? AND sha=? AND status='done'",
+                (repo, number, sha),
+            ).fetchone()
+            if done and enqueue_head(conn, cfg, repo, number, sha, Trigger.MANUAL) == "requeued":
+                conn.execute("DELETE FROM kv WHERE key=?", (key,))
+                why = f"{failed}; the APPROVE was {carried[:8]}'s: review of this commit queued"
+                event(
+                    conn, "ci.failed", repo=repo, number=number, run_id=w.get("run_id"), detail=why
+                )
+                return "enqueued", True
+        elif enqueue_head(conn, cfg, repo, number, sha, Trigger.CI_FAILED) == "requeued":
             w.update(state=QUEUED, failing=names, queued_at=now())
             kv_set(conn, key, json.dumps(w))
             event(
@@ -355,7 +372,7 @@ def _enqueue(
                 repo=repo,
                 number=number,
                 run_id=w.get("run_id"),
-                detail=f"{sha[:8]}: {', '.join(names)} failed after the APPROVE; CI check queued",
+                detail=f"{failed}; CI check queued",
             )
             return "enqueued", True
     why = "the head is not a finished review: not re-opened"

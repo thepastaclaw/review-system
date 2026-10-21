@@ -41,7 +41,7 @@ from .config import Config
 from .contract import Finding, parse_json_object
 from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, tx
 from .gh import Gh
-from .ingest import label_names, skip_label
+from .ingest import label_names, reviewed_sha, skip_label
 from .models import FailKind, ReviewError
 
 log = logging.getLogger(__name__)
@@ -271,7 +271,8 @@ def _excluded(cfg: Config, pr: MergedPr) -> bool:
 
 
 def _clean(conn: sqlite3.Connection, cfg: Config, pr: MergedPr) -> bool:
-    return is_clean(pr, cfg.bot_login, db_verdict(conn, pr.repo, pr.number, pr.head_sha))
+    sha = reviewed_sha(conn, pr.repo, pr.number, pr.head_sha)
+    return is_clean(pr, cfg.bot_login, db_verdict(conn, pr.repo, pr.number, sha))
 
 
 def enqueue(

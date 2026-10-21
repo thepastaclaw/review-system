@@ -42,6 +42,7 @@ from .dedupe import FINDING_MARKER_RE, content_tokens, title_similarity
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
+from .ingest import reviewed_sha
 from .lane import (
     LaneResult,
     LaneRunner,
@@ -212,6 +213,7 @@ class RunContext:
     meta: github.PrMeta | None = None
     base_sha: str = ""
     merge_base: str | None = None  # of the head with the live base branch (not on an audit)
+    diff_print: str | None = None  # the PR's own diff (worktree.diff_print; not on an audit)
     selection: list[str] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
     triage: Triage | None = None
@@ -704,6 +706,9 @@ def step_worktree(ctx: RunContext) -> None:
     base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
     ctx.merge_base = base
     ctx.coverage_from = base or f"{ctx.sha}~1"
+    # what the review of this commit reads; a conversation reviews nothing and records none
+    if base and not ctx.conversation:
+        ctx.diff_print = wt.diff_print(ctx.worktree, base, ctx.sha)
     _record_worktree(ctx)
 
 
@@ -724,6 +729,92 @@ def _record_worktree(ctx: RunContext) -> None:
             "UPDATE runs SET worktree=?, run_dir=? WHERE id=?",
             (str(ctx.worktree), str(ctx.run_dir), ctx.run_id),
         )
+        if ctx.diff_print:
+            ctx.conn.execute(
+                "UPDATE heads SET diff_print=? WHERE id=?", (ctx.diff_print, ctx.head_id)
+            )
+
+
+# heads nobody asked a review of: only these may stand on the review of an earlier commit
+CARRYABLE = frozenset({Trigger.NEW_PR, Trigger.NEW_PUSH})
+CARRIED_VERDICTS = {
+    "APPROVE": "approved",
+    "REQUEST_CHANGES": "changes requested",
+    "COMMENT": "commented",
+}
+
+
+def _carry(ctx: RunContext) -> bool:
+    """A push that left the PR's own diff as it was (an empty commit, a merge of the base, a
+    rebase onto it) changes nothing a reviewer read: the review of the head before it stands
+    for this commit and no lane runs. dashpay's PR Hygiene controller applies the same rule
+    (`carried_heads`) and already counts that final review for this commit. Only an automatic
+    head (a person asking gets a review: ingest.enqueue_head), and only from the head right
+    before it, by its diff as its own run found it: a predecessor superseded before a run
+    never recorded one, so the commit after it starts over. True when carried (run done)."""
+    if ctx.trigger not in CARRYABLE or not ctx.diff_print:
+        return False
+    prev = ctx.conn.execute(
+        "SELECT sha, diff_print FROM heads WHERE repo=? AND number=? AND queue='live' AND id<? "
+        "ORDER BY id DESC LIMIT 1",
+        (ctx.repo, ctx.number, ctx.head_id),
+    ).fetchone()
+    if prev is None or prev["diff_print"] != ctx.diff_print:
+        return False
+    source = reviewed_sha(ctx.conn, ctx.repo, ctx.number, str(prev["sha"]))
+    verdict = _carryable_verdict(ctx, source)
+    if verdict is None:
+        return False
+    with tx(ctx.conn):
+        head = ctx.conn.execute(
+            "SELECT trigger, status FROM heads WHERE id=?", (ctx.head_id,)
+        ).fetchone()
+        if head["status"] != HeadStatus.RUNNING:  # superseded meanwhile: no word for the newer
+            raise Cancelled()
+        if head["trigger"] not in CARRYABLE:  # someone asked for a review during the checkout
+            ctx.trigger = str(head["trigger"])
+            return False
+        ctx.conn.execute("UPDATE heads SET carried_from=? WHERE id=?", (source, ctx.head_id))
+        event(
+            ctx.conn,
+            "head.carried",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{ctx.sha[:8]} stands on {source[:8]} ({verdict}): diff {ctx.diff_print[:12]}",
+        )
+    _step_start(ctx, StepName.CARRY)
+    _gate_comment(
+        ctx,
+        "carried",
+        carried_from=source,
+        reason=f"{CARRIED_VERDICTS[verdict]}; `@{ctx.cfg.bot_login} review` asks for a review "
+        "of this commit",
+    )
+    if verdict == "APPROVE":
+        _watch_ci(ctx, known=[])
+    _step_end(ctx, StepName.CARRY, "ok", {"carried_from": source, "verdict": verdict})
+    return True
+
+
+def _carryable_verdict(ctx: RunContext, sha: str) -> str | None:
+    """The verdict a carry may pass on: the newest review of `sha`, when it is a final review
+    (a preliminary one is no report to the hygiene controller, and its deferred Phase 2 is
+    owed) that ran on the primary models and that no CI update has weakened since (a rebase is
+    exactly the push that may win either back). None otherwise."""
+    row = ctx.conn.execute(
+        "SELECT rv.event, rv.phase, (SELECT MAX(r.degraded) FROM reviews o JOIN runs r "
+        "ON r.id=o.run_id WHERE o.repo=rv.repo AND o.number=rv.number AND o.sha=rv.sha) degraded "
+        "FROM reviews rv WHERE rv.repo=? AND rv.number=? AND rv.sha=? "
+        "ORDER BY rv.posted_at DESC, rv.id DESC LIMIT 1",
+        (ctx.repo, ctx.number, sha),
+    ).fetchone()
+    if row is None or row["phase"] != "final" or row["degraded"]:
+        return None
+    if kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, sha)):
+        return None
+    verdict = publish.canonical_event(str(row["event"]))
+    return verdict if verdict in CARRIED_VERDICTS else None
 
 
 def _audit_worktree(ctx: RunContext, meta: github.PrMeta) -> None:
@@ -3902,6 +3993,8 @@ def run(ctx: RunContext) -> RunStatus:
     _step_start(ctx, StepName.WORKTREE)
     step_worktree(ctx)
     _step_end(ctx, StepName.WORKTREE, "ok")
+    if not standing and _carry(ctx):
+        return RunStatus.DONE
     if not standing:  # a conversation needs no specialist selection or effort triage
         ctx.check_cancel()
         step_prep(ctx)

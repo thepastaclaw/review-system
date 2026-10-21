@@ -206,6 +206,7 @@ _PUBLIC_EVENT_DETAIL = frozenset(
         "head.superseded",
         "head.closed",
         "head.priority_requested",
+        "head.carried",
         "run.spawned",
         "run.done",
         "phase1.skipped_backlog",
@@ -435,7 +436,7 @@ def build_path_timing(conn: sqlite3.Connection, cfg: Config, at: datetime) -> di
         "(SELECT MAX(o.finished_at) FROM runs o WHERE o.head_id=r.head_id AND o.id<r.id) prev_end "
         "FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.path IN (?,?) AND r.started_at>=? "
         "AND NOT EXISTS (SELECT 1 FROM steps c WHERE c.run_id=r.id "
-        "AND c.name IN ('converse','ci_check'))",
+        "AND c.name IN ('converse','ci_check','carry'))",
         (progress.PRIORITY, progress.NORMAL, since),
     ):
         mine = samples[row["path"]]

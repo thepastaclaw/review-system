@@ -108,6 +108,28 @@ def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
 # what re-opens an already-reviewed commit: a reply under a finding, an operator, the
 # priority box (a mention or review request on a reviewed commit changes nothing)
 REOPENING = frozenset({Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST})
+# ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`)
+ASKING = frozenset({Trigger.MENTION, Trigger.REVIEW_REQUESTED})
+
+
+def carried_from(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str | None:
+    """The earlier commit whose review stands for `sha` (worker._carry), or None. A review of
+    `sha` itself, once there is one, takes over."""
+    row = conn.execute(
+        "SELECT carried_from FROM heads WHERE repo=? AND number=? AND sha=? AND queue='live'",
+        (repo, number, sha),
+    ).fetchone()
+    if not row or not row["carried_from"]:
+        return None
+    own = conn.execute(
+        "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1", (repo, number, sha)
+    ).fetchone()
+    return None if own else str(row["carried_from"])
+
+
+def reviewed_sha(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str:
+    """The commit whose review stands for `sha`: `sha` itself unless it is carried over."""
+    return carried_from(conn, repo, number, sha) or sha
 
 
 def enqueue_head(
@@ -188,6 +210,9 @@ def enqueue_head(
                 "UPDATE heads SET priority=1, trigger=?, eligible_at=? WHERE id=?",
                 (trigger.value, ts, existing["id"]),
             )
+            if existing["status"] == HeadStatus.RUNNING and carried_from(conn, repo, number, sha):
+                # its run carried an earlier review and is finishing: review it right after
+                _rereview_after_run(conn, existing["id"])
             return "promoted"
         if trigger in REOPENING and existing["status"] in (
             HeadStatus.DONE,
@@ -196,6 +221,13 @@ def enqueue_head(
         ):
             # same commit, already reviewed: a human answered a finding (or an operator asked),
             # so review it again with the threads in context and answer on them
+            return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
+        if (
+            trigger in ASKING
+            and existing["status"] == HeadStatus.DONE
+            and carried_from(conn, repo, number, sha)
+        ):
+            # nothing reviewed this commit itself: someone asking gets a review
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
     supersede_other_heads(conn, repo, number, sha, ts)
@@ -285,16 +317,26 @@ def _take_over_ci_check(
             (trigger.value, ts, existing["id"]),
         )
         return "promoted"
-    if existing["status"] == HeadStatus.RUNNING and trigger != Trigger.REVIEW_REPLY:
-        run = conn.execute(
-            "SELECT id FROM runs WHERE head_id=? AND status IN ('spawned','running') ORDER BY id DESC LIMIT 1",
-            (existing["id"],),
-        ).fetchone()
-        if run:
-            conn.execute("UPDATE heads SET trigger=? WHERE id=?", (trigger.value, existing["id"]))
-            kv_set(conn, f"rereview.after_run:{run['id']}", "1")
-            return "promoted"
+    if (
+        existing["status"] == HeadStatus.RUNNING
+        and trigger != Trigger.REVIEW_REPLY
+        and _rereview_after_run(conn, existing["id"])
+    ):
+        conn.execute("UPDATE heads SET trigger=? WHERE id=?", (trigger.value, existing["id"]))
+        return "promoted"
     return None
+
+
+def _rereview_after_run(conn: sqlite3.Connection, head_id: int) -> bool:
+    """Queue a re-review of the head once its running run ends (`scheduler.finish_run`).
+    False when no run of it is running."""
+    run = conn.execute(
+        "SELECT id FROM runs WHERE head_id=? AND status IN ('spawned','running') ORDER BY id DESC LIMIT 1",
+        (head_id,),
+    ).fetchone()
+    if run:
+        kv_set(conn, f"rereview.after_run:{run['id']}", "1")
+    return run is not None
 
 
 def close_pr_heads(

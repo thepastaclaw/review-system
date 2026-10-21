@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -132,6 +132,11 @@ MIGRATIONS: dict[int, str] = {
     # the PR carries a `[scheduling] skip_labels` label: no automatic review (see ingest.py)
     7: """
     ALTER TABLE prs ADD COLUMN skip_label INTEGER NOT NULL DEFAULT 0;
+    """,
+    # the PR's own diff as a live run found it, and the earlier review it carries (worker._carry)
+    8: """
+    ALTER TABLE heads ADD COLUMN diff_print TEXT;
+    ALTER TABLE heads ADD COLUMN carried_from TEXT;
     """,
 }
 
