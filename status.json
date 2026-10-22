@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-22T21:55:00Z",
-  "generated_at": "2026-10-22T21:55:01Z",
+  "data_as_of": "2026-10-22T21:56:01Z",
+  "generated_at": "2026-10-22T21:56:01Z",
   "history": {
     "daily": [
       {
@@ -284,6 +284,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 889,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 6314,
+        "ts": "2026-10-22T21:55:29Z"
+      },
       {
         "detail": "attempt 1 sha=1f9b04fa",
         "kind": "run.spawned",
@@ -595,14 +603,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 6308,
         "ts": "2026-10-22T21:43:40Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.requeued",
-        "number": 5515,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-10-22T21:43:33Z"
       }
     ],
     "tokens_by_effort": [
@@ -1208,12 +1208,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-23T03:52:50Z",
-        "deadline_in_seconds": 21470,
+        "deadline_in_seconds": 21409,
         "degraded": false,
-        "elapsed_seconds": 130,
+        "elapsed_seconds": 191,
         "findings": null,
-        "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-10-22T21:54:51Z",
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-22T21:55:51Z",
         "id": 6312,
         "lanes": [],
         "live_lanes": [
@@ -1224,7 +1224,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 116,
+            "since_seconds": 177,
             "state": "running"
           }
         ],
@@ -1233,10 +1233,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/890",
         "priority": true,
-        "progress": 0.192,
+        "progress": 0.282,
         "queue": "live",
         "queued_at": "2026-10-22T21:52:40Z",
-        "remaining_seconds": 547,
+        "remaining_seconds": 486,
         "repo": "PastaPastaPasta/yappr",
         "sha": "58bd2009f614826d884e9fa509bc692accfbb464",
         "started_at": "2026-10-22T21:52:50Z",
@@ -1298,7 +1298,7 @@
             ],
             "lanes_total": 1,
             "name": "phase2",
-            "seconds": 116,
+            "seconds": 177,
             "started_at": "2026-10-22T21:53:04Z",
             "status": "running"
           }
@@ -1320,24 +1320,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-10-23T03:54:59Z",
-        "deadline_in_seconds": 21599,
+        "deadline_in_seconds": 21538,
         "degraded": false,
-        "elapsed_seconds": 1,
+        "elapsed_seconds": 62,
         "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-10-22T21:54:59Z",
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-10-22T21:55:59Z",
         "id": 6314,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 30,
+            "state": "running"
+          }
+        ],
         "number": 889,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/889",
         "priority": true,
-        "progress": null,
+        "progress": 0.035,
         "queue": "live",
         "queued_at": "2026-10-22T21:54:57Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1688,
         "repo": "PastaPastaPasta/yappr",
         "sha": "1f9b04fa4fe0b5d2a31c02295e066b498389e7d8",
         "started_at": "2026-10-22T21:54:59Z",
@@ -1346,17 +1357,73 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 1,
+            "seconds": 4,
             "started_at": "2026-10-22T21:54:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-10-22T21:55:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large bulk-moderation implementation directly changes key handling in lib/services/moderation-service.ts: openBatch retains a CRITICAL signer and passes it through hideWith, unhideWith, and moderate for reuse across multiple signed transitions.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 22,
+            "started_at": "2026-10-22T21:55:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-22T21:55:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-10-22T21:55:29Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 30,
+            "started_at": "2026-10-22T21:55:31Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(moderation): hide or unhide many of an account's posts at once",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1393,7 +1460,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-22T21:53:11Z",
+        "at": "2026-10-22T21:55:58Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1440,7 +1507,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1459,12 +1526,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 5771,
+        "age_seconds": 5832,
         "attempts": 2,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-10-22T21:58:33Z",
-        "eligible_in_seconds": 213,
+        "eligible_in_seconds": 152,
         "number": 5515,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5515",
@@ -1478,12 +1545,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 837,
+        "age_seconds": 898,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-10-22T22:11:03Z",
-        "eligible_in_seconds": 963,
+        "eligible_in_seconds": 902,
         "number": 1015,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-evo-tool/pull/1015",
@@ -1497,12 +1564,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 140,
+        "age_seconds": 201,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-22T22:22:40Z",
-        "eligible_in_seconds": 1660,
+        "eligible_in_seconds": 1599,
         "number": 888,
         "position": 3,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/888",
@@ -1523,7 +1590,7 @@
       "reviews": 176,
       "tokens": 2541915090
     },
-    "ts": "2026-10-22T21:55:00Z",
+    "ts": "2026-10-22T21:56:01Z",
     "typical_minutes_by_tier": {
       "critical": 18.7,
       "low": 5.2,
@@ -1534,7 +1601,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.016666666666666666,
+      "idle_minutes": 1.0333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
