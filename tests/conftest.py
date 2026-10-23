@@ -507,3 +507,25 @@ def _fast_lane_slots(monkeypatch):
     from reviewsys import lanepool
 
     monkeypatch.setattr(lanepool, "POLL_SECONDS", 0.005)
+
+
+@pytest.fixture
+def binary_diff_gh(tmp_path: Path) -> Gh:
+    """Real subprocess boundary: Git may print a small binary blob as a text hunk."""
+    import sys
+
+    diff = (
+        "diff --git a/f.rs b/f.rs\n"
+        "--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +10,5 @@\n+café 東京 🦀\n"
+        "diff --git a/key-hash.bin b/key-hash.bin\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/key-hash.bin\n@@ -0,0 +1 @@\n"
+    ).encode() + (
+        b"+Dc\xa1\xa9\x94\xd5\x04\x0ei\xc0\x90\xb6\x98]z\xf2\x95\xbf\xd1\x1a\n"
+        b"\\ No newline at end of file\n"
+        b"diff --git a/proof.bin b/proof.bin\n"
+        b"Binary files /dev/null and b/proof.bin differ\n"
+    )
+    script = tmp_path / "gh-binary-diff"
+    script.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.buffer.write({diff!r})\n")
+    script.chmod(0o755)
+    return Gh(str(script))

@@ -166,6 +166,70 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
         GOLDEN.write_text(body)
 
 
+def test_final_review_publishes_with_binary_diff(cfg, conn, gh, lanes, binary_diff_gh):
+    # Use the actual subprocess/decoder for the diff, and the usual fake for GitHub writes.
+    runner = gh.runner
+    gh.runner = lambda argv, stdin, timeout: (
+        binary_diff_gh.runner([binary_diff_gh.bin, *argv[1:]], stdin, timeout)
+        if list(argv[1:3]) == ["pr", "diff"]
+        else runner(argv, stdin, timeout)
+    )
+    blocker = _blocking("Preserve café 東京 🦀 in the review")
+    unmappable = _sugg("Binary proof needs coverage — café", file="proof.bin")
+    unmappable["line_start"] = unmappable["line_end"] = 1
+    findings = [blocker, unmappable]
+    lanes.reviewer["default"] = {"summary": "ok", "findings": findings, "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier(findings)
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    (review,) = gh.posted_reviews
+    assert review["event"] == "REQUEST_CHANGES" and review["commit_id"] == HEAD
+    (inline,) = review["comments"]
+    assert inline["path"] == "f.rs" and inline["line"] == 12
+    assert blocker["title"] in inline["body"]
+    assert unmappable["title"] in review["body"]
+    assert unmappable["body"] in review["body"]
+    assert "1 finding(s) not shown inline" in review["body"]
+    steps = {
+        r["name"]: r["status"] for r in conn.execute("SELECT * FROM steps WHERE run_id=?", (rid,))
+    }
+    assert steps["verify2"] == steps["publish"] == "ok"
+    assert conn.execute("SELECT blocker_count FROM runs WHERE id=?", (rid,)).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("expected", [False, True])
+def test_terminal_publish_error_closes_progress(cfg, conn, gh, lanes, monkeypatch, expected):
+    from reviewsys.models import FailKind, ReviewError
+
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["default"] = _verifier([])
+
+    def crash(*args, **kwargs):
+        if expected:
+            raise ReviewError(FailKind.CONTRACT, "publication rejected")
+        raise UnicodeDecodeError("utf-8", b"\xa1", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(worker, "step_publish", crash)
+    rid, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.FAILED
+    step = conn.execute("SELECT * FROM steps WHERE run_id=? AND name='publish'", (rid,)).fetchone()
+    assert step["status"] == "failed" and step["finished_at"]
+    error = json.loads(step["detail"])["error"]
+    assert ("publication rejected" if expected else "UnicodeDecodeError") in error
+    assert not conn.execute(
+        "SELECT 1 FROM steps WHERE run_id=? AND status='running'", (rid,)
+    ).fetchone()
+    assert (
+        conn.execute(
+            "SELECT status FROM steps WHERE run_id=? AND name='verify2'", (rid,)
+        ).fetchone()[0]
+        == "ok"
+    )
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⚠️ Automated review could not complete")
+    assert not gh.posted_reviews
+
+
 def test_considered_dismissed_reaches_the_verifier_but_is_not_published(cfg, conn, gh, lanes):
     lanes.reviewer["default"] = {
         "summary": "ok",

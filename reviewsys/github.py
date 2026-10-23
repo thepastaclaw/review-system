@@ -142,9 +142,14 @@ def reviews(gh: Gh, repo: str, number: int) -> list[dict[str, Any]]:
 
 
 def pr_diff(gh: Gh, repo: str, number: int) -> str | None:
-    """Unified diff, or None when GitHub refuses it as too large (body-only fallback)."""
+    """Unified diff, or None when GitHub refuses it as too large (body-only fallback).
+
+    Git can emit non-UTF-8 blob bytes in text hunks (including small binary files).
+    Only hunk headers/paths are used for inline placement; replace undecodable bytes
+    rather than losing the whole diff. Valid Unicode is preserved.
+    """
     try:
-        return gh.run("pr", "diff", str(number), "--repo", repo, timeout=300)
+        return gh.run("pr", "diff", str(number), "--repo", repo, timeout=300, errors="replace")
     except ReviewError as exc:
         msg = exc.message.lower()
         if "too_large" in msg or "exceeded the maximum number of lines" in msg:

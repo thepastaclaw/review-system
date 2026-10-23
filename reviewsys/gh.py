@@ -15,7 +15,10 @@ from typing import Any
 
 from .models import FailKind, ReviewError
 
-GhRunner = Callable[[Sequence[str], str | None, int], subprocess.CompletedProcess[str]]
+GhRunner = Callable[
+    [Sequence[str], str | None, int],
+    subprocess.CompletedProcess[bytes] | subprocess.CompletedProcess[str],
+]
 
 _TRANSIENT_MARKERS = (
     "error connecting to",
@@ -37,13 +40,12 @@ _TRANSIENT_MARKERS = (
 
 def _default_runner(
     argv: Sequence[str], stdin: str | None, timeout: int
-) -> subprocess.CompletedProcess[str]:
+) -> subprocess.CompletedProcess[bytes]:
     env = {**os.environ, "GODEBUG": "netdns=go", "GH_PROMPT_DISABLED": "1", "NO_COLOR": "1"}
     return subprocess.run(
         list(argv),
-        input=stdin,
+        input=stdin.encode("utf-8") if stdin is not None else None,
         capture_output=True,
-        text=True,
         timeout=timeout,
         env=env,
         check=False,
@@ -58,7 +60,13 @@ class Gh:
         self.runner = runner or _default_runner
         self.default_timeout = default_timeout
 
-    def run(self, *args: str, stdin: str | None = None, timeout: int | None = None) -> str:
+    def run(
+        self,
+        *args: str,
+        stdin: str | None = None,
+        timeout: int | None = None,
+        errors: str = "strict",
+    ) -> str:
         argv = [self.bin, *args]
         try:
             proc = self.runner(argv, stdin, timeout or self.default_timeout)
@@ -66,15 +74,27 @@ class Gh:
             raise ReviewError(FailKind.INFRA, f"gh {' '.join(args[:3])} timed out") from exc
         except OSError as exc:
             raise ReviewError(FailKind.FATAL, f"cannot execute gh: {exc}") from exc
+        # Decode at the call boundary: API/JSON stays strict, while repository diffs
+        # may contain arbitrary blob bytes even when Git renders them as text hunks.
+        stdout = (
+            proc.stdout.decode("utf-8", errors=errors)
+            if isinstance(proc.stdout, bytes)
+            else proc.stdout
+        )
+        stderr = (
+            proc.stderr.decode("utf-8", errors=errors)
+            if isinstance(proc.stderr, bytes)
+            else proc.stderr
+        )
         if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "").strip()
+            err = (stderr or stdout or "").strip()
             kind = (
                 FailKind.INFRA
                 if any(m in err.lower() for m in _TRANSIENT_MARKERS)
                 else FailKind.CONTRACT
             )
             raise ReviewError(kind, f"gh {' '.join(args[:3])} rc={proc.returncode}: {err[:400]}")
-        return proc.stdout
+        return stdout
 
     def json(self, *args: str, stdin: str | None = None, timeout: int | None = None) -> Any:
         out = self.run(*args, stdin=stdin, timeout=timeout)
