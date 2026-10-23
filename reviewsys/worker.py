@@ -539,6 +539,17 @@ def _step_end(
         )
 
 
+def _fail_run_progress(ctx: RunContext, reason: str) -> None:
+    """Close unfinished steps on either an expected failure or an unexpected crash."""
+    with tx(ctx.conn):
+        ctx.conn.execute(
+            "UPDATE steps SET status='failed', finished_at=?, detail=? "
+            "WHERE run_id=? AND status='running'",
+            (now(), json.dumps({"error": reason[:1000]}), ctx.run_id),
+        )
+    _gate_comment(ctx, "failed", reason=reason[:200])
+
+
 def _lane_row(
     ctx: RunContext,
     *,
@@ -4395,14 +4406,11 @@ def main(
             _gate_closed(ctx, exc.reason)
     except ReviewError as exc:
         status, reason, kind = RunStatus.FAILED, exc.message, exc.kind
-        current = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (run_id,)).fetchone()
-        if current and current["phase"]:
-            with contextlib.suppress(ValueError):
-                _step_end(ctx, StepName(current["phase"]), "failed", {"error": exc.message[:1000]})
-        _gate_comment(ctx, "failed", reason=exc.message[:200])
+        _fail_run_progress(ctx, reason)
     except Exception as exc:
         status, reason, kind = RunStatus.FAILED, f"{type(exc).__name__}: {exc}", FailKind.INFRA
         log.exception("worker crashed")
+        _fail_run_progress(ctx, reason)
     finally:
         with ctx.gate_lock:  # no progress edit may follow the run's end (requeue, cancel)
             ctx.gate_live_kw = None
