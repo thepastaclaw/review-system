@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-25T19:01:01Z",
-  "generated_at": "2026-10-25T19:01:01Z",
+  "data_as_of": "2026-10-25T19:02:01Z",
+  "generated_at": "2026-10-25T19:02:01Z",
   "history": {
     "daily": [
       {
@@ -299,6 +299,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7420,
+        "repo": "dashpay/dash",
+        "run_id": 6739,
+        "ts": "2026-10-25T19:01:25Z"
+      },
       {
         "detail": "attempt 1 sha=dfd2dbea",
         "kind": "run.spawned",
@@ -602,14 +610,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 6735,
         "ts": "2026-10-25T17:27:35Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1640,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 6735,
-        "ts": "2026-10-25T17:27:34Z"
       },
       {
         "detail": null,
@@ -1223,24 +1223,35 @@
         "attempt": 1,
         "author": "thepastaclaw",
         "deadline_at": "2026-10-26T01:00:49Z",
-        "deadline_in_seconds": 21588,
+        "deadline_in_seconds": 21528,
         "degraded": false,
-        "elapsed_seconds": 12,
+        "elapsed_seconds": 72,
         "findings": null,
-        "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-10-25T19:00:49Z",
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-10-25T19:01:50Z",
         "id": 6739,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 36,
+            "state": "running"
+          }
+        ],
         "number": 7420,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7420",
         "priority": false,
-        "progress": 0.004,
+        "progress": 0.032,
         "queue": "live",
         "queued_at": "2026-10-25T18:30:45Z",
-        "remaining_seconds": 3065,
+        "remaining_seconds": 2191,
         "repo": "dashpay/dash",
         "sha": "dfd2dbea4775347b03f181b2811b8140d2c29c7c",
         "started_at": "2026-10-25T19:00:49Z",
@@ -1249,21 +1260,64 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 10,
+            "seconds": 20,
             "started_at": "2026-10-25T19:00:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-25T19:01:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a substantial CoinJoin functional and unit test change with a small additive RPC response modification, but it does not alter consensus, funds movement, cryptography, key handling, peer-facing deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-25T19:01:11Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 6,
+            "started_at": "2026-10-25T19:01:18Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 37,
+            "started_at": "2026-10-25T19:01:24Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "test: cover CoinJoin client restart handling",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "select",
-          "triage",
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1357,7 +1411,7 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
@@ -1370,12 +1424,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 854,
+        "age_seconds": 914,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-25T19:16:47Z",
-        "eligible_in_seconds": 946,
+        "eligible_in_seconds": 886,
         "number": 5460,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5460",
@@ -1389,12 +1443,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 623,
+        "age_seconds": 683,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-25T19:20:38Z",
-        "eligible_in_seconds": 1177,
+        "eligible_in_seconds": 1117,
         "number": 5549,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5549",
@@ -1415,7 +1469,7 @@
       "reviews": 61,
       "tokens": 1501494727
     },
-    "ts": "2026-10-25T19:01:01Z",
+    "ts": "2026-10-25T19:02:01Z",
     "typical_minutes_by_tier": {
       "critical": 40.9,
       "low": 42.4,
@@ -1426,7 +1480,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.2,
+      "idle_minutes": 1.2,
       "ingest_stale": false,
       "stuck": false
     }
