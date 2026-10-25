@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-25T20:25:02Z",
-  "generated_at": "2026-10-25T20:25:02Z",
+  "data_as_of": "2026-10-25T20:26:01Z",
+  "generated_at": "2026-10-25T20:26:02Z",
   "history": {
     "daily": [
       {
@@ -647,9 +647,9 @@
       },
       {
         "effort": "high",
-        "lanes": 17164,
-        "tokens_in": 16523386069,
-        "tokens_out": 151007305
+        "lanes": 17165,
+        "tokens_in": 16523520756,
+        "tokens_out": 151010659
       },
       {
         "effort": "low",
@@ -695,18 +695,18 @@
         "tokens_out": 40935799
       },
       {
-        "avg_tokens_per_lane": 1514811.0,
-        "lanes": 20838,
+        "avg_tokens_per_lane": 1514745.0,
+        "lanes": 20839,
         "model": "gpt-6.1-sol",
-        "tokens_in": 31411817043,
-        "tokens_out": 153823305
+        "tokens_in": 31411951730,
+        "tokens_out": 153826659
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 6745,
-        "tokens_in": 707487,
-        "tokens_out": 30985
+        "tokens_in": 842174,
+        "tokens_out": 34339
       },
       {
         "run_id": 6744,
@@ -1205,16 +1205,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 12447141,
+      "avg_tokens_per_completed_review": 12447168,
       "completed_reviews": 5017,
       "findings": 35580,
       "findings_posted": 6056,
       "reviews": 6896,
       "reviews_imported": 2245,
       "runs": 6745,
-      "tokens_in": 61698454633,
-      "tokens_out": 748851116,
-      "tokens_total": 62447305749
+      "tokens_in": 61698589320,
+      "tokens_out": 748854470,
+      "tokens_total": 62447443790
     }
   },
   "live": {
@@ -1223,16 +1223,16 @@
         "attempt": 1,
         "author": "abaranouski",
         "deadline_at": "2026-10-26T02:14:52Z",
-        "deadline_in_seconds": 20990,
+        "deadline_in_seconds": 20931,
         "degraded": false,
-        "elapsed_seconds": 610,
+        "elapsed_seconds": 669,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-10-25T20:24:50Z",
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-25T20:25:51Z",
         "id": 6745,
         "lanes": [
           {
@@ -1274,6 +1274,16 @@
             "status": "completed",
             "tokens_in": 133860,
             "tokens_out": 5403
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 134687,
+            "tokens_out": 3354
           }
         ],
         "live_lanes": [
@@ -1281,22 +1291,32 @@
             "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify2",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 50,
+            "role": "general",
+            "since_seconds": 48,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 47,
             "state": "running"
           }
         ],
         "number": 1640,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1640",
         "priority": true,
-        "progress": 0.471,
+        "progress": 0.483,
         "queue": "live",
         "queued_at": "2026-10-25T20:14:14Z",
-        "remaining_seconds": 684,
+        "remaining_seconds": 716,
         "repo": "dashpay/dash-wallet",
         "sha": "0dd91652aa2ed7752844f14f7cf5a526c6a62149",
         "started_at": "2026-10-25T20:14:52Z",
@@ -1390,20 +1410,40 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify2",
-            "seconds": 50,
+            "seconds": 61,
             "started_at": "2026-10-25T20:24:12Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "fresh_phase2",
+            "seconds": 48,
+            "started_at": "2026-10-25T20:25:13Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "fix(pre-review): fail closed on every probe and exit non-zero without a usable verdict",
-        "tokens_in": 707487,
-        "tokens_out": 30985,
+        "tokens_in": 842174,
+        "tokens_out": 34339,
         "trigger": "manual",
         "upcoming": [
-          "fresh_phase2",
           "fresh_verify2",
           "publish"
         ],
@@ -1489,7 +1529,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
@@ -1503,7 +1543,7 @@
     "last_run_done_at": "2026-10-25T20:14:14Z",
     "last_run_started_at": "2026-10-25T20:14:52Z",
     "median_run_minutes": 37.71666666666667,
-    "notify_last_at": "2026-10-25T20:23:52Z",
+    "notify_last_at": "2026-10-25T20:26:00Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1514,9 +1554,9 @@
       "reviews": 67,
       "tokens": 1522375681
     },
-    "ts": "2026-10-25T20:25:02Z",
+    "ts": "2026-10-25T20:26:01Z",
     "typical_minutes_by_tier": {
-      "critical": 40.9,
+      "critical": 41.0,
       "low": 42.4,
       "normal": 27.9,
       "trivial": 12.5,
@@ -1525,7 +1565,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 10.166666666666666,
+      "idle_minutes": 11.15,
       "ingest_stale": false,
       "stuck": false
     }
