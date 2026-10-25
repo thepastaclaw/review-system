@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-25T04:26:00Z",
-  "generated_at": "2026-10-25T04:26:01Z",
+  "data_as_of": "2026-10-25T04:27:00Z",
+  "generated_at": "2026-10-25T04:27:00Z",
   "history": {
     "daily": [
       {
@@ -273,7 +273,7 @@
           },
           "wait": {
             "median_seconds": 1811,
-            "n": 496,
+            "n": 497,
             "p90_seconds": 1842
           }
         },
@@ -299,6 +299,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1604,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 6687,
+        "ts": "2026-10-25T04:26:44Z"
+      },
+      {
+        "detail": null,
+        "kind": "degraded.run",
+        "number": 1604,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 6687,
+        "ts": "2026-10-25T04:26:21Z"
+      },
+      {
+        "detail": "attempt 1 sha=5ffa1fe5",
+        "kind": "run.spawned",
+        "number": 1604,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 6687,
+        "ts": "2026-10-25T04:26:21Z"
+      },
       {
         "detail": null,
         "kind": "degraded.transition",
@@ -594,30 +618,6 @@
         "repo": "dashpay/dash-platform-website",
         "run_id": 6683,
         "ts": "2026-10-25T01:55:34Z"
-      },
-      {
-        "detail": "attempt 1 sha=f2478cb6",
-        "kind": "run.spawned",
-        "number": 235,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": 6683,
-        "ts": "2026-10-25T01:55:08Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-25T01:50:52Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.corrected",
-        "number": 5259,
-        "repo": "dashpay/platform",
-        "run_id": 6681,
-        "ts": "2026-10-25T01:35:34Z"
       }
     ],
     "tokens_by_effort": [
@@ -1211,14 +1211,155 @@
       "findings_posted": 5997,
       "reviews": 6852,
       "reviews_imported": 2245,
-      "runs": 6686,
+      "runs": 6687,
       "tokens_in": 60305212602,
       "tokens_out": 737882275,
       "tokens_total": 61043094877
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-10-25T10:26:21Z",
+        "deadline_in_seconds": 21561,
+        "degraded": true,
+        "elapsed_seconds": 39,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-25T04:26:51Z",
+        "id": 6687,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 16,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase2",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 18,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase2",
+            "pool": "muse",
+            "role": "security-auditor",
+            "since_seconds": 17,
+            "state": "running"
+          }
+        ],
+        "number": 1604,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1604",
+        "priority": false,
+        "progress": 0.01,
+        "queue": "live",
+        "queued_at": "2026-10-25T03:56:02Z",
+        "remaining_seconds": 3975,
+        "repo": "dashpay/dash-wallet",
+        "sha": "5ffa1fe51f7c46c5a78fcc1dd12dd412fcd97d4d",
+        "started_at": "2026-10-25T04:26:21Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-10-25T04:26:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 10,
+            "started_at": "2026-10-25T04:26:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:muse-spark-1.3-contributor",
+              "reasoning": "Large 5k-line change adds new key/session handling in KeyExchangeCrypto.kt and AppConnectSession.kt with IdentityUpdate signing.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-10-25T04:26:28Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-10-25T04:26:38Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 18,
+            "started_at": "2026-10-25T04:26:42Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 18,
+            "started_at": "2026-10-25T04:26:42Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(connect): update DashConnect to v2 one-QR flow ",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1819
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1234,7 +1375,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 4,
       "priority_overflow": 1,
@@ -1272,7 +1413,8 @@
       "closed": 520,
       "done": 6776,
       "failed": 80,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2507
     },
     "ingest_error_streak": 0,
@@ -1292,7 +1434,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1304,46 +1446,27 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-10-25T03:07:45Z",
-    "last_run_started_at": "2026-10-25T03:04:20Z",
+    "last_run_started_at": "2026-10-25T04:26:21Z",
     "median_run_minutes": 39.4,
     "notify_last_at": "2026-10-25T04:25:36Z",
-    "oldest_queued_at": "2026-10-25T03:56:02Z",
+    "oldest_queued_at": "2026-10-25T04:08:11Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1798,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-10-25T04:26:02Z",
-        "eligible_in_seconds": 2,
-        "number": 1604,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1604",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1604#issuecomment-6047105100",
-        "priority": false,
-        "queued_at": "2026-10-25T03:56:02Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-wallet",
-        "sha": "5ffa1fe51f7c46c5a78fcc1dd12dd412fcd97d4d",
-        "title": "feat(connect): update DashConnect to v2 one-QR flow ",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1069,
+        "age_seconds": 1129,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-25T04:38:11Z",
-        "eligible_in_seconds": 731,
+        "eligible_in_seconds": 671,
         "number": 86,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/base-sdk/pull/86",
         "prioritize_url": "https://github.com/dashpay/base-sdk/issues/86#issuecomment-6393300364",
         "priority": false,
@@ -1362,7 +1485,7 @@
       "reviews": 13,
       "tokens": 250116963
     },
-    "ts": "2026-10-25T04:26:00Z",
+    "ts": "2026-10-25T04:27:00Z",
     "typical_minutes_by_tier": {
       "critical": 37.2,
       "low": 37.2,
@@ -1371,9 +1494,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 81.66666666666667,
+      "idle_minutes": 0.65,
       "ingest_stale": false,
       "stuck": false
     }
