@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-25T19:00:02Z",
-  "generated_at": "2026-10-25T19:00:02Z",
+  "data_as_of": "2026-10-25T19:01:01Z",
+  "generated_at": "2026-10-25T19:01:01Z",
   "history": {
     "daily": [
       {
@@ -273,7 +273,7 @@
           },
           "wait": {
             "median_seconds": 1811,
-            "n": 505,
+            "n": 506,
             "p90_seconds": 1848
           }
         },
@@ -299,6 +299,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=dfd2dbea",
+        "kind": "run.spawned",
+        "number": 7420,
+        "repo": "dashpay/dash",
+        "run_id": 6739,
+        "ts": "2026-10-25T19:00:49Z"
+      },
       {
         "detail": "3a3771bf trigger=new_push priority=0",
         "kind": "head.queued",
@@ -610,14 +618,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 6735,
         "ts": "2026-10-25T17:27:34Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.output_normalized",
-        "number": 5529,
-        "repo": "dashpay/platform",
-        "run_id": 6734,
-        "ts": "2026-10-25T17:22:56Z"
       }
     ],
     "tokens_by_effort": [
@@ -1211,14 +1211,66 @@
       "findings_posted": 6055,
       "reviews": 6892,
       "reviews_imported": 2245,
-      "runs": 6738,
+      "runs": 6739,
       "tokens_in": 61677250048,
       "tokens_out": 748436275,
       "tokens_total": 62425686323
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "thepastaclaw",
+        "deadline_at": "2026-10-26T01:00:49Z",
+        "deadline_in_seconds": 21588,
+        "degraded": false,
+        "elapsed_seconds": 12,
+        "findings": null,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-25T19:00:49Z",
+        "id": 6739,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 7420,
+        "overdue": false,
+        "phase": "worktree",
+        "pr_url": "https://github.com/dashpay/dash/pull/7420",
+        "priority": false,
+        "progress": 0.004,
+        "queue": "live",
+        "queued_at": "2026-10-25T18:30:45Z",
+        "remaining_seconds": 3065,
+        "repo": "dashpay/dash",
+        "sha": "dfd2dbea4775347b03f181b2811b8140d2c29c7c",
+        "started_at": "2026-10-25T19:00:49Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 10,
+            "started_at": "2026-10-25T19:00:51Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "test: cover CoinJoin client restart handling",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "select",
+          "triage",
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1804
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1234,7 +1286,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1252,7 +1304,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-25T18:58:43Z",
+        "at": "2026-10-25T19:00:51Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1272,7 +1324,8 @@
       "closed": 523,
       "done": 6816,
       "failed": 80,
-      "queued": 3,
+      "queued": 2,
+      "running": 1,
       "superseded": 2516
     },
     "ingest_error_streak": 0,
@@ -1310,40 +1363,21 @@
       }
     ],
     "last_run_done_at": "2026-10-25T18:45:39Z",
-    "last_run_started_at": "2026-10-25T18:12:40Z",
+    "last_run_started_at": "2026-10-25T19:00:49Z",
     "median_run_minutes": 38.18333333333333,
     "notify_last_at": "2026-10-25T18:59:44Z",
-    "oldest_queued_at": "2026-10-25T18:30:45Z",
+    "oldest_queued_at": "2026-10-25T18:46:47Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1757,
-        "attempts": 0,
-        "author": "thepastaclaw",
-        "eligible": false,
-        "eligible_at": "2026-10-25T19:00:45Z",
-        "eligible_in_seconds": 43,
-        "number": 7420,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash/pull/7420",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/7420#issuecomment-5037438359",
-        "priority": false,
-        "queued_at": "2026-10-25T18:30:45Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash",
-        "sha": "dfd2dbea4775347b03f181b2811b8140d2c29c7c",
-        "title": "test: cover CoinJoin client restart handling",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 795,
+        "age_seconds": 854,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-25T19:16:47Z",
-        "eligible_in_seconds": 1005,
+        "eligible_in_seconds": 946,
         "number": 5460,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5460",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5460#issuecomment-6195524894",
         "priority": false,
@@ -1355,14 +1389,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 564,
+        "age_seconds": 623,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-10-25T19:20:38Z",
-        "eligible_in_seconds": 1236,
+        "eligible_in_seconds": 1177,
         "number": 5549,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5549",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5549#issuecomment-6361638337",
         "priority": false,
@@ -1381,7 +1415,7 @@
       "reviews": 61,
       "tokens": 1501494727
     },
-    "ts": "2026-10-25T19:00:02Z",
+    "ts": "2026-10-25T19:01:01Z",
     "typical_minutes_by_tier": {
       "critical": 40.9,
       "low": 42.4,
@@ -1390,9 +1424,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 47.36666666666667,
+      "idle_minutes": 0.2,
       "ingest_stale": false,
       "stuck": false
     }
