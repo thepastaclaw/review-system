@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-25T18:11:01Z",
-  "generated_at": "2026-10-25T18:11:01Z",
+  "data_as_of": "2026-10-25T18:12:02Z",
+  "generated_at": "2026-10-25T18:12:02Z",
   "history": {
     "daily": [
       {
@@ -273,7 +273,7 @@
           },
           "wait": {
             "median_seconds": 1811,
-            "n": 506,
+            "n": 507,
             "p90_seconds": 1849
           }
         },
@@ -299,6 +299,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=642277ff",
+        "kind": "run.spawned",
+        "number": 7939,
+        "repo": "dashpay/dash",
+        "run_id": 6737,
+        "ts": "2026-10-25T18:11:32Z"
+      },
       {
         "detail": "ok in 8789s",
         "kind": "run.done",
@@ -594,14 +602,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 6732,
         "ts": "2026-10-25T17:09:49Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1616,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 6732,
-        "ts": "2026-10-25T17:09:47Z"
       },
       {
         "detail": null,
@@ -1211,14 +1211,92 @@
       "findings_posted": 6053,
       "reviews": 6890,
       "reviews_imported": 2245,
-      "runs": 6736,
+      "runs": 6737,
       "tokens_in": 61665524198,
       "tokens_out": 748036963,
       "tokens_total": 62413561161
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "knst",
+        "deadline_at": "2026-10-26T00:11:32Z",
+        "deadline_in_seconds": 21570,
+        "degraded": false,
+        "elapsed_seconds": 30,
+        "findings": null,
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-10-25T18:11:47Z",
+        "id": 6737,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 7939,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dash/pull/7939",
+        "priority": false,
+        "progress": 0.009,
+        "queue": "live",
+        "queued_at": "2026-10-25T17:41:13Z",
+        "remaining_seconds": 3385,
+        "repo": "dashpay/dash",
+        "sha": "642277ff014ade2a785d553a79854f42a2746aa2",
+        "started_at": "2026-10-25T18:11:32Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 17,
+            "started_at": "2026-10-25T18:11:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-25T18:11:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a large, intricate storage-format migration changing block and undo record serialization and recovery paths in src/node/blockstorage.cpp, src/validation.cpp, and src/index/txindex.cpp, which directly affects persisted blockchain data and reindexing.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-25T18:11:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 6,
+            "started_at": "2026-10-25T18:11:56Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat: optional zstd compression of block and undo files",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1819
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1234,7 +1312,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1272,7 +1350,7 @@
       "closed": 523,
       "done": 6814,
       "failed": 80,
-      "queued": 1,
+      "running": 1,
       "superseded": 2515
     },
     "ingest_error_streak": 0,
@@ -1310,32 +1388,12 @@
       }
     ],
     "last_run_done_at": "2026-10-25T18:02:25Z",
-    "last_run_started_at": "2026-10-25T17:13:41Z",
+    "last_run_started_at": "2026-10-25T18:11:32Z",
     "median_run_minutes": 38.18333333333333,
     "notify_last_at": "2026-10-25T18:10:25Z",
-    "oldest_queued_at": "2026-10-25T17:41:13Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1788,
-        "attempts": 0,
-        "author": "knst",
-        "eligible": false,
-        "eligible_at": "2026-10-25T18:11:13Z",
-        "eligible_in_seconds": 12,
-        "number": 7939,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash/pull/7939",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/7939#issuecomment-6387199076",
-        "priority": false,
-        "queued_at": "2026-10-25T17:41:13Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash",
-        "sha": "642277ff014ade2a785d553a79854f42a2746aa2",
-        "title": "feat: optional zstd compression of block and undo files",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-25",
       "failed": 1,
@@ -1343,7 +1401,7 @@
       "reviews": 59,
       "tokens": 1489369565
     },
-    "ts": "2026-10-25T18:11:01Z",
+    "ts": "2026-10-25T18:12:02Z",
     "typical_minutes_by_tier": {
       "critical": 40.9,
       "low": 42.4,
@@ -1352,9 +1410,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 57.333333333333336,
+      "idle_minutes": 0.5,
       "ingest_stale": false,
       "stuck": false
     }
