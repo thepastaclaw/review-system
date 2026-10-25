@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-25T19:20:02Z",
-  "generated_at": "2026-10-25T19:20:02Z",
+  "data_as_of": "2026-10-25T19:21:01Z",
+  "generated_at": "2026-10-25T19:21:01Z",
   "history": {
     "daily": [
       {
@@ -273,8 +273,8 @@
           },
           "wait": {
             "median_seconds": 1811,
-            "n": 506,
-            "p90_seconds": 1848
+            "n": 507,
+            "p90_seconds": 1847
           }
         },
         "priority": {
@@ -299,6 +299,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=3a3771bf",
+        "kind": "run.spawned",
+        "number": 5549,
+        "repo": "dashpay/platform",
+        "run_id": 6742,
+        "ts": "2026-10-25T19:20:38Z"
+      },
       {
         "detail": "ok in 15s",
         "kind": "run.done",
@@ -610,14 +618,6 @@
         "repo": "dashpay/dash",
         "run_id": 6736,
         "ts": "2026-10-25T17:57:10Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.corrected",
-        "number": 7420,
-        "repo": "dashpay/dash",
-        "run_id": 6736,
-        "ts": "2026-10-25T17:47:11Z"
       }
     ],
     "tokens_by_effort": [
@@ -635,9 +635,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 17635,
-        "tokens_in": 42614165860,
-        "tokens_out": 570778272
+        "lanes": 17636,
+        "tokens_in": 42615319978,
+        "tokens_out": 570884493
       },
       {
         "effort": "medium",
@@ -660,11 +660,11 @@
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 1918135.0,
-        "lanes": 6681,
+        "avg_tokens_per_lane": 1918036.0,
+        "lanes": 6682,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 12360432982,
-        "tokens_out": 454623661
+        "tokens_in": 12361587100,
+        "tokens_out": 454729882
       },
       {
         "avg_tokens_per_lane": 5026834.0,
@@ -707,6 +707,11 @@
         "run_id": 6740,
         "tokens_in": 71356,
         "tokens_out": 1049
+      },
+      {
+        "run_id": 6739,
+        "tokens_in": 1154118,
+        "tokens_out": 106221
       },
       {
         "run_id": 6738,
@@ -1197,24 +1202,19 @@
         "run_id": 6638,
         "tokens_in": 15986915,
         "tokens_out": 161246
-      },
-      {
-        "run_id": 6637,
-        "tokens_in": 12558226,
-        "tokens_out": 175273
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 12452775,
+      "avg_tokens_per_completed_review": 12453026,
       "completed_reviews": 5013,
       "findings": 35564,
       "findings_posted": 6055,
       "reviews": 6893,
       "reviews_imported": 2245,
-      "runs": 6741,
-      "tokens_in": 61677321404,
-      "tokens_out": 748437324,
-      "tokens_total": 62425758728
+      "runs": 6742,
+      "tokens_in": 61678475522,
+      "tokens_out": 748543545,
+      "tokens_total": 62427019067
     }
   },
   "live": {
@@ -1223,35 +1223,46 @@
         "attempt": 1,
         "author": "thepastaclaw",
         "deadline_at": "2026-10-26T01:00:49Z",
-        "deadline_in_seconds": 20447,
+        "deadline_in_seconds": 20388,
         "degraded": false,
-        "elapsed_seconds": 1153,
+        "elapsed_seconds": 1212,
         "findings": null,
-        "heartbeat_age_seconds": 15,
-        "heartbeat_at": "2026-10-25T19:19:47Z",
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-10-25T19:20:47Z",
         "id": 6739,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "xhigh",
-            "line_position": null,
             "model": "muse-spark-1.3-contributor",
             "phase": "phase1",
-            "pool": "muse",
             "role": "general",
-            "since_seconds": 1117,
+            "status": "completed",
+            "tokens_in": 1154118,
+            "tokens_out": 106221
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "medium",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 19,
             "state": "running"
           }
         ],
         "number": 7420,
         "overdue": false,
-        "phase": "phase1",
+        "phase": "verify1",
         "pr_url": "https://github.com/dashpay/dash/pull/7420",
         "priority": false,
-        "progress": 0.458,
+        "progress": 0.474,
         "queue": "live",
         "queued_at": "2026-10-25T18:30:45Z",
-        "remaining_seconds": 1364,
+        "remaining_seconds": 1345,
         "repo": "dashpay/dash",
         "sha": "dfd2dbea4775347b03f181b2811b8140d2c29c7c",
         "started_at": "2026-10-25T19:00:49Z",
@@ -1299,30 +1310,108 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 1118,
+            "seconds": 1158,
             "started_at": "2026-10-25T19:01:24Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify1",
+            "seconds": 19,
+            "started_at": "2026-10-25T19:20:42Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "test: cover CoinJoin client restart handling",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 1154118,
+        "tokens_out": 106221,
         "trigger": "new_push",
         "upcoming": [
-          "verify1",
           "gate",
           "phase2",
           "verify2",
           "publish"
         ],
         "wait_seconds": 1804
+      },
+      {
+        "attempt": 1,
+        "author": "romchornyi",
+        "deadline_at": "2026-10-26T01:20:38Z",
+        "deadline_in_seconds": 21577,
+        "degraded": false,
+        "elapsed_seconds": 23,
+        "findings": null,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-10-25T19:20:53Z",
+        "id": 6742,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "low",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "prep",
+            "pool": "gpt",
+            "role": "prep",
+            "since_seconds": 6,
+            "state": "running"
+          }
+        ],
+        "number": 5549,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/platform/pull/5549",
+        "priority": false,
+        "progress": 0.008,
+        "queue": "live",
+        "queued_at": "2026-10-25T18:50:38Z",
+        "remaining_seconds": 3041,
+        "repo": "dashpay/platform",
+        "sha": "3a3771bf453cd345096085eaf9a9a3f1bb99943b",
+        "started_at": "2026-10-25T19:20:38Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 15,
+            "started_at": "2026-10-25T19:20:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "select",
+            "seconds": 7,
+            "started_at": "2026-10-25T19:20:54Z",
+            "status": "running"
+          },
+          {
+            "info": {},
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-10-25T19:20:55Z",
+            "status": "running"
+          }
+        ],
+        "tier": null,
+        "title": "fix(platform-wallet-storage): restore DashPay contact address pools on SQLite load",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1800
       }
     ],
     "audit": {
@@ -1340,7 +1429,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1358,7 +1447,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-25T19:18:25Z",
+        "at": "2026-10-25T19:20:39Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1378,8 +1467,7 @@
       "closed": 523,
       "done": 6817,
       "failed": 80,
-      "queued": 1,
-      "running": 1,
+      "running": 2,
       "superseded": 2516
     },
     "ingest_error_streak": 0,
@@ -1405,44 +1493,24 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 0,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-10-25T19:17:28Z",
-    "last_run_started_at": "2026-10-25T19:17:12Z",
+    "last_run_started_at": "2026-10-25T19:20:38Z",
     "median_run_minutes": 38.18333333333333,
     "notify_last_at": "2026-10-25T19:19:12Z",
-    "oldest_queued_at": "2026-10-25T18:50:38Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1764,
-        "attempts": 0,
-        "author": "romchornyi",
-        "eligible": false,
-        "eligible_at": "2026-10-25T19:20:38Z",
-        "eligible_in_seconds": 36,
-        "number": 5549,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5549",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5549#issuecomment-6361638337",
-        "priority": false,
-        "queued_at": "2026-10-25T18:50:38Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "3a3771bf453cd345096085eaf9a9a3f1bb99943b",
-        "title": "fix(platform-wallet-storage): restore DashPay contact address pools on SQLite load",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-25",
       "failed": 1,
@@ -1450,7 +1518,7 @@
       "reviews": 63,
       "tokens": 1501567132
     },
-    "ts": "2026-10-25T19:20:02Z",
+    "ts": "2026-10-25T19:21:01Z",
     "typical_minutes_by_tier": {
       "critical": 40.9,
       "low": 42.4,
@@ -1459,9 +1527,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 1,
+      "active": 2,
       "eligible": 0,
-      "idle_minutes": 2.8333333333333335,
+      "idle_minutes": 0.38333333333333336,
       "ingest_stale": false,
       "stuck": false
     }
