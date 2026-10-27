@@ -50,6 +50,8 @@ class Trigger(StrEnum):
     MENTION = "mention"
     REVIEW_REQUESTED = "review_requested"
     PRIORITY_REQUEST = "priority_request"  # checkbox ticked on the queue comment
+    # the "Request normal review" box: someone asked, but the review waits its turn in line
+    NORMAL_REQUEST = "normal_request"
     REVIEW_REPLY = "review_reply"  # a human replied under one of the bot's finding threads
     MANUAL = "manual"
     AUDIT = "audit"  # post-merge review of a PR merged without a clean review (audit queue)

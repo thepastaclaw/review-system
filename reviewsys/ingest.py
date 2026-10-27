@@ -105,9 +105,11 @@ def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
     return bool(row and row["skip_label"])
 
 
-# what re-opens an already-reviewed commit: a reply under a finding, an operator, the
-# priority box (a mention or review request on a reviewed commit changes nothing)
-REOPENING = frozenset({Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST})
+# what re-opens an already-reviewed commit: a reply under a finding, an operator, either
+# gate-comment box (a mention or review request on a reviewed commit changes nothing)
+REOPENING = frozenset(
+    {Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST}
+)
 # ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`)
 ASKING = frozenset({Trigger.MENTION, Trigger.REVIEW_REQUESTED})
 
@@ -144,8 +146,9 @@ def enqueue_head(
 ) -> str:
     """Create a queued head for (repo, number, sha), superseding any older active head.
 
-    Returns one of: created, promoted (existing head got priority), requeued (a finished
-    head re-opened by a review reply), noop. Caller holds a transaction.
+    Returns one of: created, promoted (an existing head got priority, or a normal request
+    took over a debounced one), requeued (a finished head re-opened), noop. Caller holds a
+    transaction.
 
     `Trigger.CI_FAILED` (a check failed after the head's APPROVE, ci.py) only ever re-opens
     a finished head for the light CI-check run: it never creates a head or takes one over.
@@ -181,7 +184,12 @@ def enqueue_head(
             return "noop"
         return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
     priority = 1 if trigger.priority else 0
-    eligible = ts if priority else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
+    # the push debounce waits for pushes to settle; someone asking says they have
+    eligible = (
+        ts
+        if priority or trigger == Trigger.NORMAL_REQUEST
+        else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
+    )
     if existing and skip_closed:
         # closed only because of a skip label: the label is gone (ingest) or someone asked
         supersede_other_heads(conn, repo, number, sha, ts)
@@ -214,14 +222,27 @@ def enqueue_head(
                 # its run carried an earlier review and is finishing: review it right after
                 _rereview_after_run(conn, existing["id"])
             return "promoted"
+        if (
+            trigger == Trigger.NORMAL_REQUEST
+            and existing["status"] == HeadStatus.QUEUED
+            and existing["trigger"] in AUTOMATIC_TRIGGERS
+        ):
+            # asked for on a head still in its push debounce: it is no longer only automatic
+            # (a draft keeps it), and it waits in line from now, without jumping ahead
+            conn.execute(
+                "UPDATE heads SET trigger=?, eligible_at=MIN(eligible_at, ?) WHERE id=?",
+                (trigger.value, ts, existing["id"]),
+            )
+            return "promoted"
         if trigger in REOPENING and existing["status"] in (
             HeadStatus.DONE,
             HeadStatus.FAILED,
             HeadStatus.CLOSED,
         ):
             # same commit, already reviewed: a human answered a finding (or an operator asked),
-            # so review it again with the threads in context and answer on them
-            return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
+            # so review it again with the threads in context and answer on them; the normal
+            # box re-opens it at the back of the line, everything else at the front
+            return _requeue(conn, existing["id"], repo, number, sha, trigger, ts, priority=priority)
         if (
             trigger in ASKING
             and existing["status"] == HeadStatus.DONE
