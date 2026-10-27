@@ -233,7 +233,9 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
             body = str(c.get("body") or "") if c else ""
             if normal_requested(body) or priority_requested(body):
-                trigger = Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.MANUAL
+                trigger = (
+                    Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.NORMAL_REQUEST
+                )
                 from .ingest import enqueue_head
 
                 with tx(conn):
@@ -324,7 +326,9 @@ def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict
                 # a box ticked before the label landed is a request: honour it, never erase it
                 from .ingest import enqueue_head
 
-                trigger = Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.MANUAL
+                trigger = (
+                    Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.NORMAL_REQUEST
+                )
                 with tx(conn):
                     res = enqueue_head(conn, cfg, p["repo"], p["number"], p["head_sha"], trigger)
                 if res != "noop":

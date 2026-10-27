@@ -409,17 +409,39 @@ def test_debounced_head_boxes_still_work(cfg, conn, gh):
     head = conn.execute("SELECT priority, trigger FROM heads WHERE number=401").fetchone()
     assert tuple(head) == (1, "priority_request")
     assert gh.routes[ep]["body"].splitlines()[1].startswith("⚡ Priority review — 1st in line")
-    # the normal box: an explicit request, queued at once
+    # the normal box: an explicit request, eligible at once but behind the priority head
+    # (it used to be queued as a priority review: dashpay/dash-platform-website#249)
     ep = _debounced(conn, cfg, gh, 402)
     update_queue_comments(conn, cfg, gh)
     gh.routes[ep]["body"] = gh.routes[ep]["body"].replace(
         "- [ ] **Request normal", "- [x] **Request normal"
     )
     update_queue_comments(conn, cfg, gh)
-    head = conn.execute("SELECT priority, trigger FROM heads WHERE number=402").fetchone()
-    assert tuple(head) == (1, "manual")
+    head = conn.execute(
+        "SELECT priority, trigger, eligible_at <= ? FROM heads WHERE number=402", (now(),)
+    ).fetchone()
+    assert tuple(head) == (0, "normal_request", 1)
     update_queue_comments(conn, cfg, gh)
-    assert "Priority review" in gh.routes[ep]["body"]
+    assert gh.routes[ep]["body"].splitlines()[1].startswith("🕓 Queued for automated review — 2nd")
+    assert "- [ ] **Request priority review**" in gh.routes[ep]["body"]
+
+
+def test_normal_request_reopens_a_reviewed_commit_at_the_back_of_the_line(cfg, conn):
+    sha = "4" * 40
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 403, sha, Trigger.NEW_PR)
+        conn.execute("UPDATE heads SET status='failed' WHERE number=403")
+        assert enqueue_head(conn, cfg, "dashpay/platform", 403, sha, Trigger.NORMAL_REQUEST) == (
+            "requeued"
+        )
+    row = conn.execute("SELECT status, priority, trigger FROM heads WHERE number=403").fetchone()
+    assert tuple(row) == ("queued", 0, "normal_request")
+    # the priority box still moves it to the front
+    with tx(conn):
+        assert enqueue_head(conn, cfg, "dashpay/platform", 403, sha, Trigger.PRIORITY_REQUEST) == (
+            "promoted"
+        )
+    assert conn.execute("SELECT priority FROM heads WHERE number=403").fetchone()[0] == 1
 
 
 def test_review_requested_on_a_draft_runs_to_the_end(cfg, conn, gh):
@@ -445,10 +467,12 @@ def test_review_requested_on_a_draft_runs_to_the_end(cfg, conn, gh):
         "- [ ] **Request normal", "- [x] **Request normal"
     )
     update_queue_comments(conn, cfg, gh)
-    head = conn.execute("SELECT id, trigger, status FROM heads WHERE number=5285").fetchone()
-    assert (head["trigger"], head["status"]) == ("manual", "queued")
+    head = conn.execute(
+        "SELECT id, trigger, status, priority FROM heads WHERE number=5285"
+    ).fetchone()
+    assert (head["trigger"], head["status"], head["priority"]) == ("normal_request", "queued", 0)
     update_queue_comments(conn, cfg, gh)
-    assert "Priority review" in gh.routes[ep]["body"]
+    assert "Queued for automated review" in gh.routes[ep]["body"]
 
     # still a draft: the requested head survives ingest while queued and while running
     ingest_prs(conn, cfg, gh)
@@ -483,9 +507,9 @@ def test_review_requested_on_a_draft_runs_to_the_end(cfg, conn, gh):
         "- [ ] **Request normal", "- [x] **Request normal"
     )
     update_queue_comments(conn, cfg, gh)
-    assert (
-        conn.execute("SELECT status FROM heads WHERE id=?", (head["id"],)).fetchone()[0] == "queued"
-    )
+    assert tuple(
+        conn.execute("SELECT status, priority FROM heads WHERE id=?", (head["id"],)).fetchone()
+    ) == ("queued", 0)
 
     # a push to the draft: the requested head is for an old commit and the new one waits again
     gh.open_prs["dashpay/platform"] = [pr(5285, "6" * 40, isDraft=True)]
@@ -717,7 +741,7 @@ def test_box_ticked_before_the_label_is_honoured_not_erased(cfg, conn, gh):
     ingest_prs(conn, cfg, gh)
     update_queue_comments(conn, cfg, gh)
     row = conn.execute("SELECT status, trigger FROM heads WHERE number=19").fetchone()
-    assert tuple(row) == ("queued", "manual")
+    assert tuple(row) == ("queued", "normal_request")
     assert SKIP_LABEL_NOTE not in gh.routes[ep]["body"]
 
 
