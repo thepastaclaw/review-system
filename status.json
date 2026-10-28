@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-28T01:02:00Z",
-  "generated_at": "2026-10-28T01:02:01Z",
+  "data_as_of": "2026-10-28T01:03:00Z",
+  "generated_at": "2026-10-28T01:03:01Z",
   "history": {
     "daily": [
       {
@@ -288,7 +288,7 @@
           },
           "wait": {
             "median_seconds": 1812,
-            "n": 528,
+            "n": 529,
             "p90_seconds": 1859
           }
         },
@@ -314,6 +314,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 81,
+        "repo": "dashpay/evo-sdk-website",
+        "run_id": 7117,
+        "ts": "2026-10-28T01:02:36Z"
+      },
+      {
+        "detail": "attempt 1 sha=c2e8e284",
+        "kind": "run.spawned",
+        "number": 81,
+        "repo": "dashpay/evo-sdk-website",
+        "run_id": 7117,
+        "ts": "2026-10-28T01:02:24Z"
+      },
       {
         "detail": "47949206 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -577,22 +593,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 7106,
         "ts": "2026-10-28T00:23:54Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1604,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 7106,
-        "ts": "2026-10-28T00:23:53Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1604,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 7106,
-        "ts": "2026-10-28T00:23:53Z"
       },
       {
         "detail": null,
@@ -1226,14 +1226,118 @@
       "findings_posted": 6500,
       "reviews": 7170,
       "reviews_imported": 2245,
-      "runs": 7116,
+      "runs": 7117,
       "tokens_in": 72442232044,
       "tokens_out": 820585968,
       "tokens_total": 73262818012
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "thephez",
+        "deadline_at": "2026-10-28T07:02:24Z",
+        "deadline_in_seconds": 21564,
+        "degraded": false,
+        "elapsed_seconds": 36,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-28T01:02:54Z",
+        "id": 7117,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 24,
+            "state": "running"
+          }
+        ],
+        "number": 81,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/evo-sdk-website/pull/81",
+        "priority": false,
+        "progress": 0.021,
+        "queue": "live",
+        "queued_at": "2026-10-28T00:32:10Z",
+        "remaining_seconds": 1697,
+        "repo": "dashpay/evo-sdk-website",
+        "sha": "c2e8e28497cabde4adf85485c0381c7401832202",
+        "started_at": "2026-10-28T01:02:24Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-28T01:02:24Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 0,
+            "started_at": "2026-10-28T01:02:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This dependency upgrade changes generated SDK operation and type metadata across multiple files and requires site compatibility fixes for failed unit and smoke tests, but it does not itself modify critical consensus, funds-movement, cryptographic, key-handling, network-deserialization, or storage-migration logic.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-10-28T01:02:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-28T01:02:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 26,
+            "started_at": "2026-10-28T01:02:34Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "chore: upgrade evo-sdk to 5.0.1",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1814
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1249,7 +1353,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1287,7 +1391,8 @@
       "closed": 539,
       "done": 7091,
       "failed": 80,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2582
     },
     "ingest_error_streak": 0,
@@ -1319,46 +1424,27 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-10-28T00:50:50Z",
-    "last_run_started_at": "2026-10-28T00:49:22Z",
+    "last_run_started_at": "2026-10-28T01:02:24Z",
     "median_run_minutes": 19.966666666666665,
     "notify_last_at": "2026-10-28T01:01:59Z",
-    "oldest_queued_at": "2026-10-28T00:32:10Z",
+    "oldest_queued_at": "2026-10-28T01:01:17Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1790,
-        "attempts": 0,
-        "author": "thephez",
-        "eligible": false,
-        "eligible_at": "2026-10-28T01:02:10Z",
-        "eligible_in_seconds": 10,
-        "number": 81,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/evo-sdk-website/pull/81",
-        "prioritize_url": "https://github.com/dashpay/evo-sdk-website/issues/81#issuecomment-6450504832",
-        "priority": false,
-        "queued_at": "2026-10-28T00:32:10Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/evo-sdk-website",
-        "sha": "c2e8e28497cabde4adf85485c0381c7401832202",
-        "title": "chore: upgrade evo-sdk to 5.0.1",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 43,
+        "age_seconds": 103,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-28T01:31:17Z",
-        "eligible_in_seconds": 1757,
+        "eligible_in_seconds": 1697,
         "number": 919,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/919",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/919#issuecomment-6457810232",
         "priority": false,
@@ -1377,7 +1463,7 @@
       "reviews": 9,
       "tokens": 396576730
     },
-    "ts": "2026-10-28T01:02:00Z",
+    "ts": "2026-10-28T01:03:00Z",
     "typical_minutes_by_tier": {
       "critical": 45.8,
       "low": 45.9,
@@ -1386,9 +1472,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 12.633333333333333,
+      "idle_minutes": 0.6,
       "ingest_stale": false,
       "stuck": false
     }
