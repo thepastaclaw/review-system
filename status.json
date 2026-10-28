@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-28T01:36:01Z",
-  "generated_at": "2026-10-28T01:36:01Z",
+  "data_as_of": "2026-10-28T01:37:01Z",
+  "generated_at": "2026-10-28T01:37:01Z",
   "history": {
     "daily": [
       {
@@ -315,6 +315,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5614,
+        "repo": "dashpay/platform",
+        "run_id": 7120,
+        "ts": "2026-10-28T01:36:19Z"
+      },
+      {
         "detail": "attempt 1 sha=aa0f616d",
         "kind": "run.spawned",
         "number": 5614,
@@ -625,14 +633,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-10-28T00:33:05Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 5579,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-10-28T00:33:04Z"
       }
     ],
     "tokens_by_effort": [
@@ -1238,12 +1238,12 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-28T07:33:36Z",
-        "deadline_in_seconds": 21455,
+        "deadline_in_seconds": 21395,
         "degraded": false,
-        "elapsed_seconds": 145,
+        "elapsed_seconds": 205,
         "findings": null,
         "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-10-28T01:35:52Z",
+        "heartbeat_at": "2026-10-28T01:36:52Z",
         "id": 7119,
         "lanes": [],
         "live_lanes": [
@@ -1254,7 +1254,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 121,
+            "since_seconds": 181,
             "state": "running"
           }
         ],
@@ -1263,10 +1263,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1653",
         "priority": true,
-        "progress": 0.117,
+        "progress": 0.166,
         "queue": "live",
         "queued_at": "2026-10-28T01:33:35Z",
-        "remaining_seconds": 1093,
+        "remaining_seconds": 1033,
         "repo": "dashpay/dash-wallet",
         "sha": "234f5e5d6739602c65db756f885b9c9a41db87e8",
         "started_at": "2026-10-28T01:33:36Z",
@@ -1318,7 +1318,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 123,
+            "seconds": 183,
             "started_at": "2026-10-28T01:33:58Z",
             "status": "running"
           }
@@ -1343,35 +1343,35 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-10-28T07:35:47Z",
-        "deadline_in_seconds": 21586,
+        "deadline_in_seconds": 21526,
         "degraded": false,
-        "elapsed_seconds": 14,
+        "elapsed_seconds": 74,
         "findings": null,
         "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-10-28T01:35:47Z",
+        "heartbeat_at": "2026-10-28T01:36:47Z",
         "id": 7120,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 8,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 42,
             "state": "running"
           }
         ],
         "number": 5614,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5614",
         "priority": false,
-        "progress": 0.006,
+        "progress": 0.036,
         "queue": "live",
         "queued_at": "2026-10-28T01:05:27Z",
-        "remaining_seconds": 2355,
+        "remaining_seconds": 2001,
         "repo": "dashpay/platform",
         "sha": "aa0f616dca872cb28e97b177308f3945bf21db01",
         "started_at": "2026-10-28T01:35:47Z",
@@ -1385,28 +1385,57 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering"
+              ]
+            },
             "name": "select",
-            "seconds": 9,
+            "seconds": 17,
             "started_at": "2026-10-28T01:35:52Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a small, well-contained test-only change updating expected validation-error counts for an already established protocol behavior, with no production or consensus logic modified.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 16,
+            "started_at": "2026-10-28T01:35:53Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 8,
-            "started_at": "2026-10-28T01:35:53Z",
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-28T01:36:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 44,
+            "started_at": "2026-10-28T01:36:17Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "low",
         "title": "test(contract): expect only the first schema violation of a document at protocol version 15",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_pr",
         "upcoming": [
-          "context",
-          "phase1",
           "verify1",
           "gate",
           "phase2",
@@ -1490,13 +1519,13 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
@@ -1515,12 +1544,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1079,
+        "age_seconds": 1139,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-10-28T01:48:02Z",
-        "eligible_in_seconds": 721,
+        "eligible_in_seconds": 661,
         "number": 919,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/919",
@@ -1541,7 +1570,7 @@
       "reviews": 11,
       "tokens": 401024354
     },
-    "ts": "2026-10-28T01:36:01Z",
+    "ts": "2026-10-28T01:37:01Z",
     "typical_minutes_by_tier": {
       "critical": 45.8,
       "low": 42.4,
@@ -1552,7 +1581,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.23333333333333334,
+      "idle_minutes": 1.2333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
