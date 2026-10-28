@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-28T00:49:00Z",
-  "generated_at": "2026-10-28T00:49:00Z",
+  "data_as_of": "2026-10-28T00:50:01Z",
+  "generated_at": "2026-10-28T00:50:01Z",
   "history": {
     "daily": [
       {
@@ -305,7 +305,7 @@
           },
           "wait": {
             "median_seconds": 13,
-            "n": 523,
+            "n": 524,
             "p90_seconds": 277
           }
         }
@@ -314,6 +314,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1571,
+        "repo": "dashpay/tenderdash",
+        "run_id": 7116,
+        "ts": "2026-10-28T00:49:37Z"
+      },
+      {
+        "detail": "attempt 1 sha=a72df6cc",
+        "kind": "run.spawned",
+        "number": 1571,
+        "repo": "dashpay/tenderdash",
+        "run_id": 7116,
+        "ts": "2026-10-28T00:49:22Z"
+      },
+      {
+        "detail": "a72df6cc trigger=mention priority=1",
+        "kind": "head.queued",
+        "number": 1571,
+        "repo": "dashpay/tenderdash",
+        "run_id": null,
+        "ts": "2026-10-28T00:49:22Z"
+      },
       {
         "detail": null,
         "kind": "label.sync_failed",
@@ -513,30 +537,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": 7106,
         "ts": "2026-10-28T00:23:54Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1604,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 7106,
-        "ts": "2026-10-28T00:23:53Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1604,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 7106,
-        "ts": "2026-10-28T00:23:53Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1604,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 7106,
-        "ts": "2026-10-28T00:23:53Z"
       },
       {
         "detail": null,
@@ -1226,14 +1226,116 @@
       "findings_posted": 6500,
       "reviews": 7169,
       "reviews_imported": 2245,
-      "runs": 7115,
+      "runs": 7116,
       "tokens_in": 72442131427,
       "tokens_out": 820583554,
       "tokens_total": 73262714981
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "dependabot",
+        "deadline_at": "2026-10-28T06:49:22Z",
+        "deadline_in_seconds": 21561,
+        "degraded": false,
+        "elapsed_seconds": 39,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-28T00:49:52Z",
+        "id": 7116,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 24,
+            "state": "running"
+          }
+        ],
+        "number": 1571,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/tenderdash/pull/1571",
+        "priority": true,
+        "progress": 0.059,
+        "queue": "live",
+        "queued_at": "2026-10-28T00:49:21Z",
+        "remaining_seconds": 619,
+        "repo": "dashpay/tenderdash",
+        "sha": "a72df6cc0a3e148edd488ddca33c59f713e70295",
+        "started_at": "2026-10-28T00:49:22Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-28T00:49:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-10-28T00:49:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a one-line GitHub Actions dependency version bump in .github/workflows/docker.yml with no application behavior or critical-surface changes.",
+              "tier": "trivial"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-28T00:49:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-28T00:49:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 27,
+            "started_at": "2026-10-28T00:49:34Z",
+            "status": "running"
+          }
+        ],
+        "tier": "trivial",
+        "title": "build(deps): Bump docker/login-action from 4.6.0 to 4.7.0",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "mention",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "publish"
+        ],
+        "wait_seconds": 1
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1249,7 +1351,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1288,6 +1390,7 @@
       "done": 7090,
       "failed": 80,
       "queued": 1,
+      "running": 1,
       "superseded": 2581
     },
     "ingest_error_streak": 0,
@@ -1307,7 +1410,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1325,19 +1428,19 @@
       }
     ],
     "last_run_done_at": "2026-10-28T00:47:31Z",
-    "last_run_started_at": "2026-10-28T00:47:17Z",
+    "last_run_started_at": "2026-10-28T00:49:22Z",
     "median_run_minutes": 19.966666666666665,
     "notify_last_at": "2026-10-28T00:48:57Z",
     "oldest_queued_at": "2026-10-28T00:32:10Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1010,
+        "age_seconds": 1071,
         "attempts": 0,
         "author": "thephez",
         "eligible": false,
         "eligible_at": "2026-10-28T01:02:10Z",
-        "eligible_in_seconds": 790,
+        "eligible_in_seconds": 729,
         "number": 81,
         "position": 1,
         "pr_url": "https://github.com/dashpay/evo-sdk-website/pull/81",
@@ -1358,7 +1461,7 @@
       "reviews": 8,
       "tokens": 396473699
     },
-    "ts": "2026-10-28T00:49:00Z",
+    "ts": "2026-10-28T00:50:01Z",
     "typical_minutes_by_tier": {
       "critical": 45.8,
       "low": 45.9,
@@ -1367,9 +1470,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 1.7166666666666666,
+      "idle_minutes": 0.65,
       "ingest_stale": false,
       "stuck": false
     }
