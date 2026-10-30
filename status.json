@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-30T00:29:01Z",
-  "generated_at": "2026-10-30T00:29:01Z",
+  "data_as_of": "2026-10-30T00:30:01Z",
+  "generated_at": "2026-10-30T00:30:01Z",
   "history": {
     "daily": [
       {
@@ -315,7 +315,7 @@
           },
           "wait": {
             "median_seconds": 14,
-            "n": 528,
+            "n": 529,
             "p90_seconds": 277
           }
         }
@@ -324,6 +324,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=3576e91f",
+        "kind": "run.spawned",
+        "number": 1089,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": 7616,
+        "ts": "2026-10-30T00:29:51Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 1089,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": null,
+        "ts": "2026-10-30T00:29:51Z"
+      },
+      {
+        "detail": "3576e91f trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 1089,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": null,
+        "ts": "2026-10-30T00:29:51Z"
+      },
       {
         "detail": "ok in 3190s",
         "kind": "run.done",
@@ -619,30 +643,6 @@
         "repo": "dashpay/dash-platform-website",
         "run_id": null,
         "ts": "2026-10-29T23:57:18Z"
-      },
-      {
-        "detail": "685870cc trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 282,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": null,
-        "ts": "2026-10-29T23:57:10Z"
-      },
-      {
-        "detail": "3e002522 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 234,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": null,
-        "ts": "2026-10-29T23:57:10Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 7982,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-10-29T23:47:33Z"
       }
     ],
     "tokens_by_effort": [
@@ -1236,14 +1236,94 @@
       "findings_posted": 7056,
       "reviews": 7536,
       "reviews_imported": 2245,
-      "runs": 7615,
+      "runs": 7616,
       "tokens_in": 81879641157,
       "tokens_out": 890178468,
       "tokens_total": 82769819625
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-30T06:29:51Z",
+        "deadline_in_seconds": 21590,
+        "degraded": false,
+        "elapsed_seconds": 10,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-30T00:29:51Z",
+        "id": 7616,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1089,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1089",
+        "priority": true,
+        "progress": 0.005,
+        "queue": "live",
+        "queued_at": "2026-10-30T00:29:49Z",
+        "remaining_seconds": 1854,
+        "repo": "dashpay/dashwallet-ios",
+        "sha": "3576e91f42e5ac730d10f4e880783aa3cc49caca",
+        "started_at": "2026-10-30T00:29:51Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-10-30T00:29:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-10-30T00:29:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a large, cross-cutting UI and routing refactor affecting camera permissions, payment and invitation flows, but the diff does not itself change funds movement, cryptography, key handling, consensus, network deserialization, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-10-30T00:29:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 1,
+            "started_at": "2026-10-30T00:30:00Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "refactor(ui): unify QR scanning and generation into shared components",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 2
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1259,7 +1339,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1297,6 +1377,7 @@
       "closed": 557,
       "done": 7453,
       "failed": 80,
+      "running": 1,
       "superseded": 2701
     },
     "ingest_error_streak": 0,
@@ -1334,9 +1415,9 @@
       }
     ],
     "last_run_done_at": "2026-10-30T00:27:46Z",
-    "last_run_started_at": "2026-10-29T23:57:21Z",
+    "last_run_started_at": "2026-10-30T00:29:51Z",
     "median_run_minutes": 28.816666666666666,
-    "notify_last_at": "2026-10-30T00:27:23Z",
+    "notify_last_at": "2026-10-30T00:29:45Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1347,7 +1428,7 @@
       "reviews": 6,
       "tokens": 185567683
     },
-    "ts": "2026-10-30T00:29:01Z",
+    "ts": "2026-10-30T00:30:01Z",
     "typical_minutes_by_tier": {
       "critical": 59.7,
       "low": 53.2,
@@ -1356,9 +1437,9 @@
       "unknown": 0.5
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 31.666666666666668,
+      "idle_minutes": 0.16666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
