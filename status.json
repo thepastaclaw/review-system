@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-30T08:37:00Z",
-  "generated_at": "2026-10-30T08:37:00Z",
+  "data_as_of": "2026-10-30T08:38:01Z",
+  "generated_at": "2026-10-30T08:38:01Z",
   "history": {
     "daily": [
       {
@@ -271,7 +271,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 18316,
+        "count": 18318,
         "severity": "blocking"
       },
       {
@@ -324,6 +324,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "0a15f107 checkbox ticked by lklimek",
+        "kind": "head.priority_requested",
+        "number": 1574,
+        "repo": "dashpay/tenderdash",
+        "run_id": null,
+        "ts": "2026-10-30T08:37:07Z"
+      },
       {
         "detail": "ok in 5590s",
         "kind": "run.done",
@@ -635,14 +643,6 @@
         "repo": "dashpay/dash-platform-website",
         "run_id": 7642,
         "ts": "2026-10-30T05:34:34Z"
-      },
-      {
-        "detail": "attempt 1 sha=293d73cd",
-        "kind": "run.spawned",
-        "number": 282,
-        "repo": "dashpay/dash-platform-website",
-        "run_id": 7642,
-        "ts": "2026-10-30T05:34:12Z"
       }
     ],
     "tokens_by_effort": [
@@ -672,9 +672,9 @@
       },
       {
         "effort": "high",
-        "lanes": 19001,
-        "tokens_in": 18870377818,
-        "tokens_out": 169272817
+        "lanes": 19002,
+        "tokens_in": 18870657323,
+        "tokens_out": 169280035
       },
       {
         "effort": "low",
@@ -720,18 +720,18 @@
         "tokens_out": 43766943
       },
       {
-        "avg_tokens_per_lane": 1963897.0,
-        "lanes": 25348,
+        "avg_tokens_per_lane": 1963831.0,
+        "lanes": 25349,
         "model": "gpt-6.1-sol",
-        "tokens_in": 49555972778,
-        "tokens_out": 224894720
+        "tokens_in": 49556252283,
+        "tokens_out": 224901938
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 7646,
-        "tokens_in": 8090823,
-        "tokens_out": 133572
+        "tokens_in": 8370328,
+        "tokens_out": 140790
       },
       {
         "run_id": 7645,
@@ -1230,16 +1230,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14392255,
+      "avg_tokens_per_completed_review": 14392304,
       "completed_reviews": 5797,
-      "findings": 43242,
+      "findings": 43244,
       "findings_posted": 7092,
-      "reviews": 7559,
+      "reviews": 7560,
       "reviews_imported": 2245,
       "runs": 7648,
-      "tokens_in": 82536766290,
-      "tokens_out": 895134492,
-      "tokens_total": 83431900782
+      "tokens_in": 82537045795,
+      "tokens_out": 895141710,
+      "tokens_total": 83432187505
     }
   },
   "live": {
@@ -1248,12 +1248,16 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-10-30T13:58:18Z",
-        "deadline_in_seconds": 19278,
+        "deadline_in_seconds": 19217,
         "degraded": false,
-        "elapsed_seconds": 2322,
-        "findings": null,
-        "heartbeat_age_seconds": 5,
-        "heartbeat_at": "2026-10-30T08:36:55Z",
+        "elapsed_seconds": 2383,
+        "findings": {
+          "blocking": 1,
+          "nitpick": 0,
+          "suggestion": 0
+        },
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-10-30T08:37:55Z",
         "id": 7646,
         "lanes": [
           {
@@ -1295,29 +1299,28 @@
             "status": "completed",
             "tokens_in": 5042119,
             "tokens_out": 25634
-          }
-        ],
-        "live_lanes": [
+          },
           {
+            "attempt": 1,
             "effort": "high",
-            "line_position": null,
             "model": "gpt-6.1-sol",
             "phase": "verify2",
-            "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 234,
-            "state": "running"
+            "status": "completed",
+            "tokens_in": 279505,
+            "tokens_out": 7218
           }
         ],
+        "live_lanes": [],
         "number": 1643,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "publish",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1643",
         "priority": false,
-        "progress": 0.838,
+        "progress": 0.99,
         "queue": "live",
         "queued_at": "2026-10-30T07:27:53Z",
-        "remaining_seconds": 449,
+        "remaining_seconds": 1,
         "repo": "dashpay/dash-wallet",
         "sha": "140e036813b2eb2839bb6de7b088544eee0cd268",
         "started_at": "2026-10-30T07:58:18Z",
@@ -1389,33 +1392,41 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 1,
+              "findings": 1
+            },
             "name": "verify2",
-            "seconds": 234,
+            "seconds": 291,
             "started_at": "2026-10-30T08:33:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "publish",
+            "seconds": 4,
+            "started_at": "2026-10-30T08:37:57Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "fix(sdk): report an ambiguous SDK send as outcome unknown, never a retryable failure",
-        "tokens_in": 8090823,
-        "tokens_out": 133572,
+        "tokens_in": 8370328,
+        "tokens_out": 140790,
         "trigger": "new_push",
-        "upcoming": [
-          "publish"
-        ],
+        "upcoming": [],
         "wait_seconds": 1825
       },
       {
         "attempt": 1,
         "author": "knst",
         "deadline_at": "2026-10-30T14:20:01Z",
-        "deadline_in_seconds": 20581,
+        "deadline_in_seconds": 20520,
         "degraded": false,
-        "elapsed_seconds": 1019,
+        "elapsed_seconds": 1080,
         "findings": null,
-        "heartbeat_age_seconds": 11,
-        "heartbeat_at": "2026-10-30T08:36:49Z",
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-10-30T08:37:49Z",
         "id": 7647,
         "lanes": [],
         "live_lanes": [
@@ -1426,16 +1437,16 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 986,
+            "since_seconds": 1047,
             "state": "running"
           }
         ],
         "number": 7939,
-        "overdue": false,
+        "overdue": true,
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7939",
         "priority": false,
-        "progress": 0.199,
+        "progress": 0.208,
         "queue": "live",
         "queued_at": "2026-10-30T07:49:46Z",
         "remaining_seconds": 4104,
@@ -1492,7 +1503,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 988,
+            "seconds": 1049,
             "started_at": "2026-10-30T08:20:32Z",
             "status": "running"
           }
@@ -1515,12 +1526,12 @@
         "attempt": 1,
         "author": "knst",
         "deadline_at": "2026-10-30T14:32:11Z",
-        "deadline_in_seconds": 21311,
+        "deadline_in_seconds": 21250,
         "degraded": false,
-        "elapsed_seconds": 289,
+        "elapsed_seconds": 350,
         "findings": null,
-        "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-10-30T08:36:57Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-10-30T08:37:57Z",
         "id": 7648,
         "lanes": [],
         "live_lanes": [
@@ -1531,7 +1542,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 258,
+            "since_seconds": 319,
             "state": "running"
           }
         ],
@@ -1540,10 +1551,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7966",
         "priority": false,
-        "progress": 0.06,
+        "progress": 0.073,
         "queue": "live",
         "queued_at": "2026-10-30T08:02:10Z",
-        "remaining_seconds": 4512,
+        "remaining_seconds": 4451,
         "repo": "dashpay/dash",
         "sha": "d9e487ea8a32114574d2ef24f73534c803749271",
         "started_at": "2026-10-30T08:32:11Z",
@@ -1597,7 +1608,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 260,
+            "seconds": 321,
             "started_at": "2026-10-30T08:32:40Z",
             "status": "running"
           }
@@ -1697,7 +1708,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
@@ -1713,19 +1724,38 @@
     "median_run_minutes": 54.65,
     "notify_last_at": "2026-10-30T08:35:08Z",
     "oldest_queued_at": "2026-10-30T08:34:43Z",
-    "priority_queued": 0,
+    "priority_queued": 1,
     "queued": [
       {
-        "age_seconds": 137,
+        "age_seconds": 194,
+        "attempts": 0,
+        "author": "lklimek",
+        "eligible": true,
+        "eligible_at": "2026-10-30T08:37:07Z",
+        "eligible_in_seconds": 0,
+        "number": 1574,
+        "position": 1,
+        "pr_url": "https://github.com/dashpay/tenderdash/pull/1574",
+        "prioritize_url": "https://github.com/dashpay/tenderdash/issues/1574#issuecomment-6518583203",
+        "priority": true,
+        "queued_at": "2026-10-30T08:34:47Z",
+        "reason": "waiting for a review slot",
+        "repo": "dashpay/tenderdash",
+        "sha": "0a15f107d08feff888f76689b90199957a7e9512",
+        "title": "fix(deps): update vulnerable Go dependencies",
+        "trigger": "priority_request"
+      },
+      {
+        "age_seconds": 198,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-30T09:04:43Z",
-        "eligible_in_seconds": 1663,
+        "eligible_in_seconds": 1602,
         "number": 5680,
-        "position": 1,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5680",
-        "prioritize_url": "https://github.com/dashpay/platform/pull/5680#issuecomment-new",
+        "prioritize_url": "https://github.com/dashpay/platform/issues/5680#issuecomment-6518642787",
         "priority": false,
         "queued_at": "2026-10-30T08:34:43Z",
         "reason": "debounce (more pushes may follow)",
@@ -1733,35 +1763,16 @@
         "sha": "6c8ab352af6fbe83ae53ee8f2b1f7c55aebef4cc",
         "title": "feat(platform)!: yes/no votes name their poll by id, and polls carry a typed purpose (PV15)",
         "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 133,
-        "attempts": 0,
-        "author": "lklimek",
-        "eligible": false,
-        "eligible_at": "2026-10-30T09:04:47Z",
-        "eligible_in_seconds": 1667,
-        "number": 1574,
-        "position": 2,
-        "pr_url": "https://github.com/dashpay/tenderdash/pull/1574",
-        "prioritize_url": "https://github.com/dashpay/tenderdash/issues/1574#issuecomment-6518583203",
-        "priority": false,
-        "queued_at": "2026-10-30T08:34:47Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/tenderdash",
-        "sha": "0a15f107d08feff888f76689b90199957a7e9512",
-        "title": "fix(deps): update vulnerable Go dependencies",
-        "trigger": "new_pr"
       }
     ],
     "today": {
       "day": "2026-10-30",
       "failed": 0,
-      "findings_posted": 45,
+      "findings_posted": 46,
       "reviews": 35,
       "tokens": 839424445
     },
-    "ts": "2026-10-30T08:37:00Z",
+    "ts": "2026-10-30T08:38:01Z",
     "typical_minutes_by_tier": {
       "critical": 62.1,
       "low": 53.2,
@@ -1771,8 +1782,8 @@
     },
     "watchdog": {
       "active": 3,
-      "eligible": 0,
-      "idle_minutes": 4.816666666666666,
+      "eligible": 1,
+      "idle_minutes": 5.833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
