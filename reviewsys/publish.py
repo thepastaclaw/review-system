@@ -620,8 +620,12 @@ def dedupe_against_github(
     for f in findings:
         # A finding explicitly reintroduced after a prior lift is new evidence, not a carry
         # onto the old resolved root. Give it a fresh inline comment so the old withdrawal is
-        # never silently turned back into a live thread.
-        if f.extra.get("reintroduced_finding_hash") in settled_hashes:
+        # never silently turned back into a live thread; a reworded one whose own comment is
+        # already up (an earlier head) is deduped onto that as usual.
+        marker = f.extra.get("reintroduced_finding_hash")
+        if marker in settled_hashes and (
+            f.hash == marker or not any(r.finding_hash == f.hash for r in records)
+        ):
             kept.append(f)
             continue
         match, reason = find_duplicate(f, records)

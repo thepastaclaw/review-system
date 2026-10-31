@@ -351,11 +351,10 @@ def _reconciliation_problems(
     recon: list[Any],
     findings: list[Finding],
     prior_hashes: set[str],
-    settled_hashes: set[str] | None = None,
+    settled_hashes: set[str],
 ) -> list[str]:
     """Every way the reconciliation breaks the contract, not just the first, so a correction
     turn can fix them all at once."""
-    settled_hashes = settled_hashes or set()
     problems: list[str] = []
     seen: dict[str, str] = {}
     for row in recon:
@@ -385,10 +384,8 @@ def _reconciliation_problems(
 
 
 def _settled_finding_problems(
-    findings: list[Finding], settled_hashes: set[str] | None, still_valid: set[str] | None = None
+    findings: list[Finding], settled_hashes: set[str], still_valid: set[str]
 ) -> list[str]:
-    settled_hashes = settled_hashes or set()
-    still_valid = still_valid or set()
     problems: list[str] = []
     settled_still_valid = settled_hashes & still_valid
     if settled_still_valid:
@@ -396,16 +393,16 @@ def _settled_finding_problems(
             "settled prior findings cannot be STILL_VALID: "
             + ", ".join(sorted(settled_still_valid))
         )
-    revived_without_evidence = [
+    revived = {
         h
         for f in findings
         for h in settled_hashes & {f.hash, f.prior_hash or f.hash}
         if f.extra.get("reintroduced_finding_hash") != h
-    ]
-    if revived_without_evidence:
+    }
+    if revived:
         problems.append(
             "settled prior findings need reintroduced_finding_hash and new evidence: "
-            + ", ".join(sorted(set(revived_without_evidence)))
+            + ", ".join(sorted(revived))
         )
     return problems
 
@@ -442,9 +439,7 @@ def parse_reviewer_output(
     if not isinstance(recon, list):
         raise ReviewError(FailKind.CONTRACT, "prior_finding_reconciliation must be a list")
     if prior_hashes:
-        problems = _reconciliation_problems(
-            recon, findings, prior_hashes, settled_hashes=settled_hashes
-        )
+        problems = _reconciliation_problems(recon, findings, prior_hashes, settled_hashes or set())
         if problems:
             raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     oos = raw.get("out_of_scope_findings") or []

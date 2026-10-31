@@ -1009,10 +1009,6 @@ def _end_triage(ctx: RunContext, t: Triage) -> None:
     _step_end(ctx, StepName.TRIAGE, "ok", dataclasses.asdict(t))
 
 
-# judgement lifts only: FIXED/OUTDATED rest on the code, which a later head may revert
-_SETTLED_PRIOR_STATUSES = frozenset({"WITHDRAWN", "INTENTIONALLY_DEFERRED"})
-
-
 def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
     """Return the latest explicit lift for a finding, unless a later full review re-kept it.
 
@@ -1030,7 +1026,18 @@ def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
     if not row or row["stage"] != "conceded":
         return None
     status = str(row["body"] or "").split("\n", 1)[0]
-    return status if status in _SETTLED_PRIOR_STATUSES else None
+    # judgement lifts only: FIXED/OUTDATED rest on the code, which a later head may revert
+    return status if status in converse.LIFTING_STATUSES else None
+
+
+def _prior_extra(ctx: RunContext, h: str, thread: dict[str, Any] | None) -> dict[str, Any]:
+    """A prior finding's `extra`: its thread's replies, and the settled status if any."""
+    extra: dict[str, Any] = {"thread_replies": thread["transcript"]} if thread else {}
+    settled = _latest_settlement(ctx, h)
+    if settled:
+        extra["prior_status"] = settled
+        ctx.settled_hashes.add(h)
+    return extra
 
 
 def step_context(ctx: RunContext) -> None:
@@ -1072,11 +1079,6 @@ def step_context(ctx: RunContext) -> None:
         seen.add(r["hash"])
         ctx.prior_sha = ctx.prior_sha or r["sha"]
         thread = replied.get(r["hash"])
-        settled = _latest_settlement(ctx, str(r["hash"]))
-        extra = {"thread_replies": thread["transcript"]} if thread else {}
-        if settled:
-            extra["prior_status"] = settled
-            ctx.settled_hashes.add(str(r["hash"]))
         prior.append(
             Finding(
                 file=r["file"] or "",
@@ -1086,7 +1088,7 @@ def step_context(ctx: RunContext) -> None:
                 category=r["category"] or "general",
                 line_start=r["line_start"],
                 line_end=r["line_end"],
-                extra=extra,
+                extra=_prior_extra(ctx, str(r["hash"]), thread),
             )
         )
     for h, t in replied.items():
@@ -1095,11 +1097,6 @@ def step_context(ctx: RunContext) -> None:
         # a finding this database never recorded (posted by the legacy pipeline) that a human
         # replied to: reconstruct it from the comment so the reply still gets adjudicated
         seen.add(h)
-        settled = _latest_settlement(ctx, h)
-        extra = {"thread_replies": t["transcript"]}
-        if settled:
-            extra["prior_status"] = settled
-            ctx.settled_hashes.add(h)
         prior.append(
             Finding(
                 file=t.get("path") or "",
@@ -1109,7 +1106,7 @@ def step_context(ctx: RunContext) -> None:
                 line_start=t.get("line"),
                 line_end=t.get("line"),
                 prior_hash=h,
-                extra=extra,
+                extra=_prior_extra(ctx, h, t),
             )
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
@@ -2135,11 +2132,19 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
     for h, outcome in _reconciliation(ctx, phase, verified).items():
         status = str(outcome.get("status") or "")
         prior = ctx.prior_findings.get(h)
-        if status not in _SETTLED_PRIOR_STATUSES or h in kept or prior is None:
+        if status not in converse.LIFTING_STATUSES or h in kept or prior is None:
             continue
-        # a deferral keeps its tracking link on a second line, as `_record_conceded` does,
-        # so `_known_tracking` still finds it on later heads
-        tracking = str(outcome.get("tracking") or "") if status == "INTENTIONALLY_DEFERRED" else ""
+        # a deferral keeps the tracking link it was checked against on a second line, as
+        # `_record_conceded` does, so `_known_tracking` still finds it on later heads
+        tracking = ""
+        if status == "INTENTIONALLY_DEFERRED":
+            tracking = converse.review_deferral_link(
+                outcome.get("tracking"),
+                _finding_thread_texts(ctx).get(h, ""),
+                pr_text=_pr_text(ctx),
+                repo=ctx.repo,
+                number=ctx.number,
+            )
         rows.append(
             (
                 ctx.run_id,
