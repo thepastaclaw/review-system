@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-31T18:19:01Z",
-  "generated_at": "2026-10-31T18:19:01Z",
+  "data_as_of": "2026-10-31T18:20:01Z",
+  "generated_at": "2026-10-31T18:20:02Z",
   "history": {
     "daily": [
       {
@@ -330,6 +330,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5702,
+        "repo": "dashpay/platform",
+        "run_id": 7998,
+        "ts": "2026-10-31T18:19:18Z"
+      },
+      {
         "detail": "attempt 1 sha=ef922ac0",
         "kind": "run.spawned",
         "number": 5702,
@@ -639,14 +647,6 @@
         "number": 1272,
         "repo": "dashpay/dashwallet-ios",
         "run_id": 7995,
-        "ts": "2026-10-31T17:48:28Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1272,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": null,
         "ts": "2026-10-31T17:48:28Z"
       }
     ],
@@ -1253,12 +1253,12 @@
         "attempt": 1,
         "author": "knst",
         "deadline_at": "2026-10-31T23:49:48Z",
-        "deadline_in_seconds": 19847,
+        "deadline_in_seconds": 19787,
         "degraded": false,
-        "elapsed_seconds": 1753,
+        "elapsed_seconds": 1813,
         "findings": null,
         "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-10-31T18:18:52Z",
+        "heartbeat_at": "2026-10-31T18:19:52Z",
         "id": 7996,
         "lanes": [],
         "live_lanes": [
@@ -1269,7 +1269,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 1724,
+            "since_seconds": 1784,
             "state": "running"
           }
         ],
@@ -1278,7 +1278,7 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/8001",
         "priority": false,
-        "progress": 0.631,
+        "progress": 0.639,
         "queue": "live",
         "queued_at": "2026-10-31T17:19:48Z",
         "remaining_seconds": 1023,
@@ -1336,7 +1336,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 1726,
+            "seconds": 1786,
             "started_at": "2026-10-31T17:50:15Z",
             "status": "running"
           }
@@ -1359,35 +1359,45 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-11-01T00:18:49Z",
-        "deadline_in_seconds": 21588,
+        "deadline_in_seconds": 21528,
         "degraded": false,
-        "elapsed_seconds": 12,
+        "elapsed_seconds": 72,
         "findings": null,
         "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-10-31T18:18:49Z",
+        "heartbeat_at": "2026-10-31T18:19:49Z",
         "id": 7998,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 5,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 42,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 43,
             "state": "running"
           }
         ],
         "number": 5702,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5702",
         "priority": true,
-        "progress": null,
+        "progress": 0.055,
         "queue": "live",
         "queued_at": "2026-10-31T18:18:47Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1248,
         "repo": "dashpay/platform",
         "sha": "ef922ac0a2454e8130ce06a18e03aaa73cb9f08e",
         "started_at": "2026-10-31T18:18:49Z",
@@ -1401,26 +1411,68 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 6,
+            "seconds": 12,
             "started_at": "2026-10-31T18:18:55Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff changes consensus-sensitive schema acceptance, but the production implementation is a contained recursive duplicate-key check with version gating and fee accounting, rather than a large or intricate change.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 11,
+            "started_at": "2026-10-31T18:18:56Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 5,
-            "started_at": "2026-10-31T18:18:56Z",
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-31T18:19:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 46,
+            "started_at": "2026-10-31T18:19:15Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix(dpp)!: refuse a document type schema naming a key twice (PV15)",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1504,13 +1556,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 3,
         "slots": 20,
         "waiting": 0
       }
@@ -1523,12 +1575,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 69,
+        "age_seconds": 129,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-10-31T18:47:52Z",
-        "eligible_in_seconds": 1731,
+        "eligible_in_seconds": 1671,
         "number": 8002,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8002",
@@ -1549,7 +1601,7 @@
       "reviews": 134,
       "tokens": 1852682044
     },
-    "ts": "2026-10-31T18:19:01Z",
+    "ts": "2026-10-31T18:20:01Z",
     "typical_minutes_by_tier": {
       "critical": 52.3,
       "low": 48.6,
@@ -1560,7 +1612,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.2,
+      "idle_minutes": 1.2,
       "ingest_stale": false,
       "stuck": false
     }
