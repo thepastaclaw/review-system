@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-31T02:37:01Z",
-  "generated_at": "2026-10-31T02:37:01Z",
+  "data_as_of": "2026-10-31T02:38:01Z",
+  "generated_at": "2026-10-31T02:38:01Z",
   "history": {
     "daily": [
       {
@@ -319,9 +319,9 @@
             "p90_seconds": 632
           },
           "wait": {
-            "median_seconds": 13,
-            "n": 521,
-            "p90_seconds": 264
+            "median_seconds": 14,
+            "n": 522,
+            "p90_seconds": 263
           }
         }
       },
@@ -329,6 +329,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=096a2cf3",
+        "kind": "run.spawned",
+        "number": 5526,
+        "repo": "dashpay/platform",
+        "run_id": 7866,
+        "ts": "2026-10-31T02:37:37Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5526,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-31T02:37:36Z"
+      },
       {
         "detail": "096a2cf3 trigger=new_push priority=0",
         "kind": "head.queued",
@@ -632,22 +648,6 @@
         "repo": "dashpay/platform",
         "run_id": 7861,
         "ts": "2026-10-31T00:23:41Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-10-31T00:22:51Z"
-      },
-      {
-        "detail": "phase=phase2 kept=2 dropped=0",
-        "kind": "compare.lanes",
-        "number": 1662,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 7860,
-        "ts": "2026-10-31T00:18:47Z"
       }
     ],
     "tokens_by_effort": [
@@ -1241,14 +1241,98 @@
       "findings_posted": 7272,
       "reviews": 7704,
       "reviews_imported": 2245,
-      "runs": 7865,
+      "runs": 7866,
       "tokens_in": 86824571906,
       "tokens_out": 925948655,
       "tokens_total": 87750520561
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-31T08:37:37Z",
+        "deadline_in_seconds": 21576,
+        "degraded": false,
+        "elapsed_seconds": 24,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-10-31T02:37:52Z",
+        "id": 7866,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5526,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5526",
+        "priority": true,
+        "progress": 0.007,
+        "queue": "live",
+        "queued_at": "2026-10-31T02:36:46Z",
+        "remaining_seconds": 3231,
+        "repo": "dashpay/platform",
+        "sha": "096a2cf3bb77fd6d8855b6a7b3c9b4ac9651cc37",
+        "started_at": "2026-10-31T02:37:37Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 7,
+            "started_at": "2026-10-31T02:37:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor",
+                "tenderdash-consensus-security"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-31T02:37:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff changes consensus-persisted state through transition_to_version_15 and create_initial_state_structure_v5, adds escrow storage primitives, and changes token supply accounting in calculate_total_tokens_balance/v2.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-31T02:37:47Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-10-31T02:37:54Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(platform)!: token marketplace escrow trees and token market contract (PV15)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 51
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1264,7 +1348,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1282,7 +1366,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-10-31T02:35:23Z",
+        "at": "2026-10-31T02:37:38Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1302,7 +1386,8 @@
       "closed": 570,
       "done": 7622,
       "failed": 80,
-      "queued": 4,
+      "queued": 3,
+      "running": 1,
       "superseded": 2748
     },
     "ingest_error_streak": 0,
@@ -1340,19 +1425,19 @@
       }
     ],
     "last_run_done_at": "2026-10-31T01:22:28Z",
-    "last_run_started_at": "2026-10-31T00:59:48Z",
+    "last_run_started_at": "2026-10-31T02:37:37Z",
     "median_run_minutes": 19.616666666666667,
-    "notify_last_at": "2026-10-31T02:35:17Z",
+    "notify_last_at": "2026-10-31T02:37:30Z",
     "oldest_queued_at": "2026-10-31T02:17:05Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1196,
+        "age_seconds": 1256,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-31T02:47:05Z",
-        "eligible_in_seconds": 604,
+        "eligible_in_seconds": 544,
         "number": 5532,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5532",
@@ -1366,12 +1451,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 15,
+        "age_seconds": 75,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-31T03:06:46Z",
-        "eligible_in_seconds": 1785,
+        "eligible_in_seconds": 1725,
         "number": 5530,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5530",
@@ -1385,12 +1470,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 15,
+        "age_seconds": 75,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-10-31T03:06:46Z",
-        "eligible_in_seconds": 1785,
+        "eligible_in_seconds": 1725,
         "number": 5529,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5529",
@@ -1402,25 +1487,6 @@
         "sha": "26337eba3978d9d96f635097c496e6fbc1b6f21e",
         "title": "feat(platform)!: token marketplace listings (PV15)",
         "trigger": "new_push"
-      },
-      {
-        "age_seconds": 15,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": false,
-        "eligible_at": "2026-10-31T03:06:46Z",
-        "eligible_in_seconds": 1785,
-        "number": 5526,
-        "position": 4,
-        "pr_url": "https://github.com/dashpay/platform/pull/5526",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5526#issuecomment-6323638552",
-        "priority": false,
-        "queued_at": "2026-10-31T02:36:46Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "096a2cf3bb77fd6d8855b6a7b3c9b4ac9651cc37",
-        "title": "feat(platform)!: token marketplace escrow trees and token market contract (PV15)",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1430,7 +1496,7 @@
       "reviews": 11,
       "tokens": 113020873
     },
-    "ts": "2026-10-31T02:37:01Z",
+    "ts": "2026-10-31T02:38:01Z",
     "typical_minutes_by_tier": {
       "critical": 58.8,
       "low": 49.7,
@@ -1439,9 +1505,9 @@
       "unknown": 0.4
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 97.21666666666667,
+      "idle_minutes": 0.4,
       "ingest_stale": false,
       "stuck": false
     }
