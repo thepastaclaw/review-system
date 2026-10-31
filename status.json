@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-31T00:59:01Z",
-  "generated_at": "2026-10-31T00:59:01Z",
+  "data_as_of": "2026-10-31T01:00:01Z",
+  "generated_at": "2026-10-31T01:00:02Z",
   "history": {
     "daily": [
       {
@@ -303,7 +303,7 @@
           },
           "wait": {
             "median_seconds": 1811,
-            "n": 581,
+            "n": 582,
             "p90_seconds": 1856
           }
         },
@@ -329,6 +329,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=24370736",
+        "kind": "run.spawned",
+        "number": 5523,
+        "repo": "dashpay/platform",
+        "run_id": 7865,
+        "ts": "2026-10-31T00:59:48Z"
+      },
       {
         "detail": "ok in 3532s",
         "kind": "run.done",
@@ -640,14 +648,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-10-31T00:14:33Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 5523,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-10-31T00:14:32Z"
       }
     ],
     "tokens_by_effort": [
@@ -1241,14 +1241,94 @@
       "findings_posted": 7270,
       "reviews": 7703,
       "reviews_imported": 2245,
-      "runs": 7864,
+      "runs": 7865,
       "tokens_in": 86809431288,
       "tokens_out": 925757012,
       "tokens_total": 87735188300
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-10-31T06:59:48Z",
+        "deadline_in_seconds": 21587,
+        "degraded": false,
+        "elapsed_seconds": 13,
+        "findings": null,
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-10-31T00:59:48Z",
+        "id": 7865,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5523,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5523",
+        "priority": false,
+        "progress": 0.002,
+        "queue": "live",
+        "queued_at": "2026-10-31T00:29:46Z",
+        "remaining_seconds": 7141,
+        "repo": "dashpay/platform",
+        "sha": "2437073636cdb9b5f3dae0ac6aececd9d7f0c510",
+        "started_at": "2026-10-31T00:59:48Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-10-31T00:59:48Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-10-31T00:59:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate changes in verified_provider.rs and proof_fetches.rs establish proof-backed quorum public-key acceptance, height validity, and caching across an untrusted HTTP boundary, directly changing cryptographic key handling.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-10-31T00:59:53Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-10-31T00:59:59Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(sdk): add opt-in verified HTTP context provider",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1802
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1264,7 +1344,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1302,7 +1382,7 @@
       "closed": 570,
       "done": 7621,
       "failed": 80,
-      "queued": 1,
+      "running": 1,
       "superseded": 2748
     },
     "ingest_error_streak": 0,
@@ -1340,32 +1420,12 @@
       }
     ],
     "last_run_done_at": "2026-10-31T00:43:39Z",
-    "last_run_started_at": "2026-10-31T00:42:19Z",
+    "last_run_started_at": "2026-10-31T00:59:48Z",
     "median_run_minutes": 19.616666666666667,
     "notify_last_at": "2026-10-31T00:58:21Z",
-    "oldest_queued_at": "2026-10-31T00:29:46Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1755,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-10-31T00:59:46Z",
-        "eligible_in_seconds": 45,
-        "number": 5523,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5523",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5523#issuecomment-6322511813",
-        "priority": false,
-        "queued_at": "2026-10-31T00:29:46Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "2437073636cdb9b5f3dae0ac6aececd9d7f0c510",
-        "title": "feat(sdk): add opt-in verified HTTP context provider",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-10-31",
       "failed": 0,
@@ -1373,7 +1433,7 @@
       "reviews": 10,
       "tokens": 97688612
     },
-    "ts": "2026-10-31T00:59:01Z",
+    "ts": "2026-10-31T01:00:01Z",
     "typical_minutes_by_tier": {
       "critical": 59.2,
       "low": 49.7,
@@ -1382,9 +1442,9 @@
       "unknown": 0.4
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 16.7,
+      "idle_minutes": 0.21666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
