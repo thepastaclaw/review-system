@@ -236,6 +236,9 @@ class RunContext:
     # the same prior findings in full, by the hash they are reconciled under (`prior` is what
     # the prompt sees, without most bodies)
     prior_findings: dict[str, Finding] = field(default_factory=dict)
+    # identities explicitly lifted by the latest adjudication; a later head must not silently
+    # turn one back into a blocker, while an explicitly marked reintroduction remains possible
+    settled_hashes: set[str] = field(default_factory=set)
     prior_sha: str | None = None
     has_prior_review: bool = False
     fresh_final: bool = False
@@ -1006,6 +1009,29 @@ def _end_triage(ctx: RunContext, t: Triage) -> None:
     _step_end(ctx, StepName.TRIAGE, "ok", dataclasses.asdict(t))
 
 
+_SETTLED_PRIOR_STATUSES = frozenset({"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED"})
+
+
+def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
+    """Return the latest explicit lift for a finding, unless a later full review re-kept it.
+
+    Full reviews write verified/posted rows; conversation outcomes write conceded rows. Ordering
+    by run id makes a later independently evidenced reintroduction active again, while a later
+    withdrawal remains a tombstone for every subsequent head.
+    """
+    row = ctx.conn.execute(
+        "SELECT f.stage, f.body FROM findings f JOIN runs r ON r.id=f.run_id "
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND f.hash=? "
+        "AND f.stage IN ('conceded','verified','verified-fresh','posted') "
+        "ORDER BY r.id DESC, f.id DESC LIMIT 1",
+        (ctx.repo, ctx.number, finding_hash),
+    ).fetchone()
+    if not row or row["stage"] != "conceded":
+        return None
+    status = str(row["body"] or "").split("\n", 1)[0]
+    return status if status in _SETTLED_PRIOR_STATUSES else None
+
+
 def step_context(ctx: RunContext) -> None:
     assert ctx.meta
     threads = github.review_threads(ctx.gh, ctx.repo, ctx.number)
@@ -1045,6 +1071,11 @@ def step_context(ctx: RunContext) -> None:
         seen.add(r["hash"])
         ctx.prior_sha = ctx.prior_sha or r["sha"]
         thread = replied.get(r["hash"])
+        settled = _latest_settlement(ctx, str(r["hash"]))
+        extra = {"thread_replies": thread["transcript"]} if thread else {}
+        if settled:
+            extra["prior_status"] = settled
+            ctx.settled_hashes.add(str(r["hash"]))
         prior.append(
             Finding(
                 file=r["file"] or "",
@@ -1054,7 +1085,7 @@ def step_context(ctx: RunContext) -> None:
                 category=r["category"] or "general",
                 line_start=r["line_start"],
                 line_end=r["line_end"],
-                extra={"thread_replies": thread["transcript"]} if thread else {},
+                extra=extra,
             )
         )
     for h, t in replied.items():
@@ -1063,6 +1094,11 @@ def step_context(ctx: RunContext) -> None:
         # a finding this database never recorded (posted by the legacy pipeline) that a human
         # replied to: reconstruct it from the comment so the reply still gets adjudicated
         seen.add(h)
+        settled = _latest_settlement(ctx, h)
+        extra = {"thread_replies": t["transcript"]}
+        if settled:
+            extra["prior_status"] = settled
+            ctx.settled_hashes.add(h)
         prior.append(
             Finding(
                 file=t.get("path") or "",
@@ -1072,7 +1108,7 @@ def step_context(ctx: RunContext) -> None:
                 line_start=t.get("line"),
                 line_end=t.get("line"),
                 prior_hash=h,
-                extra={"thread_replies": t["transcript"]},
+                extra=extra,
             )
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
@@ -1615,6 +1651,7 @@ def _reviewer_lanes(
                 head_sha=ctx.sha,
                 source=f"{phase}:{key}",
                 prior_hashes=prior_hashes,
+                settled_hashes=ctx.settled_hashes,
             )
 
         check = OutputCheck(
@@ -1791,6 +1828,7 @@ def _verifier_lane(
             expected_phase=expected_phase,
             expected_coderabbit_ids=ctx.coderabbit_ids,
             prior_hashes=prior_hashes,
+            settled_hashes=ctx.settled_hashes,
         )
 
     out = _run_checked_lane(
@@ -2075,6 +2113,50 @@ def _backfill_posted(
         )
 
 
+def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
+    """Persist full-review lifts as tombstones for later PR heads.
+
+    Conversation concessions already use this table. Full reviews used to answer and publish a
+    withdrawal but leave only the original ``posted_findings`` identity, so the next head fed it
+    back as an ordinary active blocker. A later full review may explicitly reintroduce the same
+    identity; its marker is evidence that the new finding is intentional and keeps the tombstone
+    from winning over the new publication.
+    """
+    rows = []
+    for h, outcome in _reconciliation(ctx, phase, verified).items():
+        status = str(outcome.get("status") or "")
+        if status not in _SETTLED_PRIOR_STATUSES or (
+            h in ctx.settled_hashes
+            and any(
+                f.hash == h and f.extra.get("reintroduced_finding_hash") == h
+                for f in verified.findings
+            )
+        ):
+            continue
+        prior = ctx.prior_findings.get(h)
+        if prior is None:
+            continue
+        rows.append(
+            (
+                ctx.run_id,
+                phase,
+                "conceded",
+                h,
+                prior.file,
+                prior.line_start,
+                prior.line_end,
+                prior.severity,
+                None,
+                prior.category,
+                prior.title,
+                status,
+            )
+        )
+    if rows:
+        with tx(ctx.conn):
+            ctx.conn.executemany(_FINDINGS_INSERT, rows)
+
+
 def step_publish(
     ctx: RunContext,
     *,
@@ -2112,6 +2194,7 @@ def step_publish(
         # threads that were replied to, and, if the verdict moved (a blocker withdrawn or a new
         # one found), post a short follow-up review so the standing verdict is not left stale.
         _backfill_posted(ctx, phase, existing, verified)
+        _record_lifted_reconciliations(ctx, phase, verified)
         _answer_threads(ctx, phase, verified)
         update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
         if update is not None:
@@ -2153,6 +2236,7 @@ def step_publish(
         dry_run=ctx.dry_run,
     )
     _record_publication(ctx, phase, model, result, verified)
+    _record_lifted_reconciliations(ctx, phase, verified)
     if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
         publish.post_coderabbit_reactions(
             ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
@@ -2392,6 +2476,7 @@ def _build_review(
         dry_run=ctx.dry_run,
         superseded_note=note,
         rereview=rereview,
+        settled_hashes=ctx.settled_hashes,
     )
     held = [
         ctx.prior_findings[str(r["finding_hash"])].title

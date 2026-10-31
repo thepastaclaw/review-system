@@ -170,6 +170,43 @@ def test_reviewer_output_reconciliation_contract():
         )
 
 
+def test_settled_prior_cannot_be_carried_without_explicit_reintroduction():
+    finding = {
+        "file": "f.rs",
+        "title": "Old blocker",
+        "body": "new evidence",
+        "severity": "blocking",
+        "category": "bug",
+    }
+    h = finding_hash("f.rs", "bug", "Old blocker")
+    raw = {
+        "summary": "s",
+        "review_phase": "final",
+        "head_sha": HEAD,
+        "findings": [finding],
+        "prior_finding_reconciliation": [{"finding_hash": h, "status": "WITHDRAWN"}],
+    }
+    with pytest.raises(ReviewError, match="reintroduced_finding_hash"):
+        parse_reviewer_output(
+            raw,
+            expected_phase="final",
+            head_sha=HEAD,
+            source="x",
+            prior_hashes={h},
+            settled_hashes={h},
+        )
+    reintroduced = {**finding, "reintroduced_finding_hash": h}
+    out = parse_reviewer_output(
+        {**raw, "findings": [reintroduced]},
+        expected_phase="final",
+        head_sha=HEAD,
+        source="x",
+        prior_hashes={h},
+        settled_hashes={h},
+    )
+    assert out.findings[0].extra["reintroduced_finding_hash"] == h
+
+
 def test_considered_dismissed_is_optional_and_defaults_empty():
     out = _reviewer({"findings": [], "out_of_scope_findings": []})
     assert out.considered_dismissed == [] and "considered_dismissed" not in out.raw

@@ -119,6 +119,13 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         "answer the latest reply's points in the carried finding's body with something you have "
         "not already said. Never restate an earlier answer of yours, and never re-raise a "
         "withdrawn finding as a new one.\n"
+        "- A prior entry with `prior_status` WITHDRAWN, FIXED, OUTDATED, or "
+        "INTENTIONALLY_DEFERRED is settled on an earlier head. Do not carry it or report the "
+        "same identity merely because the code is unchanged; reconcile it with that settled "
+        "status. If the current head independently proves the defect has genuinely returned, "
+        "report a new finding without `finding_hash`, set `reintroduced_finding_hash` to the "
+        "settled hash, and put the new current-head evidence in its body. This explicit marker "
+        "preserves genuine reintroductions without silently reviving a settled finding.\n"
         "- Every reconciliation row must include a one- or two-sentence `reason` addressed to the "
         "PR author; it is posted verbatim as a reply on that finding's thread, so it must answer "
         "the newest human message, not summarise the finding.\n"
@@ -134,7 +141,7 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         f"- This PR was previously reviewed at `{prior_sha}`. {len(prior)} prior verified finding(s) must each be revalidated against the current head.\n"
         f"- Emit exactly one `prior_finding_reconciliation` array. Reconcile every supplied `finding_hash` exactly once with exactly one status from {' | '.join(REVALIDATION_STATUSES)}. Do not omit, duplicate, or invent hashes.\n"
         "- A STILL_VALID prior finding MUST appear exactly once in `findings`, even when its lines did not change. Its finding object MUST include the supplied `finding_hash`, and its `title` MUST equal the supplied `original_title` byte-for-byte. Do not append `(carried forward...)`, status text, hash text, or any other suffix or prefix.\n"
-        "- FIXED, OUTDATED, WITHDRAWN, and INTENTIONALLY_DEFERRED reconcile the prior identity without requiring a `findings` entry. Do not also carry one of those identities in `findings`; that contradicts the reconciliation status.\n"
+        "- FIXED, OUTDATED, WITHDRAWN, and INTENTIONALLY_DEFERRED reconcile the prior identity without requiring a `findings` entry. Do not also carry one of those identities in `findings`; that contradicts the reconciliation status. A settled prior identity may only appear as a new finding when it has `reintroduced_finding_hash` and the body contains independently verified current-head evidence.\n"
         "- INTENTIONALLY_DEFERRED (above a nitpick) also needs the follow-up to be tracked: give the row a `tracking` field with the issue or pull request that tracks it (a URL or `owner/repo#N`), as linked in the finding's thread, the PR description or a PR comment. Without a tracking reference visible on the PR the orchestrator keeps the finding standing and asks for one.\n"
         "- Keep new findings separate: omit `finding_hash` unless the finding is the exact STILL_VALID carry-forward for that supplied prior identity.\n"
         "### Prior findings requiring cumulative adjudication\n\n"
@@ -398,8 +405,12 @@ def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
             "prior_head_sha": sha,
         }
         replies = f.extra.get("thread_replies")
-        if replies:
+        prior_status = f.extra.get("prior_status")
+        if prior_status:
+            d["prior_status"] = prior_status
+        if replies or prior_status:
             d["body"] = f.body[:4000]
+        if replies:
             d["thread_replies"] = replies
         out.append(d)
     return out

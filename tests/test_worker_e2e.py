@@ -889,6 +889,116 @@ def _seed_prior(conn, finding, *, body="old body"):
     return f.hash
 
 
+def _seed_withdrawn_prior(conn, finding):
+    fh = _seed_prior(conn, finding)
+    with tx(conn):
+        row = conn.execute(
+            "SELECT r.id AS run_id FROM runs r JOIN heads h ON h.id=r.head_id "
+            "WHERE h.repo=? AND h.number=? AND h.sha=?",
+            ("dashpay/platform", 1, "b" * 40),
+        ).fetchone()
+        f = worker.Finding.from_dict(finding)
+        conn.execute(
+            "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, "
+            "severity, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                row["run_id"],
+                "final",
+                "conceded",
+                fh,
+                f.file,
+                f.line_start,
+                f.line_end,
+                f.severity,
+                f.category,
+                f.title,
+                "WITHDRAWN",
+            ),
+        )
+    return fh
+
+
+def _queue_new_head(cfg, conn, gh, sha, lanes=None):
+    gh.pr = {**gh.pr, "head": {**gh.pr["head"], "sha": sha}}
+    if lanes is not None:
+        lanes.head = sha
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, sha, Trigger.MANUAL)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    return rid
+
+
+def test_withdrawn_finding_stays_settled_on_a_later_full_review_head(cfg, conn, gh, lanes):
+    """A conversation lift is input to the next head, not forgotten history."""
+    finding = _blocking("Old blocker that was withdrawn")
+    fh = _seed_withdrawn_prior(conn, finding)
+    gh.threads = [_prior_thread(fh, replies=[])]
+    lanes.reviewer["default"] = {
+        "summary": "The old concern remains settled.",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "WITHDRAWN", "reason": "It remains inapplicable."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([])
+    rid = _queue_new_head(cfg, conn, gh, "c" * 40, lanes)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    reviewer_prompt = next(c.prompt for c in _reviewer_calls(lanes))
+    assert '"prior_status": "WITHDRAWN"' in reviewer_prompt
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "COMMENT" and finding["title"] not in review["body"]
+    assert (
+        conn.execute(
+            "SELECT stage,body FROM findings WHERE run_id=? AND hash=? ORDER BY id DESC LIMIT 1",
+            (rid, fh),
+        ).fetchone()["body"]
+        == "WITHDRAWN"
+    )
+
+
+def test_reintroduced_settled_finding_requires_new_marker_and_gets_new_thread(cfg, conn, gh, lanes):
+    finding = _blocking("Old blocker that was withdrawn")
+    fh = _seed_withdrawn_prior(conn, finding)
+    gh.threads = [_prior_thread(fh, replies=[])]
+    gh.inline = [
+        {
+            "id": 900,
+            "node_id": "N1",
+            "user": {"login": "thepastaclaw"},
+            "path": "f.rs",
+            "line": 12,
+            "html_url": "https://gh/900",
+            "body": gh.threads[0]["comments"]["nodes"][0]["body"],
+        }
+    ]
+    reintroduced = {**finding, "reintroduced_finding_hash": fh}
+    lanes.reviewer["default"] = {
+        "summary": "The same defect is independently present again.",
+        "findings": [reintroduced],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {
+                "finding_hash": fh,
+                "status": "WITHDRAWN",
+                "reason": "The old instance remains settled.",
+            }
+        ],
+    }
+    lanes.verifier["default"] = _verifier([reintroduced])
+    rid = _queue_new_head(cfg, conn, gh, "d" * 40, lanes)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert len(gh.posted_reviews[-1]["comments"]) == 1
+    assert gh.posted_reviews[-1]["comments"][0]["body"].find(finding["title"]) >= 0
+    assert (
+        conn.execute(
+            "SELECT stage FROM findings WHERE run_id=? AND hash=? ORDER BY id DESC LIMIT 1",
+            (rid, fh),
+        ).fetchone()["stage"]
+        == "posted"
+    )
+
+
 def test_reply_on_prior_finding_reaches_reviewer_and_is_answered(cfg, conn, gh, lanes):
     s = _sugg()
     fh = _seed_prior(conn, s)
