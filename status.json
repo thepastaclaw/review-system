@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-10-31T12:34:01Z",
-  "generated_at": "2026-10-31T12:34:02Z",
+  "data_as_of": "2026-10-31T12:35:02Z",
+  "generated_at": "2026-10-31T12:35:02Z",
   "history": {
     "daily": [
       {
@@ -319,8 +319,8 @@
             "p90_seconds": 630
           },
           "wait": {
-            "median_seconds": 14,
-            "n": 522,
+            "median_seconds": 13,
+            "n": 523,
             "p90_seconds": 279
           }
         }
@@ -329,6 +329,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=2b5ca927",
+        "kind": "run.spawned",
+        "number": 5531,
+        "repo": "dashpay/platform",
+        "run_id": 7960,
+        "ts": "2026-10-31T12:34:37Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5531,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-31T12:34:37Z"
+      },
+      {
+        "detail": "2b5ca927 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 5531,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-10-31T12:34:27Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -624,30 +648,6 @@
         "repo": "dashpay/platform",
         "run_id": 7954,
         "ts": "2026-10-31T10:45:13Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 4933,
-        "repo": "dashpay/platform",
-        "run_id": 7954,
-        "ts": "2026-10-31T10:35:31Z"
-      },
-      {
-        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
-        "kind": "compare.selected",
-        "number": 4933,
-        "repo": "dashpay/platform",
-        "run_id": 7954,
-        "ts": "2026-10-31T10:35:28Z"
-      },
-      {
-        "detail": "ok in 1939s",
-        "kind": "run.done",
-        "number": 5702,
-        "repo": "dashpay/platform",
-        "run_id": 7953,
-        "ts": "2026-10-31T10:35:24Z"
       }
     ],
     "tokens_by_effort": [
@@ -1241,14 +1241,98 @@
       "findings_posted": 7349,
       "reviews": 7778,
       "reviews_imported": 2245,
-      "runs": 7959,
+      "runs": 7960,
       "tokens_in": 88033040515,
       "tokens_out": 940073665,
       "tokens_total": 88973114180
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-10-31T18:34:37Z",
+        "deadline_in_seconds": 21575,
+        "degraded": false,
+        "elapsed_seconds": 25,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-10-31T12:34:52Z",
+        "id": 7960,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5531,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5531",
+        "priority": true,
+        "progress": 0.013,
+        "queue": "live",
+        "queued_at": "2026-10-31T12:34:27Z",
+        "remaining_seconds": 1851,
+        "repo": "dashpay/platform",
+        "sha": "2b5ca927427d9f7767efec0008309eb4bac9f72c",
+        "started_at": "2026-10-31T12:34:37Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-10-31T12:34:38Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 8,
+            "started_at": "2026-10-31T12:34:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate cross-crate change modifies persisted consensus state through transition_to_version_15 in packages/rs-drive-abci/src/execution/platform_events/protocol_upgrade/perform_events_on_first_block_of_protocol_change/v0/mod.rs, adds marketplace history writes, and changes placement-proof verification.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-10-31T12:34:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-10-31T12:34:54Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(platform)!: record token marketplace events in token history (PV15)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 10
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1264,7 +1348,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1302,10 +1386,11 @@
       "closed": 572,
       "done": 7692,
       "failed": 80,
+      "running": 1,
       "superseded": 2761
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-10-31T12:30:37Z",
+    "ingest_last_at": "2026-10-31T12:34:31Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1339,9 +1424,9 @@
       }
     ],
     "last_run_done_at": "2026-10-31T12:25:06Z",
-    "last_run_started_at": "2026-10-31T11:51:06Z",
+    "last_run_started_at": "2026-10-31T12:34:37Z",
     "median_run_minutes": 32.31666666666667,
-    "notify_last_at": "2026-10-31T12:31:40Z",
+    "notify_last_at": "2026-10-31T12:34:31Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1352,7 +1437,7 @@
       "reviews": 100,
       "tokens": 1298256599
     },
-    "ts": "2026-10-31T12:34:01Z",
+    "ts": "2026-10-31T12:35:02Z",
     "typical_minutes_by_tier": {
       "critical": 54.6,
       "low": 49.7,
@@ -1361,9 +1446,9 @@
       "unknown": 0.4
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 42.93333333333333,
+      "idle_minutes": 0.4166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
