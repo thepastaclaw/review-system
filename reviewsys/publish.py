@@ -601,6 +601,7 @@ def dedupe_against_github(
     bot_login: str,
     *,
     dry_run: bool,
+    settled_hashes: set[str] | None = None,
 ) -> tuple[list[Finding], list[Suppressed]]:
     records = [
         ExistingComment.from_github(c)
@@ -615,7 +616,18 @@ def dedupe_against_github(
     # receive one carry-forward reply for a reviewed head; otherwise aliases turn into
     # duplicate GitHub comments even though each finding was considered once.
     seen_matches: set[tuple[str, str]] = set()
+    settled_hashes = settled_hashes or set()
     for f in findings:
+        # A finding explicitly reintroduced after a prior lift is new evidence, not a carry
+        # onto the old resolved root. Give it a fresh inline comment so the old withdrawal is
+        # never silently turned back into a live thread; a reworded one whose own comment is
+        # already up (an earlier head) is deduped onto that as usual.
+        marker = f.extra.get("reintroduced_finding_hash")
+        if marker in settled_hashes and (
+            f.hash == marker or not any(r.finding_hash == f.hash for r in records)
+        ):
+            kept.append(f)
+            continue
         match, reason = find_duplicate(f, records)
         if not match:
             kept.append(f)
@@ -673,10 +685,18 @@ def build(
     dry_run: bool,
     superseded_note: str | None = None,
     rereview: bool = False,
+    settled_hashes: set[str] | None = None,
 ) -> ReviewModel:
     findings, collapsed = collapse_same_root(list(verified.findings))
     kept, sup = dedupe_against_github(
-        gh, repo, number, head_sha, findings, bot_login, dry_run=dry_run
+        gh,
+        repo,
+        number,
+        head_sha,
+        findings,
+        bot_login,
+        dry_run=dry_run,
+        settled_hashes=settled_hashes,
     )
     suppressed = list(collapsed) + list(sup)
     if has_same_root_duplicates(kept):
