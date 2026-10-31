@@ -205,6 +205,9 @@ def test_settled_prior_cannot_be_carried_without_explicit_reintroduction():
         settled_hashes={h},
     )
     assert out.findings[0].extra["reintroduced_finding_hash"] == h
+    # a malformed marker is dropped, not carried into hash-set lookups
+    odd = Finding.from_dict({**finding, "reintroduced_finding_hash": [h]})
+    assert "reintroduced_finding_hash" not in odd.extra
 
 
 def test_verifier_reconciliation_is_only_checked_for_settled_priors():

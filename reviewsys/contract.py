@@ -151,6 +151,10 @@ class Finding:
             "finding_hash",
             "root_id",
         }
+        extra = {k: v for k, v in raw.items() if k not in known}
+        # a hash or nothing: the marker is looked up in sets of hashes downstream
+        if not isinstance(extra.get("reintroduced_finding_hash", ""), str):
+            del extra["reintroduced_finding_hash"]
         return cls(
             file=file,
             title=title,
@@ -164,7 +168,7 @@ class Finding:
             source=source or str(raw.get("source") or "unknown"),
             prior_hash=str(raw["finding_hash"]) if raw.get("finding_hash") else None,
             root_id=str(raw["root_id"]) if raw.get("root_id") else None,
-            extra={k: v for k, v in raw.items() if k not in known},
+            extra=extra,
         )
 
 
