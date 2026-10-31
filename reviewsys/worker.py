@@ -1009,7 +1009,8 @@ def _end_triage(ctx: RunContext, t: Triage) -> None:
     _step_end(ctx, StepName.TRIAGE, "ok", dataclasses.asdict(t))
 
 
-_SETTLED_PRIOR_STATUSES = frozenset({"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED"})
+# judgement lifts only: FIXED/OUTDATED rest on the code, which a later head may revert
+_SETTLED_PRIOR_STATUSES = frozenset({"WITHDRAWN", "INTENTIONALLY_DEFERRED"})
 
 
 def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
@@ -2122,20 +2123,23 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
     identity; its marker is evidence that the new finding is intentional and keeps the tombstone
     from winning over the new publication.
     """
+    # a hash the verifier published (carried, held or reintroduced) stands, whatever a
+    # reviewer lane's row merged in by `_reconciliation` says
+    kept = {
+        h
+        for f in verified.findings
+        for h in (f.hash, f.prior_hash, f.extra.get("reintroduced_finding_hash"))
+        if h
+    }
     rows = []
     for h, outcome in _reconciliation(ctx, phase, verified).items():
         status = str(outcome.get("status") or "")
-        if status not in _SETTLED_PRIOR_STATUSES or (
-            h in ctx.settled_hashes
-            and any(
-                f.hash == h and f.extra.get("reintroduced_finding_hash") == h
-                for f in verified.findings
-            )
-        ):
-            continue
         prior = ctx.prior_findings.get(h)
-        if prior is None:
+        if status not in _SETTLED_PRIOR_STATUSES or h in kept or prior is None:
             continue
+        # a deferral keeps its tracking link on a second line, as `_record_conceded` does,
+        # so `_known_tracking` still finds it on later heads
+        tracking = str(outcome.get("tracking") or "") if status == "INTENTIONALLY_DEFERRED" else ""
         rows.append(
             (
                 ctx.run_id,
@@ -2149,7 +2153,7 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
                 None,
                 prior.category,
                 prior.title,
-                status,
+                status + (f"\n{tracking}" if tracking else ""),
             )
         )
     if rows:

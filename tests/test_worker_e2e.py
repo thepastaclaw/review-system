@@ -999,6 +999,70 @@ def test_reintroduced_settled_finding_requires_new_marker_and_gets_new_thread(cf
     )
 
 
+def test_finding_the_verifier_keeps_gets_no_tombstone(cfg, conn, gh, lanes):
+    """A reviewer lane's WITHDRAWN row (merged in because it carries a reason) must not
+    settle a finding the verifier carried and published."""
+    finding = _blocking("Blocker the verifier keeps")
+    fh = _seed_prior(conn, finding)
+    gh.threads = [_prior_thread(fh, replies=[])]
+    lanes.reviewer["default"] = {
+        "summary": "s",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "WITHDRAWN", "reason": "Looks inapplicable."}
+        ],
+    }
+    lanes.verifier["default"] = {
+        **_verifier([{**finding, "finding_hash": fh}]),
+        "prior_finding_reconciliation": [{"finding_hash": fh, "status": "STILL_VALID"}],
+    }
+    rid = _queue_new_head(cfg, conn, gh, "c" * 40, lanes)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert not conn.execute(
+        "SELECT 1 FROM findings WHERE run_id=? AND hash=? AND stage='conceded'", (rid, fh)
+    ).fetchone()
+
+
+def test_reworded_reintroduction_gets_a_new_thread(cfg, conn, gh, lanes):
+    """The marker, not the title hash, decides that a reintroduction is not a carry onto the
+    withdrawn thread."""
+    finding = _blocking("Old blocker that was withdrawn")
+    fh = _seed_withdrawn_prior(conn, finding)
+    gh.threads = [_prior_thread(fh, replies=[])]
+    gh.inline = [
+        {
+            "id": 900,
+            "node_id": "N1",
+            "user": {"login": "thepastaclaw"},
+            "path": "f.rs",
+            "line": 12,
+            "html_url": "https://gh/900",
+            # the old root reads like the reworded finding, so dedupe would reuse it
+            "body": f"<!-- thepastaclaw-review v1 finding={fh} dedupe=x -->\n"
+            f"**🔴 Blocking: {finding['title']}**\n\n{finding['body']}",
+        }
+    ]
+    reworded = {
+        **finding,
+        "title": "Old blocker that was withdrawn is back",
+        "reintroduced_finding_hash": fh,
+    }
+    lanes.reviewer["default"] = {
+        "summary": "s",
+        "findings": [reworded],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "WITHDRAWN", "reason": "The old instance is settled."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([reworded])
+    rid = _queue_new_head(cfg, conn, gh, "d" * 40, lanes)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    comments = gh.posted_reviews[-1]["comments"]
+    assert len(comments) == 1 and reworded["title"] in comments[0]["body"]
+
+
 def test_reply_on_prior_finding_reaches_reviewer_and_is_answered(cfg, conn, gh, lanes):
     s = _sugg()
     fh = _seed_prior(conn, s)

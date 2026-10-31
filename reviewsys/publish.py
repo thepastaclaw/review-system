@@ -621,7 +621,7 @@ def dedupe_against_github(
         # A finding explicitly reintroduced after a prior lift is new evidence, not a carry
         # onto the old resolved root. Give it a fresh inline comment so the old withdrawal is
         # never silently turned back into a live thread.
-        if f.hash in settled_hashes:
+        if f.extra.get("reintroduced_finding_hash") in settled_hashes:
             kept.append(f)
             continue
         match, reason = find_duplicate(f, records)

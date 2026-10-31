@@ -397,9 +397,10 @@ def _settled_finding_problems(
             + ", ".join(sorted(settled_still_valid))
         )
     revived_without_evidence = [
-        f.hash
+        h
         for f in findings
-        if f.hash in settled_hashes and f.extra.get("reintroduced_finding_hash") != f.hash
+        for h in settled_hashes & {f.hash, f.prior_hash or f.hash}
+        if f.extra.get("reintroduced_finding_hash") != h
     ]
     if revived_without_evidence:
         problems.append(
@@ -493,19 +494,15 @@ def parse_verifier_output(
     if not isinstance(findings_raw, list):
         raise ReviewError(FailKind.CONTRACT, "verifier: findings must be a list")
     findings = [Finding.from_dict(f) for f in findings_raw]
-    recon = [
-        r
-        for r in (raw.get("prior_finding_reconciliation") or [])
-        if isinstance(r, dict) and r.get("finding_hash") and r.get("status")
-    ]
-    if prior_hashes:
-        problems = _settled_finding_problems(findings, settled_hashes)
-        if recon:
-            problems.extend(
-                _reconciliation_problems(
-                    recon, findings, prior_hashes, settled_hashes=settled_hashes
-                )
-            )
+    if settled_hashes:
+        # only the settled identities are checked: the verifier's reconciliation stays
+        # unvalidated otherwise (`worker._reconciliation` fills in what it leaves out)
+        still_valid = {
+            str(r.get("finding_hash"))
+            for r in raw.get("prior_finding_reconciliation") or []
+            if isinstance(r, dict) and r.get("status") == "STILL_VALID"
+        }
+        problems = _settled_finding_problems(findings, settled_hashes, still_valid)
         if problems:
             raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     reactions = raw.get("coderabbit_reactions")
