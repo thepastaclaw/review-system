@@ -170,6 +170,65 @@ def test_reviewer_output_reconciliation_contract():
         )
 
 
+def test_settled_prior_cannot_be_carried_without_explicit_reintroduction():
+    finding = {
+        "file": "f.rs",
+        "title": "Old blocker",
+        "body": "new evidence",
+        "severity": "blocking",
+        "category": "bug",
+    }
+    h = finding_hash("f.rs", "bug", "Old blocker")
+    raw = {
+        "summary": "s",
+        "review_phase": "final",
+        "head_sha": HEAD,
+        "findings": [finding],
+        "prior_finding_reconciliation": [{"finding_hash": h, "status": "WITHDRAWN"}],
+    }
+    with pytest.raises(ReviewError, match="reintroduced_finding_hash"):
+        parse_reviewer_output(
+            raw,
+            expected_phase="final",
+            head_sha=HEAD,
+            source="x",
+            prior_hashes={h},
+            settled_hashes={h},
+        )
+    reintroduced = {**finding, "reintroduced_finding_hash": h}
+    out = parse_reviewer_output(
+        {**raw, "findings": [reintroduced]},
+        expected_phase="final",
+        head_sha=HEAD,
+        source="x",
+        prior_hashes={h},
+        settled_hashes={h},
+    )
+    assert out.findings[0].extra["reintroduced_finding_hash"] == h
+    # a malformed marker is dropped, not carried into hash-set lookups
+    odd = Finding.from_dict({**finding, "reintroduced_finding_hash": [h]})
+    assert "reintroduced_finding_hash" not in odd.extra
+
+
+def test_verifier_reconciliation_is_only_checked_for_settled_priors():
+    """The verifier may reconcile partially and carry without `finding_hash` (the worker fills
+    both in); only a settled identity it keeps standing is a contract break."""
+    h, other = finding_hash("f.rs", "bug", "Old blocker"), "a" * 12
+    raw = {
+        "summary": "s",
+        "review_phase": "final",
+        "findings": [{"file": "f.rs", "title": "Old blocker", "body": "b", "category": "bug"}],
+        "prior_finding_reconciliation": [{"finding_hash": h, "status": "STILL_VALID"}],
+        "coderabbit_reactions": [],
+        "prerequisite_adjudications": [],
+        "adjudication_complete": True,
+    }
+    kw = {"expected_phase": "final", "expected_coderabbit_ids": [], "prior_hashes": {h, other}}
+    assert len(parse_verifier_output(raw, **kw).findings) == 1
+    with pytest.raises(ReviewError, match="cannot be STILL_VALID"):
+        parse_verifier_output(raw, **kw, settled_hashes={h})
+
+
 def test_considered_dismissed_is_optional_and_defaults_empty():
     out = _reviewer({"findings": [], "out_of_scope_findings": []})
     assert out.considered_dismissed == [] and "considered_dismissed" not in out.raw

@@ -151,6 +151,10 @@ class Finding:
             "finding_hash",
             "root_id",
         }
+        extra = {k: v for k, v in raw.items() if k not in known}
+        # a hash or nothing: the marker is looked up in sets of hashes downstream
+        if not isinstance(extra.get("reintroduced_finding_hash", ""), str):
+            del extra["reintroduced_finding_hash"]
         return cls(
             file=file,
             title=title,
@@ -164,7 +168,7 @@ class Finding:
             source=source or str(raw.get("source") or "unknown"),
             prior_hash=str(raw["finding_hash"]) if raw.get("finding_hash") else None,
             root_id=str(raw["root_id"]) if raw.get("root_id") else None,
-            extra={k: v for k, v in raw.items() if k not in known},
+            extra=extra,
         )
 
 
@@ -348,7 +352,10 @@ def normalize_reviewer_output(
 
 
 def _reconciliation_problems(
-    recon: list[Any], findings: list[Finding], prior_hashes: set[str]
+    recon: list[Any],
+    findings: list[Finding],
+    prior_hashes: set[str],
+    settled_hashes: set[str],
 ) -> list[str]:
     """Every way the reconciliation breaks the contract, not just the first, so a correction
     turn can fix them all at once."""
@@ -376,6 +383,31 @@ def _reconciliation_problems(
         problems.append(
             f"STILL_VALID set {sorted(still_valid)} != carried findings {sorted(carried)}"
         )
+    problems.extend(_settled_finding_problems(findings, settled_hashes, still_valid))
+    return problems
+
+
+def _settled_finding_problems(
+    findings: list[Finding], settled_hashes: set[str], still_valid: set[str]
+) -> list[str]:
+    problems: list[str] = []
+    settled_still_valid = settled_hashes & still_valid
+    if settled_still_valid:
+        problems.append(
+            "settled prior findings cannot be STILL_VALID: "
+            + ", ".join(sorted(settled_still_valid))
+        )
+    revived = {
+        h
+        for f in findings
+        for h in settled_hashes & {f.hash, f.prior_hash or f.hash}
+        if f.extra.get("reintroduced_finding_hash") != h
+    }
+    if revived:
+        problems.append(
+            "settled prior findings need reintroduced_finding_hash and new evidence: "
+            + ", ".join(sorted(revived))
+        )
     return problems
 
 
@@ -392,7 +424,13 @@ def clean_considered_dismissed(value: Any) -> list[dict[str, str]]:
 
 
 def parse_reviewer_output(
-    raw: dict[str, Any], *, expected_phase: str, head_sha: str, source: str, prior_hashes: set[str]
+    raw: dict[str, Any],
+    *,
+    expected_phase: str,
+    head_sha: str,
+    source: str,
+    prior_hashes: set[str],
+    settled_hashes: set[str] | None = None,
 ) -> ReviewerOutput:
     raw, notes = normalize_reviewer_output(
         raw, expected_phase=expected_phase, head_sha=head_sha, prior_hashes=prior_hashes
@@ -405,7 +443,7 @@ def parse_reviewer_output(
     if not isinstance(recon, list):
         raise ReviewError(FailKind.CONTRACT, "prior_finding_reconciliation must be a list")
     if prior_hashes:
-        problems = _reconciliation_problems(recon, findings, prior_hashes)
+        problems = _reconciliation_problems(recon, findings, prior_hashes, settled_hashes or set())
         if problems:
             raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     oos = raw.get("out_of_scope_findings") or []
@@ -432,6 +470,7 @@ def parse_verifier_output(
     expected_phase: str,
     expected_coderabbit_ids: list[int],
     prior_hashes: set[str] | None = None,
+    settled_hashes: set[str] | None = None,
 ) -> VerifierOutput:
     """`review_phase` is an echo field here too (the prompt states it, nothing reads it back),
     so it is normalized like a reviewer's; prior hashes in the verifier's own reconciliation
@@ -454,6 +493,17 @@ def parse_verifier_output(
     if not isinstance(findings_raw, list):
         raise ReviewError(FailKind.CONTRACT, "verifier: findings must be a list")
     findings = [Finding.from_dict(f) for f in findings_raw]
+    if settled_hashes:
+        # only the settled identities are checked: the verifier's reconciliation stays
+        # unvalidated otherwise (`worker._reconciliation` fills in what it leaves out)
+        still_valid = {
+            str(r.get("finding_hash"))
+            for r in raw.get("prior_finding_reconciliation") or []
+            if isinstance(r, dict) and r.get("status") == "STILL_VALID"
+        }
+        problems = _settled_finding_problems(findings, settled_hashes, still_valid)
+        if problems:
+            raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     reactions = raw.get("coderabbit_reactions")
     if not isinstance(reactions, list):
         raise ReviewError(FailKind.CONTRACT, "verifier: coderabbit_reactions must be a list")

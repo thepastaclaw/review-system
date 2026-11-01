@@ -101,6 +101,51 @@ def test_dedupe_against_github_reuses_one_existing_root_per_head(monkeypatch):
     ]
 
 
+def test_reintroduction_bypasses_the_withdrawn_root_only_until_it_has_its_own(monkeypatch):
+    """A reworded reintroduction of settled `old` skips fuzzy dedupe onto the withdrawn root,
+    but once its own comment is up (an earlier head) it carries onto that one."""
+    from reviewsys import publish as pub
+
+    def comment(cid, h, title):
+        return {
+            "id": cid,
+            "node_id": f"PRRC_{cid}",
+            "path": "src/a.rs",
+            "line": 12,
+            "html_url": f"https://github.example/comment/{cid}",
+            "user": {"login": "thepastaclaw"},
+            "body": f"<!-- thepastaclaw-review v1 finding={h} dedupe=x -->\n"
+            f"**🟡 Suggestion: {title}**\n\nbody",
+        }
+
+    back = f(
+        "Fee estimation omits drainage costs again", extra={"reintroduced_finding_hash": "0ddba11"}
+    )
+    inline = [comment(100, "0ddba11", "Fee estimation omits drainage costs")]
+    monkeypatch.setattr(pub.github, "inline_comments", lambda *args: inline)
+    monkeypatch.setattr(
+        pub.github, "thread_for_comment", lambda *args: {"isResolved": False, "comments": {}}
+    )
+    monkeypatch.setattr(pub.github, "post_reply", lambda *args: None)
+
+    def run():
+        return pub.dedupe_against_github(
+            None,
+            "dashpay/dash",
+            1,
+            "a" * 40,
+            [back],
+            "thepastaclaw",
+            dry_run=True,
+            settled_hashes={"0ddba11"},
+        )
+
+    assert run()[0] == [back]
+    inline.append(comment(200, back.hash, back.title))
+    kept, suppressed = run()
+    assert not kept and suppressed[0].comment_id == "200"
+
+
 def test_resolution_reply_detection():
     t = {
         "comments": {
