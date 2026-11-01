@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-01T01:52:01Z",
-  "generated_at": "2026-11-01T01:52:02Z",
+  "data_as_of": "2026-11-01T01:53:01Z",
+  "generated_at": "2026-11-01T01:53:01Z",
   "history": {
     "daily": [
       {
@@ -308,7 +308,7 @@
           },
           "wait": {
             "median_seconds": 1810,
-            "n": 638,
+            "n": 639,
             "p90_seconds": 1856
           }
         },
@@ -334,6 +334,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=500ca5b5",
+        "kind": "run.spawned",
+        "number": 102,
+        "repo": "dashpay/base-sdk",
+        "run_id": 8077,
+        "ts": "2026-11-01T01:52:51Z"
+      },
       {
         "detail": "6c5044d4 trigger=new_pr priority=0",
         "kind": "head.queued",
@@ -645,14 +653,6 @@
         "repo": "dashpay/dash",
         "run_id": 8071,
         "ts": "2026-11-01T00:48:07Z"
-      },
-      {
-        "detail": "attempt 1 sha=ddcfbfc6",
-        "kind": "run.spawned",
-        "number": 8005,
-        "repo": "dashpay/dash",
-        "run_id": 8071,
-        "ts": "2026-11-01T00:48:01Z"
       }
     ],
     "tokens_by_effort": [
@@ -1246,14 +1246,94 @@
       "findings_posted": 7463,
       "reviews": 7871,
       "reviews_imported": 2245,
-      "runs": 8076,
+      "runs": 8077,
       "tokens_in": 89250420268,
       "tokens_out": 954918338,
       "tokens_total": 90205338606
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-01T07:52:51Z",
+        "deadline_in_seconds": 21590,
+        "degraded": false,
+        "elapsed_seconds": 10,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-11-01T01:52:51Z",
+        "id": 8077,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 102,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/base-sdk/pull/102",
+        "priority": false,
+        "progress": 0.006,
+        "queue": "live",
+        "queued_at": "2026-11-01T01:22:49Z",
+        "remaining_seconds": 1608,
+        "repo": "dashpay/base-sdk",
+        "sha": "500ca5b594ac1e14aad8e7be86e8f95d3a774511",
+        "started_at": "2026-11-01T01:52:51Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-11-01T01:52:51Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-11-01T01:52:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This small, contained refactor consolidates private sealing traits and integer implementations with straightforward feature gating and no intended runtime behavior change.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-11-01T01:52:55Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 0,
+            "started_at": "2026-11-01T01:53:01Z",
+            "status": "running"
+          }
+        ],
+        "tier": "low",
+        "title": "types%refac: seal `str_u64::Value` with the crate-wide `Sealed`",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1802
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1269,7 +1349,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1287,7 +1367,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-01T01:50:09Z",
+        "at": "2026-11-01T01:52:26Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1307,7 +1387,8 @@
       "closed": 574,
       "done": 7787,
       "failed": 80,
-      "queued": 5,
+      "queued": 4,
+      "running": 1,
       "superseded": 2774
     },
     "ingest_error_streak": 0,
@@ -1345,40 +1426,21 @@
       }
     ],
     "last_run_done_at": "2026-11-01T01:35:23Z",
-    "last_run_started_at": "2026-11-01T01:23:11Z",
+    "last_run_started_at": "2026-11-01T01:52:51Z",
     "median_run_minutes": 19.933333333333334,
-    "notify_last_at": "2026-11-01T01:50:37Z",
-    "oldest_queued_at": "2026-11-01T01:22:49Z",
+    "notify_last_at": "2026-11-01T01:52:47Z",
+    "oldest_queued_at": "2026-11-01T01:26:42Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1752,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-11-01T01:52:49Z",
-        "eligible_in_seconds": 48,
-        "number": 102,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/base-sdk/pull/102",
-        "prioritize_url": "https://github.com/dashpay/base-sdk/issues/102#issuecomment-6551750749",
-        "priority": false,
-        "queued_at": "2026-11-01T01:22:49Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/base-sdk",
-        "sha": "500ca5b594ac1e14aad8e7be86e8f95d3a774511",
-        "title": "types%refac: seal `str_u64::Value` with the crate-wide `Sealed`",
-        "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 1519,
+        "age_seconds": 1579,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-11-01T01:56:42Z",
-        "eligible_in_seconds": 281,
+        "eligible_in_seconds": 221,
         "number": 1643,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1643",
         "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1643#issuecomment-6427924119",
         "priority": false,
@@ -1390,14 +1452,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1056,
+        "age_seconds": 1116,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-11-01T02:04:25Z",
-        "eligible_in_seconds": 744,
+        "eligible_in_seconds": 684,
         "number": 8006,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/8006",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8006#issuecomment-6549818149",
         "priority": false,
@@ -1409,14 +1471,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 810,
+        "age_seconds": 870,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-01T02:08:31Z",
-        "eligible_in_seconds": 990,
+        "eligible_in_seconds": 930,
         "number": 1282,
-        "position": 4,
+        "position": 3,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1282",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1282#issuecomment-6551898641",
         "priority": false,
@@ -1428,14 +1490,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 85,
+        "age_seconds": 145,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-01T02:20:36Z",
-        "eligible_in_seconds": 1715,
+        "eligible_in_seconds": 1655,
         "number": 103,
-        "position": 5,
+        "position": 4,
         "pr_url": "https://github.com/dashpay/base-sdk/pull/103",
         "prioritize_url": "https://github.com/dashpay/base-sdk/pull/103#issuecomment-new",
         "priority": false,
@@ -1454,7 +1516,7 @@
       "reviews": 15,
       "tokens": 81396240
     },
-    "ts": "2026-11-01T01:52:01Z",
+    "ts": "2026-11-01T01:53:01Z",
     "typical_minutes_by_tier": {
       "critical": 50.2,
       "low": 41.0,
@@ -1463,9 +1525,9 @@
       "unknown": 0.3
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 28.833333333333332,
+      "idle_minutes": 0.16666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
