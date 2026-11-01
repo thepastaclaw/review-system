@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-01T03:35:02Z",
-  "generated_at": "2026-11-01T03:35:02Z",
+  "data_as_of": "2026-11-01T03:36:01Z",
+  "generated_at": "2026-11-01T03:36:01Z",
   "history": {
     "daily": [
       {
@@ -335,6 +335,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 8003,
+        "repo": "dashpay/dash",
+        "run_id": 8084,
+        "ts": "2026-11-01T03:35:11Z"
+      },
+      {
         "detail": "attempt 1 sha=8c5f5389",
         "kind": "run.spawned",
         "number": 8003,
@@ -645,14 +653,6 @@
         "repo": "dashpay/base-sdk",
         "run_id": 8079,
         "ts": "2026-11-01T02:11:38Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch_green",
-        "number": 7996,
-        "repo": "dashpay/dash",
-        "run_id": 8037,
-        "ts": "2026-11-01T02:10:12Z"
       }
     ],
     "tokens_by_effort": [
@@ -1258,35 +1258,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-01T09:34:42Z",
-        "deadline_in_seconds": 21580,
+        "deadline_in_seconds": 21521,
         "degraded": false,
-        "elapsed_seconds": 20,
+        "elapsed_seconds": 79,
         "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-11-01T03:34:58Z",
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-11-01T03:35:59Z",
         "id": 8084,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 4,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 50,
             "state": "running"
           }
         ],
         "number": 8003,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/8003",
         "priority": false,
-        "progress": 0.02,
+        "progress": 0.072,
         "queue": "live",
         "queued_at": "2026-11-01T03:04:31Z",
-        "remaining_seconds": 966,
+        "remaining_seconds": 1014,
         "repo": "dashpay/dash",
         "sha": "8c5f5389085f2e686962fe70a0641cc0cc04448c",
         "started_at": "2026-11-01T03:34:42Z",
@@ -1300,28 +1300,57 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
             "name": "select",
-            "seconds": 5,
+            "seconds": 6,
             "started_at": "2026-11-01T03:34:57Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change coordinates startup policy, onion listener binding, and asynchronous Tor control across several files, but does not itself modify any of the specified critical surfaces.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-01T03:34:58Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
+            "name": "context",
             "seconds": 4,
-            "started_at": "2026-11-01T03:34:58Z",
+            "started_at": "2026-11-01T03:35:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 52,
+            "started_at": "2026-11-01T03:35:09Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix(net): don't refuse to start over the automatic onion service unless -listenonion=1",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
           "verify1",
           "gate",
           "phase2",
@@ -1410,13 +1439,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
@@ -1424,7 +1453,7 @@
     "last_run_done_at": "2026-11-01T03:31:55Z",
     "last_run_started_at": "2026-11-01T03:34:42Z",
     "median_run_minutes": 19.916666666666668,
-    "notify_last_at": "2026-11-01T03:32:56Z",
+    "notify_last_at": "2026-11-01T03:35:03Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1435,7 +1464,7 @@
       "reviews": 22,
       "tokens": 117900784
     },
-    "ts": "2026-11-01T03:35:02Z",
+    "ts": "2026-11-01T03:36:01Z",
     "typical_minutes_by_tier": {
       "critical": 49.9,
       "low": 40.7,
@@ -1446,7 +1475,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.3333333333333333,
+      "idle_minutes": 1.3166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
