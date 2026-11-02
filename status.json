@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-02T14:06:02Z",
-  "generated_at": "2026-11-02T14:06:02Z",
+  "data_as_of": "2026-11-02T14:07:01Z",
+  "generated_at": "2026-11-02T14:07:01Z",
   "history": {
     "daily": [
       {
@@ -340,6 +340,22 @@
     },
     "recent_events": [
       {
+        "detail": "4e13e544 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 5712,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-02T14:06:59Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7975,
+        "repo": "dashpay/dash",
+        "run_id": 8275,
+        "ts": "2026-11-02T14:06:13Z"
+      },
+      {
         "detail": "attempt 1 sha=985a8e55",
         "kind": "run.spawned",
         "number": 7975,
@@ -642,22 +658,6 @@
         "repo": "dashpay/platform",
         "run_id": 8267,
         "ts": "2026-11-02T13:00:18Z"
-      },
-      {
-        "detail": "ok in 762s",
-        "kind": "run.done",
-        "number": 5712,
-        "repo": "dashpay/platform",
-        "run_id": 8268,
-        "ts": "2026-11-02T12:59:55Z"
-      },
-      {
-        "detail": "phase=phase2 kept=6 dropped=0",
-        "kind": "compare.lanes",
-        "number": 5604,
-        "repo": "dashpay/platform",
-        "run_id": 8267,
-        "ts": "2026-11-02T12:57:08Z"
       }
     ],
     "tokens_by_effort": [
@@ -1263,35 +1263,35 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-02T20:05:41Z",
-        "deadline_in_seconds": 21579,
+        "deadline_in_seconds": 21520,
         "degraded": false,
-        "elapsed_seconds": 21,
+        "elapsed_seconds": 80,
         "findings": null,
-        "heartbeat_age_seconds": 6,
-        "heartbeat_at": "2026-11-02T14:05:56Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-02T14:06:57Z",
         "id": 8275,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "high",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 4,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 47,
             "state": "running"
           }
         ],
         "number": 7975,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash/pull/7975",
         "priority": true,
-        "progress": 0.012,
+        "progress": 0.082,
         "queue": "live",
         "queued_at": "2026-11-02T14:05:38Z",
-        "remaining_seconds": 1679,
+        "remaining_seconds": 894,
         "repo": "dashpay/dash",
         "sha": "985a8e554053a51848fd471af9db54b508c7f921",
         "started_at": "2026-11-02T14:05:41Z",
@@ -1305,32 +1305,61 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
             "name": "select",
-            "seconds": 5,
+            "seconds": 7,
             "started_at": "2026-11-02T14:05:57Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change is a small, contained CI configuration update with straightforward runner-selection fallbacks and targeted tests, without changes to critical runtime surfaces.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-11-02T14:05:58Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 4,
-            "started_at": "2026-11-02T14:05:58Z",
+            "name": "context",
+            "seconds": 6,
+            "started_at": "2026-11-02T14:06:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 50,
+            "started_at": "2026-11-02T14:06:11Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "low",
         "title": "ci: let a variable choose every workflow's runner",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "mention",
         "upcoming": [
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
-          "fresh_phase2",
-          "fresh_verify2",
           "publish"
         ],
         "wait_seconds": 3
@@ -1389,6 +1418,7 @@
       "closed": 596,
       "done": 7901,
       "failed": 100,
+      "queued": 1,
       "running": 1,
       "superseded": 2801
     },
@@ -1409,13 +1439,13 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
@@ -1430,9 +1460,29 @@
     "last_run_started_at": "2026-11-02T14:05:41Z",
     "median_run_minutes": 26.85,
     "notify_last_at": "2026-11-02T14:05:32Z",
-    "oldest_queued_at": null,
+    "oldest_queued_at": "2026-11-02T14:06:59Z",
     "priority_queued": 0,
-    "queued": [],
+    "queued": [
+      {
+        "age_seconds": 2,
+        "attempts": 0,
+        "author": "llbartekll",
+        "eligible": false,
+        "eligible_at": "2026-11-02T14:36:59Z",
+        "eligible_in_seconds": 1798,
+        "number": 5712,
+        "position": 1,
+        "pr_url": "https://github.com/dashpay/platform/pull/5712",
+        "prioritize_url": "https://github.com/dashpay/platform/issues/5712#issuecomment-6571613370",
+        "priority": false,
+        "queued_at": "2026-11-02T14:06:59Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/platform",
+        "sha": "4e13e54415c32b029d7da5876ab4b61ebf08d3c3",
+        "title": "fix(platform-wallet): refuse a fixed-amount asset lock over the input cap before broadcast",
+        "trigger": "new_push"
+      }
+    ],
     "today": {
       "day": "2026-11-02",
       "failed": 0,
@@ -1440,7 +1490,7 @@
       "reviews": 57,
       "tokens": 1029390503
     },
-    "ts": "2026-11-02T14:06:02Z",
+    "ts": "2026-11-02T14:07:01Z",
     "typical_minutes_by_tier": {
       "critical": 42.9,
       "low": 37.6,
@@ -1451,7 +1501,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.35,
+      "idle_minutes": 1.3333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
