@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-02T12:13:01Z",
-  "generated_at": "2026-11-02T12:13:01Z",
+  "data_as_of": "2026-11-02T12:14:01Z",
+  "generated_at": "2026-11-02T12:14:02Z",
   "history": {
     "daily": [
       {
@@ -340,6 +340,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1291,
+        "repo": "dashpay/dashwallet-ios",
+        "run_id": 8266,
+        "ts": "2026-11-02T12:13:19Z"
+      },
+      {
         "detail": "attempt 1 sha=8540260f",
         "kind": "run.spawned",
         "number": 1291,
@@ -650,14 +658,6 @@
         "repo": "dashpay/dash",
         "run_id": 8260,
         "ts": "2026-11-02T10:34:28Z"
-      },
-      {
-        "detail": "attempt 1 sha=b0b8b1c1",
-        "kind": "run.spawned",
-        "number": 8014,
-        "repo": "dashpay/dash",
-        "run_id": 8260,
-        "ts": "2026-11-02T10:34:02Z"
       }
     ],
     "tokens_by_effort": [
@@ -1263,40 +1263,99 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-11-02T18:13:00Z",
-        "deadline_in_seconds": 21599,
+        "deadline_in_seconds": 21539,
         "degraded": false,
-        "elapsed_seconds": 1,
+        "elapsed_seconds": 61,
         "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-02T12:13:00Z",
+        "heartbeat_age_seconds": 0,
+        "heartbeat_at": "2026-11-02T12:14:01Z",
         "id": 8266,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 42,
+            "state": "running"
+          }
+        ],
         "number": 1291,
         "overdue": false,
-        "phase": null,
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1291",
         "priority": false,
-        "progress": 0.001,
+        "progress": 0.035,
         "queue": "live",
         "queued_at": "2026-11-02T12:08:44Z",
-        "remaining_seconds": 1675,
+        "remaining_seconds": 1658,
         "repo": "dashpay/dashwallet-ios",
         "sha": "8540260fdc69a39f87a0d362b999bf94f4a14f16",
         "started_at": "2026-11-02T12:13:00Z",
         "status": "running",
-        "steps": [],
-        "tier": null,
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-11-02T12:13:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-11-02T12:13:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a small, contained validation-message fix that reuses existing balance arithmetic, consolidates route wiring, and adds edge-case tests without changing funds movement or coin selection.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-02T12:13:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-11-02T12:13:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 45,
+            "started_at": "2026-11-02T12:13:16Z",
+            "status": "running"
+          }
+        ],
+        "tier": "low",
         "title": "fix(wallet): say funds are still confirming on a Core identity top-up",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "normal_request",
         "upcoming": [
-          "worktree",
-          "select",
-          "triage",
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1337,7 +1396,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-02T12:10:38Z",
+        "at": "2026-11-02T12:13:02Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1377,7 +1436,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1397,7 +1456,7 @@
     "last_run_done_at": "2026-11-02T11:49:54Z",
     "last_run_started_at": "2026-11-02T12:13:00Z",
     "median_run_minutes": 30.633333333333333,
-    "notify_last_at": "2026-11-02T12:11:19Z",
+    "notify_last_at": "2026-11-02T12:13:43Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1408,7 +1467,7 @@
       "reviews": 48,
       "tokens": 934722788
     },
-    "ts": "2026-11-02T12:13:01Z",
+    "ts": "2026-11-02T12:14:01Z",
     "typical_minutes_by_tier": {
       "critical": 44.5,
       "low": 41.0,
@@ -1419,7 +1478,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.016666666666666666,
+      "idle_minutes": 1.0333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
