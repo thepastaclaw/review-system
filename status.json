@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-04T07:52:01Z",
-  "generated_at": "2026-11-04T07:52:02Z",
+  "data_as_of": "2026-11-04T07:53:01Z",
+  "generated_at": "2026-11-04T07:53:02Z",
   "history": {
     "daily": [
       {
@@ -300,11 +300,11 @@
         "severity": "blocking"
       },
       {
-        "count": 2543,
+        "count": 2544,
         "severity": "nitpick"
       },
       {
-        "count": 26800,
+        "count": 26801,
         "severity": "suggestion"
       }
     ],
@@ -697,9 +697,9 @@
       },
       {
         "effort": "high",
-        "lanes": 21299,
-        "tokens_in": 21585534595,
-        "tokens_out": 194662120
+        "lanes": 21300,
+        "tokens_in": 21587238314,
+        "tokens_out": 194853167
       },
       {
         "effort": "low",
@@ -717,11 +717,11 @@
         "tokens_out": 603525666
       },
       {
-        "avg_tokens_per_lane": 5072142.0,
-        "lanes": 1218,
+        "avg_tokens_per_lane": 5069535.0,
+        "lanes": 1219,
         "model": "glm-5.3-flash",
-        "tokens_in": 6090805549,
-        "tokens_out": 87062991
+        "tokens_in": 6092509268,
+        "tokens_out": 87254038
       },
       {
         "avg_tokens_per_lane": 1019991.0,
@@ -767,6 +767,11 @@
         "run_id": 8749,
         "tokens_in": 32064026,
         "tokens_out": 333839
+      },
+      {
+        "run_id": 8747,
+        "tokens_in": 1703719,
+        "tokens_out": 191047
       },
       {
         "run_id": 8746,
@@ -1247,24 +1252,19 @@
         "run_id": 8641,
         "tokens_in": 11111357,
         "tokens_out": 253557
-      },
-      {
-        "run_id": 8640,
-        "tokens_in": 77448,
-        "tokens_out": 940
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14442246,
+      "avg_tokens_per_completed_review": 14442528,
       "completed_reviews": 6712,
-      "findings": 50513,
+      "findings": 50515,
       "findings_posted": 7994,
       "reviews": 8329,
       "reviews_imported": 2245,
       "runs": 8751,
-      "tokens_in": 95897950946,
-      "tokens_out": 1038404619,
-      "tokens_total": 96936355565
+      "tokens_in": 95899654665,
+      "tokens_out": 1038595666,
+      "tokens_total": 96938250331
     }
   },
   "live": {
@@ -1273,35 +1273,46 @@
         "attempt": 1,
         "author": "HashEngineering",
         "deadline_at": "2026-11-04T12:22:39Z",
-        "deadline_in_seconds": 16238,
+        "deadline_in_seconds": 16178,
         "degraded": false,
-        "elapsed_seconds": 5362,
+        "elapsed_seconds": 5422,
         "findings": null,
         "heartbeat_age_seconds": 11,
-        "heartbeat_at": "2026-11-04T07:51:50Z",
+        "heartbeat_at": "2026-11-04T07:52:50Z",
         "id": 8747,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "high",
-            "line_position": null,
             "model": "glm-5.3-flash",
             "phase": "phase1",
-            "pool": "glm",
             "role": "general",
-            "since_seconds": 5348,
+            "status": "completed",
+            "tokens_in": 1703719,
+            "tokens_out": 191047
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "medium",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 14,
             "state": "running"
           }
         ],
         "number": 1675,
-        "overdue": true,
-        "phase": "phase1",
+        "overdue": false,
+        "phase": "verify1",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1675",
         "priority": false,
-        "progress": 0.965,
+        "progress": 0.967,
         "queue": "live",
         "queued_at": "2026-11-04T05:52:20Z",
-        "remaining_seconds": 197,
+        "remaining_seconds": 183,
         "repo": "dashpay/dash-wallet",
         "sha": "ef9b4c80bb08d14e54675db2bad99ea1a723ef26",
         "started_at": "2026-11-04T06:22:39Z",
@@ -1347,24 +1358,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 5351,
+            "seconds": 5397,
             "started_at": "2026-11-04T06:22:50Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify1",
+            "seconds": 14,
+            "started_at": "2026-11-04T07:52:47Z",
             "status": "running"
           }
         ],
         "tier": "low",
         "title": "feat(settings): add an Advanced mode switch to Settings",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 1703719,
+        "tokens_out": 191047,
         "trigger": "new_pr",
         "upcoming": [
-          "verify1",
           "gate",
           "phase2",
           "verify2",
@@ -1406,7 +1421,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-04T07:50:23Z",
+        "at": "2026-11-04T07:52:47Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1430,7 +1445,7 @@
       "superseded": 2916
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-04T07:48:11Z",
+    "ingest_last_at": "2026-11-04T07:52:43Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1446,13 +1461,13 @@
       },
       {
         "pool": "glm",
-        "running": 1,
+        "running": 0,
         "slots": 6,
         "waiting": 0
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
@@ -1477,7 +1492,7 @@
       "reviews": 51,
       "tokens": 910981000
     },
-    "ts": "2026-11-04T07:52:01Z",
+    "ts": "2026-11-04T07:53:01Z",
     "typical_minutes_by_tier": {
       "critical": 32.4,
       "low": 37.6,
@@ -1488,7 +1503,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 29.216666666666665,
+      "idle_minutes": 30.216666666666665,
       "ingest_stale": false,
       "stuck": false
     }
