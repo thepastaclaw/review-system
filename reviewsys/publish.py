@@ -7,6 +7,7 @@ Network happens only in `publish()`.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from textwrap import indent
 from typing import Any
@@ -134,22 +135,35 @@ def attribute_sources(
         parts: list[str] = []
         for phase in sorted(phases & phases_run):
             in_phase = [r for r in lanes if r["phase"] == phase]
-            named = [r for r in in_phase if raised_by(r, f)] or in_phase
-            groups: dict[tuple[str, str], list[str]] = {}
-            for r in named:
-                roles = groups.setdefault((str(r["model"]), str(r["agent"])), [])
-                if str(r["role"]) not in roles:
-                    roles.append(str(r["role"]))
-            parts += [f"`{m}` ({a}: {', '.join(rs)})" for (m, a), rs in groups.items()]
+            parts += name_lanes([r for r in in_phase if raised_by(r, f)] or in_phase)
         parts += sorted(x for x in labels if x not in LEGACY_SOURCE_PHASE)
         if parts:
             f.source = "; ".join(parts)
+
+
+def name_lanes(lanes: Iterable[dict[str, Any]]) -> list[str]:
+    """Reviewer lanes as a finding's source names them: one "`model` (agent: roles)" per
+    model and agent, in the order they first appear."""
+    groups: dict[tuple[str, str], list[str]] = {}
+    for r in lanes:
+        roles = groups.setdefault((str(r["model"]), str(r["agent"])), [])
+        if str(r["role"]) not in roles:
+            roles.append(str(r["role"]))
+    return [f"`{m}` ({a}: {', '.join(rs)})" for (m, a), rs in groups.items()]
 
 
 def _source_labels(raw: str) -> list[str]:
     """`['claude', 'codex']`, `claude`, `unknown` → the labels the verifier meant."""
     out = [x.strip().strip("'\"").lower() for x in raw.strip().strip("[]").split(",")]
     return [x for x in out if x and x != "unknown"]
+
+
+def _follow_up(dropped: dict[str, Any]) -> bool:
+    """Whether a dropped finding is published as an out-of-scope follow-up suggestion: policy
+    v12 marks it (`follow_up`, rules.py); the v11 verifier's drops go by their reason's wording."""
+    if "follow_up" in dropped:
+        return bool(dropped["follow_up"])
+    return any(k in str(dropped.get("reason", "")).lower() for k in ("out of scope", "outside"))
 
 
 def comment_body(f: Finding) -> str:
@@ -216,6 +230,8 @@ class Provenance:
     compare_model: str | None = None
     # Phase 1 ran beside Phase 2 with no blocker gate (a `single_stage` tier)
     single_stage: bool = False
+    # policy v12: the confirmation pass that ran on this head {roles, new}
+    confirmation: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -248,9 +264,12 @@ def _location(f: Finding) -> str:
     return f"{f.file}:{f.line_start}-{f.line_end}"
 
 
-def _ai_prompt(findings: list[Finding], suppressed: list[Suppressed]) -> str | None:
+def _ai_prompt(
+    findings: list[Finding], suppressed: list[Suppressed], carried: list[Finding] | None = None
+) -> str | None:
     entries: list[tuple[Finding, Suppressed | None]] = [(f, None) for f in findings]
     entries += [(s.finding, s) for s in suppressed if s.action != "deduped_same_batch_root"]
+    entries += [(f, None) for f in carried or []]
     if not entries:
         return None
     lines = [
@@ -266,6 +285,8 @@ def _ai_prompt(findings: list[Finding], suppressed: list[Suppressed]) -> str | N
             lines.append(f"- [{f.severity.upper()}] {_location(f)}: {f.title}")
             if s and s.html_url:
                 lines.append(f"  (existing thread: {s.html_url})")
+            elif f.extra.get("thread_url"):
+                lines.append(f"  (existing thread: {f.extra['thread_url']})")
             if f.body:
                 lines.append(indent(f.body, "  "))
         lines.append("")
@@ -393,6 +414,12 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
         lines.append(
             "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"
         )
+    if p.confirmation:
+        roles = ", ".join(f"`{r}`" for r in p.confirmation.get("roles") or [])
+        lines.append(
+            f"- Confirmation pass: {roles} reviewed the whole change again, independently, "
+            f"after the review found no blocker ({p.confirmation.get('new', 0)} new finding(s))"
+        )
     lines += [
         f"- Fresh verifier: {_model_label(p.verifier)} — {p.verifier['role']}; agent `{p.verifier['agent']}`",
     ]
@@ -414,6 +441,22 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
                 "the verifier weighed both sets without knowing which model wrote which"
             )
     return lines
+
+
+_CARRIED_STATUS = {
+    "deferral_pending": " (a deferral was proposed; it needs a maintainer's call)",
+    "resolved": " (thread resolved by hand; it still counts until withdrawn or fixed)",
+}
+
+
+def _carried_line(f: Finding) -> str:
+    """One standing issue from an earlier round in the body (policy v12): not re-posted, linked
+    to its thread."""
+    icon = SEVERITY_ICONS.get(f.severity, SEVERITY_ICONS["nitpick"])
+    url = f.extra.get("thread_url")
+    link = f" ([thread]({url}))" if url else ""
+    status = _CARRIED_STATUS.get(str(f.extra.get("status") or ""), "")
+    return f"- {icon} **{f.severity.capitalize()}**: {f.title} — `{_location(f)}`{link}{status}"
 
 
 def _finding_block(f: Finding) -> str:
@@ -486,7 +529,7 @@ def render(m: ReviewModel) -> str:
     if m.superseded_note:
         parts += [m.superseded_note, ""]
     counts_line = _counts_line(
-        m.verified.findings,
+        [*m.verified.findings, *m.verified.carried],
         blocker_count=m.verified.blocker_count if m.phase == "preliminary" else None,
     )
     if counts_line or m.rereview:
@@ -510,6 +553,19 @@ def render(m: ReviewModel) -> str:
         parts.append(
             f"\n_{len(m.suppressed)} carried-forward finding(s) already raised on this PR; not re-posting as new inline comments._"
         )
+    if m.verified.carried:
+        parts += ["", f"### Still open from earlier rounds ({len(m.verified.carried)})", ""]
+        parts += [_carried_line(f) for f in m.verified.carried]
+    if m.verified.noted:
+        parts += [
+            "",
+            "<details>",
+            f"<summary>Also noticed ({len(m.verified.noted)}): non-blocking, on code unchanged "
+            "since the last full review</summary>",
+            "",
+            *(_finding_block(f) for f in m.verified.noted),
+            "</details>",
+        ]
     parts += [
         "",
         "<details>",
@@ -521,7 +577,7 @@ def render(m: ReviewModel) -> str:
         "",
         "</details>",
     ]
-    prompt = _ai_prompt(m.kept, m.suppressed)
+    prompt = _ai_prompt(m.kept, m.suppressed, m.verified.carried)
     if m.rereview and not prompt:
         prompt = (
             "These findings are from an automated code review. Verify the current code and "
@@ -540,11 +596,7 @@ def render(m: ReviewModel) -> str:
             fence,
             "</details>",
         ]
-    oos = m.verified.out_of_scope + [
-        d
-        for d in m.verified.dropped
-        if any(k in str(d.get("reason", "")).lower() for k in ("out of scope", "outside"))
-    ]
+    oos = m.verified.out_of_scope + [d for d in m.verified.dropped if _follow_up(d)]
     if oos:
         parts += [
             "",
@@ -607,8 +659,11 @@ def dedupe_against_github(
     bot_login: str,
     *,
     dry_run: bool,
+    fresh: Callable[[Finding, ExistingComment], bool] | None = None,
     settled_hashes: set[str] | None = None,
 ) -> tuple[list[Finding], list[Suppressed]]:
+    """`fresh(f, comment)`: `f` is never folded onto that comment (policy v12: a regression or a
+    revival gets a new thread instead of disappearing into a closed one)."""
     records = [
         ExistingComment.from_github(c)
         for c in github.inline_comments(gh, repo, number)
@@ -634,12 +689,20 @@ def dedupe_against_github(
         ):
             kept.append(f)
             continue
-        match, reason = find_duplicate(f, records)
+        candidates = records if fresh is None else [r for r in records if not fresh(f, r)]
+        match, reason = find_duplicate(f, candidates)
         if not match:
             kept.append(f)
             continue
         thread = github.thread_for_comment(gh, match.node_id) or {}
-        base = Suppressed(f, "", detail=reason or "", comment_id=match.id, html_url=match.html_url)
+        base = Suppressed(
+            f,
+            "",
+            detail=reason or "",
+            comment_id=match.id,
+            html_url=match.html_url,
+            comment_hash=match.finding_hash,
+        )
         match_key = (match.node_id or match.id, head_sha)
         if match_key in seen_matches:
             base.action = "deduped_same_batch_existing_thread"
@@ -691,6 +754,7 @@ def build(
     dry_run: bool,
     superseded_note: str | None = None,
     rereview: bool = False,
+    fresh: Callable[[Finding, ExistingComment], bool] | None = None,
     settled_hashes: set[str] | None = None,
 ) -> ReviewModel:
     findings, collapsed = collapse_same_root(list(verified.findings))
@@ -702,6 +766,7 @@ def build(
         findings,
         bot_login,
         dry_run=dry_run,
+        fresh=fresh,
         settled_hashes=settled_hashes,
     )
     suppressed = list(collapsed) + list(sup)
@@ -1078,6 +1143,155 @@ def answer_conversation(
     return done
 
 
+def render_thread_lane_answer(
+    *,
+    marker: str,
+    status: str,
+    head_sha: str,
+    reply: str,
+    same_sha: bool,
+    tracking_url: str = "",
+) -> str:
+    """A policy v12 thread-lane answer: conversational on a same-sha reply (a deferral's note
+    links its tracking issue); on a new push a settled status leads (as v11's re-review
+    answers did), the pending ones end in a note."""
+    if not same_sha and status in _ANSWER_LEAD:
+        return render_thread_answer(marker=marker, status=status, head_sha=head_sha, reply=reply)
+    return render_conversation_answer(
+        marker=marker, status=status, reply=reply, tracking_url=tracking_url
+    )
+
+
+def shown_status(body: str) -> str:
+    """The outcome a posted thread answer shows: its bold lead (`render_thread_answer`), else
+    its trailing note (`render_conversation_answer`), else STILL_VALID (the one outcome a
+    conversational answer states only in prose)."""
+    for status, lead in _ANSWER_LEAD.items():
+        if re.search(rf"\*\*{re.escape(lead)}\*\* \(re-reviewed at", body):
+            return status
+    for status, note in _CONVERSATION_NOTE.items():
+        if body.rstrip().endswith(note.strip()):
+            return status
+    return "STILL_VALID"
+
+
+def answer_thread_lane(
+    gh: Gh,
+    repo: str,
+    number: int,
+    head_sha: str,
+    *,
+    outcomes: dict[str, Any],
+    threads: dict[str, dict[str, Any]],
+    same_sha: bool,
+    keep: set[str] | frozenset[str] = frozenset(),
+    settled: set[str] | frozenset[str] = frozenset(),
+) -> list[dict[str, Any]]:
+    """Post the policy v12 thread lane's outcomes (`outcomes`: finding_hash -> ThreadOutcome):
+    exactly once per (human reply, head) on each open thread, resolving the thread when the
+    outcome retires the issue and marking its root comment where it stays open. An issue with
+    no open thread (`threads`: the PR's unresolved bot finding threads) gets no reply: its
+    outcome stands as is (`no_thread`). `keep`: issues this round restated, whose root must
+    not go on showing an earlier head's "✅ Withdrawn". `settled`: issues already deferred;
+    a deferral restated there without a link leaves the root's line (and link) as it is. Returns what was done, one item per outcome (the
+    `thread.answered` events and ledger outcomes are recorded from these)."""
+    posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
+    done: list[dict[str, Any]] = []
+    seen_roots: set[tuple[str, str]] = set()
+    mode = "conversation" if same_sha else "thread"
+    for h, o in outcomes.items():
+        item: dict[str, Any] = {"finding_hash": h, "status": o.status, "mode": mode}
+        if o.tracking_url:
+            item["tracking"] = o.tracking_url
+        t = threads.get(h)
+        if t is None or not t.get("comment_id"):
+            item["action"] = "no_thread"
+            done.append(item)
+            continue
+        cid = t["comment_id"]
+        item["comment_id"] = cid
+        root_key = (str(t.get("thread_id") or ""), str(cid))
+        if root_key in seen_roots:
+            item.update(status="DUPLICATE_THREAD", action="duplicate_thread_skipped")
+            done.append(item)
+            continue
+        seen_roots.add(root_key)
+        marker = THREAD_ANSWER_MARKER.format(
+            sha=head_sha, reply=t.get("latest_reply_id"), finding=h
+        )
+        earlier = next((b for b in posted if marker in b), None)
+        if earlier is not None:
+            # answered on this head before (a retried run): what counts is what the thread
+            # shows, which may not be what this attempt decided
+            shown = shown_status(earlier)
+            if shown != o.status:
+                item.update(status=shown, decided=o.status)
+            item["action"] = "already_answered"
+            done.append(item)
+            continue
+        if not t.get("awaiting_answer") and _has_answer_for_status(t, o.status):
+            item["action"] = "already_answered"
+            done.append(item)
+            continue
+        if not o.reply:
+            item["action"] = "no_reply"
+            done.append(item)
+            continue
+        reply = scrub_reply(o.reply, 2500)
+        if not reply:
+            item["action"] = "suppressed_reply"
+            done.append(item)
+            continue
+        # a deferral restated without its link keeps the line (and link) the root shows; any
+        # other answer rewrites or clears it (the lane may re-open a deferred issue)
+        keep_root = h in settled and o.status == "INTENTIONALLY_DEFERRED" and not o.tracking_url
+        _deliver_answer(
+            gh,
+            repo,
+            number,
+            comment_id=cid,
+            body=render_thread_lane_answer(
+                marker=marker,
+                status=o.status,
+                head_sha=head_sha,
+                reply=reply,
+                same_sha=same_sha,
+                tracking_url=o.tracking_url,
+            ),
+            thread_id=t.get("thread_id"),
+            resolve=o.status in _RESOLVING,
+            item=item,
+            root_body="" if keep_root else str(t.get("body") or ""),
+            root_status=o.status if o.status in _THREAD_STATUS_LINE else None,
+            head_sha=head_sha,
+            tracking_url=o.tracking_url,
+        )
+        done.append(item)
+    for h in sorted(keep):
+        t = threads.get(h)
+        body = str((t or {}).get("body") or "")
+        if t is None or h in outcomes or THREAD_STATUS_MARKER not in body:
+            continue
+        done.append(
+            {
+                "finding_hash": h,
+                "status": "STILL_VALID",
+                "comment_id": t.get("comment_id"),
+                "mode": mode,
+                "action": "status_cleared",
+                "marked": _set_thread_status(
+                    gh,
+                    repo,
+                    comment_id=t.get("comment_id"),
+                    root_body=body,
+                    status=None,
+                    head_sha=head_sha,
+                ),
+            }
+        )
+    return done
+
+
 def _answer_outcome(
     finding_hash: str, row: dict[str, Any], kept_hashes: set[str]
 ) -> tuple[str, str, bool]:
@@ -1444,7 +1658,7 @@ def render_verdict_update(
     if note:
         parts += [note, ""]
     if not provenance.conversation:  # it re-reviewed nothing, so it has nothing to count
-        parts += [_counts_line(list(verified.findings), include_zero=True), ""]
+        parts += [_counts_line([*verified.findings, *verified.carried], include_zero=True), ""]
     if lifted_blockers:
         parts += ["No longer blocking:", *(f"- {t}" for t in lifted_blockers), ""]
     if summary:
@@ -1541,6 +1755,7 @@ def publish_verdict_update(
     lifted_blockers: list[str],
     bot_login: str,
     note: str = "",
+    dry_run: bool = False,
 ) -> PublishResult:
     event = verdict_event(verified, provenance)
     body = render_verdict_update(
@@ -1557,6 +1772,14 @@ def publish_verdict_update(
     transport = transport_event(event, own_pr=own)
     if transport != event:
         body += f"\n\n_Canonical verifier result: `{event}`; submitted as `COMMENT` because GitHub does not allow authors to approve or request changes on their own pull requests._"
+    if dry_run:
+        return PublishResult(
+            posted=False,
+            event=event,
+            transport_event=transport,
+            body=body,
+            skipped_reason="dry_run",
+        )
     resp = github.post_review(
         gh, repo, number, {"commit_id": head_sha, "body": body, "event": transport, "comments": []}
     )

@@ -83,6 +83,12 @@ def probe_single_stop(model: str, key: str) -> tuple[bool, str]:
     return False, f"HTTP {status}: {err[:120]!r}"
 
 
+# TODO(policy v12): these probes run neither `--json-schema` nor the isolated lane env
+# (lane.LANE_ENV), so a v12 policy with `structured_output` / `lane_env_isolation` is not
+# exercised here. Before flipping `structured_output`, add a probe per pool that answers
+# through a small schema using `pattern`, `minimum` and `minItems` (schemas.py uses all
+# three): whether cliproxy passes them through for Gemini, Muse and GLM, and whether those
+# upstreams accept them, is unverified.
 def probe_lane(model: str, claude_bin: str) -> tuple[bool, str]:
     """One real `claude --print` through the launcher: catches a model the launcher's
     allowlist rejects, which the HTTP probe cannot see."""
@@ -262,6 +268,11 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             True,
             f"{state}; stand-ins {subs}; phase1 effort cap {dp.phase1_effort_cap or 'none'}",
         )
+    from .shadow import doctor_line, export_root
+
+    shadow = doctor_line(export_root())
+    if shadow is not None:
+        _ok("v12 shadow", True, shadow[1])  # informational: never fails production's doctor
     for rel in ("prompts/review-agent.md", "prompts/verifier-agent.md"):
         ok &= _ok(f"template {rel}", (cfg.skills_dir / rel).exists())
     for rc in cfg.repos:

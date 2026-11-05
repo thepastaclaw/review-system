@@ -249,6 +249,8 @@ _TURNS_RE = re.compile(r"after (\d+) correction turns")
 _SUBTYPE_RE = re.compile(r"\blane (max_turns|max_budget_usd|during_execution)\b")
 # (needle in the worker's message, what the public page says), first match wins
 _FAILURE_KINDS = (
+    # first: it quotes Claude Code's schema error, which can contain any later needle
+    ("no schema-valid answer", "answer never matched its schema"),
     ("lane timed out", "timed out"),
     ("lane stopped before it finished", "stopped"),
     ("lane sandbox cannot start", "lane sandbox could not start"),
@@ -750,6 +752,9 @@ def write_export(conn: sqlite3.Connection, cfg: Config, output: Path) -> Path:
     and the per-minute publish only re-commits today's; a day that aged out is deleted."""
     output.mkdir(parents=True, exist_ok=True)
     export = build_export(conn, cfg)
+    shadow_block = build_shadow()
+    if shadow_block is not None:
+        export["shadow"] = shadow_block
     target = output / "status.json"
     _write_json(target, json.dumps(export, indent=2, sort_keys=True))
     days_dir = output / "days"
@@ -766,3 +771,19 @@ def write_export(conn: sqlite3.Connection, cfg: Config, output: Path) -> Path:
         if stale.suffix != ".json" or stale.stem not in days:
             stale.unlink()
     return target
+
+
+def build_shadow(root: Path | None = None) -> dict[str, Any] | None:
+    """The live v12 shadow's public block (shadow.public_export: numbers, verdicts and links,
+    never a finding's text), when the shadow root has a database (`REVIEWSYS_SHADOW_ROOT`, else
+    ~/.reviewsys-shadow). A shadow database that cannot be read leaves the block out: it never
+    breaks the production export."""
+    from . import shadow
+
+    db = (root or shadow.export_root()) / shadow.DB_NAME
+    if not db.exists():
+        return None
+    try:
+        return shadow.public_export(db)
+    except Exception:  # whatever the shadow's state, production's page still publishes
+        return None

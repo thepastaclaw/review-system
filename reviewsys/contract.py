@@ -89,6 +89,9 @@ class Finding:
     prior_hash: str | None = None  # finding_hash carried from a prior round (STILL_VALID)
     root_id: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # policy v12: the harness-assigned id of the finder candidate (`p2-general-3`), or of the
+    # first member of the verifier group it was composed from; never a model's
+    candidate_id: str | None = None
 
     @property
     def hash(self) -> str:
@@ -115,6 +118,8 @@ class Finding:
             d["finding_hash"] = self.prior_hash
         if self.root_id:
             d["root_id"] = self.root_id
+        if self.candidate_id:
+            d["candidate_id"] = self.candidate_id
         d.update(self.extra)
         return d
 
@@ -205,10 +210,18 @@ class VerifierOutput:
     # truth, so its status and reason for a prior finding outrank any reviewer lane's
     prior_reconciliation: list[dict[str, Any]] = field(default_factory=list)
     normalized: list[str] = field(default_factory=list)  # as ReviewerOutput.normalized
+    # policy v12 (verifier contract "v12"), all empty under v11:
+    # the ledger's standing issues from earlier rounds, carried (never re-posted): they count
+    # toward the verdict, the gate and the body's "Still open from earlier rounds"
+    carried: list[Finding] = field(default_factory=list)
+    # later-round non-blocking findings collapsed into "Also noticed" (`late_nonblocking` note)
+    noted: list[Finding] = field(default_factory=list)
+    # the code rules' account of this answer (`rules.Outcome`): matches, corroborations
+    rules: Any = None
 
     @property
     def blocker_count(self) -> int:
-        return sum(1 for f in self.findings if f.severity == "blocking")
+        return sum(1 for f in (*self.findings, *self.carried) if f.severity == "blocking")
 
 
 def parse_json_object(text: str) -> dict[str, Any]:
@@ -251,6 +264,12 @@ def parse_json_object(text: str) -> dict[str, Any]:
 # to 8-14 hex). So both are set to what the worker knows, with a note, never silently. The one
 # thing still rejected is a head_sha naming another commit: that lane may have reviewed the
 # wrong code. Prior-finding hashes get the same treatment where exactly one prior hash fits.
+#
+# Policy v12 goes one step further (`stamp_echo`): lanes are not asked for the echo fields at
+# all, so the harness pre-fills them before the normalization above runs. A missing one is
+# expected and goes unnoted, and so does any `review_phase` or a non-sha `head_sha` ("HEAD",
+# "<sha>") a lane volunteers. A volunteered value that looks like a sha is still checked as
+# above, since it says which code the lane read.
 
 
 def _expand(value: str, full: set[str]) -> str | None:
@@ -337,13 +356,33 @@ def _normalize_prior_hashes(out: dict[str, Any], prior: set[str], notes: list[st
         out["findings"] = [_full_hash(f, prior, notes, "carried finding") for f in findings]
 
 
+def _prefill_echo(out: dict[str, Any], expected_phase: str, head_sha: str) -> None:
+    """Policy v12: the harness's echo values, written over whatever a lane that was never
+    asked for them put there, except a `head_sha` that looks like a commit (left for
+    `_normalize_head` to check). `head_sha` "" for a verifier, which has none."""
+    out["review_phase"] = expected_phase
+    if not head_sha:
+        return
+    got = str(out.get("head_sha") or "").strip().lower()
+    if len(got) < MIN_SHA_PREFIX or not _HEX_RE.fullmatch(got):
+        out["head_sha"] = head_sha
+
+
 def normalize_reviewer_output(
-    raw: dict[str, Any], *, expected_phase: str, head_sha: str, prior_hashes: set[str]
+    raw: dict[str, Any],
+    *,
+    expected_phase: str,
+    head_sha: str,
+    prior_hashes: set[str],
+    stamp_echo: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     """A copy of `raw` with the echo fields and unambiguous prior-hash slips fixed, and one
-    note per fix. Raises (CONTRACT) only for a head_sha that names another commit."""
+    note per fix (`stamp_echo`: the echo fields pre-filled first, see above). Raises
+    (CONTRACT) only for a head_sha that names another commit."""
     out = dict(raw)
     notes: list[str] = []
+    if stamp_echo:
+        _prefill_echo(out, expected_phase, head_sha)
     _normalize_phase(out, expected_phase, notes)
     _normalize_head(out, head_sha, notes)
     if prior_hashes:
@@ -430,10 +469,15 @@ def parse_reviewer_output(
     head_sha: str,
     source: str,
     prior_hashes: set[str],
+    stamp_echo: bool = False,
     settled_hashes: set[str] | None = None,
 ) -> ReviewerOutput:
     raw, notes = normalize_reviewer_output(
-        raw, expected_phase=expected_phase, head_sha=head_sha, prior_hashes=prior_hashes
+        raw,
+        expected_phase=expected_phase,
+        head_sha=head_sha,
+        prior_hashes=prior_hashes,
+        stamp_echo=stamp_echo,
     )
     findings_raw = raw.get("findings")
     if not isinstance(findings_raw, list):
@@ -470,13 +514,17 @@ def parse_verifier_output(
     expected_phase: str,
     expected_coderabbit_ids: list[int],
     prior_hashes: set[str] | None = None,
+    stamp_echo: bool = False,
     settled_hashes: set[str] | None = None,
 ) -> VerifierOutput:
     """`review_phase` is an echo field here too (the prompt states it, nothing reads it back),
-    so it is normalized like a reviewer's; prior hashes in the verifier's own reconciliation
-    rows are expanded the same way (they decide the thread answers), never validated."""
+    so it is normalized like a reviewer's (stamped under policy v12); prior hashes in the
+    verifier's own reconciliation rows are expanded the same way (they decide the thread
+    answers), never validated."""
     raw = dict(raw)
     notes: list[str] = []
+    if stamp_echo:
+        _prefill_echo(raw, expected_phase, "")
     _normalize_phase(raw, expected_phase, notes)
     if prior_hashes:
         _normalize_prior_hashes(raw, prior_hashes, notes)

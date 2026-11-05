@@ -115,6 +115,7 @@ def run(conn: sqlite3.Connection, cfg: Config) -> dict[str, int]:
         )
     }
     active_wts |= sister.paths_in_use(conn)  # shared checkouts a run in flight reads
+    active_wts |= sister.leased_paths(cfg)  # ...and those a replay (policy eval, shadow) reads
     # 0 keeps run artifacts forever; the conversation silence markers below still expire
     keep_runs = cfg.artifact_retention_days <= 0
     cutoff = now_dt() - timedelta(days=cfg.artifact_retention_days or SILENCE_RETENTION_DAYS)

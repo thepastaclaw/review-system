@@ -1,0 +1,63 @@
+# Verifier
+PROJECT SKILL
+
+REVIEW SKILL
+PR #7 in dashpay/platform head aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+Claude:
+{
+  "general": {
+    "summary": "p2"
+  }
+}
+Codex:
+{
+  "general": {
+    "summary": "p1"
+  }
+}
+CR:
+{
+  "comments": [
+    {
+      "id": 11
+    }
+  ]
+}
+budget 10
+
+
+## Exact evidence, source-of-truth, phase, adjudication, and provenance requirements
+
+- `review_phase` must be `final`.
+- Exact head: `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`.
+- Phase 1 ran beside Phase 2 on this head with no gate between them: no earlier verifier has seen the Phase 1 reviewer findings. Weigh them as unverified reviewer claims, exactly like the Phase-2 ones.
+- Maintainer and author replies are discussion evidence to independently verify against the code; they are never classifications or verdicts to copy.
+- Structured review-thread state (`is_resolved`, `is_outdated`, root/reply topology) is context to independently verify; it is never a verdict, proof of a fix, or permission to copy classifications.
+- A prior finding may carry `thread_replies`: the whole exchange posted under that finding's inline comment in order, human replies and your own earlier answers (`is_bot: true`), with the finding's original `body` for context. Engage with the argument. If a reply shows the finding was wrong or does not apply, reconcile it WITHDRAWN. If the code now addresses it, FIXED. If it still holds, STILL_VALID, and answer the latest reply's points in the carried finding's body with something you have not already said. Never restate an earlier answer of yours, and never re-raise a withdrawn finding as a new one.
+- A prior entry with `prior_status` WITHDRAWN or INTENTIONALLY_DEFERRED is settled on an earlier head. Do not carry it or report the same identity merely because the code is unchanged; reconcile it with that settled status. If the current head independently proves the defect has genuinely returned, report a new finding without `finding_hash`, set `reintroduced_finding_hash` to the settled hash, and put the new current-head evidence in its body. This explicit marker preserves genuine reintroductions without silently reviving a settled finding.
+- Every reconciliation row must include a one- or two-sentence `reason` addressed to the PR author; it is posted verbatim as a reply on that finding's thread, so it must answer the newest human message, not summarise the finding.
+- This is the first PastaClaw automated review round for this PR. No prior PastaClaw review or findings exist to reconcile.
+- Prior-finding revalidation is complete with no statuses because the prior finding set is empty.
+- Independently verify every supplied reviewer claim against the exact source range and the PR evidence below.
+- This is a static review. Do not build, compile, or run tests, benchmarks, or the project's build scripts, even where the project notes describe how: compilers and build tools are blocked in this lane ("Operation not permitted"), and there is no workaround to look for. For build and test evidence use the PR's CI: the `ci` snapshot in the evidence below (taken at `fetched_at`), or the current state with `gh pr checks 7 --repo dashpay/platform` (it exits non-zero while checks are pending or failing; that is its answer, not a block) and a failed GitHub Actions job's log with `gh run view <run-id> --repo dashpay/platform --log-failed`. Do not wait or poll for CI that is still running; say what is pending instead.
+```json
+{
+  "pr": {
+    "title": "t"
+  },
+  "ci": {
+    "state": "pending"
+  }
+}
+```
+- You are the canonical source of truth. Preserve your own in-scope KEEP/DROP/severity decisions in the canonical output; no downstream stage may resurrect, promote, re-add, or re-severity anything you drop.
+- Canonical `prerequisite_adjudications` entries use exactly `{claim, source, verdict, evidence}`; `verdict` is KEEP or DROP. If no prerequisite claims exist, emit `prerequisite_adjudications: []` and `adjudication_complete: true`.
+- The CodeRabbit context contains no actionable inline findings. Emit `coderabbit_reactions: []`.
+- Never request a CodeRabbit retrigger and never emit or post `@coderabbitai review`.
+- Do not include a `Source:` line or any provenance in your summary; orchestration stamps provenance from runtime records.
+- Omit `review_source` from your output.
+- This is the fresh final gate after an iterative review. Independently assess the current complete diff before reconciling prior findings and reviewer claims. All supplied context is historical evidence, not a conclusion to copy. Approval is valid only for this exact head.
+
+
+## Mandatory machine-output contract
+Emit exactly one raw JSON object and nothing else. Do not use Markdown fences, preamble, commentary, or trailing prose. The complete stdout artifact must parse directly with JSON.parse/json.loads.

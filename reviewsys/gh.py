@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from collections.abc import Callable, Sequence
 from typing import Any
@@ -39,9 +40,15 @@ _TRANSIENT_MARKERS = (
 
 
 def _default_runner(
-    argv: Sequence[str], stdin: str | None, timeout: int
+    argv: Sequence[str], stdin: str | None, timeout: int, extra_env: dict[str, str] | None = None
 ) -> subprocess.CompletedProcess[bytes]:
-    env = {**os.environ, "GODEBUG": "netdns=go", "GH_PROMPT_DISABLED": "1", "NO_COLOR": "1"}
+    env = {
+        **os.environ,
+        "GODEBUG": "netdns=go",
+        "GH_PROMPT_DISABLED": "1",
+        "NO_COLOR": "1",
+        **(extra_env or {}),
+    }
     return subprocess.run(
         list(argv),
         input=stdin.encode("utf-8") if stdin is not None else None,
@@ -50,6 +57,45 @@ def _default_runner(
         env=env,
         check=False,
     )
+
+
+def env_runner(extra_env: dict[str, str]) -> GhRunner:
+    """The default runner with `extra_env` set (a replay's read-only GH_TOKEN)."""
+    return lambda argv, stdin, timeout: _default_runner(argv, stdin, timeout, extra_env)
+
+
+GRAPHQL_MUTATION = re.compile(r"(^|[^A-Za-z0-9_])mutation\b")
+
+
+def read_only_runner(inner: GhRunner | None = None) -> GhRunner:
+    """A runner that refuses every call that could change GitHub (a non-GET REST call, a
+    GraphQL mutation, any subcommand but `api` reads and `pr diff`). Used by `reviewsys
+    replay`, which must be unable to post however the code paths it exercises are wired."""
+    run = inner or _default_runner
+
+    def runner(
+        argv: Sequence[str], stdin: str | None, timeout: int
+    ) -> subprocess.CompletedProcess[bytes] | subprocess.CompletedProcess[str]:
+        args = list(argv)[1:]
+        writes = False
+        if args[:2] == ["api", "graphql"]:
+            # every query field (gh sends the last), never one read from a file or stdin
+            queries = [a.removeprefix("query=") for a in args if a.startswith("query=")]
+            writes = "--input" in args or any(
+                q.startswith("@") or GRAPHQL_MUTATION.search(q) for q in queries
+            )
+        elif args[:1] == ["api"]:
+            method = args[args.index("--method") + 1] if "--method" in args else "GET"
+            writes = method.upper() != "GET" or "--input" in args
+        elif args[:2] != ["pr", "diff"]:
+            writes = True  # only `api` reads and `pr diff` are known to be read-only
+        if writes:
+            return subprocess.CompletedProcess(
+                argv, 1, "", f"read-only gh: refused {' '.join(args[:4])}"
+            )
+        return run(argv, stdin, timeout)
+
+    return runner
 
 
 class Gh:

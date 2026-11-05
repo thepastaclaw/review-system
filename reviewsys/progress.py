@@ -237,7 +237,9 @@ def step_lanes(
     step started, `lanes_total` and `lanes_left` (the ones still going). {} for other steps.
 
     A lane's row is written when it ends, so the lanes a step finished are its phase's rows
-    recorded after the step started (a fresh Phase 2 reruns the phase2 roles). A comparison
+    that finished after the step started (a fresh Phase 2 reruns the phase2 roles). Not
+    `started_at`: that is when the lane's process started, which on whole-second timestamps
+    can read a second before its step did. A comparison
     run's Phase-2 twins carry the primary's role names; the second model, from the run's
     compare.selected event (as `reviewsys compare` reads it), tells them apart."""
     twin = conn.execute(
@@ -252,7 +254,7 @@ def step_lanes(
     done: list[tuple[str, str, str]] = []
     twins: list[tuple[str, str, str]] = []
     for r in conn.execute(
-        "SELECT phase,role,started_at,model FROM lanes WHERE run_id=? "
+        "SELECT phase,role,finished_at,model FROM lanes WHERE run_id=? "
         "AND status IN ('completed','repaired','corrected') AND phase IN ('phase1','phase2')",
         (run_id,),
     ):

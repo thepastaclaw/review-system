@@ -1,0 +1,282 @@
+{
+  "name": "quota-ladder-sol61-v11.1-quality",
+  "version": 11,
+  "fingerprint": "7503c1767e352a859858bb3f2e183781edd0450c0451a57e9d510ac21846a6a0",
+  "description": "Every exact head is triaged by gpt-6.1-sol (low effort) into trivial/low/normal/critical (normal is the default; critical requires both a large/intricate diff and a critical surface); the tier sets the reviewer --effort per phase. Phase 1 runs the general reviewer plus rust-quality (when selected) only, on a quota ladder: gemini-3.8-flash-high while the Antigravity Gemini quota lasts, else glm-5.3-flash while the Z.AI plan lasts and the tier asks at most high effort, else muse-spark-1.3-contributor; validated by a fresh distinct gpt-6.1-sol gate verifier (effort medium). The gate scores the verified Phase-1 findings (blocking 3, suggestion 1, nitpick 0) and defers Phase 2 only above 5 points; otherwise Phase-2 gpt-6.1-sol reviewers (general and every selected specialist) run at the tier's phase2 effort and a fresh distinct gpt-6.1-sol final verifier (fixed high) weighs both phases. A trivial tier publishes the final review from Phase 1 alone unless a verified blocker keeps it preliminary. The critical tier is single stage: no gate, the Phase-1 reviewers run beside the Phase-2 reviewers and the final verifier weighs both; a failed Phase 1 is dropped and disclosed. dash-evo-tool, yappr and grovedb have no Phase 1 (straight to Phase 2; trivial at low). Model comparison: on 25% of critical runs every Phase-2 reviewer also runs on gpt-6-astra; the gpt-6.1-sol verifier weighs both sets blind. Degraded mode: while the OpenAI/Codex pool answers with quota errors every gpt-* lane runs on muse-spark-1.3-contributor, no comparison runs, Phase 1 is capped at high effort, the review is titled DEGRADED and never approves. v11.1 (2026-10-16): same lanes and models; prompts gain the 'introduced or by its nature responsible' scope test, premise/sibling/sequence/base checks, considered_dismissed, tracked-deferral rule and CI-as-evidence rule; Platform/GroveDB gain non-consensus and layer-ownership blocking classes; tenderdash-consensus-security is offered on dashpay/platform ABCI changes.",
+  "roles": [
+    "general",
+    "selected-specialists"
+  ],
+  "phase2_enabled": true,
+  "triage": {
+    "label": "complexity-triage",
+    "agent": "triage",
+    "model": "gpt-6.1-sol",
+    "harness": "claude-code",
+    "auth": "api-gateway",
+    "reasoning": "low",
+    "fallback_tier": "normal",
+    "is_reviewer": false,
+    "is_verifier": false,
+    "is_finding_source": false,
+    "tiers": {
+      "trivial": {
+        "phase1": "high",
+        "phase2": null,
+        "meaning": "typo/docs/rename/format/config-only, no behaviour change; Phase 2 skipped"
+      },
+      "low": {
+        "phase1": "high",
+        "phase2": "medium",
+        "meaning": "small, straightforward, well contained"
+      },
+      "normal": {
+        "phase1": "max",
+        "phase2": "high",
+        "meaning": "the default: an ordinary change to logic, tests, tooling, UI or build, including large or cross-cutting ones, unless it meets the bar for critical"
+      },
+      "critical": {
+        "phase1": "max",
+        "phase2": "xhigh",
+        "meaning": "BOTH large/intricate AND the diff changes a critical surface (consensus, funds/coin selection, crypto, signatures/keys, peer-facing deserialization, migrations); size alone never qualifies; never above xhigh; single stage: the author is expected to have reviewed it closely, so Phase 1 runs beside Phase 2 with no gate",
+        "single_stage": true
+      }
+    },
+    "rule": "normal is the default; critical only when both large/intricate and on a critical surface, naming the file/function; when unsure pick the lower tier. effort per phase = tiers[tier]; verifiers keep their fixed reasoning; Phase-1 findings above the gate budget publish preliminary regardless of tier, except on the single-stage critical tier, which has no gate"
+  },
+  "orchestrator": {
+    "harness": "python",
+    "model": null,
+    "auth": null,
+    "role": "deterministic-orchestration-only",
+    "is_reviewer": false,
+    "is_verifier": false,
+    "is_finding_source": false,
+    "recorded_separately_from_reviewer_evidence": true
+  },
+  "phase1": {
+    "compatibility_state_key": "codex",
+    "reviewer": {
+      "label": "phase1-quota-ladder",
+      "agent": "phase1-reviewer",
+      "model": "glm-5.3-flash",
+      "harness": "claude-code",
+      "auth": "api-gateway",
+      "reasoning": "max",
+      "roles": [
+        "general",
+        "rust-quality"
+      ],
+      "launch": {
+        "api_only": true,
+        "read_only": true,
+        "bare": true,
+        "permission_mode": "plan",
+        "effort": "max",
+        "output_format": "text",
+        "no_session_persistence": true,
+        "print": true
+      },
+      "effort_note": "default; the triage tier overrides --effort per run and the value used is persisted per lane. `candidates` below is the ordered Phase-1 ladder; this block is the shared default for agent/launch."
+    },
+    "verifier": {
+      "label": "phase1-sol-verifier",
+      "agent": "sol-gate-verifier",
+      "model": "gpt-6.1-sol",
+      "harness": "claude-code",
+      "auth": "api-gateway",
+      "reasoning": "medium",
+      "fresh_session": true,
+      "distinct_attempt_id": true,
+      "launch": {
+        "api_only": true,
+        "read_only": true,
+        "bare": true,
+        "permission_mode": "plan",
+        "effort": "medium",
+        "output_format": "text",
+        "no_session_persistence": true,
+        "print": true
+      }
+    },
+    "fail_closed": [
+      "missing reviewer lane",
+      "failed reviewer lane",
+      "unparseable reviewer output",
+      "missing verifier",
+      "failed verifier",
+      "unparseable verifier output",
+      "incomplete prior-finding revalidation",
+      "failed deterministic policy validation"
+    ],
+    "admit_phase2_when": "gate points (blocking 3, suggestion 1, nitpick 0) <= 5",
+    "technical_failure_route": "fail_closed; no alternate-model reviewer substitution",
+    "candidates": [
+      {
+        "label": "phase1-gemini-flash",
+        "model": "gemini-3.8-flash-high",
+        "reasoning": "high",
+        "quota": {
+          "provider": "antigravity",
+          "group": "Gemini Models"
+        },
+        "note": "included Antigravity subscription; gated on the Gemini group's 5h and weekly buckets"
+      },
+      {
+        "label": "phase1-glm-flash",
+        "model": "glm-5.3-flash",
+        "reasoning": "max",
+        "quota": {
+          "provider": "zai"
+        },
+        "note": "Z.AI coding plan; gated on its 5h and weekly credit windows. Fine up to `high`, but at `max` it thinks for 50-150 min per lane (measured 2026-09-09..16: median 51, p90 136), so tiers asking `max` pass over it",
+        "use_up_to": "high"
+      },
+      {
+        "label": "phase1-muse-contrib",
+        "model": "muse-spark-1.3-contributor",
+        "reasoning": "xhigh",
+        "note": "pay-per-token last rung (Meta contributor tier, ~$0.10/$0.20 per M; no `max` effort on this tier); never gated"
+      }
+    ],
+    "quota_reserve": 0.15,
+    "ladder_rule": "Phase 1 runs on the first candidate whose subscription has at least quota_reserve of every window left and whose use_up_to ceiling (if any) is at or above the tier's phase1 effort; a failed lookup skips the rung; the last rung is never gated. The chosen model is disclosed in the provenance block and persisted per lane.",
+    "specialists": [
+      "rust-quality"
+    ],
+    "specialists_note": "Phase 1 runs general plus only these specialists (when selected); Phase 2 runs every selected specialist. 2026-09-30 audit: the other Phase-1 specialists produced ~0 unique fixed findings per token.",
+    "gate": {
+      "block_above": 5,
+      "weights": {
+        "blocking": 3,
+        "suggestion": 1,
+        "nitpick": 0
+      },
+      "rule": "Phase 2 is deferred only when the verified Phase-1 findings score above block_above; under it, Phase 2 runs and the final verifier re-adjudicates the Phase-1 findings. A preliminary review held back by suggestions alone never approves."
+    }
+  },
+  "phase2": {
+    "compatibility_state_key": "sonnet",
+    "reviewer": {
+      "label": "phase2-sol",
+      "agent": "phase2-reviewer",
+      "model": "gpt-6.1-sol",
+      "harness": "claude-code",
+      "auth": "api-gateway",
+      "reasoning": "high",
+      "roles": [
+        "general",
+        "selected-specialists"
+      ],
+      "launch": {
+        "api_only": true,
+        "read_only": true,
+        "bare": true,
+        "permission_mode": "plan",
+        "effort": "high",
+        "output_format": "text",
+        "no_session_persistence": true,
+        "print": true
+      },
+      "effort_note": "default; the triage tier overrides --effort per run and the value used is persisted per lane"
+    },
+    "first_admission_coverage": "merge_base..current_head",
+    "later_round_coverage": "last_phase2_reviewed_sha..current_head (persisted as last_sonnet_reviewed_sha compatibility alias)",
+    "cumulative_reconciliation": true,
+    "last_reviewed_sha_independent": true,
+    "all_reviewer_lanes_failed": "fail_closed_no_final_coverage",
+    "verifier": {
+      "label": "final-combined-sol-verifier",
+      "agent": "sol-verifier",
+      "model": "gpt-6.1-sol",
+      "harness": "claude-code",
+      "auth": "api-gateway",
+      "reasoning": "high",
+      "fresh_session": true,
+      "distinct_from_all_phase_attempts": true,
+      "bounded_fresh_attempts": 2,
+      "launch": {
+        "api_only": true,
+        "read_only": true,
+        "bare": true,
+        "permission_mode": "plan",
+        "effort": "high",
+        "output_format": "text",
+        "no_session_persistence": true,
+        "print": true
+      }
+    }
+  },
+  "publication": {
+    "preliminary": {
+      "phase": "preliminary",
+      "title": "Preliminary review — Phase 1 blocker gate",
+      "event": "REQUEST_CHANGES",
+      "phase2": "Phase 2 (gpt-6.1-sol) not run (deferred by blocker gate)"
+    },
+    "final": {
+      "phase": "final",
+      "title": "Final validation — Phase 1 + Phase 2"
+    },
+    "compatibility_marker": "<!-- thepastaclaw-review v1 -->",
+    "phase_marker": "<!-- thepastaclaw-review-phase v1 phase={preliminary|final} sha={head_sha} policy={fingerprint[:16]} -->",
+    "same_sha_dedupe_is_phase_aware": true,
+    "final_phase1_only": {
+      "phase": "final",
+      "title": "Final review — Phase 1 only ({tier} change)",
+      "phase2": "not run (triage rated this change trivial)",
+      "event": "COMMENT (never APPROVE: Phase 2 did not run)"
+    }
+  },
+  "same_sha_human_reply": "may_trigger_fresh_phase1_revalidation_then_phase2_admission",
+  "manual_thread_resolution": "never_clears_gate",
+  "new_head": "restart_at_phase1",
+  "checkpoint_migration": "same-head policy identity or fingerprint mismatch restarts Phase 1; mismatched evidence cannot resume or satisfy policy v3",
+  "compatibility_aliases": {
+    "codex": "Phase-1 state/artifact key only",
+    "sonnet": "Phase-2 state/artifact key only"
+  },
+  "provenance_rule": "Persist exact policy identity/fingerprint, head, phase, decision, canonical blocker count, reviewer/verifier attempt IDs, logical agents, exact backend models, per-lane --effort and the triage tier/model/reasoning, harness/auth/roles/read-only launch contract, PIDs, exit statuses, artifacts, status/parseability, prior-finding revalidation, deterministic policy result, coverage, publication IDs, and every verifier attempt.",
+  "degraded": {
+    "label": "degraded",
+    "sentinel": "gpt-6.1-sol",
+    "phase1_effort_cap": "high",
+    "backlog_skip_phase1": true,
+    "substitutes": {
+      "gpt-6.1-sol": {
+        "model": "muse-spark-1.3-contributor",
+        "effort_cap": "xhigh",
+        "note": "Meta contributor tier has no `max`; xhigh is its top"
+      },
+      "gpt-6-astra": {
+        "model": "muse-spark-1.3-contributor",
+        "effort_cap": "xhigh",
+        "note": "Meta contributor tier has no `max`; xhigh is its top"
+      },
+      "gpt-5.6-sol": {
+        "model": "muse-spark-1.3-contributor",
+        "effort_cap": "xhigh"
+      },
+      "gpt-5.6-terra": {
+        "model": "muse-spark-1.3-contributor",
+        "effort_cap": "xhigh",
+        "note": "specialist selector (low effort)"
+      },
+      "gpt-5.6-luna": {
+        "model": "muse-spark-1.3-contributor",
+        "effort_cap": "xhigh",
+        "note": "JSON repair (low effort)"
+      }
+    },
+    "rule": "Active while the sentinel answers a quota error (429 / cooling down / usage limit) or an operator ran `reviewsys degraded on`. Phase 1 keeps its ladder (gemini-3.8-flash-high -> glm-5.3-flash -> muse) with the tier effort capped at `phase1_effort_cap`; every other lane whose model is listed in `substitutes` runs on its stand-in at min(lane effort, effort_cap). Both phases run, except when more heads than `backlog_skip_phase1_above` are queued: backlog mode still applies in degraded mode (`backlog_skip_phase1`), so a deep queue goes straight to Phase 2 on the stand-in rather than waiting on the slow Phase-1 rungs. APPROVE is downgraded to COMMENT; every publication carries the DEGRADED badge and the reason. No model comparison runs while degraded. Clears automatically when the sentinel answers again."
+  },
+  "comparison": {
+    "label": "sol61-vs-astra",
+    "model": "gpt-6-astra",
+    "tiers": [
+      "critical"
+    ],
+    "fraction": 0.25,
+    "rule": "On a sampled run every Phase-2 reviewer lane (general and each specialist, fresh final pass included) also runs on `model` at the same effort; the verifier sees both sets without model names and alone decides the verdict. Never in degraded mode or on audits. Compare with `reviewsys compare`."
+  }
+}

@@ -1,6 +1,10 @@
 """Worker: runs one review (one `runs` row) end to end.
 
 Steps: worktree -> select + triage (one prep lane) -> context -> phase1 -> verify1 -> gate -> phase2 -> verify2 -> publish.
+Policy v12 (`review_model_policy.pipeline`) runs inside the same steps: finder lanes on the
+candidate contract, a thread lane beside them (`_start_thread_lane`), verify+match with the code
+rules (`_verify12`), a confirmation pass (`_confirm12`) and a verdict from the issue ledger
+(`_publish12`); a reply on a reviewed commit goes to `step_threads`.
 Every step is recorded in `steps`. Any ReviewError ends the run as failed with
 its classification; the scheduler decides on retry. Cooperative cancellation
 is checked on every heartbeat.
@@ -13,19 +17,36 @@ import dataclasses
 import functools
 import json
 import logging
+import os
 import random
 import shutil
 import sqlite3
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
-from . import audit, ci, converse, degraded, drift, github, labels, lanepool, publish, quota, sister
+from . import (
+    audit,
+    ci,
+    converse,
+    degraded,
+    drift,
+    github,
+    labels,
+    lanepool,
+    ledger,
+    publish,
+    quota,
+    rules,
+    schemas,
+    sister,
+)
 from . import prep as prep_mod
 from . import progress as progress_mod
 from .config import Config, DegradedPolicy, LaneModel, TierEffort, min_effort
@@ -37,8 +58,14 @@ from .contract import (
     parse_reviewer_output,
     parse_verifier_output,
 )
-from .db import connect_existing, event, kv_get, kv_set, now, now_dt, tx
-from .dedupe import FINDING_MARKER_RE, content_tokens, title_similarity
+from .db import connect_existing, event, fmt_ts, kv_get, kv_set, now, now_dt, tx
+from .dedupe import (
+    FINDING_MARKER_RE,
+    ExistingComment,
+    content_tokens,
+    find_duplicate,
+    title_similarity,
+)
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
@@ -47,7 +74,9 @@ from .lane import (
     LaneResult,
     LaneRunner,
     LaneSpec,
+    SchemaRetriesExhausted,
     exec_deny_profile,
+    isolated,
     lane_output,
     new_session_id,
     prompt_sha,
@@ -56,12 +85,17 @@ from .lane import (
 )
 from .models import FailKind, HeadStatus, ReviewError, RunStatus, StepName, Trigger
 from .prompts import (
+    V12_KINDS,
     correction_prompt,
+    finder_prompt,
     prior_for_prompt,
     repair_prompt,
+    repo_guidance,
     reviewer_prompt,
     skill_texts,
+    thread_prompt,
     verifier_prompt,
+    verify_prompt,
 )
 from .scheduler import finish_run, live_queued_count, retire_obsolete_head
 from .select import Selection, select, write_selection
@@ -118,6 +152,12 @@ class LaneFailed(ReviewError):
         self.cause = cause
 
 
+class UncheckedBlockers(ReviewError):
+    """A verify+match shard failed for good holding blocking candidates (v12 design §2.2): the
+    run fails (INFRA) rather than publish without checking them, the confirmation pass's own
+    verification included."""
+
+
 class StopSignal:
     """A threading.Event that remembers why it was set (the first reason wins), so a lane
     stopped because its phase is being abandoned can say which lane failed and how."""
@@ -150,6 +190,9 @@ class OutputCheck[T]:
     expected_phase: str = ""
     prior: list[dict[str, Any]] = field(default_factory=list)  # prior findings, as prompted
     coderabbit_ids: list[int] = field(default_factory=list)
+    # policy v12 kinds (`finder`, `verify`, `thread`): the ids the answer must cover, re-told
+    # in a correction turn (the verifier's candidate ids, the thread lane's hashes)
+    ids: list[str] = field(default_factory=list)
 
 
 def _as_is(raw: dict[str, Any]) -> dict[str, Any]:
@@ -189,9 +232,35 @@ def _evaluate[T](turn: LaneResult, check: OutputCheck[T]) -> _Verdict:
     try:
         raw = lane_output(turn)
     except ReviewError as exc:
-        unparsed = exc.kind is FailKind.CONTRACT and turn.ok and bool(turn.result_text.strip())
+        unparsed = (
+            exc.kind is FailKind.CONTRACT and turn.answered and bool(turn.result_text.strip())
+        )
         return _Verdict(error=exc, unparsed=unparsed)
     return _validated(raw, check)
+
+
+@dataclass(slots=True)
+class _Confirmation:
+    """The policy v12 confirmation pass a round owed (`_confirm12`): the roles it runs, whether
+    it ran and what it added, or why not."""
+
+    roles: list[str]
+    ran: bool = False
+    new: int = 0
+    skipped: str | None = None
+
+
+@dataclass(slots=True)
+class _ThreadLane:
+    """The policy v12 thread lane of a new-sha round, running beside the finders on its own
+    thread (`_start_thread_lane`); its outcomes are read where they are first needed
+    (`_thread_outcomes`) and applied when the round publishes."""
+
+    stop: StopSignal
+    thread: threading.Thread | None = None
+    out: converse.ConversationOutput | None = None
+    error: BaseException | None = None
+    joined: bool = False
 
 
 @dataclass(slots=True)
@@ -262,6 +331,16 @@ class RunContext:
     reviewers: list[dict[str, Any]] = field(default_factory=list)
     lane_runner: LaneRunner = run_claude_lane
     dry_run: bool = False
+    # `reviewsys replay` only: `replay` (its gh is pinned and refuses writes, so the dry-run
+    # shortcuts that stand in for GitHub reads are not taken), run Phase 2 whatever the gate
+    # decides (the decision is still recorded), and review from this merge base instead of
+    # one with the base branch as of now
+    replay: bool = False
+    force_phase2: bool = False
+    coverage_base: str | None = None
+    # a replay's review context as production recorded it for the source run (`sister_repos`,
+    # `base_drift` from its evidence.json): the live gathering is skipped for a replay
+    replay_context: dict[str, Any] | None = None
     cancel_flag: threading.Event = field(default_factory=threading.Event)
     # the reviewer lanes of a phase run in parallel threads: this guards the run-wide
     # decisions they can race on (falling down the Phase-1 ladder, flipping to degraded)
@@ -284,6 +363,26 @@ class RunContext:
     # a conversation run (answers replies on a reviewed commit); None until run() knows. The
     # progress estimate measures it against conversations from the start (see progress.py)
     conversation: bool | None = None
+    # ---- policy v12 (`review_model_policy.pipeline`); untouched under v11 ----
+    issues: dict[str, ledger.Issue] = field(default_factory=dict)  # the PR's ledger at context
+    # the ledger was reconciled before this round (`ledger.reconcile`); until it is, only
+    # issues with an open thread or last seen at the previous reviewed head count
+    reconciled: bool = True
+    reconcile_pending: set[str] = field(default_factory=set)  # left for the thread lane to judge
+    # finding_hash -> thread facts for every bot finding thread, resolved ones included
+    thread_index: dict[str, dict[str, Any]] = field(default_factory=dict)
+    last_reviewed_sha: str | None = None  # the newest other head the bot published a review on
+    last_final_sha: str | None = None  # ... a final review on (late_nonblocking)
+    finder_evidence: dict[str, Any] = field(default_factory=dict)  # evidence minus our threads
+    settled: list[dict[str, Any]] = field(default_factory=list)  # the finders' settled list
+    thread_work: dict[str, list[str]] = field(default_factory=dict)  # hash -> why it is judged
+    thread_lane: _ThreadLane | None = None
+    thread_failed: bool = False
+    # a maintainer-driven concession met a blind re-find of the same issue this round
+    thread_conflict: bool = False
+    verify_incomplete: bool = False  # a verifier shard without blockers was dropped
+    # the confirmation pass on this round; None when the policy does not ask for one here
+    confirmation: _Confirmation | None = None
 
     @property
     def conn(self) -> sqlite3.Connection:
@@ -569,10 +668,18 @@ def _lane_row(
 ) -> None:
     """One row per lane attempt. Its correction turns (`res.followups`) ran in the same
     session and slot, so their tokens are added to the row rather than given rows of their
-    own: a role still has one row per attempt, which is what progress and compare count."""
+    own: a role still has one row per attempt, which is what progress and compare count.
+
+    Written when the attempt ends: `finished_at` is now, `started_at` when its process started
+    (now less the whole seconds its turns ran, never earlier than that), so the span is the
+    time it held its slot, not the time it waited for one. Progress counts a lane done by its
+    `finished_at` (progress.step_lanes)."""
     turns = [res, *res.followups] if res else []
     tokens_in = [t.tokens_in for t in turns if t.tokens_in is not None]
     tokens_out = [t.tokens_out for t in turns if t.tokens_out is not None]
+    finished = now_dt()
+    ran = sum(max(0.0, t.duration_s or 0.0) for t in turns)
+    started = fmt_ts(finished - timedelta(seconds=int(ran)))
     with tx(ctx.conn):
         ctx.conn.execute(
             "INSERT INTO lanes (run_id, phase, role, agent, model, effort, attempt, attempt_id, status, exit_code, tokens_in, tokens_out, started_at, finished_at, artifact_dir, prompt_sha, reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -589,8 +696,8 @@ def _lane_row(
                 res.exit_code if res else None,
                 sum(tokens_in) if tokens_in else None,
                 sum(tokens_out) if tokens_out else None,
-                now(),
-                now(),
+                started,
+                fmt_ts(finished),
                 str(artifact_dir),
                 psha,
                 reason[:500],
@@ -598,11 +705,12 @@ def _lane_row(
         )
 
 
-_FINDINGS_INSERT = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)"
+_FINDINGS_INSERT = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body, candidate_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
 
 
 def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Finding]) -> None:
-    """Write finding rows. The caller must already hold the write transaction."""
+    """Write finding rows (with the policy v12 candidate id). The caller must already hold the
+    write transaction."""
     ctx.conn.executemany(
         _FINDINGS_INSERT,
         [
@@ -619,6 +727,7 @@ def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Fin
                 f.category,
                 f.title,
                 f.body[:8000],
+                f.candidate_id,
             )
             for f in findings
         ],
@@ -717,7 +826,10 @@ def step_worktree(ctx: RunContext) -> None:
     # leaves the comment to the newer head's writer): the checkout shows as the running step
     _gate_comment(ctx, "in_progress")
     ctx.worktree = _checkout_head(ctx)
-    base = wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
+    # a replay reviews the range production reviewed (`coverage_base`), never the live base
+    base = ctx.coverage_base or (
+        wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
+    )
     ctx.merge_base = base
     ctx.coverage_from = base or f"{ctx.sha}~1"
     # what the review of this commit reads; a conversation reviews nothing and records none
@@ -1066,6 +1178,19 @@ def step_context(ctx: RunContext) -> None:
     # prior findings: last posted set for this PR from our DB, plus any human replies on
     # their inline threads (the reviewer must engage with pushback, not re-raise past it)
     ctx.open_threads = github.finding_threads(threads, ctx.cfg.bot_login)
+    _ledger_write(
+        ctx,
+        "threads",
+        lambda c: ledger.sync_threads(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            threads=threads,
+            bot_login=ctx.cfg.bot_login,
+        ),
+    )
     replied = {h: t for h, t in ctx.open_threads.items() if t["awaiting_answer"]}
     rows = ctx.conn.execute(
         "SELECT pf.hash, pf.sha, f.file, f.line_start, f.line_end, f.severity, f.category, f.title, f.body FROM posted_findings pf LEFT JOIN findings f ON f.hash=pf.hash AND f.stage='posted' WHERE pf.repo=? AND pf.number=? ORDER BY pf.posted_at DESC, f.id DESC",
@@ -1112,13 +1237,504 @@ def step_context(ctx: RunContext) -> None:
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
     ctx.prior_findings = {f.prior_hash or f.hash: f for f in prior}
     ctx.prior_threads = {h: t for h, t in replied.items() if h in seen}
-    if not ctx.conversation:  # the conversation lane is given none of it
+    # the conversation lane is given none of it. A replay never gathers it (the sister
+    # checkouts' default tips and the base drift are live state, and sister checkouts write the
+    # mirrors); it gets what production recorded for the source run instead
+    if not ctx.conversation and not ctx.replay:
         _review_context(ctx)
+    elif not ctx.conversation and ctx.replay_context:
+        _replayed_context(ctx, ctx.replay_context)
     (ctx.run_dir / "evidence.json").write_text(
         json.dumps(
             {"evidence": ctx.evidence, "coderabbit": ctx.coderabbit, "prior": ctx.prior}, indent=1
         )
     )
+    pol = ctx.cfg.policy
+    if pol.unanchored and not ctx.is_audit:  # (the v12 verifier needs unanchored finders)
+        _context12(ctx, threads)
+
+
+# ---- policy v12: what a round knows from the ledger ----
+
+
+def _lines_changed(
+    ctx: RunContext, from_sha: str, to_sha: str, file: str, ls: int | None, le: int | None
+) -> bool | None:
+    """`ledger.lines_changed` in this run's worktree (its mirror holds every reviewed head);
+    None when git cannot tell."""
+    if ctx.worktree is None or not file:
+        return None
+    return ledger.lines_changed(ctx.worktree, from_sha, to_sha, file, ls, le)
+
+
+def _issue_moved(ctx: RunContext, i: ledger.Issue) -> bool | None:
+    """`ledger.anchor_moved` in this run's worktree."""
+    return ledger.anchor_moved(
+        i, ctx.sha, lambda a, b, file, ls, le: _lines_changed(ctx, a, b, file, ls, le)
+    )
+
+
+def _map_lines(
+    ctx: RunContext, from_sha: str, to_sha: str, file: str, ls: int | None, le: int | None
+) -> tuple[int | None, int | None] | None:
+    """`ledger.map_lines` in this run's worktree; None when git cannot tell."""
+    if ctx.worktree is None or not file:
+        return None
+    return ledger.map_lines(ctx.worktree, from_sha, to_sha, file, ls, le)
+
+
+def _closed_changed(ctx: RunContext, i: ledger.Issue) -> bool | None:
+    """Whether the code at a settled issue changed since it was closed (the revival rule):
+    its anchored lines, re-located at the commit it was closed at (`_map_lines`: the anchor is
+    numbered in `anchor_sha`, and a typical OUTDATED issue's lines were rewritten before it
+    closed), changed between that commit and this head. Not some other edit in the file. None
+    when git cannot tell, which never revives anything."""
+    since = i.closed_sha or i.last_seen_sha
+    anchor = i.anchor_sha or i.opened_sha
+    if not since or not anchor:
+        return None
+    if since == ctx.sha:
+        return False
+    lines = _map_lines(ctx, anchor, since, i.file, i.line_start, i.line_end)
+    if lines is None:
+        return None
+    return _lines_changed(ctx, since, ctx.sha, i.file, *lines)
+
+
+def _issue_url(ctx: RunContext, i: ledger.Issue) -> str:
+    return rules.thread_url(ctx.repo, ctx.number, i)
+
+
+def _last_human(t: dict[str, Any]) -> str:
+    replies = [c for c in t.get("transcript") or [] if not c.get("is_bot")]
+    return converse.strip_marker(str(replies[-1].get("body") or ""))[:600] if replies else ""
+
+
+def _context12(ctx: RunContext, threads: list[dict[str, Any]]) -> None:
+    """Policy v12 additions to the context step: every bot finding thread (resolved ones too),
+    the previous reviewed heads, the ledger (reconciled once per PR first), the finders'
+    evidence without our own threads and their settled list, and the thread lane's work set."""
+    pol, bot = ctx.cfg.policy, ctx.cfg.bot_login
+    ctx.thread_index = github.finding_threads([{**t, "is_resolved": False} for t in threads], bot)
+    rows = ctx.conn.execute(
+        "SELECT sha, phase FROM reviews WHERE repo=? AND number=? AND sha!=? "
+        "ORDER BY posted_at DESC, rowid DESC",
+        (ctx.repo, ctx.number, ctx.sha),
+    ).fetchall()
+    ctx.last_reviewed_sha = str(rows[0]["sha"]) if rows else None
+    ctx.last_final_sha = next((str(r["sha"]) for r in rows if r["phase"] == "final"), None)
+    if pol.verifier_v12:
+        _reconcile12(ctx)
+    ctx.issues = ledger.load(ctx.conn, ctx.repo, ctx.number)
+    if pol.unanchored:
+        # open issues belong to the thread lane: finders see neither our findings nor the
+        # discussion under them, only the settled list
+        ctx.finder_evidence = {
+            **ctx.evidence,
+            "review_threads": [
+                t
+                for t in ctx.evidence.get("review_threads") or []
+                if not github._is_bot((t.get("comments") or [{}])[0], bot)
+            ],
+        }
+        reasons = {h: _last_human(t) for h, t in ctx.thread_index.items()}
+        ctx.settled = rules.settled_list(ctx.issues, reasons)
+    if pol.thread_lane and not ctx.conversation:
+        ctx.thread_work = _thread_work(ctx)
+    (ctx.run_dir / "ledger.json").write_text(
+        json.dumps(
+            {
+                "reconciled": ctx.reconciled,
+                "pending": sorted(ctx.reconcile_pending),
+                "last_reviewed_sha": ctx.last_reviewed_sha,
+                "issues": {h: dataclasses.asdict(i) for h, i in ctx.issues.items()},
+                "settled": ctx.settled,
+                "thread_work": ctx.thread_work,
+            },
+            indent=1,
+        )
+    )
+
+
+def _reconcile12(ctx: RunContext) -> None:
+    """The PR's one-shot ledger reconcile (`ledger.reconcile`) before its first v12 round. Git
+    is asked before the write transaction, never inside it."""
+    rec = ledger.reconciled(ctx.conn, ctx.repo, ctx.number)
+    if rec is None and not ctx.dry_run:
+        moved = ledger.moved_anchors(
+            ledger.load(ctx.conn, ctx.repo, ctx.number),
+            ctx.sha,
+            lambda a, b, file, ls, le: _lines_changed(ctx, a, b, file, ls, le),
+            open_threads=ctx.open_threads,
+        )
+        ledger.safe_write(
+            ctx.conn,
+            "reconcile",
+            lambda c: ledger.reconcile(
+                c,
+                ctx.repo,
+                ctx.number,
+                pr_open=True,
+                open_threads=set(ctx.open_threads),
+                moved=moved,
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+            ),
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+        )
+        rec = ledger.reconciled(ctx.conn, ctx.repo, ctx.number)
+    ctx.reconciled = rec is not None
+    ctx.reconcile_pending = set((rec or {}).get("pending") or [])
+
+
+def _thread_work(ctx: RunContext) -> dict[str, list[str]]:
+    """The thread lane's work set on a new-sha round (v12 design §2.4), computed by code: open
+    threads with a human reply newer than our last answer (and not already met with silence),
+    standing issues the reconcile left to judge, and standing issues whose code changed since
+    they were last judged. Every other open issue stays open with no model call."""
+    work: dict[str, list[str]] = {}
+    for h in _threads_to_answer(ctx):
+        work.setdefault(h, []).append("reply")
+    for h, i in ctx.issues.items():
+        if i.status not in rules.VERDICT_STANDING:
+            continue
+        if h in ctx.reconcile_pending:
+            work.setdefault(h, []).append("reconcile")
+            continue
+        moved = _issue_moved(ctx, i)
+        # an issue git cannot place (no file, line or anchor commit) waits for a reply:
+        # "unknown" would otherwise send it again on every push
+        anchored = bool(i.file and i.line_start and (i.anchor_sha or i.opened_sha))
+        if moved is True or (moved is None and anchored):
+            work.setdefault(h, []).append("code_changed")
+    return work
+
+
+# ---- policy v12: the thread lane (converse.py grown) ----
+
+
+def _code_at(
+    worktree: Path | None, file: str, ls: int | None, le: int | None, around: int = 20
+) -> str:
+    """The issue's file at the reviewed head around its anchor, numbered."""
+    if worktree is None or not file:
+        return ""
+    path = (worktree / file).resolve()
+    if not path.is_relative_to(worktree.resolve()) or not path.is_file():
+        return "(the file does not exist at this head)"
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    lo = max(1, (ls or 1) - around)
+    hi = min(len(lines), (le or ls or 1) + around)
+    return "\n".join(f"{n}: {lines[n - 1]}" for n in range(lo, hi + 1))[:8000]
+
+
+def _thread_item(ctx: RunContext, h: str, why: list[str], same_sha: bool) -> dict[str, Any]:
+    """One issue as the thread lane sees it: the finding, its whole thread, the code at head
+    around its anchor and the diff of its file since it was last judged."""
+    i = ctx.issues.get(h)
+    t = ctx.open_threads.get(h) or ctx.thread_index.get(h) or {}
+    file = i.file if i else str(t.get("path") or "")
+    ls = i.line_start if i else t.get("line")
+    le = i.line_end if i else t.get("line")
+    item: dict[str, Any] = {
+        "finding_hash": h,
+        "why": why,
+        "status": i.status if i else "open",
+        "severity": i.severity if i else t.get("severity"),
+        "title": i.title if i else t.get("title"),
+        "file": file,
+        "lines": [ls, le],
+        "anchored_at": ((i.anchor_sha or "") if i else "")[:12],
+        "finding_body": converse.strip_marker(i.body if i and i.body else str(t.get("body") or "")),
+        "thread": "open"
+        if h in ctx.open_threads
+        else ("resolved by a human" if t else "none (no inline comment to reply on)"),
+        "exchange": converse.exchange(t.get("transcript") or []),
+        "awaiting_your_answer": bool(t.get("awaiting_answer")) and h in ctx.open_threads,
+        "code_at_head": _code_at(ctx.worktree, file, ls, le),
+    }
+    since = (i.last_seen_sha or i.anchor_sha or i.opened_sha) if i else None
+    if not same_sha and since and since != ctx.sha and ctx.worktree is not None and file:
+        item["last_judged_at"] = since[:12]
+        item["diff_since_last_judged"] = (
+            ledger.git_diff(ctx.worktree, since, ctx.sha, file)
+            or "(no change to this file, or git could not compare the commits)"
+        )
+    return item
+
+
+def _run_thread_lane(
+    ctx: RunContext,
+    work: dict[str, list[str]],
+    *,
+    same_sha: bool,
+    standing_verdict: str | None = None,
+    should_stop: Callable[[], bool] | None = None,
+) -> tuple[converse.ConversationOutput, LaneModel]:
+    """The thread lane over `work` (hash -> why), in at most three shards by issue count and
+    input size (`rules.thread_shards`), side by side: their outcomes after the code's own
+    rules (`converse.parse_threads`: every hash exactly once, FIXED / OUTDATED where nothing
+    changed is FIX_PENDING; `converse.accept_deferrals`). A shard that fails for good leaves
+    only its own issues as they were (`threads.failed`) and the round cannot approve
+    (`ctx.thread_failed`); when every shard fails the error is raised. `same_sha`: a reply
+    to the reviewed commit."""
+    assert ctx.meta
+    pol = ctx.cfg.policy
+    hashes = list(work)
+    facts = {h: ctx.open_threads.get(h) or ctx.thread_index.get(h) or {} for h in hashes}
+    fetched, unfetched = _fetch_linked_commits(
+        ctx, {h: t for h, t in facts.items() if t}, should_stop=should_stop
+    )
+    linked = "\n".join(
+        [
+            *(
+                f"- `{c['sha']}` from {c['owner']}/{c['repo']}: available in this checkout "
+                f"(`git show {c['sha']}`)"
+                for c in fetched
+            ),
+            *(
+                f"- `{c['sha']}` from {c['owner']}/{c['repo']}: could NOT be fetched "
+                f"({c.get('reason') or 'unavailable'})"
+                for c in unfetched
+            ),
+        ]
+    )
+    fix_pending = (
+        set(hashes)
+        if same_sha
+        else {
+            h for h in hashes if (i := ctx.issues.get(h)) is not None and i.last_seen_sha == ctx.sha
+        }
+    )
+    items = {h: _thread_item(ctx, h, work[h], same_sha) for h in hashes}
+    shards = rules.thread_shards({h: len(json.dumps(items[h])) for h in hashes})
+    lm = ctx.lane_model(pol.conversation_lane)
+    base = "conversation" if same_sha else "thread"
+    roles = (
+        [base]
+        if len(shards) == 1
+        else [f"{base}-{n}of{len(shards)}" for n in range(1, len(shards) + 1)]
+    )
+
+    def one(n: int) -> converse.ConversationOutput:
+        batch = shards[n]
+        prompt = thread_prompt(
+            ctx.cfg,
+            repo=ctx.repo,
+            number=ctx.number,
+            head_sha=ctx.sha,
+            meta=meta,
+            issues=[items[h] for h in batch],
+            linked_commits=linked,
+            evidence=ctx.evidence,
+            standing_verdict=standing_verdict,
+            same_sha=same_sha,
+            structured=pol.structured_output,
+        )
+        try:
+            return _run_checked_lane(
+                ctx,
+                phase="converse" if same_sha else "threads",
+                role=roles[n],
+                lm=lm,
+                prompt=prompt,
+                is_verifier=True,
+                check=OutputCheck(
+                    validate=lambda raw: converse.parse_threads(
+                        raw, hashes=batch, fix_pending=fix_pending
+                    ),
+                    kind="thread",
+                    ids=batch,
+                ),
+                should_stop=should_stop,
+                schema=schemas.thread_schema(batch),
+            )
+        finally:
+            if len(shards) > 1:
+                ctx.close_lane_conn()
+
+    meta = ctx.meta.as_dict()
+    results: list[converse.ConversationOutput | BaseException] = []
+    if len(shards) == 1:
+        results = [one(0)]
+    else:
+        with ThreadPoolExecutor(
+            max_workers=len(shards), thread_name_prefix=f"{base}-shard"
+        ) as pool:
+            futures = [pool.submit(one, n) for n in range(len(shards))]
+            for fut in futures:
+                try:
+                    results.append(fut.result())
+                except BaseException as exc:  # sorted out below, after every shard ended
+                    results.append(exc)
+    errors = [r for r in results if isinstance(r, BaseException)]
+    fatal = next((e for e in errors if not isinstance(e, ReviewError)), None)
+    if fatal is not None:
+        raise fatal  # Cancelled, a stopped lane, a crash: not a shard's contract
+    if errors and len(errors) == len(results):
+        raise errors[0]
+    outcomes: dict[str, converse.ThreadOutcome] = {}
+    for n, r in enumerate(results):
+        if isinstance(r, BaseException):
+            ctx.thread_failed = True
+            _lane_event(
+                ctx,
+                "threads.failed",
+                f"{roles[n]} ({len(shards[n])} issue(s) left as they were): "
+                + _failure_text(r)[:800],
+            )
+        else:
+            outcomes.update(r.outcomes)
+    out = _accept_thread_deferrals(ctx, outcomes, facts)
+    (ctx.run_dir / ("conversation.json" if same_sha else "threads.json")).write_text(
+        json.dumps(
+            {
+                "work": work,
+                "shards": shards,
+                "outcomes": {h: dataclasses.asdict(o) for h, o in out.outcomes.items()},
+            },
+            indent=1,
+        )
+    )
+    return out, lm
+
+
+def _start_thread_lane(ctx: RunContext) -> None:
+    """Start the thread lane beside the finders (v12 design §2.4: it adds no latency): only
+    on a policy with it, never on an audit, and only when its work set is non-empty."""
+    if not ctx.cfg.policy.thread_lane or ctx.is_audit or not ctx.thread_work:
+        return
+    tl = _ThreadLane(stop=StopSignal())
+
+    def work() -> None:
+        try:
+            tl.out, _ = _run_thread_lane(
+                ctx,
+                ctx.thread_work,
+                same_sha=False,
+                should_stop=lambda: ctx.cancel_flag.is_set() or tl.stop.is_set(),
+            )
+        except BaseException as exc:  # handed to whoever reads the outcomes
+            tl.error = exc
+        finally:
+            ctx.close_lane_conn()
+
+    tl.thread = threading.Thread(target=work, name="thread-lane", daemon=True)
+    ctx.thread_lane = tl
+    tl.thread.start()
+
+
+THREAD_LANE_STOP_SECONDS = 120  # a stopped lane's process is killed well within this
+
+
+def _stop_thread_lane(ctx: RunContext) -> None:
+    """Tell the thread lane to stop (its lanes and fetches poll for it) and wait for it,
+    bounded: a lane that does not end in time is left to its daemon thread and logged."""
+    tl = ctx.thread_lane
+    if tl is not None and tl.thread is not None:
+        tl.stop.set("the run ended")
+        tl.thread.join(timeout=THREAD_LANE_STOP_SECONDS)
+        if tl.thread.is_alive():
+            log.warning(
+                "thread lane still running %ss after the run ended", THREAD_LANE_STOP_SECONDS
+            )
+
+
+def _thread_outcomes(ctx: RunContext) -> dict[str, converse.ThreadOutcome]:
+    """The thread lane's outcomes, waiting for it if it is still running. A thread lane that
+    failed for good does not fail the review: every issue it was to judge stays as it was
+    (open issues keep counting), recorded as `threads.failed`, and is judged again next round.
+    A cancelled run is cancelled."""
+    tl = ctx.thread_lane
+    if tl is None:
+        return {}
+    if not tl.joined:
+        if tl.thread is not None:
+            tl.thread.join()
+        tl.joined = True
+        exc = tl.error
+        if isinstance(exc, Cancelled) or (exc is not None and not isinstance(exc, Exception)):
+            raise exc
+        if exc is not None:
+            ctx.thread_failed = True
+            log.warning("thread lane failed: %s", exc)
+            _lane_event(ctx, "threads.failed", _failure_text(exc)[:1000])
+    return dict(tl.out.outcomes) if tl.out is not None else {}
+
+
+def _accept_thread_deferrals(
+    ctx: RunContext,
+    outcomes: dict[str, converse.ThreadOutcome],
+    facts: dict[str, dict[str, Any]],
+) -> converse.ConversationOutput:
+    """`converse.accept_deferrals` for the thread lane: a deferral needs a maintainer's call
+    and, above a nitpick, a tracking issue or PR visible on the PR (the one its reply cites,
+    or one the maintainer points to). The lane cannot have one filed, so an untracked
+    deferral is asked for a link. An issue the ledger already holds deferred is settled: a
+    restatement is not a new deferral to vet."""
+    pr_text = _pr_text(ctx)
+    threads = {
+        h: {
+            "transcript": facts[h].get("transcript") or [],
+            "severity": i.severity if (i := ctx.issues.get(h)) else facts[h].get("severity"),
+        }
+        for h in outcomes
+    }
+
+    def cite(h: str, o: converse.ThreadOutcome) -> converse.ThreadOutcome:
+        if o.status != "INTENTIONALLY_DEFERRED" or o.tracking_url:
+            return o
+        t = threads[h]
+        link = converse.cited_reference(
+            o.reply,
+            said=converse.thread_text(t, humans_only=True),
+            visible=converse.thread_text(t) + "\n" + pr_text,
+            repo=ctx.repo,
+            number=ctx.number,
+        )
+        return dataclasses.replace(o, tracking_url=link)
+
+    return converse.accept_deferrals(
+        converse.ConversationOutput(outcomes={h: cite(h, o) for h, o in outcomes.items()}),
+        threads,
+        settled=_ledger_deferred(ctx, outcomes),
+        repo=ctx.repo,
+        number=ctx.number,
+        pr_text=pr_text,
+        can_file=False,
+    )
+
+
+def _ledger_deferred(ctx: RunContext, hashes: Iterable[str]) -> set[str]:
+    """Those of `hashes` the ledger already holds deferred: a restated deferral there is not
+    a new one to vet, and its thread keeps the status line (and tracking link) it shows."""
+    return {h for h in hashes if (i := ctx.issues.get(h)) is not None and i.status == "deferred"}
+
+
+def _pending_statuses(
+    outs: dict[str, converse.ThreadOutcome], corroborated: set[str]
+) -> dict[str, str]:
+    """hash -> the ledger status this round's thread outcomes leave, a FIXED / OUTDATED of an
+    issue a finder just restated suppressed (it stays open: v12 design §2.3)."""
+    out: dict[str, str] = {}
+    for h, o in outs.items():
+        if o.status in {"FIXED", "OUTDATED"} and h in corroborated:
+            continue
+        st = ledger.OUTCOME_STATUS.get(o.status)
+        if st is not None:
+            out[h] = st
+    return out
+
+
+def _projected_lifted(outs: dict[str, converse.ThreadOutcome], corroborated: set[str]) -> set[str]:
+    """The hashes this round's thread outcomes would close were every one delivered: what a
+    replay, which delivers nothing, decides on in place of `_record_thread_answers`' set."""
+    return {h for h, st in _pending_statuses(outs, corroborated).items() if st in ledger.CLOSED}
 
 
 def _review_context(ctx: RunContext) -> None:
@@ -1161,6 +1777,42 @@ def _review_context(ctx: RunContext) -> None:
         _context_event(ctx, "context.base_drift_failed", bd["error"])
 
 
+def _replayed_context(ctx: RunContext, recorded: dict[str, Any]) -> None:
+    """The source run's `sister_repos` and `base_drift`, so a replay's lanes see the evidence
+    the production lanes saw. A checkout slot that is gone since gets a null path (the lanes'
+    "not checked out"); one still there is touched, as live reuse does (gc goes by mtime; the
+    replay also holds a lease on them, `sister.lease`)."""
+    repos = []
+    for r in recorded.get("sister_repos") or []:
+        if not isinstance(r, dict):
+            continue
+        r = dict(r)
+        if r.get("also_pinned"):
+            r["also_pinned"] = [dict(s) for s in r["also_pinned"] if isinstance(s, dict)]
+        for key in ("pinned", "default"):
+            if isinstance(r.get(key), dict):
+                r[key] = dict(r[key])
+        gone = False
+        for slot in (*sister._pin_slots(r), r.get("default")):
+            if not isinstance(slot, dict) or not slot.get("path"):
+                continue
+            p = Path(str(slot["path"]))
+            if p.is_dir():
+                with contextlib.suppress(OSError):
+                    os.utime(p)
+            else:
+                slot["path"] = None
+                gone = True
+        if gone:
+            r["skipped"] = "a checkout production used is no longer present for the replay"
+        repos.append(r)
+    if repos:
+        ctx.evidence["sister_repos"] = repos
+    bd = recorded.get("base_drift")
+    if isinstance(bd, dict) and not ctx.is_audit:
+        ctx.evidence["base_drift"] = bd
+
+
 def _context_event(ctx: RunContext, kind: str, detail: str) -> None:
     with tx(ctx.conn):
         event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
@@ -1174,6 +1826,7 @@ def _run_lane(
     lm: LaneModel,
     prompt: str,
     is_verifier: bool,
+    schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A lane whose JSON answer its caller checks itself (persistence, conversation): retries
     and the repair lane as below, no correction turns."""
@@ -1185,6 +1838,7 @@ def _run_lane(
         prompt=prompt,
         is_verifier=is_verifier,
         check=PLAIN_OUTPUT,
+        schema=schema,
     )
 
 
@@ -1201,8 +1855,16 @@ def _run_checked_lane[T](
     should_stop: Callable[[], bool] | None = None,
     comparison: bool = False,
     stop_reason: Callable[[], str] | None = None,
+    schema: dict[str, Any] | None = None,
 ) -> T:
     """Run a lane with bounded retries until its answer passes `check`. Returns the output.
+
+    `schema` (schemas.py) is the lane kind's answer schema. Under policy v12 with
+    `pipeline.structured_output` the lane answers through it (`--json-schema`), its
+    correction turns too, and its envelope's `structured_output` is read before its text; a
+    lane whose structured-output retries ran out failed its contract. Otherwise it is
+    ignored. The schema enforces shape only: the answer still goes through `check`, and
+    the correction turns below remain the fallback for everything else.
 
     An answer that breaks the contract (no JSON object in it, or `check.validate` rejects it
     after the deterministic normalization in contract.py) is first corrected in the lane's
@@ -1231,7 +1893,9 @@ def _run_checked_lane[T](
     key = f"{role}{COMPARE_SUFFIX}" if comparison else role
     pool = lanepool.COMPARE_POOL if comparison else None
     corrections = ctx.cfg.lane_correction_turns if check.kind else 0
+    json_schema = schema if ctx.cfg.policy.structured_output else None
     last = cause = ""
+    off_schema = False  # the last failure was Claude Code giving up on the schema
     attempt, budget = 0, 1 if comparison else 2
     while attempt < budget:
         attempt += 1
@@ -1263,6 +1927,9 @@ def _run_checked_lane[T](
                 coderabbit_ids=check.coderabbit_ids,
                 turn=len(asked),
                 turns=corrections,
+                stamp_echo=ctx.cfg.policy.stamps_echo_fields,
+                ids=check.ids,
+                structured=json_schema is not None,
             )
 
         session = new_session_id() if corrections else ""
@@ -1284,6 +1951,7 @@ def _run_checked_lane[T](
             session_id=session,
             check=ask if session else None,
             corrections=corrections,
+            json_schema=json_schema,
         )
         res = ctx.lane_runner(spec, art, ctx.worktree)
         psha = prompt_sha(prompt)
@@ -1320,8 +1988,8 @@ def _run_checked_lane[T](
             raise stopped(res.started)
         # the newest turn that finished: a correction that could not resume the session (or
         # died on its own) leaves the answer before it standing
-        basis = next((t for t in reversed(turns) if t.ok), res)
-        failed_turn = turns[-1] if res.followups and not turns[-1].ok else None
+        basis = next((t for t in reversed(turns) if t.answered), res)
+        failed_turn = turns[-1] if res.followups and not turns[-1].answered else None
         verdict = _evaluate(basis, check)
         if verdict.error is not None and stop():
             # told to stop between turns (the phase was abandoned, the run cancelled): not a
@@ -1369,6 +2037,7 @@ def _run_checked_lane[T](
         after = f" (after {len(res.followups)} correction turns)" if res.followups else ""
         row(status="failed", reason=f"{exc}{after}")
         last, cause = f"{exc}{after}", exc.message
+        off_schema = isinstance(exc, SchemaRetriesExhausted)
         # a correction turn that died on a dry pool says so as surely as a first turn would
         quota_turn, quota_exc = failed_turn or res, exc
         if failed_turn is not None:  # did not finish: lane_output names its infra error
@@ -1380,7 +2049,9 @@ def _run_checked_lane[T](
         if switched is not None:
             lm, budget = switched, attempt + 2
     raise LaneFailed(
-        FailKind.INFRA if "timed out" in last or "exit" in last else FailKind.CONTRACT,
+        FailKind.INFRA
+        if not off_schema and ("timed out" in last or "exit" in last)
+        else FailKind.CONTRACT,
         f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}",
         cause,
     )
@@ -1475,7 +2146,10 @@ def _repair[T](
             kind=check.kind,
             expected_phase=check.expected_phase,
             head_sha=ctx.sha,
-            prior_hashes=[str(p["finding_hash"]) for p in check.prior],
+            prior_hashes=check.ids
+            if check.kind in V12_KINDS
+            else [str(p["finding_hash"]) for p in check.prior],
+            stamp_echo=ctx.cfg.policy.stamps_echo_fields,
         ),
         cwd=ctx.worktree,
         add_dir=ctx.run_dir,
@@ -1505,6 +2179,7 @@ def _reviewer_lane(
     should_stop: Callable[[], bool] | None = None,
     comparison: bool = False,
     stop_reason: Callable[[], str] | None = None,
+    schema: dict[str, Any] | None = None,
 ) -> ReviewerOutput:
     """One reviewer lane, retried down the Phase-1 ladder when its rung dies. A Phase-1 lane
     starts (and restarts) on the run's current rung, so a lane that starts after a sibling
@@ -1527,6 +2202,7 @@ def _reviewer_lane(
                 should_stop=should_stop,
                 comparison=comparison,
                 stop_reason=stop_reason,
+                schema=schema,
             )
         except ReviewError as exc:
             if should_stop is not None and should_stop():
@@ -1540,6 +2216,27 @@ def _reviewer_lane(
             lm = nxt
 
 
+def _blind_label(key: str, *, seed: int) -> str:
+    """A Phase-2 lane's output key under its neutral comparison label: `<role>/a` or
+    `<role>/b`, which one is the comparison model decided per run (`seed`)."""
+    second_is_a = random.Random(seed).random() < 0.5
+    base = key.removesuffix(COMPARE_SUFFIX)
+    return f"{base}/{'a' if key.endswith(COMPARE_SUFFIX) == second_is_a else 'b'}"
+
+
+def _blinded_key(ctx: RunContext, key: str) -> str:
+    """A Phase-2 lane's output key as `_blind` shows it to the verifier on a comparison run,
+    for its candidate ids; unchanged otherwise."""
+    return _blind_label(key, seed=ctx.run_id) if ctx.compare_model else key
+
+
+def _lane_title(ctx: RunContext, role: str) -> str:
+    if role == "general":
+        return "general review"
+    spec = next((s for s in ctx.cfg.specialists if s.id == role), None)
+    return f"{role} ({spec.description})" if spec and spec.description else role
+
+
 def _phase_roles(ctx: RunContext, phase: str) -> list[str]:
     """The reviewer roles of a phase: `general` plus the selected specialists. Phase 1 runs
     only the specialists the policy lists for it (`phase1_specialists`), when it lists any."""
@@ -1550,6 +2247,59 @@ def _phase_roles(ctx: RunContext, phase: str) -> list[str]:
     return ["general", *picked]
 
 
+def _lane_prompts(
+    ctx: RunContext,
+    roles: list[str],
+    *,
+    meta: dict[str, Any],
+    expected_phase: str,
+    guidance: str,
+    prior: list[dict[str, Any]],
+    prior_sha: str | None,
+    fresh: bool,
+) -> dict[str, str]:
+    """Each role's prompt: a policy v12 finder (`finder_prompt`), else the v11 reviewer."""
+    pol = ctx.cfg.policy
+    if pol.unanchored:
+        return {
+            role: finder_prompt(
+                ctx.cfg,
+                repo=ctx.repo,
+                number=ctx.number,
+                head_sha=ctx.sha,
+                role=role,
+                lane_title=_lane_title(ctx, role),
+                meta=meta,
+                coverage_from=ctx.coverage_from,
+                evidence=ctx.finder_evidence or ctx.evidence,
+                guidance=guidance,
+                last_reviewed_sha=ctx.last_reviewed_sha,
+                settled=ctx.settled,
+                structured=pol.structured_output,
+            )
+            for role in roles
+        }
+    return {
+        role: reviewer_prompt(
+            ctx.cfg,
+            repo=ctx.repo,
+            number=ctx.number,
+            head_sha=ctx.sha,
+            phase=expected_phase,
+            role=role,
+            meta=meta,
+            coverage_from=ctx.coverage_from,
+            evidence=ctx.evidence,
+            prior=prior,
+            prior_sha=prior_sha,
+            fresh=fresh,
+            stamp_echo=pol.stamps_echo_fields,
+            guidance=guidance,
+        )
+        for role in roles
+    }
+
+
 def _reviewer_lanes(
     ctx: RunContext,
     *,
@@ -1558,8 +2308,10 @@ def _reviewer_lanes(
     expected_phase: str,
     fresh: bool = False,
     abort: StopSignal | None = None,
+    roles: list[str] | None = None,
 ) -> dict[str, ReviewerOutput]:
-    """The general reviewer and the phase's specialists (`_phase_roles`), side by side (at
+    """The general reviewer and the phase's specialists (`_phase_roles`; `roles` instead, for
+    the policy v12 confirmation pass), side by side (at
     most `phase_parallelism` at once, all of them when it is 0; each lane also waits for a
     slot in its model's pool, see lanepool.py). The reviewers of a phase never read each
     other's output, so only the verifier after them has to wait for all of them. `abort`,
@@ -1581,27 +2333,24 @@ def _reviewer_lanes(
     meta = ctx.meta.as_dict()
     if abort is None:
         abort = StopSignal()
-    roles = _phase_roles(ctx, phase)
+    roles = roles if roles is not None else _phase_roles(ctx, phase)
     review_prior = [] if fresh else ctx.prior
     review_prior_sha = None if fresh else ctx.prior_sha
     prior_hashes = {str(p["finding_hash"]) for p in review_prior}
-    prompts = {
-        role: reviewer_prompt(
-            ctx.cfg,
-            repo=ctx.repo,
-            number=ctx.number,
-            head_sha=ctx.sha,
-            phase=expected_phase,
-            role=role,
-            meta=meta,
-            coverage_from=ctx.coverage_from,
-            evidence=ctx.evidence,
-            prior=review_prior,
-            prior_sha=review_prior_sha,
-            fresh=fresh,
-        )
-        for role in roles
-    }
+    stamp = ctx.cfg.policy.stamps_echo_fields
+    guidance = repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else ""
+    # policy v12: finder lanes on the candidate contract (`rules.parse_finder_output`)
+    unanchored = ctx.cfg.policy.unanchored
+    prompts = _lane_prompts(
+        ctx,
+        roles,
+        meta=meta,
+        expected_phase=expected_phase,
+        guidance=guidance,
+        prior=review_prior,
+        prior_sha=review_prior_sha,
+        fresh=fresh,
+    )
     # (output key, role, lane model, comparison?)
     lanes: list[tuple[str, str, LaneModel, bool]] = [(r, r, lm, False) for r in roles]
     if phase == "phase2" and ctx.compare_model and not fresh:
@@ -1649,11 +2398,29 @@ def _reviewer_lanes(
                 head_sha=ctx.sha,
                 source=f"{phase}:{key}",
                 prior_hashes=prior_hashes,
+                stamp_echo=stamp,
                 settled_hashes=ctx.settled_hashes,
             )
 
-        check = OutputCheck(
-            validate=validate, kind="reviewer", expected_phase=expected_phase, prior=review_prior
+        def validate_candidates(raw: dict[str, Any]) -> ReviewerOutput:
+            label = _blinded_key(ctx, key) if phase == "phase2" and not fresh else key
+            return rules.parse_finder_output(
+                raw,
+                id_prefix=rules.candidate_prefix(phase, label, fresh=fresh),
+                source=f"{phase}:{'fresh:' if fresh else ''}{key}",
+                expected_phase=expected_phase,
+                head_sha=ctx.sha,
+            )
+
+        check = (
+            OutputCheck(validate=validate_candidates, kind="finder", expected_phase=expected_phase)
+            if unanchored
+            else OutputCheck(
+                validate=validate,
+                kind="reviewer",
+                expected_phase=expected_phase,
+                prior=review_prior,
+            )
         )
         try:
             return _reviewer_lane(
@@ -1667,6 +2434,7 @@ def _reviewer_lanes(
                 should_stop=twin_stopped if comparison else stopped,
                 comparison=comparison,
                 stop_reason=stop_reason,
+                schema=schemas.FINDER_SCHEMA if unanchored else None,
             )
         except Exception as exc:  # a comparison lane never fails the phase, whatever broke
             if not comparison or abandon.is_set() or isinstance(exc, Cancelled):
@@ -1800,7 +2568,17 @@ def _verifier_lane(
     phase2_outputs: dict[str, ReviewerOutput] | None = None,
     fresh_final: bool = False,
 ) -> VerifierOutput:
+    if ctx.cfg.policy.verifier_v12:
+        return _verify12(
+            ctx,
+            phase=phase,
+            lm=lm,
+            expected_phase=expected_phase,
+            candidates=_phase_candidates(ctx, phase),
+            note=_phase_note(ctx, phase),
+        )
     all_phase2 = phase2_outputs if phase2_outputs is not None else ctx.phase2_outputs
+    stamp = ctx.cfg.policy.stamps_echo_fields
     prompt = verifier_prompt(
         ctx.cfg,
         repo=ctx.repo,
@@ -1817,6 +2595,8 @@ def _verifier_lane(
         phase1_skipped=ctx.phase1_skipped,
         fresh_final=fresh_final,
         single_stage=ctx.single_stage,
+        stamp_echo=stamp,
+        guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
     )
     prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
 
@@ -1826,6 +2606,7 @@ def _verifier_lane(
             expected_phase=expected_phase,
             expected_coderabbit_ids=ctx.coderabbit_ids,
             prior_hashes=prior_hashes,
+            stamp_echo=stamp,
             settled_hashes=ctx.settled_hashes,
         )
 
@@ -2065,14 +2846,417 @@ def _blind(outputs: dict[str, Any], *, seed: int) -> dict[str, Any]:
     twins = {k.removesuffix(COMPARE_SUFFIX) for k in outputs if k.endswith(COMPARE_SUFFIX)}
     if not twins:
         return outputs
-    second_is_a = random.Random(seed).random() < 0.5
     out: dict[str, Any] = {}
     for key, value in outputs.items():
-        base = key.removesuffix(COMPARE_SUFFIX)
-        if base in twins:
-            key = f"{base}/{'a' if key.endswith(COMPARE_SUFFIX) == second_is_a else 'b'}"
+        if key.removesuffix(COMPARE_SUFFIX) in twins:
+            key = _blind_label(key, seed=seed)
         out[key] = value
     return dict(sorted(out.items()))
+
+
+# ---- policy v12: verify+match, code rules (rules.py) ----
+
+
+def _candidates_of(outputs: dict[str, ReviewerOutput]) -> list[Finding]:
+    return [f for o in outputs.values() for f in o.findings if f.candidate_id]
+
+
+def _gate_kept(v1: VerifierOutput) -> list[Finding]:
+    """What the gate verifier kept, as candidates for the final one (`v1-<n>`): each group's
+    claim as the gate composed it (before the code's PLAUSIBLE demotion), with its gate verdict
+    shown. The final verifier re-judges them."""
+    out: list[Finding] = []
+    for n, (g, f) in enumerate(_outcome(v1).kept, 1):
+        out.append(
+            Finding(
+                file=f.file,
+                title=g.title,
+                body=g.body,
+                severity=g.severity,
+                category=f.category,
+                line_start=f.line_start,
+                line_end=f.line_end,
+                suggestion=g.suggestion,
+                source=f.source,
+                extra={
+                    rules.FAILURE_SCENARIO: g.evidence,
+                    "gate_verdict": f"{g.verdict} at the gate, matched {g.match}",
+                },
+                candidate_id=f"v1-{n}",
+            )
+        )
+    return out
+
+
+def _phase_candidates(ctx: RunContext, phase: str) -> list[Finding]:
+    """The candidates a phase's verify+match weighs: Phase 1's at the gate; at the final one
+    Phase 2's plus what the gate kept, or plus Phase 1's own on a single-stage run."""
+    if phase == "verify1":
+        return _candidates_of(ctx.phase1_outputs)
+    p2 = _candidates_of(ctx.phase2_outputs)
+    if ctx.single_stage:
+        return _candidates_of(ctx.phase1_outputs) + p2
+    if ctx.verify1 is not None:
+        return p2 + _gate_kept(ctx.verify1)
+    return p2
+
+
+def _phase_note(ctx: RunContext, phase: str) -> str:
+    if phase == "verify1":
+        return (
+            "This is the gate verification of the Phase-1 candidates (`p1-*`). The orchestrator "
+            "decides from your verdicts whether Phase 2 runs before anything is published."
+        )
+    if ctx.single_stage:
+        return (
+            "This is the final verification. Phase 1 (`p1-*`) and Phase 2 (`p2-*`) reviewed "
+            "this head side by side with no gate between them; weigh every candidate the same."
+        )
+    if ctx.verify1 is not None:
+        return (
+            "This is the final verification of the Phase-2 candidates (`p2-*`). The `v1-*` "
+            "candidates are what the gate verifier kept from Phase 1 (its verdict is shown as "
+            "`gate_verdict`): judge them again, as final authority."
+        )
+    return "This is the final verification of the Phase-2 candidates (`p2-*`)."
+
+
+def _sources12(ctx: RunContext, members: list[Finding]) -> str:
+    """Who raised a verified group: the models and agents of its members' lanes, named as
+    `publish.attribute_sources` names them. A gate-kept candidate already carries its own."""
+    parts: list[str] = []
+    lanes: list[dict[str, Any]] = []
+    for m in members:
+        phase, _, key = m.source.partition(":")
+        fresh = key.startswith("fresh:")
+        key = key.removeprefix("fresh:")
+        own = [
+            r
+            for r in ctx.reviewers
+            if r["phase"] == phase and r["key"] == key and bool(r.get("fresh")) == fresh
+        ]
+        if own:
+            lanes += own
+        elif m.source and m.source not in parts:
+            parts.append(m.source)
+    named = publish.name_lanes(lanes)
+    return "; ".join(named + [p for p in parts if p not in named]) or "unknown"
+
+
+def _last_messages(ctx: RunContext) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for h, t in ctx.thread_index.items():
+        last = (t.get("transcript") or [])[-1:] or []
+        if last:
+            who = "you" if last[0].get("is_bot") else str(last[0].get("author") or "")
+            out[h] = f"{who}: {converse.strip_marker(str(last[0].get('body') or ''))}"
+    return out
+
+
+def _verify_shard(
+    ctx: RunContext,
+    *,
+    phase: str,
+    role: str,
+    lm: LaneModel,
+    batch: list[Finding],
+    summary: dict[str, Any],
+    raised_now: set[str],
+    note: str,
+) -> rules.VerifyAnswer:
+    assert ctx.meta
+    ids = [str(f.candidate_id) for f in batch]
+    prompt = verify_prompt(
+        ctx.cfg,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        meta=ctx.meta.as_dict(),
+        coverage_from=ctx.coverage_from,
+        candidates=[rules.brief(f) for f in batch],
+        coderabbit=ctx.coderabbit,
+        ledger_summary=summary,
+        evidence=ctx.evidence,
+        guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
+        phase_note=note,
+        structured=ctx.cfg.policy.structured_output,
+    )
+
+    def validate(raw: dict[str, Any]) -> rules.VerifyAnswer:
+        return rules.parse_verify(
+            raw,
+            candidate_ids=ids,
+            issues=ctx.issues,
+            coderabbit_ids=ctx.coderabbit_ids,
+            extra_open=raised_now,
+        )
+
+    return _run_checked_lane(
+        ctx,
+        phase=phase,
+        role=role,
+        lm=lm,
+        prompt=prompt,
+        is_verifier=True,
+        check=OutputCheck(validate=validate, kind="verify", ids=ids),
+        schema=schemas.verifier_schema(ids),
+    )
+
+
+def _verify12(
+    ctx: RunContext,
+    *,
+    phase: str,
+    lm: LaneModel,
+    expected_phase: str,
+    candidates: list[Finding],
+    note: str,
+    raised_now: list[Finding] | None = None,
+    stage: str = "verified",
+) -> VerifierOutput:
+    """One policy v12 verify+match per phase (v12 design §2.2): every candidate, the CodeRabbit
+    comments and the ledger summary to one lane, split into at most three shards by file above
+    twelve candidates (`_verify_shards`). No candidates: no lane. The code rules
+    (`rules.apply_rules`) turn the answer into this round's issues; the ledger's standing
+    issues ride along as `carried`."""
+    raised = list(raised_now or [])
+    raised_hashes = {f.hash for f in raised}
+    outs = _thread_outcomes(ctx)
+    summary = rules.ledger_summary(
+        ctx.issues,
+        thread_status={h: o.status for h, o in outs.items()},
+        last_message=_last_messages(ctx),
+        raised_now=raised,
+    )
+    answer = _merge_answers(
+        ctx,
+        phase,
+        _verify_shards(
+            ctx,
+            phase=phase,
+            lm=lm,
+            candidates=candidates,
+            summary=summary,
+            raised=raised_hashes,
+            note=note,
+        ),
+        empty=not candidates,
+    )
+    outcome = rules.apply_rules(
+        answer,
+        {str(f.candidate_id): f for f in candidates},
+        ctx.issues,
+        changed_since_closed=lambda i: _closed_changed(ctx, i),
+        source_of=lambda ms: _sources12(ctx, ms),
+        thread_url=lambda i: _issue_url(ctx, i),
+        extra_open=raised_hashes,
+    )
+    post, noted = _late_split(ctx, outcome.new)
+    carried = _carried12(
+        ctx,
+        rules.project(
+            ctx.issues, _pending_statuses(outs, set(outcome.corroborated)), outcome.upgrades
+        ),
+    )
+    standing_sev = [f.severity for f in (*post, *carried)]
+    out = VerifierOutput(
+        summary=answer.summary,
+        # provisional (an audit's report reads it); a review's verdict is decided from the
+        # ledger when it publishes (`_verdict12`)
+        review_action=rules.verdict(
+            blockers=standing_sev.count("blocking"),
+            suggestions=standing_sev.count("suggestion"),
+            full_strength=True,
+            confirmed=True,
+        ),
+        findings=post,
+        dropped=outcome.dropped,
+        out_of_scope=[],
+        coderabbit_reactions=_dedupe_reactions(outcome.reactions),
+        prerequisite_adjudications=[],
+        adjudication_complete=True,
+        review_phase=expected_phase,
+        raw=answer.raw,
+        normalized=answer.normalized,
+        carried=carried,
+        noted=noted,
+        rules=outcome,
+    )
+    _record_findings(ctx, phase, stage, out.findings)
+    _write_verify_artifact(ctx, phase, stage, candidates, answer, out)
+    return out
+
+
+def _verify_shards(
+    ctx: RunContext,
+    *,
+    phase: str,
+    lm: LaneModel,
+    candidates: list[Finding],
+    summary: dict[str, Any],
+    raised: set[str],
+    note: str,
+) -> list[rules.VerifyAnswer]:
+    """The verify+match lanes over `candidates` (`rules.shards`), side by side. A shard that
+    fails for good (after the retry inside `_run_checked_lane`) has its candidates dropped
+    when none of them is blocking (the run can no longer approve), and fails the run (INFRA,
+    `UncheckedBlockers`) when a blocker would go unchecked."""
+    batches = rules.shards(candidates) if candidates else []
+    k = len(batches)
+    roles = ["verifier"] if k == 1 else [f"verifier-{n}of{k}" for n in range(1, k + 1)]
+    notes = (
+        [note]
+        if k == 1
+        else [
+            f"{note}\n\nThis is batch {n} of {k}: the other batches hold the candidates of other "
+            "files."
+            for n in range(1, k + 1)
+        ]
+    )
+
+    def one(n: int) -> rules.VerifyAnswer | None:
+        batch = batches[n]
+        try:
+            return _verify_shard(
+                ctx,
+                phase=phase,
+                role=roles[n],
+                lm=lm,
+                batch=batch,
+                summary=summary,
+                raised_now=raised,
+                note=notes[n],
+            )
+        except ReviewError as exc:
+            ctx.check_cancel()
+            blocking = [f.candidate_id for f in batch if f.severity == "blocking"]
+            if blocking:
+                raise UncheckedBlockers(
+                    FailKind.INFRA,
+                    f"{phase}/{roles[n]} failed with blocking candidates unchecked "
+                    f"({', '.join(map(str, blocking))}): {exc.message}",
+                ) from exc
+            ctx.verify_incomplete = True
+            _lane_event(
+                ctx,
+                "verify.shard_dropped",
+                f"{phase}/{roles[n]}: {len(batch)} non-blocking candidate(s) dropped: {exc.message}",
+            )
+            return None
+        finally:
+            ctx.close_lane_conn()
+
+    if k <= 1:
+        res = [one(0)] if k else []
+    else:
+        with ThreadPoolExecutor(max_workers=k, thread_name_prefix=f"{phase}-shard") as pool:
+            res = list(pool.map(one, range(k)))
+    return [a for a in res if a is not None]
+
+
+def _merge_answers(
+    ctx: RunContext, phase: str, answers: list[rules.VerifyAnswer], *, empty: bool
+) -> rules.VerifyAnswer:
+    """The shards' answers as one (`empty`: there was nothing to verify)."""
+    text = "\n\n".join(a.summary for a in answers if a.summary) or (
+        "The reviewers raised nothing to verify on this head." if empty else ""
+    )
+    answer = rules.VerifyAnswer(
+        summary=text,
+        groups=[g for a in answers for g in a.groups],
+        raw={"summary": text, "groups": [a.raw.get("groups") for a in answers]},
+        normalized=[n for a in answers for n in a.normalized],
+    )
+    if answer.normalized:
+        _lane_event(
+            ctx,
+            "lane.output_normalized",
+            f"{phase}/verifier: {'; '.join(answer.normalized)}"[:1000],
+        )
+    return answer
+
+
+def _dedupe_reactions(reactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """One reaction per CodeRabbit comment; agreeing wins over disagreeing."""
+    out: dict[int, dict[str, Any]] = {}
+    for r in reactions:
+        if r["comment_id"] not in out or r["action"] == "agree":
+            out[r["comment_id"]] = r
+    return list(out.values())
+
+
+def _write_verify_artifact(
+    ctx: RunContext,
+    phase: str,
+    stage: str,
+    candidates: list[Finding],
+    answer: rules.VerifyAnswer,
+    out: VerifierOutput,
+) -> None:
+    outcome = out.rules
+    assert outcome is not None
+    (ctx.run_dir / f"{phase}{'-fresh' if stage != 'verified' else ''}.json").write_text(
+        json.dumps(
+            {
+                "candidates": [rules.brief(f) for f in candidates],
+                "groups": [dataclasses.asdict(g) for g in answer.groups],
+                "new": [f.to_dict() for f in out.findings],
+                "noted": [f.to_dict() for f in out.noted],
+                "corroborated": outcome.corroborated,
+                "upgrades": sorted(outcome.upgrades),
+                "dropped": outcome.dropped,
+                "carried": [f.prior_hash for f in out.carried],
+            },
+            indent=1,
+        )
+    )
+
+
+def _stand12(
+    ctx: RunContext, issues: dict[str, ledger.Issue], judged: Iterable[str] = ()
+) -> list[ledger.Issue]:
+    """The issues that count toward this round's verdict (`rules.standing`): the reconcile's
+    leftovers only once the thread lane has judged them (`judged`)."""
+    return rules.standing(
+        issues,
+        reconciled=ctx.reconciled,
+        pending=ctx.reconcile_pending - set(judged),
+        last_reviewed_sha=ctx.last_reviewed_sha,
+        open_threads=ctx.open_threads,
+    )
+
+
+def _carried12(ctx: RunContext, issues: dict[str, ledger.Issue]) -> list[Finding]:
+    stand = _stand12(ctx, issues, _thread_outcomes(ctx))
+    return rules.carried(stand, lambda i: _issue_url(ctx, i))
+
+
+def _late_split(ctx: RunContext, new: list[Finding]) -> tuple[list[Finding], list[Finding]]:
+    """`late_nonblocking` (owner decision D2): this round's non-blocking new issues on lines
+    unchanged since the last final review are tagged `late`; under "note" they are collapsed
+    into "Also noticed" (not posted, not in the ledger, never holding APPROVE). Their count is
+    recorded either way, for the eval. Revivals and regressions are never late."""
+    pol = ctx.cfg.policy.pipeline
+    since = ctx.last_final_sha
+    if pol is None or not since or since == ctx.sha:
+        return new, []
+    late: list[Finding] = []
+    for f in new:
+        if f.severity == "blocking" or "revives" in f.extra or "regression_of" in f.extra:
+            continue
+        # the anchor is in this head's numbering: diff from it (lines_changed is symmetric)
+        if _lines_changed(ctx, ctx.sha, since, f.file, f.line_start, f.line_end) is False:
+            f.extra["late"] = True
+            late.append(f)
+    if late:
+        _lane_event(
+            ctx,
+            "v12.late_nonblocking",
+            f"{len(late)} late non-blocking finding(s) since {since[:8]} ({pol.late_nonblocking})",
+        )
+    if pol.late_nonblocking != "note":
+        return new, []
+    return [f for f in new if not f.extra.get("late")], late
 
 
 def _backfill_posted(
@@ -2109,6 +3293,23 @@ def _backfill_posted(
             review_id=review_id,
             review_url=str(existing.get("html_url") or "") or None,
         )
+
+    def record(c: sqlite3.Connection) -> None:
+        # nothing new went on GitHub: the findings the PR already had are carried, and only
+        # those it never had (a prior attempt posted them, then died) are recorded as posted
+        have = ledger.known(c, ctx.repo, ctx.number)
+        posted = [f for f in verified.findings if (f.prior_hash or f.hash) not in have]
+        ledger.record_published(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            posted=posted,
+            kept=verified.findings,
+        )
+
+    _ledger_write(ctx, "publication", record)
 
 
 def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
@@ -2159,6 +3360,7 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
                 prior.category,
                 prior.title,
                 status + (f"\n{tracking}" if tracking else ""),
+                None,
             )
         )
     if rows:
@@ -2174,28 +3376,16 @@ def step_publish(
     verifier_lm: LaneModel,
     phase2_skipped: str | None = None,
 ) -> publish.PublishResult:
-    # The review may have taken long enough for a push to land after the initial
-    # worktree check. Never publish an approval (or any verdict) against an
-    # obsolete head; the run ends superseded (HeadObsolete) and ingest queues the
-    # live commit.
-    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
-    _require_live(ctx, live)
-    if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
-        raise ReviewError(
-            FailKind.FATAL,
-            f"live base {live.base_sha[:8]} != assigned {ctx.base_sha[:8]}",
+    if ctx.cfg.policy.verifier_v12:
+        return _publish12(
+            ctx,
+            phase=phase,
+            verified=verified,
+            verifier_lm=verifier_lm,
+            phase2_skipped=phase2_skipped,
         )
-    existing = github.existing_review_for_sha(
-        ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
-    )
-    if existing is None and phase == "preliminary":
-        # a same-sha re-review that now finds blockers after a FINAL review stood: correct the
-        # final verdict with a follow-up rather than stacking a second full review
-        existing = github.existing_review_for_sha(
-            ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
-        )
-        if existing:
-            phase = "final"
+    _require_live_base(ctx)
+    existing, phase = _existing_review(ctx, phase)
     if existing:
         # Either a prior attempt posted but died before recording it, or this is a reply-
         # triggered re-review of an already-reviewed commit. Backfill so future rounds still
@@ -2208,14 +3398,79 @@ def step_publish(
         update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
         if update is not None:
             return update
-        model = _build_review(
+        return _publish_review(
             ctx,
             phase=phase,
             verified=verified,
             verifier_lm=verifier_lm,
             phase2_skipped=phase2_skipped,
             rereview=True,
+        )[1]
+    result = _publish_review(
+        ctx,
+        phase=phase,
+        verified=verified,
+        verifier_lm=verifier_lm,
+        phase2_skipped=phase2_skipped,
+        rereview=False,
+    )[1]
+    _answer_threads(ctx, phase, verified)
+    return result
+
+
+def _require_live_base(ctx: RunContext) -> None:
+    """The review may have taken long enough for a push to land after the initial worktree
+    check. Never publish an approval (or any verdict) against an obsolete head; the run ends
+    superseded (HeadObsolete) and ingest queues the live commit. A moved base is fatal."""
+    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
+    _require_live(ctx, live)
+    if ctx.base_sha and live.base_sha and live.base_sha != ctx.base_sha:
+        raise ReviewError(
+            FailKind.FATAL,
+            f"live base {live.base_sha[:8]} != assigned {ctx.base_sha[:8]}",
         )
+
+
+def _existing_review(ctx: RunContext, phase: str) -> tuple[dict[str, Any] | None, str]:
+    """The bot's review of this commit and `phase` already on the PR, and the phase it is: a
+    same-sha re-review that now finds blockers after a FINAL review stood corrects the final
+    verdict with a follow-up rather than stacking a second full review."""
+    existing = github.existing_review_for_sha(
+        ctx.gh, ctx.repo, ctx.number, ctx.sha, phase, ctx.cfg.bot_login
+    )
+    if existing is None and phase == "preliminary":
+        existing = github.existing_review_for_sha(
+            ctx.gh, ctx.repo, ctx.number, ctx.sha, "final", ctx.cfg.bot_login
+        )
+        if existing:
+            phase = "final"
+    return existing, phase
+
+
+def _publish_review(
+    ctx: RunContext,
+    *,
+    phase: str,
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+    phase2_skipped: str | None,
+    rereview: bool,
+) -> tuple[publish.ReviewModel, publish.PublishResult]:
+    """Build, post and record the review. `rereview`: a same-sha re-review whose review
+    already stands, posted as an informational COMMENT; otherwise the review proper, with its
+    CodeRabbit reactions. Either way its body is kept as `review-<phase>.md`."""
+    model = _build_review(
+        ctx,
+        phase=phase,
+        verified=verified,
+        verifier_lm=verifier_lm,
+        phase2_skipped=phase2_skipped,
+        rereview=rereview or ctx.has_prior_review,
+    )
+    if rereview:
+        # the artifact goes first, as on the normal path: a failed write after the post would
+        # fail the run and its retry would post the COMMENT again
+        (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
         result = publish.publish(
             ctx.gh,
             model,
@@ -2223,20 +3478,14 @@ def step_publish(
             dry_run=ctx.dry_run,
             force_comment=True,
         )
+        with contextlib.suppress(OSError):  # the posted body (with its transport note)
+            (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
         _record_publication(ctx, phase, model, result, verified)
         if ctx.kept_verdict:
             # the APPROVE still stands on GitHub: the label and the CI watch (ci.py) read
             # our record, which the summary's COMMENT just overwrote
             _record_verdict(ctx, phase, verified, ctx.kept_verdict)
-        return result
-    model = _build_review(
-        ctx,
-        phase=phase,
-        verified=verified,
-        verifier_lm=verifier_lm,
-        phase2_skipped=phase2_skipped,
-        rereview=ctx.has_prior_review,
-    )
+        return model, result
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
     result = publish.publish(
         ctx.gh,
@@ -2250,8 +3499,7 @@ def step_publish(
         publish.post_coderabbit_reactions(
             ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
         )
-    _answer_threads(ctx, phase, verified)
-    return result
+    return model, result
 
 
 def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
@@ -2268,15 +3516,34 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
         verified=verified,
     )
     with tx(ctx.conn):
-        for a in answered:
-            event(
-                ctx.conn,
-                "thread.answered",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=json.dumps(a),
-            )
+        _record_answered_events(ctx, answered)
+    _ledger_write(
+        ctx,
+        "answers",
+        lambda c: ledger.record_answers(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            answered=answered,
+            source="verifier",
+        ),
+    )
+
+
+def _record_answered_events(ctx: RunContext, answered: list[dict[str, Any]]) -> None:
+    """One `thread.answered` event per item an answering pass returned. Caller holds the
+    write transaction."""
+    for a in answered:
+        event(
+            ctx.conn,
+            "thread.answered",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=json.dumps(a),
+        )
 
 
 def _record_verdict(ctx: RunContext, phase: str, verified: VerifierOutput, new_event: str) -> None:
@@ -2310,13 +3577,15 @@ def _verdict_update(
     verifier_lm: LaneModel,
     *,
     phase2_skipped: str | None,
+    lifted_titles: list[str] | None = None,
 ) -> publish.PublishResult | None:
     """On a same-sha re-review, post a follow-up review when the verdict moved.
+    `lifted_titles` (policy v12): the blockers this round lifted, from the thread lane.
 
     Compares against the bot's LATEST review state for this (sha, phase), which includes
     earlier follow-ups, so the same correction is never posted twice. A review a maintainer
     dismissed is left dismissed: we only ever move from a state we set ourselves."""
-    if ctx.dry_run:
+    if ctx.dry_run and not ctx.replay:
         return None
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
@@ -2329,6 +3598,7 @@ def _verdict_update(
         adhoc=ctx.adhoc,
         fresh_final=ctx.fresh_final,
         degraded=_degraded_provenance(ctx),
+        confirmation=_confirmation_provenance(ctx),
     )
     state = publish.standing_verdict(
         github.reviews(ctx.gh, ctx.repo, ctx.number), ctx.sha, phase, ctx.cfg.bot_login
@@ -2357,16 +3627,19 @@ def _verdict_update(
             )
         ctx.kept_verdict = "APPROVE"
         return None
-    lifted = [
-        str(r.get("finding_hash"))
-        for r in _reconciliation(ctx, phase, verified).values()
-        if r.get("status") in {"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED"}
-    ]
-    titles = [
-        t["title"]
-        for h, t in ctx.open_threads.items()
-        if h in lifted and t.get("title") and t.get("severity") == "blocking"
-    ]
+    if lifted_titles is not None:
+        titles = lifted_titles
+    else:
+        lifted = [
+            str(r.get("finding_hash"))
+            for r in _reconciliation(ctx, phase, verified).values()
+            if r.get("status") in {"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED"}
+        ]
+        titles = [
+            t["title"]
+            for h, t in ctx.open_threads.items()
+            if h in lifted and t.get("title") and t.get("severity") == "blocking"
+        ]
     result = publish.publish_verdict_update(
         ctx.gh,
         repo=ctx.repo,
@@ -2378,7 +3651,11 @@ def _verdict_update(
         previous_event=state,
         lifted_blockers=titles,
         bot_login=ctx.cfg.bot_login,
+        dry_run=ctx.dry_run,
     )
+    if not result.posted:
+        _record_dry_publication(ctx, phase, result, verified.findings, verdict_update=True)
+        return result
     with tx(ctx.conn):
         ctx.conn.execute(
             "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
@@ -2466,6 +3743,7 @@ def _build_review(
         degraded=_degraded_provenance(ctx),
         compare_model=ctx.compare_model if compared else None,
         single_stage=ctx.single_stage and not ctx.phase1_skipped,
+        confirmation=_confirmation_provenance(ctx),
     )
     note = None
     head_row = ctx.conn.execute("SELECT status FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
@@ -2485,6 +3763,7 @@ def _build_review(
         dry_run=ctx.dry_run,
         superseded_note=note,
         rereview=rereview,
+        fresh=_fresh_threads(ctx),
         settled_hashes=ctx.settled_hashes,
     )
     held = [
@@ -2497,6 +3776,21 @@ def _build_review(
     return model
 
 
+def _fresh_threads(ctx: RunContext) -> Callable[[Finding, Any], bool] | None:
+    """Policy v12: a regression or a revival never folds onto the thread of a closed issue (it
+    would block from inside a resolved thread nobody reads); it gets a new thread, whose body
+    links the old one. Only a standing issue's thread can take it (a retry of this round)."""
+    if not ctx.cfg.policy.verifier_v12:
+        return None
+    standing = {h for h, i in ctx.issues.items() if i.status in rules.VERDICT_STANDING}
+
+    def fresh(f: Finding, comment: Any) -> bool:
+        reopens = bool(f.extra.get("revives") or f.extra.get("regression_of"))
+        return reopens and comment.finding_hash not in standing
+
+    return fresh
+
+
 def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
     """How a verifier/conversation lane is disclosed in the published provenance."""
     return {
@@ -2505,6 +3799,12 @@ def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
         "role": role,
         "substitute_for": lm.substitute_for,
     }
+
+
+def _confirmation_provenance(ctx: RunContext) -> dict[str, Any] | None:
+    """The policy v12 confirmation pass, disclosed when it ran on this head."""
+    c = ctx.confirmation
+    return {"roles": c.roles, "new": c.new} if c is not None and c.ran else None
 
 
 def _degraded_provenance(ctx: RunContext) -> dict[str, Any] | None:
@@ -2645,6 +3945,59 @@ def _triage_provenance(ctx: RunContext) -> dict[str, Any] | None:
     }
 
 
+def _finding_record(f: Finding) -> dict[str, Any]:
+    return {**f.to_dict(), "hash": f.hash}
+
+
+def _inline_record(comments: list[dict[str, Any]], kept: list[Finding]) -> list[dict[str, Any]]:
+    titles = {f.hash: f.title for f in kept}
+    out = []
+    for c in comments:
+        m = FINDING_MARKER_RE.search(str(c.get("body") or ""))
+        h = m.group(1) if m else ""
+        line = c.get("line")
+        out.append(
+            {
+                "hash": h,
+                "file": c.get("path"),
+                "line_start": c.get("start_line") or line,
+                "line_end": line,
+                "title": titles.get(h, ""),
+            }
+        )
+    return out
+
+
+def _record_dry_publication(
+    ctx: RunContext,
+    phase: str,
+    result: publish.PublishResult,
+    kept: list[Finding],
+    *,
+    verdict_update: bool = False,
+) -> None:
+    """A dry run posts nothing and writes no `posted` rows: keep what would have been posted
+    as `publication-<phase>.json` (read by `reviewsys replay`'s report). A same-sha verdict
+    follow-up stands on the verifier's findings (`verdict_update`)."""
+    (ctx.run_dir / f"publication-{phase}.json").write_text(
+        json.dumps(
+            {
+                "phase": phase,
+                "event": result.event,
+                "transport_event": result.transport_event,
+                "verdict_update": verdict_update,
+                "kept": [_finding_record(f) for f in kept],
+                "suppressed": len(result.suppressed),
+                # the inline comments it would open (a new thread each): the eval counts those
+                # landing on an issue that already has an open thread
+                "inline": _inline_record(result.comments, kept),
+                "body": result.body,
+            },
+            indent=1,
+        )
+    )
+
+
 def _record_publication(
     ctx: RunContext,
     phase: str,
@@ -2652,6 +4005,8 @@ def _record_publication(
     result: publish.PublishResult,
     verified: VerifierOutput,
 ) -> None:
+    if ctx.dry_run:
+        _record_dry_publication(ctx, phase, result, model.kept)
     with tx(ctx.conn):
         if result.posted:
             ctx.conn.execute(
@@ -2681,6 +4036,31 @@ def _record_publication(
             review_id=result.review_id,
             review_url=result.review_url,
         )
+    if result.posted:
+        _ledger_write(
+            ctx,
+            "publication",
+            lambda c: ledger.record_published(
+                c,
+                ctx.repo,
+                ctx.number,
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+                posted=model.kept,
+                kept=verified.findings,
+                deduped_comment_ids=[s.comment_id for s in model.suppressed if s.comment_id],
+            ),
+        )
+
+
+def _ledger_write(ctx: RunContext, what: str, fn: Callable[[sqlite3.Connection], object]) -> None:
+    """Write-through to the issue ledger (ledger.py), after the step's own bookkeeping has
+    committed. Write-only under policy v11: nothing reads it, and a failed write is logged and
+    recorded (`ledger.write_failed`), never raised. Audits and dry runs are not part of a PR's
+    review history."""
+    if ctx.is_audit or ctx.dry_run:
+        return
+    ledger.safe_write(ctx.conn, what, fn, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id)
 
 
 # ---- orchestration ----
@@ -2695,13 +4075,20 @@ def _reviewer_step(
     expected_phase: str,
     fresh: bool = False,
     abort: StopSignal | None = None,
+    roles: list[str] | None = None,
 ) -> dict[str, ReviewerOutput]:
     # the planned lanes, so a phase that is still going can say how many of them are done
-    _step_start(ctx, step, {"roles": _phase_roles(ctx, phase)})
+    _step_start(ctx, step, {"roles": roles if roles is not None else _phase_roles(ctx, phase)})
     if callable(lm):
         lm = lm()  # Phase 1 picks its model inside the step, so a slow lookup shows there
     outputs = _reviewer_lanes(
-        ctx, phase=phase, lm=lm, expected_phase=expected_phase, fresh=fresh, abort=abort
+        ctx,
+        phase=phase,
+        lm=lm,
+        expected_phase=expected_phase,
+        fresh=fresh,
+        abort=abort,
+        roles=roles,
     )
     _step_end(ctx, step, "ok", {"roles": list(outputs)})
     return outputs
@@ -3143,19 +4530,25 @@ def _standing_review(ctx: RunContext) -> dict[str, Any] | None:
 
 
 def _fetch_linked_commits(
-    ctx: RunContext, threads: dict[str, dict[str, Any]]
+    ctx: RunContext,
+    threads: dict[str, dict[str, Any]],
+    *,
+    should_stop: Callable[[], bool] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """(fetched, unfetched) commits humans linked in the replied threads. Only commits from a
     fork of this repository are fetched (the delta against the mirror is small); anything else
     is reported to the model as unavailable with the reason. Fetched ones land in the shared
-    object store, so `git show <sha>` works inside the run's worktree."""
+    object store, so `git show <sha>` works inside the run's worktree. `should_stop` (the
+    policy v12 thread lane) is polled between fetches."""
     fetched: list[dict[str, str]] = []
     unfetched: list[dict[str, str]] = []
     if not ctx.mirror:
         return fetched, unfetched
     own_name = ctx.repo.split("/", 1)[1].lower()
     for i, c in enumerate(converse.linked_commits(threads)):
-        if i >= LINKED_COMMIT_LIMIT:
+        if should_stop is not None and should_stop():
+            unfetched.append({**c, "reason": "not fetched: the run is stopping"})
+        elif i >= LINKED_COMMIT_LIMIT:
             unfetched.append({**c, "reason": f"more than {LINKED_COMMIT_LIMIT} commits linked"})
         elif c["repo"].lower() != own_name:
             unfetched.append({**c, "reason": "not a fork of this repository"})
@@ -3286,18 +4679,24 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     lifted = {h for h in posted_ok if out.outcomes[h].status in converse.LIFTING_STATUSES}
     silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
     with tx(ctx.conn):
-        for a in answered:
-            event(
-                ctx.conn,
-                "thread.answered",
-                repo=ctx.repo,
-                number=ctx.number,
-                run_id=ctx.run_id,
-                detail=json.dumps(a),
-            )
+        _record_answered_events(ctx, answered)
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
         _record_conceded(ctx, phase, {h: out.outcomes[h] for h in lifted})
+    _ledger_write(
+        ctx,
+        "conversation",
+        lambda c: ledger.record_answers(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            answered=answered,
+            source="conversation",
+            conceded=lifted,
+        ),
+    )
     kept = _standing_findings(ctx, phase, lifted=lifted)
     summary = _mark_lifted_in_review(ctx, phase, kept, reviews)
     update = None
@@ -3480,6 +4879,7 @@ def _record_conceded(
                 "general",
                 t.get("title") or h,
                 o.status + (f"\n{o.tracking_url}" if o.tracking_url else ""),
+                None,
             )
         )
     ctx.conn.executemany(_FINDINGS_INSERT, rows)
@@ -3638,6 +5038,35 @@ def _open_blockers(ctx: RunContext, phase: str, *, lifted: set[str] | None = Non
     return _standing_findings(ctx, phase, lifted=lifted).blockers
 
 
+def _strength_row(ctx: RunContext, run_id: int) -> sqlite3.Row | None:
+    """What makes a run's review strong enough to carry an approval: degraded mode, its Phase
+    2 and second-pass steps, whether it was a later round, and (policy v12) dropped verifier
+    shards and why its confirmation pass did not run."""
+    row: sqlite3.Row | None = ctx.conn.execute(
+        "SELECT r.degraded, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh_phase2, "
+        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh_verify2, "
+        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later, "
+        "EXISTS (SELECT 1 FROM events WHERE run_id=r.id AND kind='verify.shard_dropped') "
+        "AS dropped, "
+        "EXISTS (SELECT 1 FROM events WHERE run_id=r.id AND kind='threads.conflict') "
+        "AS conflict, "
+        "(SELECT kind || ':' || detail FROM events WHERE run_id=r.id AND kind IN "
+        "('confirmation.skipped', 'confirmation.failed') ORDER BY id DESC LIMIT 1) AS skipped "
+        "FROM runs r WHERE r.id=?",
+        (
+            StepName.PHASE2.value,
+            StepName.FRESH_PHASE2.value,
+            StepName.FRESH_VERIFY2.value,
+            ctx.repo,
+            ctx.number,
+            run_id,
+        ),
+    ).fetchone()
+    return row
+
+
 def _mark_lifted_in_review(
     ctx: RunContext, phase: str, standing: _Standing, reviews: list[dict[str, Any]]
 ) -> str:
@@ -3694,24 +5123,21 @@ def _review_strength(ctx: RunContext, run_id: int | None) -> str:
     which skips it while blockers stand). "ok", "needs_fresh" or "weak"."""
     if run_id is None:
         return "weak"
-    row = ctx.conn.execute(
-        "SELECT r.degraded, "
-        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS phase2, "
-        "(SELECT status FROM steps WHERE run_id=r.id AND name=?) AS fresh, "
-        "EXISTS (SELECT 1 FROM reviews WHERE repo=? AND number=? AND run_id<r.id) AS later "
-        "FROM runs r WHERE r.id=?",
-        (StepName.PHASE2.value, StepName.FRESH_PHASE2.value, ctx.repo, ctx.number, run_id),
-    ).fetchone()
+    row = _strength_row(ctx, run_id)
     if not row or row["degraded"] or row["phase2"] != "ok":
         return "weak"
-    return "needs_fresh" if row["later"] and row["fresh"] != "ok" else "ok"
+    return "needs_fresh" if row["later"] and row["fresh_phase2"] != "ok" else "ok"
+
+
+def _fresh_audit_guard(ctx: RunContext) -> str:
+    return f"converse.fresh_audit:{ctx.repo}#{ctx.number}:{ctx.sha}"
 
 
 def _request_fresh_audit(ctx: RunContext) -> bool:
     """Ask for one same-sha re-review once this conversation run ends, so the fresh Phase-2
     audit the standing review skipped can run and approve. Once per commit: a re-review that
     re-raises a finding is answered in its threads like any other. True if requested now."""
-    guard = f"converse.fresh_audit:{ctx.repo}#{ctx.number}:{ctx.sha}"
+    guard = _fresh_audit_guard(ctx)
     with tx(ctx.conn):
         if kv_get(ctx.conn, guard):
             return False
@@ -3747,37 +5173,18 @@ def _conversation_verdict_update(
         # nothing of the publication's own set was lifted (it was clean, or only nitpicks
         # went): the discussion removed nothing the verdict rests on, so it stays
         return None
-    # the lane ran for minutes: a push or a dismissal since then must not get an approval
-    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
-    state = publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login)
-    if state not in {"CHANGES_REQUESTED", "COMMENTED"}:
-        return None  # approved already, or dismissed: a human overrode us; do not re-assert
+    state = _live_verdict_state(ctx, phase)
+    if state is None:
+        return None
     left = sum(1 for sev in standing.findings.values() if sev != "nitpick")
     strength = _review_strength(ctx, standing.run_id)
     clear = standing.verified and standing.lifted_any and not left
     # a code check failed after this commit's approval and looked related (ci.py): only a
     # review that sees that failure may approve the commit again, not a discussion
     ci_hold = kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)) is not None
-    prov = publish.Provenance(
-        reviewers=[],
-        verifier=_lane_provenance(lm, "conversation"),
-        policy_fingerprint=ctx.cfg.policy.fingerprint,
-        adhoc=ctx.adhoc,
-        conversation=True,
-        degraded=_degraded_provenance(ctx),
-    )
-    verified = VerifierOutput(
-        summary="",
-        review_action="APPROVE" if clear and strength == "ok" and not ci_hold else "COMMENT",
-        findings=[],
-        dropped=[],
-        out_of_scope=[],
-        coderabbit_reactions=[],
-        prerequisite_adjudications=[],
-        adjudication_complete=True,
-        review_phase=phase,
-        raw={},
+    prov = _conversation_provenance(ctx, lm)
+    verified = _verdict_only(
+        phase, "APPROVE" if clear and strength == "ok" and not ci_hold else "COMMENT"
     )
     new_event = publish.verdict_event(verified, prov)
     source = f"the full review of `{ctx.sha[:8]}`" + (
@@ -3819,6 +5226,67 @@ def _conversation_verdict_update(
             "Not approved: the standing review of this commit did not run at full strength "
             "(Phase 2 or the primary models were missing), so it cannot carry an approval."
         )
+    titles = [
+        t["title"]
+        for h, t in ctx.open_threads.items()
+        if h in lifted and t.get("severity") == "blocking" and t.get("title")
+    ]
+    return _post_conversation_update(
+        ctx, phase, verified, prov, state=state, new_event=new_event, titles=titles, note=note
+    )
+
+
+def _live_verdict_state(ctx: RunContext, phase: str) -> str | None:
+    """The bot's standing verdict on this commit's `phase` review when a conversation may move
+    it, else None (approved already, or dismissed: a human overrode us; do not re-assert). The
+    lane ran for minutes: a push or a dismissal since then must not get an approval, so the
+    head is checked live first."""
+    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
+    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    state = publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login)
+    return state if state in {"CHANGES_REQUESTED", "COMMENTED"} else None
+
+
+def _conversation_provenance(ctx: RunContext, lm: LaneModel) -> publish.Provenance:
+    return publish.Provenance(
+        reviewers=[],
+        verifier=_lane_provenance(lm, "conversation"),
+        policy_fingerprint=ctx.cfg.policy.fingerprint,
+        adhoc=ctx.adhoc,
+        conversation=True,
+        degraded=_degraded_provenance(ctx),
+    )
+
+
+def _verdict_only(phase: str, action: str) -> VerifierOutput:
+    """A verdict with nothing else: what a conversation's follow-up review stands on."""
+    return VerifierOutput(
+        summary="",
+        review_action=action,
+        findings=[],
+        dropped=[],
+        out_of_scope=[],
+        coderabbit_reactions=[],
+        prerequisite_adjudications=[],
+        adjudication_complete=True,
+        review_phase=phase,
+        raw={},
+    )
+
+
+def _post_conversation_update(
+    ctx: RunContext,
+    phase: str,
+    verified: VerifierOutput,
+    prov: publish.Provenance,
+    *,
+    state: str,
+    new_event: str,
+    titles: list[str],
+    note: str,
+) -> publish.PublishResult | None:
+    """Post a conversation's verdict follow-up on the commit and record it; nothing when
+    GitHub would record the state it already shows (then only our own record moves)."""
     assert ctx.meta
     own = ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
     if publish.EVENT_STATE[publish.transport_event(new_event, own_pr=own)] == state:
@@ -3829,11 +5297,6 @@ def _conversation_verdict_update(
         if approved:  # a bot-authored PR: the APPROVE exists only in our record
             _watch_ci(ctx, known=[])
         return None
-    titles = [
-        t["title"]
-        for h, t in ctx.open_threads.items()
-        if h in lifted and t.get("severity") == "blocking" and t.get("title")
-    ]
     result = publish.publish_verdict_update(
         ctx.gh,
         repo=ctx.repo,
@@ -3877,6 +5340,853 @@ def _conversation_verdict_update(
         # nothing weighed CI for this approval: the discussion only lifted findings
         _watch_ci(ctx, known=[])
     return result
+
+
+# ---- policy v12: confirmation pass, publishing from the ledger, same-sha thread lane ----
+
+
+def _confirmation_due(ctx: RunContext) -> bool:
+    """Whether the policy asks for a confirmation pass on this round (v12 design §2.5):
+    "no_blockers" on every round, "rereview" on re-reviews only (today's fresh-final rounds),
+    "off" never, and never on an audit."""
+    trigger = ctx.cfg.policy.confirmation_trigger
+    if trigger == "off" or ctx.is_audit:
+        return False
+    return trigger == "no_blockers" or ctx.has_prior_review
+
+
+def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) -> VerifierOutput:
+    """The confirmation pass (replaces fresh-final under the v12 verifier): when no blocker
+    stands after the code rules on a full-strength run, the confirmation roles (general and
+    security-auditor in policy v12) review the whole change once more, unanchored, and only
+    their candidates are verified, against everything already verified this round. Skipped
+    while blockers stand, in degraded mode (which never approves) or when verification was
+    incomplete. Recorded on the run (`ctx.confirmation`); an approval needs it when the policy
+    asks for it. Its lanes failing for good costs the approval, never the review; a blocker
+    its verification could not check fails the run, as in the main pass."""
+    if not _confirmation_due(ctx):
+        return verified
+    pol = ctx.cfg.policy
+    assert pol.pipeline is not None
+    wanted = pol.pipeline.confirmation.roles
+    conf = ctx.confirmation = _Confirmation(
+        roles=[r for r in _phase_roles(ctx, "phase2") if wanted is None or r in wanted]
+    )
+    conf.skipped = _confirmation_skip(ctx, verified, effort, conf.roles)
+    if conf.skipped:
+        _lane_event(ctx, "confirmation.skipped", conf.skipped)
+        return verified
+    step = StepName.FRESH_PHASE2
+    try:
+        outs = _reviewer_step(
+            ctx,
+            step=step,
+            phase="phase2",
+            lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
+            expected_phase="final",
+            fresh=True,
+            roles=conf.roles,
+        )
+        step = StepName.FRESH_VERIFY2
+        _step_start(ctx, step)
+        delta = _verify12(
+            ctx,
+            phase="verify2",
+            lm=ctx.lane_model(pol.phase2_verifier),
+            expected_phase="final",
+            candidates=_candidates_of(outs),
+            note=(
+                "These candidates (`cf-*`) come from a second, independent pass over the same "
+                "head, run because the first found no blocker. The ledger's open list includes "
+                "the issues this round already raised (status `raised this round`): a candidate "
+                "restating one of them matches it as `open:<hash>`."
+            ),
+            raised_now=[*verified.findings, *verified.noted],
+            stage="verified-fresh",
+        )
+        _step_end(ctx, step, "ok", {"blockers": delta.blocker_count, "new": len(delta.findings)})
+    except UncheckedBlockers:
+        raise
+    except ReviewError as exc:
+        ctx.check_cancel()
+        _step_end(ctx, step, "failed", {"error": exc.message[:1000]})
+        conf.skipped = f"failed: {exc.message[:200]}"
+        _lane_event(ctx, "confirmation.failed", exc.message)
+        return verified
+    conf.ran, conf.new = True, len(delta.findings)
+    _merge_confirmation(verified, delta)
+    return verified
+
+
+def _confirmation_skip(
+    ctx: RunContext, verified: VerifierOutput, effort: TierEffort, roles: list[str]
+) -> str | None:
+    """Why the confirmation pass cannot run on this round, or None when it can."""
+    pol = ctx.cfg.policy
+    if verified.blocker_count:
+        return "blockers stand"
+    if ctx.is_degraded:
+        return "degraded mode"
+    if not pol.phase2_enabled or effort.phase2 is None:
+        return "no Phase 2"
+    if ctx.verify_incomplete:
+        return "verification incomplete"
+    if not roles:
+        return "no confirmation role selected"
+    return None
+
+
+def _merge_confirmation(verified: VerifierOutput, delta: VerifierOutput) -> None:
+    """The confirmation pass's verified delta, added to the round's verified set."""
+    verified.findings += delta.findings
+    verified.noted += delta.noted
+    verified.dropped += delta.dropped
+    have = {x["comment_id"] for x in verified.coderabbit_reactions}
+    verified.coderabbit_reactions += [
+        x for x in delta.coderabbit_reactions if x["comment_id"] not in have
+    ]
+    r, d = verified.rules, delta.rules
+    if r is None or d is None:
+        return
+    for h, ms in d.corroborated.items():
+        r.corroborated.setdefault(h, []).extend(ms)
+    for h, v in d.refound.items():
+        if r.refound.get(h) != "CONFIRMED":
+            r.refound[h] = v
+    for h, f in d.upgrades.items():
+        r.upgrades.setdefault(h, f)
+
+
+def _verdict12(
+    ctx: RunContext, phase: str, verified: VerifierOutput, phase2_skipped: str | None
+) -> str:
+    """The round's verdict from the ledger (v12 design §3): any standing blocker requests
+    changes; APPROVE needs nothing above a nitpick standing, a final review on the full
+    pipeline (Phase 2 ran, primary models, every candidate verified) and the confirmation pass
+    when the policy asks for one; otherwise COMMENT. The model's own `review_action` is never
+    asked for."""
+    blockers = verified.blocker_count
+    suggestions = sum(
+        1 for f in (*verified.findings, *verified.carried) if f.severity == "suggestion"
+    )
+    full = (
+        phase == "final"
+        and not phase2_skipped
+        and not ctx.is_degraded
+        and not ctx.verify_incomplete
+        and not ctx.thread_failed  # someone may be waiting on a thread nobody read
+        and not ctx.thread_conflict  # a concession and a re-find disagree; a human decides
+        and not ctx.is_audit
+    )
+    confirmed = ctx.confirmation is None or ctx.confirmation.ran
+    return rules.verdict(
+        blockers=blockers, suggestions=suggestions, full_strength=full, confirmed=confirmed
+    )
+
+
+def _record_thread_answers(
+    ctx: RunContext,
+    answered: list[dict[str, Any]],
+    outs: dict[str, converse.ThreadOutcome],
+    *,
+    source: str,
+    phase: str,
+) -> set[str]:
+    """Book what the thread lane's outcomes did: `thread.answered` events, silence memory for a
+    reply met with NO_REPLY, `conceded` rows for what a delivered outcome withdrew or deferred,
+    the ledger outcomes (an outcome moves its issue only once it is on the thread, or the issue
+    has none), the affirmed issues' `last_seen`, and the reconcile's pending list. Returns the
+    hashes the delivered outcomes closed."""
+    delivered = {
+        str(a["finding_hash"]): str(a["status"])
+        for a in answered
+        if a.get("action") in ledger.DELIVERED_ACTIONS
+    }
+    considered = {str(a["finding_hash"]) for a in answered}
+    lifted = {h for h, st in delivered.items() if ledger.OUTCOME_STATUS.get(st) in ledger.CLOSED}
+    conceded = {h for h in lifted if delivered[h] in converse.LIFTING_STATUSES}
+    silent = {
+        h
+        for h, o in outs.items()
+        if not o.reply
+        and h in considered
+        and (ctx.open_threads.get(h) or {}).get("awaiting_answer")
+    }
+    affirmed = {h for h, o in outs.items() if o.status in {"STILL_VALID", "FIX_PENDING"}}
+    with tx(ctx.conn):
+        _record_answered_events(ctx, answered)
+        for h in silent:
+            kv_set(ctx.conn, _silent_key(ctx, h), str(ctx.open_threads[h].get("latest_reply_id")))
+        _record_conceded(ctx, phase, {h: outs[h] for h in conceded})
+
+    def record(c: sqlite3.Connection) -> None:
+        ledger.record_answers(
+            c,
+            ctx.repo,
+            ctx.number,
+            run_id=ctx.run_id,
+            sha=ctx.sha,
+            answered=answered,
+            source=source,
+            conceded=conceded,
+        )
+        ledger.record_seen(
+            c, ctx.repo, ctx.number, run_id=ctx.run_id, sha=ctx.sha, hashes=affirmed, source=source
+        )
+        ledger.settle_pending(c, ctx.repo, ctx.number, outs)
+
+    _ledger_write(ctx, "thread outcomes", record)
+    return lifted
+
+
+def _apply_thread_outcomes(ctx: RunContext, verified: VerifierOutput, phase: str) -> set[str]:
+    """Deliver the new-sha thread lane's outcomes on their threads, a FIXED / OUTDATED of an
+    issue a finder just restated suppressed (it stays open, unanswered), and book them."""
+    outs = _thread_outcomes(ctx)
+    if ctx.dry_run:
+        # nothing goes on a thread, nothing is booked; a replay still decides on what the
+        # outcomes would lift (the titles of a same-sha verdict follow-up)
+        return _projected_lifted(outs, _refound(verified)) if ctx.replay else set()
+    corroborated = _refound(verified)
+    answered: list[dict[str, Any]] = []
+    deliver: dict[str, converse.ThreadOutcome] = {}
+    for h, o in outs.items():
+        if o.status in {"FIXED", "OUTDATED"} and h in corroborated:
+            answered.append(
+                {
+                    "finding_hash": h,
+                    "status": o.status,
+                    "action": "suppressed_refound",
+                    "mode": "thread",
+                }
+            )
+        else:
+            deliver[h] = o
+    if deliver or corroborated:
+        answered += publish.answer_thread_lane(
+            ctx.gh,
+            ctx.repo,
+            ctx.number,
+            ctx.sha,
+            outcomes=deliver,
+            threads=ctx.open_threads,
+            same_sha=False,
+            keep=corroborated,
+            settled=_ledger_deferred(ctx, deliver),
+        )
+    if not outs and not answered:
+        return set()
+    return _record_thread_answers(ctx, answered, outs, source="thread", phase=phase)
+
+
+def _resolve_conflicts(ctx: RunContext, verified: VerifierOutput) -> None:
+    """A maintainer-driven concession (WITHDRAWN, or a deferral a maintainer made) wins over a
+    finder restating the same issue this round: the finders never saw the reply. The issue is
+    not raised in place, the disagreement is recorded (`threads.conflict`, for the eval), and
+    the round cannot approve. A FIXED / OUTDATED outcome a finder contradicts is the other way
+    round (the issue stays open: `_apply_thread_outcomes`)."""
+    outcome = _outcome(verified)
+    outs = _thread_outcomes(ctx)
+    conflicts = {
+        h: {"finding_hash": h, "outcome": outs[h].status, "verdict": outcome.refound.get(h, "")}
+        for h in outcome.corroborated
+        if h in outs and outs[h].status in converse.LIFTING_STATUSES
+    }
+    for h in conflicts:
+        outcome.upgrades.pop(h, None)
+    _record_conflicts(ctx, list(conflicts.values()))
+
+
+def _record_conflicts(ctx: RunContext, conflicts: list[dict[str, Any]]) -> None:
+    """Concessions this round that a finder contradicted (`threads.conflict`, for the eval):
+    the round cannot approve."""
+    if not conflicts:
+        return
+    ctx.thread_conflict = True
+    with tx(ctx.conn):
+        for c in conflicts:
+            event(
+                ctx.conn,
+                "threads.conflict",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=json.dumps(c),
+            )
+
+
+def _drop_settled_refolds(ctx: RunContext, verified: VerifierOutput) -> None:
+    """A new issue that publish-time dedupe would fold onto a settled issue's thread (the
+    verifier saw a new title; dedupe sees the same lines and a similar title) is that issue
+    raised again, so it gets the rule `rules.apply_rules` gives a `settled:` match: dropped
+    unless the code at it changed since it was settled (`_closed_changed`). One conceded on its
+    thread this very round is settled too, and the re-find is a conflict (H1: the concession
+    wins). Runs before the verdict, so a dropped one blocks nothing."""
+    if not verified.findings:
+        return
+    records = [
+        ExistingComment.from_github(c)
+        for c in github.inline_comments(ctx.gh, ctx.repo, ctx.number)
+        if (c.get("user") or {}).get("login") == ctx.cfg.bot_login
+    ]
+    if not records:
+        return
+    fresh = _fresh_threads(ctx)
+    outs = _thread_outcomes(ctx)
+    by_comment = {str(i.comment_id): i for i in ctx.issues.values() if i.comment_id}
+    keep: list[Finding] = []
+    conflicts: list[dict[str, Any]] = []
+    for f in verified.findings:
+        candidates = records if fresh is None else [r for r in records if not fresh(f, r)]
+        match, _ = find_duplicate(f, candidates)
+        issue = (ctx.issues.get(match.finding_hash) or by_comment.get(match.id)) if match else None
+        o = outs.get(issue.hash) if issue is not None else None
+        conceded = o is not None and o.status in converse.LIFTING_STATUSES
+        settled = issue is not None and issue.status in rules.MATCH_SETTLED
+        if issue is None or not (conceded or settled):
+            keep.append(f)
+            continue
+        if conceded:
+            conflicts.append(
+                {
+                    "finding_hash": issue.hash,
+                    "outcome": outs[issue.hash].status,
+                    "verdict": str(f.extra.get("verdict") or ""),
+                }
+            )
+        elif _closed_changed(ctx, issue) is True:
+            keep.append(f)  # revived: publishing folds it onto its own thread, re-opening it
+            continue
+        verified.dropped.append(
+            {
+                "original_title": f.title,
+                "members": f.extra.get("members") or [],
+                "reason": f"SETTLED: restates {issue.status if settled else 'conceded'} issue "
+                f"{issue.hash} on its thread; the code at it has not changed since",
+                "follow_up": False,
+            }
+        )
+        _lane_event(ctx, "v12.settled_refold", f"{f.title[:200]} -> {issue.hash}")
+    verified.findings = keep
+    _record_conflicts(ctx, conflicts)
+
+
+def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
+    """An open non-blocking issue a candidate restated and the verifier CONFIRMED as blocking
+    is raised in place: the ledger's severity, and a note on its thread (never a new thread)."""
+    outcome = _outcome(verified)
+    if not outcome.upgrades or ctx.dry_run:
+        return
+    for h, f in outcome.upgrades.items():
+        t = ctx.open_threads.get(h)
+        if t and t.get("comment_id"):
+            note = publish.scrub_reply(
+                f"Raising this to **blocking** at `{ctx.sha[:8]}`: {f.extra.get('evidence') or f.body}",
+                2500,
+            )
+            if note:
+                try:
+                    github.post_reply(ctx.gh, ctx.repo, ctx.number, int(t["comment_id"]), note)
+                except (ReviewError, ValueError) as exc:
+                    log.warning("severity note on %s failed: %s", h, exc)
+
+    def record(c: sqlite3.Connection) -> None:
+        for h, f in outcome.upgrades.items():
+            ledger.raise_severity(
+                c,
+                ctx.repo,
+                ctx.number,
+                h,
+                "blocking",
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+                source="verifier",
+                reason=str(f.extra.get("evidence") or ""),
+            )
+
+    _ledger_write(ctx, "severity", record)
+
+
+def _ledger_after(ctx: RunContext, verified: VerifierOutput) -> dict[str, ledger.Issue]:
+    """The ledger after this round's outcomes: re-read once they are recorded; projected in a
+    dry run, where nothing is."""
+    if not ctx.dry_run:
+        return ledger.load(ctx.conn, ctx.repo, ctx.number)
+    corroborated = _refound(verified)
+    upgrades = _outcome(verified).upgrades
+    return rules.project(
+        ctx.issues, _pending_statuses(_thread_outcomes(ctx), corroborated), upgrades
+    )
+
+
+def _publish12(
+    ctx: RunContext,
+    *,
+    phase: str,
+    verified: VerifierOutput,
+    verifier_lm: LaneModel,
+    phase2_skipped: str | None,
+) -> publish.PublishResult:
+    """Publish a policy v12 round from the ledger: the thread lane's outcomes go on their
+    threads first, then the verdict is computed over what the ledger now holds plus this
+    round's new issues (`_verdict12`), and the review posts the new issues inline and lists
+    the carried ones under "Still open from earlier rounds" (never re-posted)."""
+    _require_live_base(ctx)
+    before = dict(ctx.issues)
+    _drop_settled_refolds(ctx, verified)
+    _apply_budget(ctx, verified)
+    _resolve_conflicts(ctx, verified)
+    lifted = _apply_thread_outcomes(ctx, verified, phase)
+    _apply_upgrades(ctx, verified)
+    verified.carried = _carried12(ctx, _ledger_after(ctx, verified))
+    verified.review_action = _verdict12(ctx, phase, verified, phase2_skipped)
+    corroborated = _refound(verified)
+    if corroborated:
+        _ledger_write(
+            ctx,
+            "corroborated",
+            lambda c: ledger.record_seen(
+                c,
+                ctx.repo,
+                ctx.number,
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+                hashes=corroborated,
+                source="verifier",
+            ),
+        )
+    existing, phase = _existing_review(ctx, phase)
+    if existing:
+        # a same-sha re-review: as v11, never a second full review for the commit; a verdict
+        # that moved gets a follow-up
+        _backfill_posted(ctx, phase, existing, verified)
+        update = _verdict_update(
+            ctx,
+            phase,
+            verified,
+            verifier_lm,
+            phase2_skipped=phase2_skipped,
+            lifted_titles=_lifted_blocker_titles(before, lifted),
+        )
+        if update is not None:
+            return update
+    model, result = _publish_review(
+        ctx,
+        phase=phase,
+        verified=verified,
+        verifier_lm=verifier_lm,
+        phase2_skipped=phase2_skipped,
+        rereview=bool(existing),
+    )
+    _record_folds(ctx, model)
+    _record_revivals(ctx, verified)
+    return result
+
+
+def _apply_budget(ctx: RunContext, verified: VerifierOutput) -> None:
+    """The comment budget (`rules.within_budget`): what is over it is dropped, and the summary
+    says how many."""
+    verified.findings, over = rules.within_budget(verified.findings, ctx.cfg.comment_budget)
+    if not over:
+        return
+    verified.dropped += [
+        {"original_title": f.title, "reason": "BUDGET: over the comment budget"} for f in over
+    ]
+    verified.summary += (
+        f"\n\n_{len(over)} more non-blocking finding(s) over the comment budget of "
+        f"{ctx.cfg.comment_budget} are not posted on this round._"
+    )
+
+
+def _outcome(v: VerifierOutput) -> rules.Outcome:
+    """The code rules' account of a v12 verifier answer (an empty one for any other)."""
+    return v.rules if isinstance(v.rules, rules.Outcome) else rules.Outcome()
+
+
+def _blockers(issues: Iterable[ledger.Issue]) -> int:
+    return sum(1 for i in issues if i.severity == "blocking")
+
+
+def _refound(verified: VerifierOutput) -> set[str]:
+    """The ledger issues a candidate restated this round."""
+    return set(_outcome(verified).corroborated)
+
+
+def _lifted_blocker_titles(before: dict[str, ledger.Issue], lifted: set[str]) -> list[str]:
+    return [before[h].title for h in lifted if h in before and before[h].severity == "blocking"]
+
+
+def _record_folds(ctx: RunContext, model: publish.ReviewModel) -> None:
+    """Every new issue publishing folded onto an existing finding comment becomes that
+    comment's ledger issue (`ledger.attach_folded`): affirmed, re-opened, or recorded, so it
+    is listed, judged and withdrawable instead of blocking from nowhere."""
+    folds = [s for s in model.suppressed if s.comment_id]
+    if not folds:
+        return
+
+    def reopens(i: ledger.Issue) -> bool:
+        # a settled issue only comes back on code that changed since (as `settled:` does)
+        return i.status not in rules.MATCH_SETTLED or _closed_changed(ctx, i) is True
+
+    def record(c: sqlite3.Connection) -> None:
+        for s in folds:
+            ledger.attach_folded(
+                c,
+                ctx.repo,
+                ctx.number,
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+                finding=s.finding,
+                comment_hash=s.comment_hash,
+                comment_id=s.comment_id,
+                reopens=reopens,
+            )
+
+    _ledger_write(ctx, "folds", record)
+
+
+def _record_revivals(ctx: RunContext, verified: VerifierOutput) -> None:
+    """A settled issue raised again on changed code under its own title keeps its identity:
+    publishing dedupes it onto its old thread, so the ledger re-opens it explicitly (under a
+    new title it is a new issue, and the old one stays settled)."""
+    revived = sorted(
+        {
+            str(f.extra["revives"])
+            for f in verified.findings
+            if f.extra.get("revives") and f.hash == f.extra["revives"]
+        }
+    )
+    if not revived:
+        return
+
+    def record(c: sqlite3.Connection) -> None:
+        for h in revived:
+            ledger.transition(
+                c,
+                ctx.repo,
+                ctx.number,
+                h,
+                ledger.OPEN,
+                run_id=ctx.run_id,
+                sha=ctx.sha,
+                source="verifier",
+                reason="raised again: the code at it changed since it was settled",
+            )
+
+    _ledger_write(ctx, "revival", record)
+
+
+def _ledger_blockers(ctx: RunContext) -> int:
+    stand = _stand12(ctx, ledger.load(ctx.conn, ctx.repo, ctx.number))
+    return _blockers(stand)
+
+
+def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
+    """A reply on a reviewed commit under policy v12: the thread lane in same-sha mode over
+    the threads awaiting an answer (FIXED there is FIX_PENDING), its outcomes delivered and
+    recorded in the ledger, then the verdict restated over the ledger (#38,
+    `_conversation_verdict12`). A conversation never adds blockers."""
+    assert ctx.meta and ctx.worktree
+    phase = str(standing["phase"])
+    threads = _threads_to_answer(ctx)
+    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    if not threads:
+        # nothing to say; a review body an earlier run left stale is repaired (as under v11)
+        _gate_comment(ctx, "done", phase=phase, blocker_count=_ledger_blockers(ctx))
+        return {
+            "answered": 0,
+            "reason": "no thread awaiting an answer",
+            "review_summary": _mark_lifted_in_review(
+                ctx, phase, _lifted_standing12(ctx, phase), reviews
+            ),
+        }
+    out, lm = _run_thread_lane(
+        ctx,
+        {h: ["reply"] for h in threads},
+        same_sha=True,
+        standing_verdict=publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login),
+    )
+    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
+    before = ledger.load(ctx.conn, ctx.repo, ctx.number)
+    answered: list[dict[str, Any]] = []
+    if not ctx.dry_run:
+        answered = publish.answer_thread_lane(
+            ctx.gh,
+            ctx.repo,
+            ctx.number,
+            ctx.sha,
+            outcomes=out.outcomes,
+            threads=ctx.open_threads,
+            same_sha=True,
+            settled=_ledger_deferred(ctx, out.outcomes),
+        )
+    lifted = _record_thread_answers(ctx, answered, out.outcomes, source="conversation", phase=phase)
+    # the standing review's body says what the discussion lifted, as under v11 (its counts
+    # and agent prompt would otherwise go on listing a withdrawn blocker)
+    summary = _mark_lifted_in_review(ctx, phase, _lifted_standing12(ctx, phase), reviews)
+    issues = (
+        ledger.load(ctx.conn, ctx.repo, ctx.number)
+        if not ctx.dry_run
+        else rules.project(before, _pending_statuses(out.outcomes, set()))
+    )
+    stand = _stand12(ctx, issues, out.outcomes)
+    blockers = _blockers(stand)
+    update = None
+    replayed: dict[str, Any] = {}
+    if not ctx.dry_run:
+        update = _conversation_verdict12(ctx, phase, lm, stand, lifted=lifted, before=before)
+    elif ctx.replay:
+        # a replay delivers nothing (its gh is read-only), so it decides on what the outcomes
+        # would lift and records the follow-up it would post (the eval's S8 reads it)
+        lifted = _projected_lifted(out.outcomes, set())
+        replayed["would_post"] = _would_post12(ctx, phase, lm, stand, lifted=lifted, before=before)
+        path = ctx.run_dir / "conversation.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), **replayed}, indent=1))
+    _gate_comment(ctx, "done", phase=phase, blocker_count=blockers)
+    return {
+        "answered": sum(1 for a in answered if a.get("action") == "replied"),
+        "outcomes": {h: o.status for h, o in out.outcomes.items()},
+        "blockers_remaining": blockers,
+        "verdict_updated": bool(update and update.posted),
+        "review_summary": summary,
+        **replayed,
+    }
+
+
+# ledger statuses a discussion lifts an issue to -> the outcome the review body names
+_LIFTED12 = {"withdrawn": "WITHDRAWN", "deferred": "INTENTIONALLY_DEFERRED"}
+
+
+def _lifted_standing12(ctx: RunContext, phase: str) -> _Standing:
+    """What the discussion lifted on this commit, from the ledger, for `_mark_lifted_in_review`:
+    every issue withdrawn or deferred on it, those its review raised and those it carried from
+    earlier rounds alike (`publish.with_lifted_findings` marks only what the review lists),
+    with a deferral's tracking link from its concession row."""
+    links: dict[str, str] = {}
+    for r in ctx.conn.execute(
+        "SELECT f.hash, f.body FROM findings f JOIN runs r ON r.id=f.run_id "
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND h.sha=? "
+        "AND f.stage='conceded' ORDER BY f.id",
+        (ctx.repo, ctx.number, ctx.sha),
+    ):
+        link = str(r["body"] or "").partition("\n")[2]
+        if link:
+            links[str(r["hash"])] = link
+    lifted = [
+        publish.LiftedFinding(
+            hash=h,
+            severity=i.severity,
+            file=i.file,
+            title=i.title,
+            status=_LIFTED12[i.status],
+            tracking=links.get(h, ""),
+        )
+        for h, i in sorted(ledger.load(ctx.conn, ctx.repo, ctx.number).items())
+        if i.status in _LIFTED12 and i.status_sha == ctx.sha
+    ]
+    return _Standing(
+        findings={},
+        run_id=_standing_run12(ctx, phase),
+        verified=True,
+        lifted_any=bool(lifted),
+        lifted=lifted,
+    )
+
+
+def _standing_run12(ctx: RunContext, phase: str) -> int | None:
+    """The full-pipeline run whose `phase` review of this commit stands: the latest one that
+    published it (a conversation's own follow-ups do not count)."""
+    row = ctx.conn.execute(
+        "SELECT run_id FROM reviews WHERE repo=? AND number=? AND sha=? AND phase=? "
+        "AND run_id IN (SELECT run_id FROM steps WHERE name=? AND status='ok') "
+        "ORDER BY posted_at DESC, rowid DESC LIMIT 1",
+        (ctx.repo, ctx.number, ctx.sha, phase, StepName.PUBLISH.value),
+    ).fetchone()
+    return int(row["run_id"]) if row and row["run_id"] is not None else None
+
+
+# why a run's confirmation pass did not run, as the #38 note says it (`_confirm12` reasons)
+_SKIP_WORDS = {"blockers stand": "it had found a blocker"}
+
+
+def _review_strength12(ctx: RunContext, run_id: int | None) -> tuple[str, str]:
+    """`_review_strength` under policy v12, with why: ("ok", ""), ("weak", reason) when the
+    run cannot carry an approval (Phase 2 missing, stand-in models, candidates it dropped
+    unverified, or a concession its verifier contradicted, whatever the confirmation trigger), or ("needs_fresh", reason) when the policy
+    asked that run for a confirmation pass and it did not run, `reason` being why it did not."""
+    if run_id is None:
+        return "weak", "no full review of this commit is on record"
+    row = _strength_row(ctx, run_id)
+    if not row or row["degraded"] or row["phase2"] != "ok":
+        return "weak", "Phase 2 or the primary models were missing"
+    if row["dropped"]:
+        return "weak", "some of its candidates were never verified"
+    if row["conflict"]:
+        # that run refused to approve over it (`_verdict12`); a reply must not approve either
+        return "weak", "a finding the discussion withdrew was confirmed again by the verifier"
+    trigger = ctx.cfg.policy.confirmation_trigger
+    required = trigger == "no_blockers" or (trigger == "rereview" and bool(row["later"]))
+    if not required or row["fresh_verify2"] == "ok":
+        return "ok", ""
+    kind, _, reason = str(row["skipped"] or "").partition(":")
+    if kind == "confirmation.failed":
+        why = "its lanes failed"  # the error itself is never published
+    else:
+        why = _SKIP_WORDS.get(reason, reason or "it did not run")
+    return "needs_fresh", why
+
+
+@dataclass(slots=True)
+class _Verdict12:
+    """What a v12 conversation's #38 follow-up would say (`_decide_conversation12`)."""
+
+    state: str  # the bot's standing verdict it moves from
+    event: str  # the canonical event (`publish.verdict_event`)
+    verified: VerifierOutput
+    prov: publish.Provenance
+    titles: list[str]
+    note: str
+
+
+def _conversation_verdict12(
+    ctx: RunContext,
+    phase: str,
+    lm: LaneModel,
+    stand: list[ledger.Issue],
+    *,
+    lifted: set[str],
+    before: dict[str, ledger.Issue],
+) -> publish.PublishResult | None:
+    """#38 restated over the ledger (`_decide_conversation12`), posted: nothing is when the
+    verdict would not move, or a human overrode it."""
+    d = _decide_conversation12(
+        ctx, phase, lm, stand, lifted=lifted, before=before, queue=lambda: _request_fresh_audit(ctx)
+    )
+    if d is None:
+        return None
+    return _post_conversation_update(
+        ctx,
+        phase,
+        d.verified,
+        d.prov,
+        state=d.state,
+        new_event=d.event,
+        titles=d.titles,
+        note=d.note,
+    )
+
+
+def _would_post12(
+    ctx: RunContext,
+    phase: str,
+    lm: LaneModel,
+    stand: list[ledger.Issue],
+    *,
+    lifted: set[str],
+    before: dict[str, ledger.Issue],
+) -> dict[str, Any] | None:
+    """A replay's account of the #38 follow-up a live run would post (it posts nothing,
+    queues nothing and records no verdict): its event, note and the lifted set it stands on;
+    `posts` is False when GitHub would record the state it already shows. None: no follow-up."""
+    guard = _fresh_audit_guard(ctx)
+    d = _decide_conversation12(
+        ctx,
+        phase,
+        lm,
+        stand,
+        lifted=lifted,
+        before=before,
+        queue=lambda: not kv_get(ctx.conn, guard),
+    )
+    if d is None:
+        return None
+    assert ctx.meta
+    own = ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
+    return {
+        "event": d.event,
+        "note": d.note,
+        "lifted": sorted(lifted),
+        "titles": d.titles,
+        "from": d.state,
+        "posts": publish.EVENT_STATE[publish.transport_event(d.event, own_pr=own)] != d.state,
+    }
+
+
+def _decide_conversation12(
+    ctx: RunContext,
+    phase: str,
+    lm: LaneModel,
+    stand: list[ledger.Issue],
+    *,
+    lifted: set[str],
+    before: dict[str, ledger.Issue],
+    queue: Callable[[], bool],
+) -> _Verdict12 | None:
+    """#38 restated over the ledger: after a same-sha thread pass lifted something above a
+    nitpick, with no blocker left standing, APPROVE when nothing above a nitpick stands and
+    the standing review ran at full strength with its confirmation pass; COMMENT otherwise,
+    queuing one same-sha re-review (`queue`: True if queued now) when only the confirmation
+    pass is missing. None when there is nothing to say, or a human overrode the verdict."""
+    lifted_any = any(h in before and before[h].severity != "nitpick" for h in lifted)
+    if _blockers(stand) or not lifted_any:
+        return None
+    state = _live_verdict_state(ctx, phase)
+    if state is None:
+        return None
+    left = sum(1 for i in stand if i.severity != "nitpick")
+    run_id = _standing_run12(ctx, phase)
+    strength, why = _review_strength12(ctx, run_id)
+    prov = _conversation_provenance(ctx, lm)
+    # a code check failed after this commit's approval and looked related (ci.py): only a
+    # review that sees that failure may approve the commit again, not a discussion
+    ci_hold = kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)) is not None
+    approve = not left and strength == "ok" and not ctx.thread_failed and not ci_hold
+    verified = _verdict_only(phase, "APPROVE" if approve else "COMMENT")
+    new_event = publish.verdict_event(verified, prov)
+    source = f"the full review of `{ctx.sha[:8]}`" + (f" (run {run_id})" if run_id else "")
+    if new_event == "APPROVE":
+        note = (
+            f"Approved: the discussion withdrew or deferred every finding {source} left "
+            "standing, and the approval rests on that review."
+        )
+    elif left:
+        note = f"Not approved: {left} non-blocking finding(s) still stand on this PR."
+    elif ctx.thread_failed:
+        note = (
+            "Not approved: some of the threads could not be read this round; they are read "
+            "again on the next reply or push."
+        )
+    elif prov.degraded:
+        note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
+    elif ci_hold:
+        note = (
+            "Not approved: CI failed on this commit after its review, in checks that looked "
+            "related (see the CI follow-up); the next push gets a full review."
+        )
+    elif strength == "needs_fresh":
+        queued = queue()
+        note = (
+            "Not approved yet: an approval needs the confirmation pass over the whole change, "
+            f"which the review of this commit did not run ({why}). "
+            + (
+                "It is queued for this commit and approves if it finds nothing."
+                if queued
+                else "It was already requested once for this commit; push or ask for a re-review."
+            )
+        )
+    else:
+        note = (
+            "Not approved: the standing review of this commit did not run at full strength "
+            f"({why}), so it cannot carry an approval."
+        )
+    return _Verdict12(
+        state=state,
+        event=new_event,
+        verified=verified,
+        prov=prov,
+        titles=_lifted_blocker_titles(before, lifted),
+        note=note,
+    )
 
 
 # ---- CI after the verdict: a check failed after this head's APPROVE (ci.py) ----
@@ -4111,12 +6421,24 @@ def run(ctx: RunContext) -> RunStatus:
         # a human replied on a commit we already reviewed: the code did not change, the
         # discussion did. Answer the threads; never re-run the review pipeline for that.
         _step_start(ctx, StepName.CONVERSE)
-        detail = step_converse(ctx, standing)
+        detail = step_threads(ctx, standing) if pol.thread_lane else step_converse(ctx, standing)
         _step_end(ctx, StepName.CONVERSE, "ok", detail)
         return RunStatus.DONE
     effort = pol.tier_effort(ctx.tier)
     ctx.phase2_follows = pol.phase2_enabled and effort.phase2 is not None
     _choose_comparison(ctx)
+    # policy v12: the thread lane runs beside whichever finders run first (a no-op otherwise)
+    _start_thread_lane(ctx)
+    try:
+        return _review(ctx, effort)
+    finally:
+        _stop_thread_lane(ctx)
+
+
+def _review(ctx: RunContext, effort: TierEffort) -> RunStatus:
+    """The review pipeline of a new-sha round (or a same-sha re-review): Phase 1, the gate and
+    Phase 2, or the paths that skip parts of it."""
+    pol = ctx.cfg.policy
     if _repo_skips_phase1(ctx):
         return _phase2_only(ctx, _without_phase1(effort))
     if _backlog_skips_phase1(ctx, phase2_effort=effort.phase2):
@@ -4157,6 +6479,7 @@ def run(ctx: RunContext) -> RunStatus:
         # nobody will push a fix and re-run the gate on a merged PR: an audit needs the
         # complete finding set, so Phase 2 runs whether or not Phase 1 found blockers
         admit = pol.phase2_enabled and tier_allows
+    forced = ctx.force_phase2 and blocks and not admit and not ctx.is_audit
     _step_end(
         ctx,
         StepName.GATE,
@@ -4167,8 +6490,12 @@ def run(ctx: RunContext) -> RunStatus:
             "phase2_effort": effort.phase2,
             "blockers": ctx.verify1.blocker_count,
             **gate_score(ctx.verify1, pol.phase1_gate),
+            **({"forced_phase2": True} if forced else {}),
         },
     )
+    if forced:
+        _record_gate_would_publish(ctx, gate_deferred=not ctx.verify1.blocker_count)
+        return _phase2_only(ctx, effort)
     if not admit:
         ctx.check_cancel()
         verifier1 = ctx.lane_model(pol.phase1_verifier)
@@ -4196,6 +6523,61 @@ def run(ctx: RunContext) -> RunStatus:
             )
         return RunStatus.DONE
     return _phase2_only(ctx, effort)
+
+
+def _record_gate_would_publish(ctx: RunContext, *, gate_deferred: bool) -> None:
+    """A replay forcing Phase 2 past the gate (`force_phase2`): write the preliminary review
+    the gate would have published instead (`gate-would-publish.json`), so the eval can score
+    both what the gate published and what the whole pipeline finds. Not under policy v12:
+    its publication is decided by `_publish12`'s post-rules pass (budget, settled re-folds,
+    thread outcomes, the ledger verdict), which writes events and the ledger as it goes and so
+    cannot be run a second time for a publication that never happens; a preliminary built
+    from the gate verifier's raw set would not be what v12 posts, so none is recorded."""
+    assert ctx.verify1 is not None
+    if ctx.cfg.policy.pipeline is not None:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "replay.phase2_forced",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"gate held Phase 2 ({ctx.verify1.blocker_count} blockers); running it "
+                "anyway (policy v12: no gate-would-publish record)",
+            )
+        return
+    out: dict[str, Any] = {
+        "phase": "preliminary",
+        "gate_deferred": gate_deferred,
+        "blockers": ctx.verify1.blocker_count,
+        "findings": [_finding_record(f) for f in ctx.verify1.findings],
+    }
+    try:
+        model = _build_review(
+            ctx,
+            phase="preliminary",
+            verified=ctx.verify1,
+            verifier_lm=ctx.lane_model(ctx.cfg.policy.phase1_verifier),
+            phase2_skipped=PHASE2_DEFERRED if gate_deferred else None,
+            rereview=ctx.has_prior_review,
+        )
+        out.update(
+            event=model.canonical_event,
+            kept=[_finding_record(f) for f in model.kept],
+            body=publish.render(model),
+        )
+    except ReviewError as exc:  # evidence for the eval only, never the run's problem
+        out["error"] = exc.message
+    (ctx.run_dir / "gate-would-publish.json").write_text(json.dumps(out, indent=1))
+    with tx(ctx.conn):
+        event(
+            ctx.conn,
+            "replay.phase2_forced",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"gate held Phase 2 ({ctx.verify1.blocker_count} blockers); running it anyway",
+        )
 
 
 def _phase2_only(ctx: RunContext, effort: TierEffort) -> RunStatus:
@@ -4226,7 +6608,10 @@ def _final_review(ctx: RunContext, effort: TierEffort) -> RunStatus:
         lm=ctx.lane_model(pol.phase2_verifier),
         expected_phase="final",
     )
-    ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
+    if pol.verifier_v12:
+        ctx.verify2 = _confirm12(ctx, ctx.verify2, effort)
+    else:
+        ctx.verify2 = _fresh_final_if_needed(ctx, verified=ctx.verify2, effort=effort)
     _publish_step(
         ctx, phase="final", verified=ctx.verify2, verifier_lm=ctx.lane_model(pol.phase2_verifier)
     )
@@ -4235,7 +6620,7 @@ def _final_review(ctx: RunContext, effort: TierEffort) -> RunStatus:
 
 def _final_review_stands(ctx: RunContext) -> bool:
     """A final review for this exact head is already on the PR (a same-sha re-review)."""
-    if ctx.dry_run:
+    if ctx.dry_run and not ctx.replay:
         return False
     try:
         return (
@@ -4414,6 +6799,10 @@ def main(
     heartbeat: bool = True,
     quota_reader: quota.QuotaReader | None = None,
     prober: Prober | None = None,
+    replay: bool = False,
+    force_phase2: bool = False,
+    coverage_base: str | None = None,
+    replay_context: dict[str, Any] | None = None,
 ) -> RunStatus:
     row = conn.execute(
         "SELECT r.*, h.repo, h.number, h.sha, h.trigger, h.queue, h.priority FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
@@ -4436,6 +6825,10 @@ def main(
         run_dir=cfg.runs_dir / f"run-{run_id}",
         trigger=str(row["trigger"] or ""),
         dry_run=dry_run,
+        replay=replay,
+        force_phase2=force_phase2,
+        coverage_base=coverage_base,
+        replay_context=replay_context,
     )
     ctx.deferral_cutoff = converse.tracking_required_since(
         conn, cfg.deferral.tracking_required_since, record=not dry_run
@@ -4445,13 +6838,20 @@ def main(
         if ctx.audit is None:
             raise SystemExit(f"run {run_id}: audit head without an audits row")
     # every lane of this run, parallel reviewers and side lanes alike, lines up for a slot in
-    # its model's machine-wide pool (lanepool.py)
+    # its model's machine-wide pool (lanepool.py); under policy v12 it may run isolated. A
+    # replay (policy eval) lines up behind every production lane, whatever it replays
+    queue = "audit" if ctx.is_audit else "priority" if row["priority"] else "live"
+    if replay:
+        queue = "replay"
     ctx.lane_runner = lanepool.gated(
-        sandboxed(lane_runner or run_claude_lane, exec_deny_profile(cfg.lane_deny_exec)),
+        sandboxed(
+            isolated(lane_runner or run_claude_lane, cfg.policy.isolates_lane_env),
+            exec_deny_profile(cfg.lane_deny_exec),
+        ),
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,
-        queue="audit" if ctx.is_audit else "priority" if row["priority"] else "live",
+        queue=queue,
         run_id=run_id,
     )
     ctx.quota_reader = quota_reader

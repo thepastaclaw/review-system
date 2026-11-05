@@ -185,6 +185,7 @@ class Suppressed:
     detail: str = ""
     comment_id: str | None = None
     html_url: str | None = None
+    comment_hash: str = ""  # the finding_hash in the marker of the comment it was folded onto
 
 
 def collapse_same_root(findings: list[Finding]) -> tuple[list[Finding], list[Suppressed]]:

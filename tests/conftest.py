@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import urllib.parse
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -103,6 +104,21 @@ budget {comment_budget}
 """
 
 
+# policy v12 templates (prompts/v12/): minimal, every slot the harness fills
+V12_TEMPLATES = {
+    "finder": "# Finder: {lane_title}\n{repo} #{pr_number} {pr_title}\n{pr_description}\n"
+    "base={base_branch} head={head_sha} range={coverage_from}\n{project_skill}\n{review_skill}\n"
+    "## Method\n{method}\n## Context\n{context}\n",
+    "general": "General method for {repo}: scan, removed code, callers.",
+    "security-auditor": "Security method.",
+    "always-on": "Always-on method.",
+    "verifier": "# Verify+match {repo} #{pr_number} head {head_sha}\n{phase_note}\n"
+    "## Candidates\n{candidates}\n## CodeRabbit\n{coderabbit}\n## Ledger\n{ledger}\n{context}\n",
+    "thread": "# Threads {repo} #{pr_number} at {head_sha}\n{mode_note}\nverdict {standing_verdict}\n"
+    "{issues}\n{linked_commits}\n{discussion}\n",
+}
+
+
 @pytest.fixture
 def skills_dir(tmp_path: Path) -> Path:
     d = tmp_path / "skills"
@@ -119,6 +135,9 @@ def skills_dir(tmp_path: Path) -> Path:
     )
     (d / "skills" / "platform" / "project.md").write_text("PROJECT SKILL")
     (d / "skills" / "platform" / "review.md").write_text("REVIEW SKILL")
+    (d / "prompts" / "v12").mkdir()
+    for name, text in V12_TEMPLATES.items():
+        (d / "prompts" / "v12" / f"{name}.md").write_text(text)
     return d
 
 
@@ -417,6 +436,17 @@ class FakeLanes:
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
         self.dead_stderr = "API Error: 429 rate limited"  # what a dead lane says
+        # policy v12 lanes, recognised by their prompts' output sections:
+        # finder lanes: role -> {"summary", "candidates"}, a list of candidates, or a callable
+        # returning either
+        self.candidates: dict[str, Any] = {}
+        # verify+match: (phase label, candidate briefs, prompt) -> answer; default confirms
+        # every candidate as its own new group. Labels: verify1, verify2, confirm
+        self.verify12: Callable[[str, list[dict[str, Any]], str], dict[str, Any]] | None = None
+        # thread lane: finding_hash -> {"status", "reply"}; default STILL_VALID / NO_REPLY
+        self.thread_out: dict[str, dict[str, Any]] = {}
+        self.v12_calls: list[tuple[str, str, list[str]]] = []  # (kind, label, ids)
+        self._v12_sessions: dict[str, str] = {}  # session -> the v12 prompt it answered
 
     def prep_output(self) -> Any:
         """The prep lane answers both: `triage` and `selector` set each half; a non-dict one
@@ -435,6 +465,50 @@ class FakeLanes:
             out["selected"] = s
         return out
 
+    def v12_output(self, spec: LaneSpec) -> Any:
+        """A policy v12 lane's answer, or None for any other lane. A correction turn in a v12
+        lane's session is answered as its first turn was (the fake does not learn)."""
+        p = spec.prompt
+        if spec.resume and spec.session_id in self._v12_sessions:
+            p = self._v12_sessions[spec.session_id]
+        elif spec.session_id:
+            self._v12_sessions[spec.session_id] = p
+        if "## Output: candidates" in p:
+            out = self.candidates.get(spec.role, self.candidates.get("default", []))
+            out = out() if callable(out) else out
+            out = {"summary": "ok", "candidates": out} if isinstance(out, list) else out
+            self.v12_calls.append(("finder", spec.role, []))
+            return out
+        if "## Output: verified groups" in p:
+            m = re.search(r"```json candidates\n(.*?)\n```", p, re.S)
+            cands = json.loads(m.group(1)) if m else []
+            label = (
+                "verify1"
+                if "gate verification" in p
+                else "confirm"
+                if "second, independent pass" in p
+                else "verify2"
+            )
+            self.v12_calls.append(("verify", label, [c["id"] for c in cands]))
+            if self.verify12 is not None:
+                return self.verify12(label, cands, p)
+            return confirm_all(cands)
+        if "## Output: thread outcomes" in p:
+            m = re.search(r"```json issues\n(.*?)\n```", p, re.S)
+            hashes = [i["finding_hash"] for i in json.loads(m.group(1))] if m else []
+            self.v12_calls.append(("thread", spec.role, hashes))
+            return {
+                "threads": [
+                    {
+                        "finding_hash": h,
+                        **{"status": "STILL_VALID", "reply": "NO_REPLY"},
+                        **self.thread_out.get(h, {}),
+                    }
+                    for h in hashes
+                ]
+            }
+        return None
+
     def __call__(self, spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
         self.calls.append(spec)
         artifact_dir.mkdir(parents=True, exist_ok=True)
@@ -442,7 +516,10 @@ class FakeLanes:
             return LaneResult(exit_code=None, stdout="", stderr="", duration_s=1, timed_out=True)
         if spec.model in self.dead_models:
             return LaneResult(exit_code=1, stdout="", stderr=self.dead_stderr, duration_s=1)
-        if spec.role == "selector":
+        v12 = self.v12_output(spec)
+        if v12 is not None:
+            out = v12
+        elif spec.role == "selector":
             out = self.selector
         elif spec.role == "triage":
             out = self.triage
@@ -481,6 +558,24 @@ class FakeLanes:
             tokens_out=10,
             result_text=text,
         )
+
+
+def group(c: dict[str, Any], **kw: Any) -> dict[str, Any]:
+    """A verify+match group confirming candidate brief `c` as new, overridable."""
+    return {
+        "members": [c["id"]],
+        "match": "new",
+        "verdict": "CONFIRMED",
+        "evidence": f"{c['file']}:{c.get('line_start')} shows it",
+        "severity": c["severity"],
+        "title": c["title"],
+        "body": c.get("body") or "body",
+        **kw,
+    }
+
+
+def confirm_all(cands: list[dict[str, Any]]) -> dict[str, Any]:
+    return {"summary": "Verified.", "groups": [group(c) for c in cands]}
 
 
 @pytest.fixture
@@ -529,3 +624,41 @@ def binary_diff_gh(tmp_path: Path) -> Gh:
     script.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.buffer.write({diff!r})\n")
     script.chmod(0o755)
     return Gh(str(script))
+
+
+# ---- policy v12 tests (tests/v12_support.py) ----
+
+
+@pytest.fixture
+def wide_diff(gh: FakeGh) -> None:
+    """Every line the v12 tests anchor on in f.rs is in the PR's diff, so findings post inline
+    (`pytestmark = pytest.mark.usefixtures("wide_diff")`)."""
+    gh.diff = "diff --git a/f.rs b/f.rs\n+++ b/f.rs\n@@ -1,3 +1,60 @@\n+x\n"
+
+
+@pytest.fixture
+def git(monkeypatch: pytest.MonkeyPatch) -> Any:
+    """`worker._lines_changed` and `_map_lines` answered by `v12_support.Git` (a sha-aware fake
+    history)."""
+    from reviewsys import worker
+    from tests.v12_support import Git
+
+    g = Git()
+    monkeypatch.setattr(worker, "_lines_changed", g)
+    monkeypatch.setattr(worker, "_map_lines", g.map)
+    return g
+
+
+@pytest.fixture
+def v12(cfg: cfg_mod.Config, skills_dir: Path) -> cfg_mod.Config:
+    """The fixture config under the policy v12 pipeline (`v12_support.V12`)."""
+    from tests.v12_support import v12_cfg
+
+    return v12_cfg(cfg, skills_dir)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_shadow(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The status export reads the live shadow's database when there is one: never the
+    developer's ~/.reviewsys-shadow in tests."""
+    monkeypatch.setenv("REVIEWSYS_SHADOW_ROOT", str(tmp_path / "no-shadow"))

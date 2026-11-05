@@ -29,6 +29,9 @@ tested, one daemon, one SQLite file, no lock files.
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
+| `ledger.py` | the issue ledger: every issue raised on a PR and where it stands, folded from its event history; write-only under policy v11, what policy v12 decides from |
+| `rules.py` | policy v12, pure: the finder candidate contract, verify+match parsing, the code rules over it and the ledger verdict |
+| `quality.py` | `reviewsys quality`: late finds, fate coverage, silent drops, re-raises, contract failures |
 | `ci.py` | CI after the verdict: watches an APPROVE until CI finishes; a related failure moves it to COMMENT via one cheap lane |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
 | `sister.py` | sister Dash repos (Cargo.lock pins + configured `sister_repos`) checked out read-only for the lanes, shared across runs |
@@ -36,7 +39,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `status.py` | `reviewsys status --json` + watchdog predicate |
 | `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model, quota per Phase-1 rung |
 
-State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps, lanes, findings, posted_findings, reviews, inbox, events, kv`.
+State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps, lanes, findings, posted_findings, reviews, inbox, events, kv, audits, audit_findings, issues, issue_events`.
 
 ## Model policy and effort tiers
 
@@ -538,6 +541,259 @@ runs):
   so the numbers lean towards the general reviewer. The report says how many roles
   were left out.
 
+## Replay evaluation: past heads under a new policy
+
+For policy evals (v12 DESIGN.md §5). On the box, `deploy/eval-run.sh` runs the whole eval
+beside the production daemon (below); never against the box's database itself.
+
+- `reviewsys replay RUN_ID... --out DIR --skills DIR [--force-phase2]
+  [--pin-phase1-model M] [--source-db PATH] [--source-runs DIR] [--gh-token-env NAME]`
+  re-reviews a past run's exact head as of that run's start (the cutoff). It uses a
+  scratch database seeded from the runs that finished before the cutoff, the worker's
+  dry run, and a pinned read-only gh (`ghshim.py`). Lanes get a `gh` shim that asks the
+  replay's broker. They may not run the installed gh, a curl shim refuses GitHub, and
+  WebFetch/WebSearch are off. The view serves the diff from git, CI from the source run's
+  evidence, and nothing created after the cutoff. Writes and unknown commands are
+  refused. Give it a read-only token in `REVIEWSYS_REPLAY_GH_TOKEN`; it stays with the
+  broker (lanes get every token variable blank and an empty `GH_CONFIG_DIR`).
+  `--force-phase2` records the gate's decision, then runs Phase 2 anyway. A replay
+  exits 75 without running in degraded mode (forced on in the source or the configured
+  database). `report.json` per run, with `slot_wait_s` (time it only waited for lane
+  slots) and `active_s` beside `wall_clock_s`.
+  - Git is pinned too (`replaygit.py`): the worktree comes from a per-replay bare clone
+    that borrows the production mirror's objects read-only (alternates) and has only the
+    base branch at the base the source run saw and the PR head, so no ref, tag or `--all`
+    shows a later commit. What the mirror lacks is fetched into the clone; a production
+    mirror is never written, and a repository without one is mirrored under
+    `--eval-mirrors`. The clone and the worktree are removed when the replay ends.
+  - A v12 arm gets the issue ledger as of the cutoff (the source's events, then
+    `ledger backfill` over the seeded history). Production reconciles a PR once: a
+    reconcile the source recorded before the cutoff is copied as it stood then
+    (`seeded.reconcile.source: recorded`); otherwise the replay runs it at the cutoff
+    (closed from the source database, threads from the pinned view; `replayed`), and the
+    thread-lane work only that reconcile adds is reported apart (`reconcile_work`,
+    `gpt_excl_reconcile`). A v11 arm gets none. Thread resolution cannot be rewound: such
+    heads are flagged (`thread_resolution_as_of_now`) and S5/S8 are also scored without
+    them. The events an earlier run's strength is read from (dropped verifier shards,
+    conflicts, skipped or failed confirmation passes) are seeded with it.
+  - The report carries the v12 signals (`v12`: conflicts, failed thread-lane shards,
+    late non-blocking findings, settled re-folds, the share of candidates matched to an
+    open issue), the inline comments the run would open and the bot threads open at its
+    start (duplicate threads; the S5 gate is zero). A run whose thread-lane shard failed is
+    `degraded_for_scoring` and not scored. Under v12 no `gate-would-publish.json` is
+    recorded (`gate.would_publish_note` says why).
+  - Lanes take slots in the configured work dir's pools but wait in `<pool>.replay/`,
+    which production never reads (v0.24 through v0.28 included), so a waiting replay changes nothing for
+    production (its comparison-lane admission and status export read `<pool>.line`). A
+    replay lane takes a slot only while `<pool>.line` holds no production ticket, never the
+    side-lane slot, and at most floor((n - 1) * `[scheduling] replay_pool_share`) (0.5)
+    of a pool, or `replay_pool_slots.<pool>`; a pool of 1 or 2 slots is closed to replays
+    by default (on the box: gpt 5 of 12, gemini and glm 2 of 6, muse 9 of 20, compare 0);
+    `--replay-pool-slots POOL=N` caps a pool for one eval (eval-run.sh: `gpt=2`). The gpt
+    pool is sized from the configured database's account reading, read again once a slot is
+    locked and before every correction turn that keeps it: a slot the share no longer covers
+    (the box parked an OpenAI account) is let go and the lane waits for one it does. No
+    comparison lanes.
+- `reviewsys replay-set SETFILE --policy NAME=SKILLS_DIR ... --out DIR --concurrency N`
+  runs every (head, policy, sample) as its own replay into `OUT/<policy>/run-<id>[-r<k>]/`.
+  It is resumable, alternates which arm goes first, and stops on an exit 75. SETFILE is
+  eval/set.json (`heads`, `repeats`). Before each launch (`replayset.Gate`) it reads the
+  configured database read-only: degraded mode, or fewer than `--min-usable-accounts` (2)
+  usable OpenAI accounts (or a stale reading), stops launching (exit 75); a live queue at
+  half of `backlog_skip_phase1_above` holds launches up to `--busy-wait-minutes` (60).
+  Free disk under OUT, less `--disk-per-job-gb` (6) per running replay, must stay above
+  `--min-free-gb` (35); short, it holds launches, then stops with exit 74 after
+  `--disk-wait-minutes` (30). `--limit N` takes N heads round-robin over the sets.
+- `reviewsys replay-score SETFILE LABELS --out DIR` writes `score.json`: paired per-set
+  recall, known-FP blockers, re-raises, new blockers, gpt use, wall clock and active time,
+  contract failures, and a noise floor from repeat samples. It also writes
+  `to_judge.jsonl`: new blockers and findings near a label they did not match, blinded,
+  with content ids, the claim only: what one arm writes around a finding (revival and
+  regression sentences, links to earlier threads, the `(regression)` suffix, the
+  unconfirmed-blocker note) is stripped. The gpt cost ratios come with and without the
+  reconcile-only work (the 1.15x gate reads `*_excl_reconcile`). LABELS is
+  eval/labels.jsonl.
+- `reviewsys replay-judge OUT --set SETFILE --labels LABELS` asks one blinded lane per
+  `to_judge.jsonl` item (gpt-6.1-sol at xhigh, read-only worktree at the replayed head,
+  no GitHub, no token, work dir outside OUT): is it real, and does it match the label.
+  Launches go through the same gate as replay-set. Verdicts go to `judged.jsonl`
+  (resumable); the closing score counts confirmed label matches toward recall and gives
+  new-blocker and blocker precision per arm and set, plus `spot_check.jsonl` (20 judged
+  items for the owner).
+- `deploy/eval-run.sh --v12 SKILLS_COMMIT` on the box: an eval root at
+  `~/.reviewsys-eval` with its own venv of this checkout, a `.backup` snapshot of the
+  production database (after a disk check), the two skills arms (v11 = `169fcb8`), then
+  replay-set (concurrency 3), replay-score, a second preflight, replay-judge. It refuses
+  degraded mode and short accounts, and refuses to start without a read-only token in
+  `REVIEWSYS_REPLAY_GH_TOKEN` (not `gh auth token`, no write scopes, no push on a set
+  repository) unless `--allow-bot-token`. It logs under the root, resumes when re-run,
+  and exits non-zero when replays or verdicts are missing. `--limit N` is a small real
+  run; `--dry` runs every step on a fixture with fake lanes and a fake gh (and refuses the
+  real eval root). See `deploy/eval-run.sh --help`.
+- Stopping an eval: `deploy/eval-run.sh --stop` sends TERM to the eval's own process group
+  (its pgid is in `~/.reviewsys-eval/eval.pgid`; the production daemon is never in it),
+  KILL after `--stop-grace` (60 s), then removes the worktrees and clones the replays and
+  the judge left. Lane slots free themselves (flocks die with their processes). Re-running
+  the eval command resumes: interrupted replays have no report and run again.
+
+## Live shadow: policy v12 beside production
+
+DESIGN.md §4 step 4. `reviewsys shadow run` (shadow.py) replays every finished live review under
+policy v12 as it lands, beside production, and compares the two head by head. It never posts,
+comments or labels anything, and it never writes the production database (it opens it
+read-only) or the production mirrors.
+
+- **What it shadows.** A production run qualifies when it is `done`, a live review (not an
+  audit), not degraded, not a conversation or a carried head, and its final review was
+  published (a `reviews` row with phase `final`, not imported). Its head must still be the PR's
+  newest. It takes the newest first and leaves out runs older than `max_age_hours` (24). A
+  `sample_rate` (1.0) keeps a share, chosen by a hash of the run id so the choice is
+  deterministic. Each run gets one row and is never shadowed twice. It starts from the first
+  start (the watermark) and backfills only with `--since` (older than `max_age_hours` also
+  needs `--max-age-hours 0`).
+  - An audit is told by the path its run took (`runs.path`), so a live review whose head an
+    audit later took over still counts.
+  - A carried head is left out by its run's `carry` step, so a review someone asks for of a
+    carried commit is shadowed.
+- **How.** Each head is one `reviewsys replay RUN --skills <v12> --policy-name v12` in its own
+  process group, into `~/.reviewsys-shadow/replays/run-<id>/`. That is the replay harness above:
+  - a scratch database as of the run's start;
+  - the worker's dry run;
+  - the pinned read-only gh broker. It uses `REVIEWSYS_REPLAY_GH_TOKEN` when set: `shadow.sh`
+    reads it from `~/.reviewsys-shadow/gh-token`, mode 600. Otherwise it uses the box's own gh
+    credentials and the bot's REST budget, with writes refused by code. Lanes get no token
+    either way;
+  - git pinned to the cutoff.
+
+  No `--force-phase2`: the gate decides as it would live. Replay lanes wait in
+  `<pool>.replay/` and take a slot only when no production lane waits, so the shadow never slows
+  production. At most `concurrency` (2) replays run at once. A replay running past
+  `--replay-timeout-hours` (8) is killed.
+- **Gates before every launch**, in order:
+  - `max_heads_per_day` (40) launches per UTC day. Every attempt counts, including one a stop
+    terminated;
+  - degraded mode skips the head (recorded `skipped`, `degraded`);
+  - fewer than 2 usable OpenAI accounts, a production backlog (half of
+    `backlog_skip_phase1_above`) or a short disk (35 GB floor, 6 GB per running replay) holds
+    it (`waiting`);
+  - then the quota guard: `guard_cmd` (`--guard-cmd`, or `[shadow] guard_cmd` in config.toml) is
+    a shell command, and exit 0 allows the launch. Anything else holds launches for this tick
+    (`waiting`, `quota guard`), and the guard's one-line JSON stdout goes to the shadow
+    database's `events` table and `logs/shadow.log`. Only a changed answer is logged.
+
+  On the box the guard is `/opt/homebrew/bin/python3 ~/.reviewsys-exp/bin/quota_guard.py`. A
+  missing guard script blocks every launch (`deploy/shadow.sh status` says so). A failed guard
+  never kills running replays, unless `--stop-on-guard` is set: then two failed checks in a row
+  terminate them and their heads go back to the queue.
+- **Head states** (`shadows.status`): `queued` → `waiting` (a gate holds it) → `running` →
+  `done` | `failed` | `skipped`. Skip reasons are `not sampled`, `superseded`, `aged out` and
+  `degraded`. Failure reasons are `run failed` (the v12 run itself failed), `invalid: quota`,
+  `invalid: live github`, `no report`, `timed out`, `interrupted`, `launch error` and
+  `compare error`.
+  - A replay a runner stop interrupts goes back to the queue; one that had already finished is
+    booked, not run again.
+  - A replay left by a killed runner is handled on the next start:
+    - one that finished meanwhile is booked from its report;
+    - one whose command line still shows it is that replay is terminated and re-queued once,
+      then failed;
+    - one that is alive but cannot be verified (`ps` failing) is failed and never signalled,
+      so it never runs twice.
+  - Worktrees and pinned clones are removed in every case.
+  - Process groups are signalled only while they lead their own group and still have members.
+- **Comparison** (when a replay finishes):
+  - Production side: the run's `posted` findings of phase `final` (what its published review
+    stood on, the same set as a replay's `published`), its final `reviews.event`, its lanes and
+    its start-to-finish time. Its active time leaves out the slot wait recorded in
+    `deadline_at`.
+  - Shadow side: `report.json`'s `published`, its would-be event, `gpt_excl_reconcile` (the
+    one-shot reconcile production made once, earlier, is left out), `wall_clock_s` and
+    `active_s`.
+  - Findings are paired one to one by the eval's matcher: the same file within ±10 lines and
+    title overlap, or the same hash.
+- **Outcomes** (`shadow score`, hourly in the runner, heads from the last 30 days): what the PR
+  did since.
+  - `caught_earlier`: a shadow-only finding production raised on a later run.
+  - `prod_false_alarm`: a production finding later withdrawn or accepted as deferred. The source
+    is a `conceded` row as `_latest_settlement` reads it, a delivered thread answer, or the
+    ledger's `withdrawn`/`deferred` status.
+  - `prod_confirmed`: a production blocker later FIXED.
+  - `pr_closed`: its status is `merged` only when an audit row recorded the merge (a PR merged
+    over findings). `prs.state` cannot tell a clean merge from a close.
+
+  Each outcome row carries `in_shadow` (did v12 raise it too). An outcome that stops holding
+  (a re-raised finding) is removed.
+- **Where things are** (the box): `~/.reviewsys-shadow/`:
+  - `shadow.db`;
+  - `replays/run-<id>/report.json` (lane artifacts are dropped after `--keep-artifacts-days`, 14;
+    the report stays);
+  - `logs/replay-run-<id>.log`, `logs/shadow.log`, `logs/shadow.stderr.log`;
+  - `shadow.pid` and `shadow.lock` (a flock: a killed runner never blocks the next);
+  - `enabled`.
+- **Running it.**
+  - `deploy/deploy.sh <ref> --with-v12-shadow` installs it (or `deploy/shadow.sh install` on
+    the box). This is not `--shadow`, which puts the production daemon in no-spawn mode;
+    `--with-shadow` is refused.
+    It needs the v12 skills checkout at `~/Projects/skills-v12` (or `REVIEWSYS_SHADOW_SKILLS`).
+  - It has its own LaunchAgent, `ai.thepastaclaw.reviewsys-shadow` (Nice 10, ProcessType
+    Background). Because launchd does not supervise `claw`, a `lockf` cron line runs
+    `deploy/shadow.sh start` every minute; that path uses `nice -n 10` without background QoS.
+  - `deploy/shadow.sh stop` disables and stops it: replays are terminated and their heads
+    re-queued. `pause` and `restart` keep it enabled; `status` shows the state.
+  - A runner counts as up only while it holds `shadow.lock`, so a stale pidfile is never
+    trusted.
+  - A deploy pauses an enabled shadow before it upgrades the shared venv and starts it again
+    on the new code. A deploy restart re-runs in-flight replays from the start.
+  - The daemon never depends on it: stopped or absent, production is unchanged.
+  - `reviewsys doctor` prints one informational line about it.
+- **Reading results.**
+  - `reviewsys shadow report [--json] [--since ISO]`: verdict agreement and the confusion
+    matrix; matched, production-only and shadow-only findings; blockers and suggestions per
+    head on each side; shadow-caught-earlier; production false alarms (and how many v12 also
+    raised); confirmed blockers; gpt token, gpt lane and token ratios; wall-clock and
+    active-time ratios; skip, fail and wait reasons.
+  - `reviewsys shadow status` lists the latest heads.
+  - Or query it directly:
+
+  ```sql
+  -- heads where the verdicts differ
+  SELECT repo, number, substr(sha,1,8), prod_verdict, shadow_verdict FROM shadows
+   WHERE status='done' AND COALESCE(prod_verdict,'') <> COALESCE(shadow_verdict,'');
+  -- what v12 found that production did not (titles: private)
+  SELECT s.repo, s.number, f.severity, f.file, f.line_start, f.title FROM findings f
+    JOIN shadows s ON s.id=f.shadow_id WHERE f.side='shadow' AND f.match='only';
+  -- caught earlier, with the production run that raised it later
+  SELECT s.repo, s.number, o.hash, o.later_run FROM outcomes o JOIN shadows s ON s.id=o.shadow_id
+   WHERE o.kind='caught_earlier';
+  -- quota-guard history
+  SELECT ts, kind, detail FROM events WHERE kind LIKE 'guard.%' ORDER BY id DESC LIMIT 20;
+  ```
+- **Public vs private.**
+  - Private: `shadow.db` and the replay directories stay on the box. They hold finding titles
+    (`findings`), failure text (`shadows.detail`) and the guard's output.
+  - Public: the status export gets a `shadow` block (exporter `build_shadow`, only when
+    `~/.reviewsys-shadow/shadow.db` exists, or the root `REVIEWSYS_SHADOW_ROOT` names; a
+    `[shadow] root` in config.toml is not seen by the export or doctor), shown as the dashboard's
+    "Shadow: v12 vs production" panel. It holds:
+    - the summary numbers;
+    - the confusion matrix;
+    - the last 30 heads: repo#number, sha, PR title and links, both verdicts, blocker and
+      suggestion counts on each side, matched / production-only / shadow-only counts, status;
+    - reasons from a fixed vocabulary (anything else shows as `other`).
+
+    Never a finding's title or body, and never failure text.
+- **Caveats.**
+  - A shadow replays a head as of the production run's start. It sees the same history
+    production saw, and thread resolution is as of now (the replay caveats above).
+  - The shadow's wall clock includes waiting behind production lanes, at the lowest rank and
+    under background priority. Compare cost and `active_s`; the wall ratio overstates v12's
+    latency.
+  - "Caught earlier" counts production raising the finding later, which is a lower bound:
+    a defect nobody raised again is not counted.
+  - Heads whose replay had a thread-lane shard fail (`degraded_for_scoring`) are compared and
+    stored, but left out of the summary numbers, as replay-score does.
+  - An accepted deferral counts as a production "false alarm" signal; `outcomes.status` tells
+    WITHDRAWN from INTENTIONALLY_DEFERRED.
+
 ## Final approval after an iterative review
 
 An incremental review is a reconciliation pass, not by itself a new approval gate. It
@@ -812,6 +1068,90 @@ A reply on a commit with **no** standing review still runs the full review with 
 thread in context, and `reviewsys enqueue` / a manual trigger on a reviewed commit still
 forces a full re-review (with the reconciliation-based thread answers above), so the old
 path remains available for "look at this again from scratch".
+
+## Issue ledger and `reviewsys quality`
+
+The ledger (`ledger.py`, schema v9) keeps one `issues` row per issue the bot raised on a PR,
+keyed by the `finding_hash` it was first posted under (the hash in the GitHub marker; never
+recomputed), with its anchor, status (`open`, `fixed`, `outdated`, `withdrawn`, `deferred`,
+`deferral_pending`, `resolved`) and who set it. Each row is folded from `issue_events`, one per
+fact (`posted`, `seen` (carried by a later verifier set), `outcome` (a thread answer that
+reached GitHub), `thread`, `status`), so the order facts are recorded in does not matter.
+
+Under policy v11 every run writes through to it and nothing reads it: publications, the full
+path's thread answers, conversation replies and concessions, and the PR's threads (legacy
+findings, hand-resolved threads) at context. A failed ledger write never fails a run; it is
+logged and recorded as a `ledger.write_failed` event. `reviewsys ledger backfill` replays the
+history recorded before the write-through (`findings` stage `posted`, later verifier sets,
+`thread.answered` events, `conceded` rows; `--github` also syncs open and hand-resolved
+threads). It is idempotent and safe beside the live writes: both derive the same key for the
+same fact.
+
+`reviewsys quality` reports, from the ledger plus `git diff -U0` on the mirrors (or
+`--repo-path OWNER/NAME=PATH` clones; a repo without either is skipped with a note):
+
+- late-find rate: posted blockers raised in round ≥ 2 on lines (anchor ±3) unchanged since
+  the previous reviewed head;
+- pushback: blockers with a later round that were withdrawn or deferred;
+- re-raises: withdrawn or deferred issues posted again (same title, or same file ±15 lines)
+  with their own lines unchanged;
+- fate coverage: blockers with a later round whose fate is on record, the rest "vanished";
+- silent drops: vanished blockers whose file did not change by the next reviewed head;
+- contract failures, by class (reconciliation, echo field, other).
+
+## Policy v12: unanchored finders, a thread lane, verdicts from the ledger
+
+Inert until the skills config carries `review_model_policy.pipeline` (v12 design
+`reviewsys-v12-design/DESIGN.md` §2–4); every switch defaults to v11 and a v11 config runs
+exactly as v0.28 (main) does. The switches and where they live:
+
+- `finders.anchoring: unanchored` — reviewer lanes become finders (`prompts.finder_prompt`,
+  skills `prompts/v12/finder.md` around `prompts/v12/<role>.md`): no prior checklist,
+  reconciliation, echo fields or confidence; the whole merge-base range every round, a
+  pointer to what changed since the last review, and a settled list (≤10 withdrawn or
+  deferred issues). Our own finding threads are left out of their evidence. Candidates get
+  harness ids (`p2-general-3`, `findings.candidate_id`).
+- `threads.lane` (needs `verifier.contract: v12`) — one thread lane (`converse.parse_threads`,
+  skills `prompts/v12/thread.md`) owns every open issue's status and reply. On a new push it
+  runs beside the first finders, only over a code-computed work set: threads with a human
+  reply newer than ours, standing issues whose anchored code changed since they were last
+  judged, and what the one-shot reconcile left. On a reply to a reviewed commit it replaces
+  the conversation lane. FIXED where the code did not change is FIX_PENDING; a deferral needs
+  a maintainer on both paths and, above a nitpick, a tracking issue or PR visible on the PR
+  (the one the reply cites, or one the maintainer points to; `worker._accept_thread_deferrals`).
+  The thread lane cannot have the bot file one, so an untracked deferral is asked for a link
+  and the issue keeps standing. On a reply to a reviewed commit the standing review's body is
+  updated for what the discussion lifted, and no discussion re-approves a commit whose CI
+  failed after its approval (as under v11). A thread lane that fails leaves every issue as it
+  was (no approval that round).
+- `verifier.contract: v12` (needs unanchored finders) — one verify+match lane per phase
+  (`worker._verify12`; ≤3 shards by file above 12 candidates), answering per candidate group:
+  match (`new | open:<h> | settled:<h> | fixed:<h> | coderabbit:<id>`), verdict
+  (`CONFIRMED | PLAUSIBLE | REFUTED`) with evidence, and the final wording. The code rules
+  (`rules.apply_rules`): blocking needs CONFIRMED; `open:` corroborates (no new thread, and
+  suppresses the thread lane's FIXED); `settled:` comes back only when `git diff` shows its
+  anchor changed since it closed; `fixed:` refound is a regression. The verdict comes from the
+  ledger: any standing blocker requests changes; APPROVE needs nothing above a nitpick
+  standing, a full-strength final review and the confirmation pass when due. The body lists
+  carried issues under "Still open from earlier rounds" instead of re-posting them. A shard
+  that fails twice drops its candidates when none is blocking (no approval), else fails the run.
+- `confirmation {roles, trigger}` — `no_blockers`: when no blocker stands on a full-strength
+  run, the roles review the whole change once more and only their candidates are verified,
+  against this round's own issues; `rereview`: the same on re-reviews only; `off`. Skipped in
+  degraded mode. The #38 same-sha approval needs it, and queues one re-review when it is missing.
+- `late_nonblocking: note` — this round's non-blocking issues on lines unchanged since the last
+  final review go into a collapsed "Also noticed" (not posted, not in the ledger, never holding
+  APPROVE); `post` posts them. Either way their count is an event (`v12.late_nonblocking`).
+- `lane_env_isolation` — lanes start without CLAUDE.md discovery or Claude Code's git
+  instructions; the reviewed repo's CLAUDE.md / AGENTS.md reach the prompts as evidence.
+  `structured_output` — the finder, verify+match and thread lanes answer through
+  `--json-schema` (`schemas.py`); correction turns stay the fallback.
+
+Before switching v12 on, `reviewsys ledger reconcile` outdates what the backfilled ledger
+still holds open but cannot stand (a closed PR's issues; an open PR's issues with no open
+thread whose code changed); the first v12 round on a PR does the same if it was not run, and
+until a PR is reconciled only issues with an open thread or last seen at the previous reviewed
+head count toward its verdict.
 
 ## Ad hoc reviews (repos without a skill)
 
@@ -1259,6 +1599,10 @@ minute if it dies. `~/.reviewsys/mode` records live/shadow for the watchdog.
     $R retry OWNER/REPO N         # re-queue a PR whose head ended `failed`
     $R degraded [on|off|auto]     # show / force the stand-in-models mode (see above)
     $R import-legacy PATH         # one-off: mark legacy queue.json `done` rows as reviewed
+    $R ledger backfill [--repo R --number N] [--github]  # replay history into the ledger
+    $R ledger reconcile [--repo R --number N]            # policy v12: one-shot, before the flip
+    $R ledger show OWNER/REPO N [--history] [--json]     # a PR's issues (and their events)
+    $R quality [--since DATE] [--json]                   # review-quality metrics (see above)
 
 Where to look when something is off, in order:
 

@@ -12,6 +12,8 @@ from pathlib import Path
 
 from ..models import FailKind, ReviewError
 
+SHA_FETCH_TIMEOUT = 600  # fetch_head's fallback: one commit by id
+
 
 def _env() -> dict[str, str]:
     return {
@@ -92,19 +94,24 @@ def ensure_mirror(mirrors_dir: Path, repo: str, *, timeout: int = 1800) -> Path:
 
 
 def fetch_head(mirror: Path, number: int, sha: str) -> None:
-    """Fetch the PR head ref and make sure `sha` is present."""
-    _git(
-        "fetch",
-        "--no-tags",
-        "origin",
-        f"+refs/pull/{number}/head:refs/pull/{number}/head",
-        cwd=mirror,
-        timeout=1800,
-    )
+    """Fetch the PR head ref and make sure `sha` is present. A failed ref fetch falls through
+    to fetching the commit itself: two runs of one PR updating its ref at once (one loses the
+    ref lock), or a replay of a head the PR has since moved past."""
+    with contextlib.suppress(ReviewError):
+        _git(
+            "fetch",
+            "--no-tags",
+            "origin",
+            f"+refs/pull/{number}/head:refs/pull/{number}/head",
+            cwd=mirror,
+            timeout=1800,
+        )
     try:
         _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
     except ReviewError:
-        _git("fetch", "--no-tags", "origin", sha, cwd=mirror, timeout=1800)
+        # one object by id: bounded tighter than the ref fetch above, so a dead origin fails
+        # the checkout within ~40 minutes rather than an hour
+        _git("fetch", "--no-tags", "origin", sha, cwd=mirror, timeout=SHA_FETCH_TIMEOUT)
         _git("cat-file", "-e", f"{sha}^{{commit}}", cwd=mirror)
 
 

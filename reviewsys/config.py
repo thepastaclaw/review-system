@@ -9,6 +9,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import os
 import re
 import tomllib
@@ -18,6 +19,8 @@ from pathlib import Path
 from typing import Any
 
 from .db import fmt_ts, parse_ts
+
+log = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_PATH = Path(
     os.environ.get("REVIEWSYS_CONFIG", "~/.reviewsys/config.toml")
@@ -153,6 +156,96 @@ class ComparisonPolicy:
         return int.from_bytes(digest[:8], "big") / 2**64 < self.fraction
 
 
+# ---- policy v12 (`review_model_policy.pipeline`) ----
+#
+# Every field below defaults to today's (v11) behavior, so a pipeline block switches on only
+# what it names. Allowed values are listed in full, the default (v11) first: a typo in an eval
+# flag must fail the load, never run the arm it was not meant to.
+PIPELINE_VERSIONS = ("v12",)
+ANCHORING_MODES = ("anchored", "unanchored")
+VERIFIER_CONTRACTS = ("v11", "v12")
+CONFIRMATION_TRIGGERS = ("rereview", "no_blockers", "off")
+LATE_NONBLOCKING_MODES = ("post", "note")
+
+
+@dataclass(frozen=True, slots=True)
+class FinderPolicy:
+    """`pipeline.finders`. `anchoring`: "anchored" = reviewer lanes get the prior-findings
+    checklist and reconcile it (v11); "unanchored" = finder lanes on the candidate contract,
+    no checklist, only the settled list (v12 design §2.1; `prompts.finder_prompt`)."""
+
+    anchoring: str = "anchored"
+
+
+@dataclass(frozen=True, slots=True)
+class ThreadsPolicy:
+    """`pipeline.threads`. `lane`: one thread lane beside the finders owns every open issue's
+    status and reply, replacing the reviewers' and verifier's reconciliation and
+    `step_converse` (v12 design §2.4; `worker._start_thread_lane`, `step_threads`); false =
+    v11. Needs `verifier.contract` "v12" (the verifier no longer reconciles)."""
+
+    lane: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class VerifierPolicy:
+    """`pipeline.verifier`. `contract`: "v11" = today's verifier output; "v12" = per-candidate
+    verdicts matched to the ledger, with the code rules deciding (v12 design §2.2-2.3;
+    `worker._verify12`, `rules.py`). Needs unanchored finders (candidate ids) and the thread
+    lane (open issues are no longer reconciled anywhere else)."""
+
+    contract: str = "v11"
+
+
+@dataclass(frozen=True, slots=True)
+class ConfirmationPolicy:
+    """`pipeline.confirmation`: the second, unanchored pass before an approval (v12 design
+    §2.5). `trigger`: "rereview" = today's fresh-final (re-reviews whose verified set has no
+    blocker), "no_blockers" = every round with no standing blocker on a full-strength run,
+    "off" = never. `roles`: the reviewer roles it reruns; None = every selected role (today).
+    Under verifier contract "v11" only "rereview" runs (today's fresh-final, `roles` ignored);
+    under "v12" `worker._confirm12` runs it on the trigger's rounds."""
+
+    roles: tuple[str, ...] | None = None
+    trigger: str = "rereview"
+
+
+@dataclass(frozen=True, slots=True)
+class PipelinePolicy:
+    """`review_model_policy.pipeline`: policy v12, switched on piece by piece. Absent (every
+    v11 config): None, and nothing below applies. Present, it always means the harness stamps
+    the echo fields (`review_phase`, `head_sha`) instead of asking lanes for them; every other
+    behavior is opted into by its own field, each defaulting to v11.
+
+    `lane_env_isolation`: lanes run without CLAUDE.md discovery or Claude Code's git
+    instructions (`lane.LANE_ENV`); the reviewed repo's own agent guidance (CLAUDE.md,
+    AGENTS.md at the worktree root) reaches the reviewer and verifier prompts as evidence
+    instead (`prompts.repo_guidance`).
+    `structured_output`: a lane given a schema (`schemas.py`) answers through `--json-schema`
+    (`worker._run_checked_lane(schema=...)`): the v12 finder, verifier and thread lanes pass
+    one, and their prompts then ask for the StructuredOutput tool instead of raw JSON text.
+    `late_nonblocking` (owner decision D2): "post" = later-round suggestions on lines unchanged
+    since the last final review post as today; "note" = a collapsed note that does not hold
+    APPROVE (needs verifier contract "v12").
+
+    JSON shape (every key but `version` optional):
+        {"version": "v12", "lane_env_isolation": true, "structured_output": true,
+         "finders": {"anchoring": "unanchored"}, "threads": {"lane": true},
+         "verifier": {"contract": "v12"},
+         "confirmation": {"roles": ["general", "security-auditor"], "trigger": "no_blockers"},
+         "late_nonblocking": "post"}
+    The block sits inside `review_model_policy`, so the policy fingerprint covers it."""
+
+    version: str
+    lane_env_isolation: bool = False
+    structured_output: bool = False
+    finders: FinderPolicy = field(default_factory=FinderPolicy)
+    threads: ThreadsPolicy = field(default_factory=ThreadsPolicy)
+    verifier: VerifierPolicy = field(default_factory=VerifierPolicy)
+    confirmation: ConfirmationPolicy = field(default_factory=ConfirmationPolicy)
+    late_nonblocking: str = "post"
+
+
 @dataclass(frozen=True, slots=True)
 class ModelPolicy:
     name: str
@@ -185,6 +278,42 @@ class ModelPolicy:
     phase1_specialists: tuple[str, ...] | None = None
     # how many verified Phase-1 findings defer Phase 2; None = any blocker does
     phase1_gate: GatePolicy | None = None
+    # policy v12, piece by piece; None = v11 (see PipelinePolicy)
+    pipeline: PipelinePolicy | None = None
+
+    @property
+    def stamps_echo_fields(self) -> bool:
+        """Policy v12: lanes are not asked for `review_phase` / `head_sha`; the harness
+        stamps them on every reviewer and verifier answer."""
+        return self.pipeline is not None
+
+    @property
+    def isolates_lane_env(self) -> bool:
+        return self.pipeline is not None and self.pipeline.lane_env_isolation
+
+    @property
+    def structured_output(self) -> bool:
+        return self.pipeline is not None and self.pipeline.structured_output
+
+    @property
+    def unanchored(self) -> bool:
+        """Policy v12 finder lanes: candidate contract, no prior checklist (B1)."""
+        return self.pipeline is not None and self.pipeline.finders.anchoring == "unanchored"
+
+    @property
+    def thread_lane(self) -> bool:
+        """Policy v12 thread lane owns every open issue's status and reply (B2)."""
+        return self.pipeline is not None and self.pipeline.threads.lane
+
+    @property
+    def verifier_v12(self) -> bool:
+        """Policy v12 verify+match lanes, code rules and the ledger verdict (B3)."""
+        return self.pipeline is not None and self.pipeline.verifier.contract == "v12"
+
+    @property
+    def confirmation_trigger(self) -> str:
+        """When policy v12's confirmation pass runs ("off" without a pipeline block)."""
+        return self.pipeline.confirmation.trigger if self.pipeline is not None else "off"
 
     @property
     def has_phase1_ladder(self) -> bool:
@@ -390,6 +519,14 @@ class Config:
     policy: ModelPolicy
     extra: dict[str, Any] = field(default_factory=dict)
     audit: AuditConfig = field(default_factory=AuditConfig)
+    # `reviewsys replay` (eval) lanes: the share of each pool's non-top slots they may hold
+    # at once, and only while no production lane waits (lanepool.RANK_REPLAY); a pool listed
+    # in replay_pool_slots gets that many instead
+    replay_pool_share: float = 0.5
+    replay_pool_slots: dict[str, int] = field(default_factory=dict)
+    # where the gpt pool's account reading is read from when it is not `db_path`: a replay's
+    # database is a scratch one, the box's reading is in the production database (read-only)
+    lane_capacity_db: Path | None = None
     context: ContextConfig = field(default_factory=ContextConfig)
     ci: CiConfig = field(default_factory=CiConfig)
     deferral: DeferralConfig = field(default_factory=DeferralConfig)
@@ -551,6 +688,12 @@ phase_parallelism = 0
 # capped by the per-account stream budget above instead; a family not listed here is not
 # capped.
 lane_pools = { muse = 8, glm = 6, gemini = 6 }
+# `reviewsys replay` (policy evals) lanes share these pools at the lowest rank: one only takes
+# a slot while no production lane is waiting for that pool, never the slot kept for side lanes,
+# and replays hold at most floor((slots - 1) * replay_pool_share) of a pool at once (0 for a
+# pool of 1 or 2 slots); replay_pool_slots sets that number per pool instead
+replay_pool_share = 0.5
+replay_pool_slots = {}
 
 [lanes]
 # lanes may not execute anything under these paths (compilers, build systems, test
@@ -750,6 +893,116 @@ def _comparison(
     return ComparisonPolicy(model=model, tiers=names, fraction=fraction)
 
 
+def policy_fingerprint(pol: dict[str, Any]) -> str:
+    """The skills repo's fingerprint of a `review_model_policy` object: sha256 of the object
+    without its own `fingerprint`, as compact sorted-key JSON (the rewrite scripts that cut
+    v6-v11 compute it this way). Everything in the object counts, `pipeline` included.
+    `json.dumps` keeps its default `ensure_ascii=True`, as those scripts do: the policy text has
+    non-ASCII characters ("—"), and only the escaped form reproduces the stored hashes."""
+    body = {k: v for k, v in pol.items() if k != "fingerprint"}
+    return hashlib.sha256(
+        json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def _keys(node: dict[str, Any], where: str, cls: type) -> None:
+    """`node` has no key that is not a field of the dataclass `cls`."""
+    allowed = [f.name for f in dataclasses.fields(cls)]
+    unknown = sorted(set(node) - set(allowed))
+    if unknown:
+        raise ValueError(f"{where}: unknown keys {unknown}; allowed {allowed}")
+
+
+def _section(node: dict[str, Any], key: str, cls: type) -> dict[str, Any]:
+    sub = node.get(key)
+    if sub is None:
+        return {}
+    if not isinstance(sub, dict):
+        raise ValueError(f"pipeline.{key} must be an object")
+    _keys(sub, f"pipeline.{key}", cls)
+    return sub
+
+
+def _flag(node: dict[str, Any], key: str, where: str) -> bool:
+    value = node.get(key, False)
+    if not isinstance(value, bool):
+        raise ValueError(f"{where}.{key} must be true or false")
+    return value
+
+
+def _choice(node: dict[str, Any], key: str, where: str, allowed: tuple[str, ...]) -> str:
+    value = node.get(key, allowed[0])
+    if value not in allowed:
+        raise ValueError(f"{where}.{key} {value!r} not in {allowed}")
+    return str(value)
+
+
+def _pipeline(node: Any, specialists: tuple[Specialist, ...]) -> PipelinePolicy | None:
+    """`review_model_policy.pipeline`, strictly: an unknown key or value fails the load rather
+    than silently running v11 behavior where v12 was meant (or the reverse). A bare "v12" is
+    the same as {"version": "v12"}."""
+    if node is None:
+        return None
+    if isinstance(node, str):
+        node = {"version": node}
+    if not isinstance(node, dict):
+        raise ValueError('pipeline must be an object like {"version": "v12"}')
+    _keys(node, "pipeline", PipelinePolicy)
+    if node.get("version") not in PIPELINE_VERSIONS:
+        raise ValueError(f"pipeline.version {node.get('version')!r} not in {PIPELINE_VERSIONS}")
+    finders = _section(node, "finders", FinderPolicy)
+    threads = _section(node, "threads", ThreadsPolicy)
+    verifier = _section(node, "verifier", VerifierPolicy)
+    confirm = _section(node, "confirmation", ConfirmationPolicy)
+    roles = confirm.get("roles")
+    if roles is not None:
+        if not isinstance(roles, list) or not all(isinstance(r, str) for r in roles):
+            raise ValueError("pipeline.confirmation.roles must be a list of reviewer roles")
+        unknown = sorted(set(roles) - {"general", *(s.id for s in specialists)})
+        if unknown:
+            raise ValueError(
+                f"pipeline.confirmation.roles {unknown!r} are neither `general` nor specialists"
+            )
+    policy = PipelinePolicy(
+        version=str(node["version"]),
+        lane_env_isolation=_flag(node, "lane_env_isolation", "pipeline"),
+        structured_output=_flag(node, "structured_output", "pipeline"),
+        finders=FinderPolicy(
+            anchoring=_choice(finders, "anchoring", "pipeline.finders", ANCHORING_MODES)
+        ),
+        threads=ThreadsPolicy(lane=_flag(threads, "lane", "pipeline.threads")),
+        verifier=VerifierPolicy(
+            contract=_choice(verifier, "contract", "pipeline.verifier", VERIFIER_CONTRACTS)
+        ),
+        confirmation=ConfirmationPolicy(
+            roles=tuple(roles) if roles is not None else None,
+            trigger=_choice(confirm, "trigger", "pipeline.confirmation", CONFIRMATION_TRIGGERS),
+        ),
+        late_nonblocking=_choice(node, "late_nonblocking", "pipeline", LATE_NONBLOCKING_MODES),
+    )
+    _check_pipeline(policy)
+    return policy
+
+
+def _check_pipeline(p: PipelinePolicy) -> None:
+    """Switches that only work together: the v12 verifier matches candidate ids (unanchored
+    finders) and leaves open issues to the thread lane, which in turn needs the v12 verifier to
+    stop reconciling them; the confirmation trigger "no_blockers" and the D2 note read the
+    ledger verdict, which only the v12 verifier computes. A half-switched arm would run a
+    pipeline nobody designed, so it fails the load."""
+    v12 = p.verifier.contract == "v12"
+    if v12 and p.finders.anchoring != "unanchored":
+        raise ValueError('pipeline.verifier.contract "v12" needs finders.anchoring "unanchored"')
+    if v12 != p.threads.lane:
+        raise ValueError('pipeline.threads.lane and verifier.contract "v12" go together')
+    if not v12 and p.confirmation.trigger == "no_blockers":
+        raise ValueError(
+            'pipeline.confirmation.trigger "no_blockers" needs verifier.contract "v12"'
+        )
+    if not v12 and p.late_nonblocking != "post":
+        raise ValueError('pipeline.late_nonblocking "note" needs verifier.contract "v12"')
+
+
 def load_skills_config(
     skills_dir: Path,
 ) -> tuple[tuple[RepoConfig, ...], tuple[Specialist, ...], ModelPolicy, dict[str, Any]]:
@@ -806,9 +1059,17 @@ def load_skills_config(
         comparison=_comparison(pol.get("comparison"), tiers, p2.model),
         phase1_specialists=_phase1_specialists(p1_node, specialists),
         phase1_gate=_gate(p1_node.get("gate")),
+        pipeline=_pipeline(pol.get("pipeline"), specialists),
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
+    if policy.pipeline is not None and policy.fingerprint != policy_fingerprint(pol):
+        # v12 runs must never carry a v11 fingerprint: it names the policy in every phase
+        # marker and provenance record, and the replay eval tells its two arms apart by it
+        raise ValueError(
+            "review_model_policy.fingerprint does not cover the pipeline block: recompute it "
+            f"(expected {policy_fingerprint(pol)})"
+        )
     return repos, specialists, policy, settings
 
 
@@ -949,10 +1210,41 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         policy=policy,
         extra={**settings, "additional_repos": s.get("additional_repos", [])},
         audit=_audit(t.get("audit") or {}),
+        replay_pool_share=_replay_share(s.get("replay_pool_share", 0.5)),
+        replay_pool_slots=_replay_slots(s.get("replay_pool_slots")),
         context=_context(t.get("context") or {}),
         ci=_ci(t.get("ci") or {}),
         deferral=_deferral(t.get("deferral") or {}),
     )
+
+
+def _replay_share(value: Any) -> float:
+    """`[scheduling] replay_pool_share`, clamped to 0..1; a bad value is logged and the
+    default used: an eval-only setting never keeps the daemon from starting."""
+    try:
+        return min(1.0, max(0.0, float(value)))
+    except (TypeError, ValueError):
+        log.warning("[scheduling] replay_pool_share %r is not a number; using 0.5", value)
+        return 0.5
+
+
+def _replay_slots(value: Any) -> dict[str, int]:
+    """`[scheduling] replay_pool_slots` (pool -> slots): a bad table or entry is logged and
+    left out (that pool keeps the default share), never fatal."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        log.warning("[scheduling] replay_pool_slots %r is not a table; ignored", value)
+        return {}
+    out: dict[str, int] = {}
+    for k, v in value.items():
+        try:
+            if isinstance(v, bool):
+                raise TypeError("a boolean")
+            out[str(k)] = max(0, int(v))
+        except (TypeError, ValueError):
+            log.warning("[scheduling] replay_pool_slots.%s = %r is not a count; ignored", k, v)
+    return out
 
 
 def _skip_labels(value: Any) -> tuple[str, ...]:

@@ -37,6 +37,14 @@ A deferral nobody tracks is a finding nobody fixes: on dashpay/platform#5258 a m
 no issue was ever filed. So a deferral (of anything above a nitpick) is accepted only with a
 tracking reference a reader of the PR can see, which code checks (`accept_deferrals`), or an
 issue the worker files at a maintainer's request (`FileRequest`).
+
+Policy v12 grows this lane into the thread lane (`parse_threads`, `accept_deferrals`; the prompt
+is the skills repo's `prompts/v12/thread.md`): one lane that owns every open issue's status, on
+a reply to a reviewed commit as before and beside the finders on every new push, for the issues
+someone replied to or whose code changed. It answers STILL_VALID | FIXED | OUTDATED | WITHDRAWN |
+INTENTIONALLY_DEFERRED plus a reply or NO_REPLY; the same rules hold on both paths (FIXED is
+FIX_PENDING where the code did not change, a deferral needs a maintainer, severity never
+changes in a reply).
 """
 
 from __future__ import annotations
@@ -48,10 +56,12 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from .contract import _expand, _status_spelling
 from .db import kv_get, kv_set, now, tx
 from .dedupe import THREAD_STATUS_RE
 from .models import FailKind, ReviewError
 from .prompts import RAW_JSON_CONTRACT, STATIC_REVIEW
+from .schemas import NO_REPLY, THREAD_STATUSES, check_thread_coverage
 
 CONVERSATION_STATUSES = (
     "STILL_VALID",
@@ -238,6 +248,50 @@ def cued_link(said: str, *, repo: str, number: int) -> str:
     return ""
 
 
+def _ordered_refs(text: str, repo: str) -> list[tuple[tuple[str, int], str]]:
+    """`_refs(text, repo)` in the order they appear in `text`, each reference once."""
+    found: list[tuple[int, tuple[str, int], str]] = []
+    for m in _REF_URL_RE.finditer(text):
+        link = m[0] if m[0].startswith("http") else f"https://{m[0]}"
+        found.append((m.start(), (f"{m[1]}/{m[2]}".lower(), int(m[3])), link))
+    for m in _REF_LONG_RE.finditer(text):
+        link = f"https://github.com/{m[1]}/{m[2]}/issues/{m[3]}"
+        found.append((m.start(), (f"{m[1]}/{m[2]}".lower(), int(m[3])), link))
+    if repo:
+        for m in _REF_SHORT_RE.finditer(text):
+            link = f"https://github.com/{repo}/issues/{m[1]}"
+            found.append((m.start(), (repo.lower(), int(m[1])), link))
+    out: dict[tuple[str, int], str] = {}
+    for _, ref, link in sorted(found, key=lambda f: f[0]):
+        out.setdefault(ref, link)
+    return list(out.items())
+
+
+def cited_reference(reply: str, *, said: str, visible: str, repo: str, number: int) -> str:
+    """The issue or PR the policy v12 thread lane's deferral rests on, from its `reply` (its
+    answer has no `tracking` field: the template asks it to cite the tracking there): of the
+    references the reply names besides this PR, the first visible one on a line the reply
+    marks as tracking ("tracked in #N"), else the first the humans in the thread named
+    (`said`), else the first visible on the PR (`visible`), else simply the first (which
+    `accept_deferrals` then reports as not found); "" when it names none. A reply often also
+    cites the upstream change a deferral follows, which is no tracking issue."""
+    own = (repo.lower(), number)
+    seen = _refs(visible, repo)
+    for line in reply.splitlines():  # what the reply itself calls the tracking, when visible
+        cue = _TRACKING_CUE_RE.search(line)
+        if cue:  # the references after the cue word first ("upstream X; tracked in #N")
+            named = _ordered_refs(line[cue.start() :], repo) + _ordered_refs(line, repo)
+            hit = next((u for ref, u in named if ref != own and ref in seen), "")
+            if hit:
+                return hit
+    refs = [(ref, link) for ref, link in _ordered_refs(reply, repo) if ref != own]
+    for pool in (_refs(said, repo), seen):
+        hit = next((link for ref, link in refs if ref in pool), "")
+        if hit:
+            return hit
+    return refs[0][1] if refs else ""
+
+
 def tracking_link(cited: str, *, visible: str, repo: str, number: int) -> str:
     """A link to the issue or PR `cited` names (a URL, `owner/repo#N` or `#N`), provided that
     reference appears in `visible` (what a reader of the PR sees: the thread, the description,
@@ -277,10 +331,13 @@ UNTRACKED_DEFERRAL_REASON = (
 )
 
 
-def tracking_ask(repo: str, *, unseen: str = "", itself: bool = False) -> str:
+def tracking_ask(
+    repo: str, *, unseen: str = "", itself: bool = False, can_file: bool = True
+) -> str:
     """The reply that asks for tracking before a deferral is accepted, written by the system
     when the lane accepted one that nothing visible on the PR tracks (`itself`: the lane
-    cited this pull request)."""
+    cited this pull request). `can_file` False (the policy v12 thread lane, which cannot
+    pass on a filing request): no offer to file it."""
     missing = ""
     shown = " ".join(unseen.replace("`", "").split())[:120]
     if itself:
@@ -290,9 +347,13 @@ def tracking_ask(repo: str, *, unseen: str = "", itself: bool = False) -> str:
             f" I could not find `{shown}` linked in this thread, the PR description or the PR "
             "comments, so it does not count yet."
         )
+    offer = (
+        f" Link one, or say so and I'll file it in `{repo}`."
+        if can_file
+        else " Link one here, in the PR description or in a PR comment."
+    )
     return (
-        "Before I mark this deferred it needs a tracking issue for the follow-up."
-        f"{missing} Link one, or say so and I'll file it in `{repo}`."
+        f"Before I mark this deferred it needs a tracking issue for the follow-up.{missing}{offer}"
     )
 
 
@@ -319,6 +380,7 @@ def accept_deferrals(
     repo: str = "",
     number: int = 0,
     pr_text: str = "",
+    can_file: bool = True,
 ) -> ConversationOutput:
     """Vet every INTENTIONALLY_DEFERRED outcome in code; the lane's word is not enough.
 
@@ -332,7 +394,8 @@ def accept_deferrals(
     points to as tracking in their own reply counts (`cued_link`). A thread in `settled` was
     already lifted on this commit by an earlier maintainer call; restating that to whoever
     asks next is not a new deferral to vet, though a maintainer may still have the bot file
-    its tracking issue."""
+    its tracking issue. `can_file` False: the lane cannot ask for one to be filed (see
+    `tracking_ask`)."""
     outcomes: dict[str, ThreadOutcome] = {}
     for h, o in out.outcomes.items():
         t = threads[h]
@@ -361,32 +424,36 @@ def accept_deferrals(
                     repo,
                     unseen=o.tracking_url,
                     itself=(repo.lower(), number) in _refs(o.tracking_url, repo),
+                    can_file=can_file,
                 ),
                 tracking_url="",
             )
     return ConversationOutput(outcomes=outcomes)
 
 
+def exchange(transcript: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A finding thread's replies as a lane reads them: our own answers as `you (PastaClaw)`,
+    markers stripped."""
+    return [
+        {
+            "author": "you (PastaClaw)" if c.get("is_bot") else str(c.get("author") or ""),
+            "association": None if c.get("is_bot") else c.get("association"),
+            "created_at": c.get("created_at"),
+            "body": strip_marker(str(c.get("body") or "")),
+        }
+        for c in transcript
+    ]
+
+
 def _thread_for_prompt(h: str, t: dict[str, Any], settled: dict[str, str]) -> dict[str, Any]:
-    exchange = []
-    for c in t.get("transcript") or []:
-        who = "you (PastaClaw)" if c.get("is_bot") else str(c.get("author") or "")
-        exchange.append(
-            {
-                "author": who,
-                "association": None if c.get("is_bot") else c.get("association"),
-                "created_at": c.get("created_at"),
-                "body": _strip_marker(str(c.get("body") or "")),
-            }
-        )
     return {
         "finding_hash": h,
         "severity": t.get("severity"),
         "title": t.get("title"),
         "path": t.get("path"),
         "line": t.get("line"),
-        "finding_body": _strip_marker(str(t.get("body") or "")),
-        "exchange": exchange,
+        "finding_body": strip_marker(str(t.get("body") or "")),
+        "exchange": exchange(t.get("transcript") or []),
         "awaiting_your_answer": bool(t.get("awaiting_answer")),
         # an earlier answer of yours already lifted it on this commit (WITHDRAWN/DEFERRED)
         "already_settled_as": settled.get(h),
@@ -396,12 +463,12 @@ def _thread_for_prompt(h: str, t: dict[str, Any], settled: dict[str, str]) -> di
 def finding_text(root_body: str) -> str:
     """A posted finding's own text: its root comment without markers, status line or bold
     headline (the title, which callers show on its own)."""
-    text = _strip_marker(THREAD_STATUS_RE.sub("", root_body, count=1))
+    text = strip_marker(THREAD_STATUS_RE.sub("", root_body, count=1))
     head, _, rest = text.partition("\n")
     return rest.strip() if head.startswith("**") and head.endswith("**") else text
 
 
-def _strip_marker(body: str) -> str:
+def strip_marker(body: str) -> str:
     lines = [ln for ln in body.splitlines() if not ln.strip().startswith("<!--")]
     return "\n".join(lines).strip()[:6000]
 
@@ -630,3 +697,71 @@ def _tracking(status: str, raw: Any) -> tuple[str, FileRequest | None]:
         return url, None
     body = str(f.get("body") or "").strip()[:4000]
     return url, FileRequest(repo=repo, title=title[:200], body=body)
+
+
+# ---- policy v12: the thread lane ----
+
+# outcomes that retire an issue; the thread must say why, so each needs a reply
+CLOSING_STATUSES = frozenset({"FIXED", "OUTDATED", "WITHDRAWN", "INTENTIONALLY_DEFERRED"})
+# outcomes that claim the code changed: impossible where it did not (pending instead)
+CODE_STATUSES = frozenset({"FIXED", "OUTDATED"})
+
+
+def _full_hashes(raw: dict[str, Any], hashes: list[str]) -> dict[str, Any]:
+    """`raw` with each row's `finding_hash` expanded to the one listed hash it names (a unique
+    prefix of at least seven characters, as the verifier's matches are read)."""
+    rows = raw.get("threads")
+    if not isinstance(rows, list):
+        return raw
+    full = set(hashes)
+
+    def one(row: Any) -> Any:
+        if not isinstance(row, dict):
+            return row
+        h = str(row.get("finding_hash") or "")
+        return {**row, "finding_hash": _expand(h, full) or h} if h else row
+
+    return {**raw, "threads": [one(r) for r in rows]}
+
+
+def parse_threads(
+    raw: dict[str, Any], *, hashes: list[str], fix_pending: set[str]
+) -> ConversationOutput:
+    """The thread lane's answer: every hash of the work set exactly once
+    (`schemas.check_thread_coverage`), a status from THREAD_STATUSES (spelling normalized; a
+    v11-style NO_REPLY status is STILL_VALID with no reply), and a reply, or NO_REPLY (stored
+    as ""). FIXED or OUTDATED on an issue in `fix_pending` (the code under it cannot have
+    changed: a same-sha reply, or the issue was last seen at this very head) is FIX_PENDING:
+    it lifts nothing (dashpay/dash#7778). A closing
+    status without a reply breaks the contract. Every problem is reported at once."""
+    raw = _full_hashes(raw, hashes)
+    problems = check_thread_coverage(raw, hashes)
+    out: dict[str, ThreadOutcome] = {}
+    rows = [] if problems else (raw.get("threads") or [])
+    for row in rows:
+        h = str(row.get("finding_hash") or "")
+        st = _status_spelling(str(row.get("status") or "")).upper()
+        reply = str(row.get("reply") or "").strip()
+        if st == NO_REPLY:
+            st, reply = "STILL_VALID", ""
+        if st not in THREAD_STATUSES:
+            problems.append(
+                f"threads: {h}: status {row.get('status')!r} not in {' | '.join(THREAD_STATUSES)}"
+            )
+            continue
+        if reply.upper().strip(".") == NO_REPLY:
+            reply = ""
+        if st in CLOSING_STATUSES and not reply:
+            problems.append(f"threads: {h}: {st} needs a reply saying why (not {NO_REPLY})")
+            continue
+        if st in CODE_STATUSES and h in fix_pending:
+            st = "FIX_PENDING"
+        out[h] = ThreadOutcome(
+            finding_hash=h,
+            status=st,
+            reply=reply[:REPLY_MAX],
+            reasoning=str(row.get("reasoning") or "")[:1000],
+        )
+    if problems:
+        raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
+    return ConversationOutput(outcomes=out)

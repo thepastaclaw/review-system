@@ -519,6 +519,17 @@ def test_a_conversation_run_gathers_no_review_context(tmp_path, cfg, conn, gh, m
     assert "base_drift" not in ctx.evidence and (ctx.run_dir / "evidence.json").exists()
 
 
+def test_a_replay_gathers_no_review_context(tmp_path, cfg, conn, gh, monkeypatch):
+    """A replay (policy eval) reviews the state production had at its cutoff: the sister
+    checkouts' default tips and the base drift are today's, and a sister checkout writes the
+    mirrors a replay must leave alone."""
+    monkeypatch.setattr(worker, "_review_context", lambda ctx: pytest.fail("not for a replay"))
+    ctx = _ctx(cfg, conn, gh, tmp_path, dry_run=True, replay=True)
+    ctx.run_dir.mkdir()
+    worker.step_context(ctx)
+    assert "sister_repos" not in ctx.evidence and "base_drift" not in ctx.evidence
+
+
 def test_prompts_explain_the_context_only_when_present(cfg):
     assert context_notes({}) == ""
     assert context_notes({"base_drift": {"base_branch": "x", "error": "e"}}) == ""
@@ -607,3 +618,50 @@ def test_an_unregistered_repo_has_no_verifier_skill(cfg):
     from reviewsys.prompts import verifier_skill_text
 
     assert verifier_skill_text(cfg, "someone/else") == ""
+
+
+def test_a_replay_gets_the_source_runs_context(tmp_path):
+    from types import SimpleNamespace
+
+    present = tmp_path / "sister" / "rust-dashcore@abc"
+    present.mkdir(parents=True)
+    os.utime(present, (1, 1))
+    recorded = {
+        "sister_repos": [
+            {
+                "repo": "dashpay/rust-dashcore",
+                "pinned": {"sha": "abc", "path": str(present)},
+                "default": {"sha": "def", "path": str(tmp_path / "gone")},
+            },
+            {"repo": "dashpay/tenderdash", "default": {"sha": "123", "path": str(present)}},
+        ],
+        "base_drift": {"commits_behind": 3, "base_branch": "v3.1-dev"},
+    }
+    ctx = SimpleNamespace(evidence={}, is_audit=False)
+    worker._replayed_context(ctx, recorded)
+    a, b = ctx.evidence["sister_repos"]
+    assert a["pinned"]["path"] == str(present) and a["default"]["path"] is None
+    assert "no longer present" in a["skipped"] and "skipped" not in b
+    assert recorded["sister_repos"][0]["default"]["path"] == str(tmp_path / "gone")  # copied
+    assert present.stat().st_mtime > 1  # touched, as live reuse does
+    assert sister.lane_dirs(ctx.evidence) == (present,)
+    assert ctx.evidence["base_drift"]["commits_behind"] == 3
+    audit = SimpleNamespace(evidence={}, is_audit=True)
+    worker._replayed_context(audit, {"base_drift": {"commits_behind": 1}})
+    assert "base_drift" not in audit.evidence
+
+
+def test_gc_keeps_what_a_replay_leases_until_it_expires(cfg, conn):
+    co = sister.sister_root(cfg) / "dashpay__rust-dashcore@abc"
+    co.mkdir(parents=True)
+    os.utime(co, (1, 1))  # older than a day: gc would take it
+    paths = sister.slot_paths([{"pinned": {"path": str(co)}, "default": {"path": None}}])
+    assert paths == [str(co)]
+    held = sister.lease(cfg, paths, owner="replay-7", hours=1)
+    gc.run(conn, cfg)
+    assert co.exists()
+    data = json.loads(held.read_text())
+    held.write_text(json.dumps({**data, "expires": time.time() - 1}))
+    assert sister.leased_paths(cfg) == set() and not held.exists()  # expired: dropped
+    gc.run(conn, cfg)
+    assert not co.exists()
