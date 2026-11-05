@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T17:52:01Z",
-  "generated_at": "2026-11-05T17:52:02Z",
+  "data_as_of": "2026-11-05T17:53:01Z",
+  "generated_at": "2026-11-05T17:53:01Z",
   "history": {
     "daily": [
       {
@@ -328,7 +328,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 772,
+            "n": 773,
             "p90_seconds": 1826
           }
         },
@@ -354,6 +354,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=af1337e2",
+        "kind": "run.spawned",
+        "number": 120,
+        "repo": "dashpay/base-sdk",
+        "run_id": 9058,
+        "ts": "2026-11-05T17:52:44Z"
+      },
       {
         "detail": "1ea9eabd trigger=new_push priority=0",
         "kind": "head.queued",
@@ -665,14 +673,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-11-05T16:37:50Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-11-05T16:33:07Z"
       }
     ],
     "tokens_by_effort": [
@@ -1266,7 +1266,7 @@
       "findings_posted": 8253,
       "reviews": 8560,
       "reviews_imported": 2245,
-      "runs": 9057,
+      "runs": 9058,
       "tokens_in": 99192639862,
       "tokens_out": 1076311438,
       "tokens_total": 100268951300
@@ -1278,12 +1278,12 @@
         "attempt": 1,
         "author": "abaranouski",
         "deadline_at": "2026-11-05T23:18:45Z",
-        "deadline_in_seconds": 19604,
+        "deadline_in_seconds": 19544,
         "degraded": false,
-        "elapsed_seconds": 1996,
+        "elapsed_seconds": 2056,
         "findings": null,
         "heartbeat_age_seconds": 11,
-        "heartbeat_at": "2026-11-05T17:51:50Z",
+        "heartbeat_at": "2026-11-05T17:52:50Z",
         "id": 9056,
         "lanes": [],
         "live_lanes": [
@@ -1294,7 +1294,7 @@
             "phase": "phase1",
             "pool": "glm",
             "role": "general",
-            "since_seconds": 1981,
+            "since_seconds": 2041,
             "state": "running"
           }
         ],
@@ -1303,7 +1303,7 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1679",
         "priority": false,
-        "progress": 0.976,
+        "progress": 0.977,
         "queue": "live",
         "queued_at": "2026-11-05T16:48:05Z",
         "remaining_seconds": 48,
@@ -1358,7 +1358,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 1984,
+            "seconds": 2044,
             "started_at": "2026-11-05T17:18:57Z",
             "status": "running"
           }
@@ -1374,6 +1374,88 @@
           "publish"
         ],
         "wait_seconds": 1840
+      },
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-05T23:52:44Z",
+        "deadline_in_seconds": 21583,
+        "degraded": false,
+        "elapsed_seconds": 17,
+        "findings": null,
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-11-05T17:53:00Z",
+        "id": 9058,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 120,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/base-sdk/pull/120",
+        "priority": false,
+        "progress": 0.013,
+        "queue": "live",
+        "queued_at": "2026-11-05T17:22:38Z",
+        "remaining_seconds": 1260,
+        "repo": "dashpay/base-sdk",
+        "sha": "af1337e297f53f5b2d8d0ffef6d6683ecb347075",
+        "started_at": "2026-11-05T17:52:44Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-11-05T17:52:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 9,
+            "started_at": "2026-11-05T17:52:48Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "Although pkgs/pkc/src/bls/scheme_ops.rs changes cryptographic key derivation to use a caller-selected encoding, the production change is contained and straightforward, with most of the diff devoted to API propagation and reference-vector tests rather than large or intricate cryptographic logic.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-11-05T17:52:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-11-05T17:52:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "pkc%feat(bls)!: read the BLS-IES key from a chosen encoding",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1806
       }
     ],
     "audit": {
@@ -1391,7 +1473,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1409,7 +1491,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-05T17:50:02Z",
+        "at": "2026-11-05T17:52:19Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1429,8 +1511,8 @@
       "closed": 624,
       "done": 8473,
       "failed": 100,
-      "queued": 2,
-      "running": 1,
+      "queued": 1,
+      "running": 2,
       "superseded": 2961
     },
     "ingest_error_streak": 0,
@@ -1468,40 +1550,21 @@
       }
     ],
     "last_run_done_at": "2026-11-05T17:30:49Z",
-    "last_run_started_at": "2026-11-05T17:29:44Z",
+    "last_run_started_at": "2026-11-05T17:52:44Z",
     "median_run_minutes": 20.15,
-    "notify_last_at": "2026-11-05T17:50:23Z",
-    "oldest_queued_at": "2026-11-05T17:22:38Z",
+    "notify_last_at": "2026-11-05T17:52:40Z",
+    "oldest_queued_at": "2026-11-05T17:43:07Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1763,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-11-05T17:52:38Z",
-        "eligible_in_seconds": 37,
-        "number": 120,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/base-sdk/pull/120",
-        "prioritize_url": "https://github.com/dashpay/base-sdk/issues/120#issuecomment-6652452602",
-        "priority": false,
-        "queued_at": "2026-11-05T17:22:38Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/base-sdk",
-        "sha": "af1337e297f53f5b2d8d0ffef6d6683ecb347075",
-        "title": "pkc%feat(bls)!: read the BLS-IES key from a chosen encoding",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 534,
+        "age_seconds": 594,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-11-05T18:13:07Z",
-        "eligible_in_seconds": 1266,
+        "eligible_in_seconds": 1206,
         "number": 5417,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5417",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5417#issuecomment-6150860820",
         "priority": false,
@@ -1520,7 +1583,7 @@
       "reviews": 120,
       "tokens": 1300211369
     },
-    "ts": "2026-11-05T17:52:01Z",
+    "ts": "2026-11-05T17:53:01Z",
     "typical_minutes_by_tier": {
       "critical": 28.0,
       "low": 37.6,
@@ -1529,9 +1592,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 1,
+      "active": 2,
       "eligible": 0,
-      "idle_minutes": 22.283333333333335,
+      "idle_minutes": 0.2833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
