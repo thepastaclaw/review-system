@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T05:03:01Z",
-  "generated_at": "2026-11-05T05:03:01Z",
+  "data_as_of": "2026-11-05T05:04:01Z",
+  "generated_at": "2026-11-05T05:04:02Z",
   "history": {
     "daily": [
       {
@@ -328,7 +328,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 768,
+            "n": 769,
             "p90_seconds": 1825
           }
         },
@@ -354,6 +354,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5768,
+        "repo": "dashpay/platform",
+        "run_id": 8937,
+        "ts": "2026-11-05T05:03:42Z"
+      },
+      {
+        "detail": "attempt 1 sha=4aae747f",
+        "kind": "run.spawned",
+        "number": 5768,
+        "repo": "dashpay/platform",
+        "run_id": 8937,
+        "ts": "2026-11-05T05:03:15Z"
+      },
       {
         "detail": "pr_draft",
         "kind": "head.closed",
@@ -657,22 +673,6 @@
         "repo": "dashpay/platform",
         "run_id": 8932,
         "ts": "2026-11-05T00:23:39Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 5767,
-        "repo": "dashpay/platform",
-        "run_id": 8932,
-        "ts": "2026-11-05T00:23:39Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 8051,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-05T00:23:32Z"
       }
     ],
     "tokens_by_effort": [
@@ -1266,14 +1266,135 @@
       "findings_posted": 8151,
       "reviews": 8462,
       "reviews_imported": 2245,
-      "runs": 8936,
+      "runs": 8937,
       "tokens_in": 97956836091,
       "tokens_out": 1059903138,
       "tokens_total": 99016739229
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "shumkov",
+        "deadline_at": "2026-11-05T11:03:15Z",
+        "deadline_in_seconds": 21554,
+        "degraded": false,
+        "elapsed_seconds": 46,
+        "findings": null,
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-11-05T05:04:00Z",
+        "id": 8937,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 18,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 19,
+            "state": "running"
+          }
+        ],
+        "number": 5768,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5768",
+        "priority": false,
+        "progress": 0.031,
+        "queue": "live",
+        "queued_at": "2026-11-05T04:33:05Z",
+        "remaining_seconds": 1422,
+        "repo": "dashpay/platform",
+        "sha": "4aae747f85929c257dfe1a220072ec837c27532c",
+        "started_at": "2026-11-05T05:03:15Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 7,
+            "started_at": "2026-11-05T05:03:15Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 8,
+            "started_at": "2026-11-05T05:03:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The production change is a small, contained correction to the identity targeted by a key re-enable operation plus PV15 dispatch wiring; most added lines are tests or a copied implementation, so it does not meet the large-or-intricate requirement for critical.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-11-05T05:03:22Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-11-05T05:03:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 21,
+            "started_at": "2026-11-05T05:03:40Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(drive-abci)!: re-enable the voter key of the address a masternode returns to (PV15)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1810
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1289,7 +1410,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1327,7 +1448,8 @@
       "closed": 620,
       "done": 8380,
       "failed": 100,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2951
     },
     "ingest_error_streak": 0,
@@ -1359,46 +1481,27 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-05T04:02:55Z",
-    "last_run_started_at": "2026-11-05T03:47:47Z",
+    "last_run_started_at": "2026-11-05T05:03:15Z",
     "median_run_minutes": 22.616666666666667,
     "notify_last_at": "2026-11-05T05:02:51Z",
-    "oldest_queued_at": "2026-11-05T04:33:05Z",
+    "oldest_queued_at": "2026-11-05T04:37:14Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1796,
-        "attempts": 0,
-        "author": "shumkov",
-        "eligible": false,
-        "eligible_at": "2026-11-05T05:03:05Z",
-        "eligible_in_seconds": 4,
-        "number": 5768,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5768",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5768#issuecomment-6649801217",
-        "priority": false,
-        "queued_at": "2026-11-05T04:33:05Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "4aae747f85929c257dfe1a220072ec837c27532c",
-        "title": "fix(drive-abci)!: re-enable the voter key of the address a masternode returns to (PV15)",
-        "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 1547,
+        "age_seconds": 1607,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-05T05:07:14Z",
-        "eligible_in_seconds": 253,
+        "eligible_in_seconds": 193,
         "number": 5769,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5769",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5769#issuecomment-6649857592",
         "priority": false,
@@ -1417,7 +1520,7 @@
       "reviews": 7,
       "tokens": 77692056
     },
-    "ts": "2026-11-05T05:03:01Z",
+    "ts": "2026-11-05T05:04:01Z",
     "typical_minutes_by_tier": {
       "critical": 29.2,
       "low": 36.3,
@@ -1426,9 +1529,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 75.23333333333333,
+      "idle_minutes": 0.7666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
