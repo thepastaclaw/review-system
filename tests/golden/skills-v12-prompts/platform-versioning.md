@@ -49,8 +49,8 @@ an ordinary bug fix.
 
 ### 3. Review scope and findings
 
-Flag only versioning defects introduced or exposed by this PR. A blocking
-finding is appropriate when nodes could disagree, historical blocks/state
+Flag only versioning defects this PR introduces or is by its nature
+responsible for. A blocking finding is appropriate when nodes could disagree, historical blocks/state
 could no longer replay, old clients could misdecode data, a live `vN`
 implementation was changed in place, or a new behavior has no activation
 and version snapshot. Suggestions cover incomplete tests, missing release

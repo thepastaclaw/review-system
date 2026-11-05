@@ -137,7 +137,10 @@ VERIFIER_SCHEMA: dict[str, Any] = {
                         "For PLAUSIBLE: what would confirm it (a test, a trace, a fact to check)."
                     ),
                     "severity": _one_of(SEVERITIES, "The final severity; omit for REFUTED."),
-                    "title": _text("The final one-line title; omit for REFUTED."),
+                    "title": _text(
+                        "The final one-line title; omit for REFUTED, except a REFUTED group "
+                        "whose evidence starts with `Out of scope:`, which needs one."
+                    ),
                     "body": _text(
                         "The final explanation a maintainer reads, with evidence; omit for REFUTED."
                     ),

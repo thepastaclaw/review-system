@@ -1,6 +1,6 @@
 """The skills repo's real policy v12 templates render through the harness: every slot they use
 is one the harness fills, and nothing is left unfilled. The copies under
-golden/skills-v12-prompts/ are skills-v12's `prompts/v12/` (11cbe20); with
+golden/skills-v12-prompts/ are skills-v12's `prompts/v12/` (b4073bd); with
 REVIEWSYS_V12_SKILLS pointing at a skills checkout, its templates are rendered too and the copies
 must still match them, so a template change on either side shows up here."""
 

@@ -218,9 +218,11 @@ def test_selection_takes_finished_published_live_reviews_only(tmp_path, prod):
 
 
 def test_a_carried_head_is_left_out_by_its_carry_run_not_its_column(tmp_path, prod):
-    # main's schema: heads.carried_from (absent on this branch's: the query never names it)
-    with tx(prod.conn):
-        prod.conn.execute("ALTER TABLE heads ADD COLUMN carried_from TEXT")
+    # main's schema has heads.carried_from; the query never names it either way
+    cols = {r[1] for r in prod.conn.execute("PRAGMA table_info(heads)")}
+    if "carried_from" not in cols:
+        with tx(prod.conn):
+            prod.conn.execute("ALTER TABLE heads ADD COLUMN carried_from TEXT")
     carried = prod.run(1, steps=("carry",))
     asked = prod.run(2)  # someone asked for a review of a carried commit: a real review
     with tx(prod.conn):

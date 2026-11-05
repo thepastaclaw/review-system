@@ -30,16 +30,51 @@ you eventually report, you must be able to articulate:
   exhaustion, leaked secret, etc.
 
 A candidate needs a plausible adversary and a concrete impact; without
-them it is not a security finding.
+them it is not a security finding. **Exception: liveness and correctness
+under honest operation.** A handler that rejects, stalls or diverges on a
+sequence an honest TenderDash network produces is a defect with no
+adversary at all.
+
+### 1b. Reviewing the ABCI application side (dashpay/platform)
+
+When the PR is in `dashpay/platform` (typically `rs-drive-abci`), you are
+reviewing the application TenderDash drives, not TenderDash itself. For
+every changed ABCI handler or the state it keys (`PrepareProposal`,
+`ProcessProposal`, `ExtendVote`, `VerifyVoteExtension`, `FinalizeBlock`,
+`InitChain`, `CheckTx`, `Info`, state sync, replay; under
+`packages/rs-drive-abci/src/abci/handler/`):
+
+- Read how TenderDash actually calls it. When the evidence lists
+  sister repositories with `dashpay/tenderdash`, the source is checked out
+  there; otherwise read github.com/dashpay/tenderdash at the version the PR
+  pins. Start from the consensus state machine (`internal/consensus/`) and
+  the ABCI client calls.
+- Enumerate the honest sequences that reach the handler and check each one:
+  a round change at the same height; a block **locked in round r and
+  re-proposed unchanged in a later round** (relock / valid-block); vote
+  extensions and precommits for that block arriving in a later round than
+  the one this node processed; nil precommits; late votes from earlier
+  rounds; `ProcessProposal` for a block this node already accepted; restart
+  and WAL replay mid-height; catch-up and state sync.
+- State keyed by (height, round, block) must match what TenderDash
+  guarantees for each of those sequences. Keying by exact round, or
+  rejecting what an earlier round accepted, is a liveness bug unless
+  TenderDash rules that sequence out — cite where it does.
+- Determinism: every node must reach the same accept/reject decision for
+  the same message, independent of local timing or arrival order.
+
+A `suggestion` here is code in the file's language: Go for TenderDash,
+Rust for Platform.
 
 ### 2. Review Scope
 
 First infer the PR's intended scope from its title, description,
-linked issues, and changed files. Separate defects **introduced or
-exposed by this PR** from pre-existing or merely adjacent hardening
-opportunities.
+linked issues, and changed files. Separate defects this PR introduces
+or is by its nature responsible for (its goal depends on them, or it
+adds code that works around or extends them) from pre-existing or
+merely adjacent hardening opportunities.
 
-Only in-scope defects belong in your candidates; leave out-of-scope ideas out.
+Only in-scope defects belong in your candidates; leave out-of-scope ideas out, except an important adjacent problem, which goes in as the Scope section below says.
 
 Focus exclusively on:
 
@@ -96,6 +131,6 @@ Do **NOT** flag:
 - Backport / upstream Tendermint design decisions unless they are
   consensus- or safety-affecting in the TenderDash context.
 
-For this lane the failure scenario is an attack scenario or a broken
-consensus invariant. If you can describe one, report the candidate even
+For this lane the failure scenario is an attack scenario, a broken
+consensus invariant, or an honest sequence the code mishandles. If you can describe one, report the candidate even
 when you are unsure it is reachable; the verifier checks that.

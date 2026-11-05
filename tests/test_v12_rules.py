@@ -937,3 +937,42 @@ def test_a_restated_deferral_keeps_the_roots_line_unless_it_names_tracking(gh, s
         assert "tracked in https://github.com/r/x/issues/12" in edited
     else:
         assert gh.comment_edits == [] and "marked" not in item
+
+
+def test_only_an_out_of_scope_refutation_becomes_a_follow_up():
+    out = apply(
+        answer(
+            {
+                "members": ["p2-general-1"],
+                "verdict": "REFUTED",
+                "title": "refuted p2-general-1",
+                "evidence": "Out of scope: the cache key ignores the network. Fix it in a follow-up PR.",
+            },
+            {
+                "members": ["p2-general-2"],
+                "verdict": "REFUTED",
+                "title": "Cache key ignores network",
+                "evidence": "out of scope: predates this PR",
+            },
+            {
+                "members": ["p2-general-3"],
+                "verdict": "REFUTED",
+                "evidence": "the guard outside the loop at L9 already rejects it",
+            },
+        ),
+        cands("blocking", "suggestion", "suggestion"),
+    )
+    a, b, c = out.dropped
+    assert a["follow_up"] and a["title"] == "the cache key ignores the network"
+    assert a["body"].startswith("the cache key ignores the network.")
+    assert b["follow_up"] and b["title"] == "Cache key ignores network"
+    assert c["follow_up"] is False  # quoting "outside" no longer publishes a refutation
+
+
+def test_publish_lists_v12_follow_ups_by_marker_and_v11_drops_by_wording():
+    from reviewsys.publish import _follow_up
+
+    assert _follow_up({"reason": "REFUTED: x", "follow_up": True})
+    assert not _follow_up({"reason": "REFUTED: the guard outside the loop", "follow_up": False})
+    assert _follow_up({"reason": "Valid but outside this PR's scope"})  # v11, as on main
+    assert not _follow_up({"reason": "False positive"})

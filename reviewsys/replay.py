@@ -1003,6 +1003,11 @@ def _replay(
                 replay=True,
                 force_phase2=force_phase2,
                 coverage_base=merge_base,
+                replay_context={
+                    k: v
+                    for k, v in (evidence.get("evidence") or {}).items()
+                    if k in ("sister_repos", "base_drift")
+                },
             )
             wall = time.monotonic() - t0
         report = build_report(

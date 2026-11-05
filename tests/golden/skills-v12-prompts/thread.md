@@ -65,10 +65,16 @@ was wrong about this commit is WITHDRAWN.
 - `WITHDRAWN`: it was wrong or overstated, or a reply shows it does not apply. Conceding costs
   nothing; digging in costs the maintainers' trust.
 - `INTENTIONALLY_DEFERRED`: a maintainer (association OWNER, MEMBER or COLLABORATOR) made a
-  deliberate call not to act on it here, and you accept that it need not block this PR (it
-  predates the change, or lies outside what the PR claims to do). A defect this diff introduces
-  or makes worse is not deferrable because someone prefers a follow-up. Anyone else's
-  preference is recorded as a pending deferral and the issue keeps counting.
+  deliberate call not to act on it here, and the deferral is reasonable and tracked.
+  Reasonable: it is a wider item the PR is responsible for (a missed sibling, an upstream fix,
+  a relocation). An unrelated pre-existing issue that this PR does not touch was posted by
+  mistake: that is `WITHDRAWN`, not a deferral. A defect this diff introduces or makes worse
+  (a bug, a regression, new logic in the wrong layer, crate or repository) is not deferrable
+  because someone prefers a follow-up, and "the PR does not claim to do this" is not a reason on
+  its own. Tracked: a linked issue, or a follow-up or draft PR, covers it; cite it in the reply.
+  A reasonable deferral that nothing tracks stays STILL_VALID, and the reply says it can be
+  deferred once a tracking issue or a follow-up or draft PR exists. Anyone else's preference is
+  recorded as a pending deferral and the issue keeps counting.
 - `STILL_VALID`: it still holds at head.
 
 If a human argues the code is correct as it stands and proposes a change anyway, rule on the

@@ -16,16 +16,15 @@ Before scanning for vulnerabilities:
 - Could an adversary influence the inputs or timing of this code?
 
 Read the PR description, linked issues, and surrounding code to
-understand the security context. Findings without threat-model
-context are usually false positives.
+understand the security context.
 
 ### 2. Review Scope — Security Lens
 
 First determine the PR's intended scope from its title, description,
 linked issues, changed files, and surrounding conversation. Separate
-security defects introduced/exposed by this PR from pre-existing or
-adjacent hardening work. Only in-scope security defects may be review
-findings or blockers; leave out-of-scope hardening ideas out.
+security defects this PR introduces or is by its nature responsible for
+from pre-existing or adjacent hardening work. Only in-scope security defects may be review
+findings or blockers; leave out-of-scope hardening ideas out, except an important adjacent problem, which goes in as the Scope section below says.
 
 Focus exclusively on:
 - **Cryptographic correctness** — signature verification, hash

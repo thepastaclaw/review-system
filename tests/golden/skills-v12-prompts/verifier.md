@@ -64,7 +64,7 @@ it), and `fixed`.
   suggestion carrying that line.
 - `REFUTED`: the code shows the claim is wrong. Quote the line that contradicts it, show the
   invariant or type that rules it out, cite the guard that already handles it, show that this
-  diff already fixes it, show that it lies outside what this PR changes or needs, or show that
+  diff already fixes it, show that it is not this PR's responsibility (see Scope), or show that
   it is style with no observable effect.
 
 Some candidates look speculative but describe real failures. A race on shared state, a null or
@@ -74,10 +74,55 @@ retry or partial-failure path, an allowlist or pattern that lost its anchor: the
 PLAUSIBLE unless the code rules them out. "It depends on runtime state" is not a refutation
 when that state is realistic.
 
-For a backport of an upstream merge: a hunk that is missing because Dash lacks the code it
-would edit is the gap the candidate describes, not a refutation. A declared omission (the PR
-description, a `partial` subject, or a `not_for_dash` adaptation note) is evidence against it.
-Upstream's own design choices are not findings; a backport must match upstream.
+When the project notes above give rules for verifying a kind of PR, apply them to it.
+
+## Scope
+
+A candidate is in scope when this PR introduced the problem or is by its nature responsible
+for it: its stated goal depends on it; it adds code that works around, duplicates or extends it
+(a local workaround for a dependency's defect, a second copy of a rule that exists elsewhere,
+new logic in a layer, crate or repository that must not own it); or it moves the defective
+code, or changes it in a way that carries the defect forward or depends on it.
+
+- The test is not "does it show a regression": misplaced code and duplicated logic work today
+  and are still problems this PR introduced. Judge a placement or ownership candidate
+  (`category: architecture`) against the project's ownership rules in the notes above: REFUTE
+  it when it is factually wrong or the rules allow the placement (cite them), and keep it at
+  most as a suggestion when no stated rule is violated. "Routine refactor" and "no regression"
+  are not refutations.
+- **The PR's framing is a claim, not a decision.** "Not done here", "follow-up" or "known
+  limitation" in the description does not take an in-scope problem out of scope. A defect this
+  diff introduces or makes worse cannot be deferred. A wider item the PR is responsible for (a
+  missed sibling, an upstream fix, a relocation) can be: when a linked issue, or a follow-up or
+  draft PR, tracks it, keep it as a `suggestion` whose body cites the link; when nothing tracks
+  it, keep it and say in the body that it needs a tracking issue or a follow-up or draft PR.
+- **Check the premise.** When a candidate, or the PR, rests on a claim about a dependency, the
+  base branch or why the change is needed ("X cannot tell us", "nothing ever resolves it",
+  "already prevented elsewhere", "upstream does not have it"), verify the claim in the source:
+  the sister repositories in the evidence when present, `git log` on the base. A candidate that
+  shows the PR's premise is wrong is in scope.
+- **Upstream workarounds.** When the PR mainly works around a defect or missing capability in
+  another Dash-owned project (rust-dashcore's dash-spv or key-wallet, tenderdash, grovedb, …),
+  keep one group naming the owning project and why the fix belongs there. Judge its severity on
+  the merits: usually a suggestion, satisfied by a linked upstream issue or PR; blocking when
+  the workaround itself breaks a project rule (for example, it puts logic in an FFI layer) or
+  is wrong.
+- An unrelated pre-existing problem the PR merely sits next to, adjacent cleanup, or a broad
+  redesign the PR has no part in is REFUTED, whatever its severity. When one is important and
+  really should be fixed, give the group a `title` and start its `evidence` with
+  `Out of scope:`, then say what the problem is and recommend the follow-up PR that should
+  resolve it. Only a refutation whose `evidence` starts with `Out of scope:` is published, as a
+  non-blocking follow-up suggestion; start any other scope refutation with `Not this PR's
+  responsibility:`.
+
+## CI
+
+The evidence holds the `ci` snapshot for this head. A candidate about a failed code check
+(build, test, lint) is decided by the failing job's log: read it and quote the error. It is
+CONFIRMED when the error is in, or follows from, code this PR changes, and REFUTED when the
+failure has another cause (infrastructure, a known flaky job, a job that does not cover the
+changed code). A failing test on the path another candidate describes is evidence for that
+candidate. Checks still running are fine: verify with what you have and do not wait for them.
 
 ## Grouping and matching
 
@@ -93,10 +138,10 @@ Upstream's own design choices are not findings; a backport must match upstream.
   - `coderabbit:<id>`: a CodeRabbit comment above says the same thing.
   - `new`: none of these.
 - Severity: judge it yourself; the reviewers' severity is only a starting point. `blocking`
-  for a bug, security hole, data loss, consensus failure or crash that must be fixed before
-  merge; `suggestion` for a real improvement that is not a defect; `nitpick` for something
-  minor. In-scope only: a pre-existing problem this PR does not touch or worsen is REFUTED as
-  out of scope, whatever its severity.
+  for a bug, security hole, data loss, consensus failure or crash, or a break of a rule the
+  project's review notes list as blocking, that must be fixed before merge; `suggestion` for a
+  real improvement that is not a defect; `nitpick` for something minor. In scope only (see
+  Scope).
 
 ## Final wording
 

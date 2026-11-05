@@ -337,6 +337,9 @@ class RunContext:
     replay: bool = False
     force_phase2: bool = False
     coverage_base: str | None = None
+    # a replay's review context as production recorded it for the source run (`sister_repos`,
+    # `base_drift` from its evidence.json): the live gathering is skipped for a replay
+    replay_context: dict[str, Any] | None = None
     cancel_flag: threading.Event = field(default_factory=threading.Event)
     # the reviewer lanes of a phase run in parallel threads: this guards the run-wide
     # decisions they can race on (falling down the Phase-1 ladder, flipping to degraded)
@@ -1233,10 +1236,13 @@ def step_context(ctx: RunContext) -> None:
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
     ctx.prior_findings = {f.prior_hash or f.hash: f for f in prior}
     ctx.prior_threads = {h: t for h, t in replied.items() if h in seen}
-    # the conversation lane is given none of it; a replay neither (the sister checkouts' default
-    # tips and the base drift are live state, and sister checkouts write the mirrors)
+    # the conversation lane is given none of it. A replay never gathers it (the sister
+    # checkouts' default tips and the base drift are live state, and sister checkouts write the
+    # mirrors); it gets what production recorded for the source run instead
     if not ctx.conversation and not ctx.replay:
         _review_context(ctx)
+    elif not ctx.conversation and ctx.replay_context:
+        _replayed_context(ctx, ctx.replay_context)
     (ctx.run_dir / "evidence.json").write_text(
         json.dumps(
             {"evidence": ctx.evidence, "coderabbit": ctx.coderabbit, "prior": ctx.prior}, indent=1
@@ -1768,6 +1774,26 @@ def _review_context(ctx: RunContext) -> None:
     ctx.evidence["base_drift"] = bd
     if bd.get("error"):
         _context_event(ctx, "context.base_drift_failed", bd["error"])
+
+
+def _replayed_context(ctx: RunContext, recorded: dict[str, Any]) -> None:
+    """The source run's `sister_repos` and `base_drift`, so a replay's lanes see the evidence
+    the production lanes saw. A sister checkout that is gone since is listed without a path."""
+    repos = []
+    for r in recorded.get("sister_repos") or []:
+        if not isinstance(r, dict):
+            continue
+        r = dict(r)
+        path = r.get("path")
+        if path and not Path(str(path)).is_dir():
+            r["path"] = None
+            r["skipped"] = "checkout no longer present for the replay"
+        repos.append(r)
+    if repos:
+        ctx.evidence["sister_repos"] = repos
+    bd = recorded.get("base_drift")
+    if isinstance(bd, dict) and not ctx.is_audit:
+        ctx.evidence["base_drift"] = bd
 
 
 def _context_event(ctx: RunContext, kind: str, detail: str) -> None:
@@ -5620,6 +5646,7 @@ def _drop_settled_refolds(ctx: RunContext, verified: VerifierOutput) -> None:
                 "members": f.extra.get("members") or [],
                 "reason": f"SETTLED: restates {issue.status if settled else 'conceded'} issue "
                 f"{issue.hash} on its thread; the code at it has not changed since",
+                "follow_up": False,
             }
         )
         _lane_event(ctx, "v12.settled_refold", f"{f.title[:200]} -> {issue.hash}")
@@ -6758,6 +6785,7 @@ def main(
     replay: bool = False,
     force_phase2: bool = False,
     coverage_base: str | None = None,
+    replay_context: dict[str, Any] | None = None,
 ) -> RunStatus:
     row = conn.execute(
         "SELECT r.*, h.repo, h.number, h.sha, h.trigger, h.queue, h.priority FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
@@ -6783,6 +6811,7 @@ def main(
         replay=replay,
         force_phase2=force_phase2,
         coverage_base=coverage_base,
+        replay_context=replay_context,
     )
     ctx.deferral_cutoff = converse.tracking_required_since(
         conn, cfg.deferral.tracking_required_since, record=not dry_run

@@ -158,6 +158,14 @@ def _source_labels(raw: str) -> list[str]:
     return [x for x in out if x and x != "unknown"]
 
 
+def _follow_up(dropped: dict[str, Any]) -> bool:
+    """Whether a dropped finding is published as an out-of-scope follow-up suggestion: policy
+    v12 marks it (`follow_up`, rules.py); the v11 verifier's drops go by their reason's wording."""
+    if "follow_up" in dropped:
+        return bool(dropped["follow_up"])
+    return any(k in str(dropped.get("reason", "")).lower() for k in ("out of scope", "outside"))
+
+
 def comment_body(f: Finding) -> str:
     marker = f"<!-- thepastaclaw-review v1 finding={f.hash} dedupe={f.dedupe_key}"
     root = normalize_root_id(f.root_id)
@@ -588,11 +596,7 @@ def render(m: ReviewModel) -> str:
             fence,
             "</details>",
         ]
-    oos = m.verified.out_of_scope + [
-        d
-        for d in m.verified.dropped
-        if any(k in str(d.get("reason", "")).lower() for k in ("out of scope", "outside"))
-    ]
+    oos = m.verified.out_of_scope + [d for d in m.verified.dropped if _follow_up(d)]
     if oos:
         parts += [
             "",

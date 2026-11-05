@@ -618,3 +618,28 @@ def test_an_unregistered_repo_has_no_verifier_skill(cfg):
     from reviewsys.prompts import verifier_skill_text
 
     assert verifier_skill_text(cfg, "someone/else") == ""
+
+
+def test_a_replay_gets_the_source_runs_context(tmp_path):
+    from types import SimpleNamespace
+
+    present = tmp_path / "sister" / "rust-dashcore"
+    present.mkdir(parents=True)
+    ctx = SimpleNamespace(evidence={}, is_audit=False)
+    worker._replayed_context(
+        ctx,
+        {
+            "sister_repos": [
+                {"repo": "dashpay/rust-dashcore", "path": str(present)},
+                {"repo": "dashpay/tenderdash", "path": str(tmp_path / "gone")},
+            ],
+            "base_drift": {"commits_behind": 3, "base_branch": "v3.1-dev"},
+        },
+    )
+    assert ctx.evidence["sister_repos"][0]["path"] == str(present)
+    gone = ctx.evidence["sister_repos"][1]
+    assert gone["path"] is None and "no longer present" in gone["skipped"]
+    assert ctx.evidence["base_drift"]["commits_behind"] == 3
+    audit = SimpleNamespace(evidence={}, is_audit=True)
+    worker._replayed_context(audit, {"base_drift": {"commits_behind": 1}})
+    assert "base_drift" not in audit.evidence

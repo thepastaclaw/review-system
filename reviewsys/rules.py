@@ -399,8 +399,23 @@ class Outcome:
     kept: list[tuple[Group, Finding]] = field(default_factory=list)
 
 
+OUT_OF_SCOPE = "out of scope:"
+
+
 def _dropped(g: Group, reason: str) -> dict[str, Any]:
-    return {"original_title": g.title, "members": g.members, "reason": reason}
+    """A dropped group. A REFUTED group whose evidence starts with `Out of scope:` is an
+    important adjacent problem the review publishes as a non-blocking follow-up suggestion
+    (`follow_up`); every other v12 drop says explicitly that it is not one, so a refutation that
+    merely quotes "outside" never reaches that list."""
+    d: dict[str, Any] = {"original_title": g.title, "members": g.members, "reason": reason}
+    ev = g.evidence.strip()
+    d["follow_up"] = g.verdict == "REFUTED" and ev.lower().startswith(OUT_OF_SCOPE)
+    if d["follow_up"]:
+        body = ev[len(OUT_OF_SCOPE) :].strip()
+        refuted_default = g.title.startswith("refuted ")
+        d["title"] = (body.split(". ")[0][:120] or "Follow-up") if refuted_default else g.title
+        d["body"] = body
+    return d
 
 
 def _representative(members: list[Finding]) -> Finding:
