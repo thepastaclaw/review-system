@@ -194,6 +194,44 @@ def test_a_deferral_by_an_outside_contributor_still_blocks_on_a_new_push(
     assert "a deferral was proposed" in gh.posted_reviews[before]["body"]
 
 
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_maintainer_deferral_needs_a_tracking_issue_on_a_new_push(
+    cfg, skills_dir, conn, gh, lanes, git, tracked
+):
+    """dashpay/platform#5258 under v12: a maintainer deferral lifts the issue only once a
+    tracking issue visible on the PR exists; otherwise the issue keeps blocking and the reply
+    asks for a link."""
+    v12 = v12_cfg(cfg, skills_dir)
+    lanes.verify12 = refute_gate
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Fee estimate omits drainage")]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    (fee,) = issues(conn)
+    said = "Deferring; tracked in #4321." if tracked else "Let's do this in a follow-up."
+    reply(gh, ids[fee], said, rid=901)
+    lanes.thread_out[fee] = {
+        "status": "INTENTIONALLY_DEFERRED",
+        "reply": "Agreed, #4321 covers it." if tracked else "Agreed, a follow-up then.",
+    }
+    lanes.candidates["general"] = []
+    before = len(gh.posted_reviews)
+    run_round(v12, conn, gh, lanes, B)
+    (answer,) = [r for r in gh.replies if f"finding={fee}" in r["body"]]
+    if tracked:
+        assert issues(conn)[fee].status == "deferred"
+        assert gh.posted_reviews[before]["event"] != "REQUEST_CHANGES"
+        row = conn.execute("SELECT body FROM findings WHERE stage='conceded'").fetchone()
+        assert (
+            row["body"] == "INTENTIONALLY_DEFERRED\nhttps://github.com/dashpay/platform/issues/4321"
+        )
+    else:
+        assert issues(conn)[fee].status == "open"
+        assert "needs a tracking issue" in answer["body"] and "file it" not in answer["body"]
+        assert gh.posted_reviews[before]["event"] == "REQUEST_CHANGES"
+        assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
+
+
 def test_fixed_on_the_reviewed_commit_is_a_pending_fix(cfg, skills_dir, conn, gh, lanes, git):
     v12 = v12_cfg(cfg, skills_dir)
     lanes.verify12 = refute_gate

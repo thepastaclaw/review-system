@@ -17,7 +17,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
-| `worker.py` | one run: worktree → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
+| `worker.py` | one run: worktree → (unchanged diff: carry the earlier review, done) → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
 | `prep.py` | one cheap lane answers both pre-review questions: the effort tier and the discretionary specialists |
 | `triage.py` | the tier guide and rules (trivial/low/normal/critical); the tier picks each phase's `--effort`; runs alone when there are no specialists to choose |
 | `select.py` | specialist selection: the selector lane (runs alone without triage) and the heuristic fallback |
@@ -32,7 +32,10 @@ tested, one daemon, one SQLite file, no lock files.
 | `ledger.py` | the issue ledger: every issue raised on a PR and where it stands, folded from its event history; write-only under policy v11, what policy v12 decides from |
 | `rules.py` | policy v12, pure: the finder candidate contract, verify+match parsing, the code rules over it and the ledger verdict |
 | `quality.py` | `reviewsys quality`: late finds, fate coverage, silent drops, re-raises, contract failures |
+| `ci.py` | CI after the verdict: watches an APPROVE until CI finishes; a related failure moves it to COMMENT via one cheap lane |
 | `github.py` | PR metadata, review threads, evidence bundle, gate/status comment |
+| `sister.py` | sister Dash repos (Cargo.lock pins + configured `sister_repos`) checked out read-only for the lanes, shared across runs |
+| `drift.py` | base drift: base commits since the merge base that touch the PR's files, merge conflicts with the current base |
 | `status.py` | `reviewsys status --json` + watchdog predicate |
 | `doctor.py` | gh auth, claude launcher, skills, proxy single-`stop_sequences` probe per model, quota per Phase-1 rung |
 
@@ -237,11 +240,65 @@ so each a cold build); the box went to load 900 and 60 GB of swap, and a
 `low`-tier dashwallet-ios review spent a 3-hour lane timeout polling an FFI
 build with `sleep 420`.
 
+### Review context: sister repos and base drift
+
+The context step adds two best-effort evidence keys to every review (not to conversation
+runs; an audit gets only the first). Why (2026-10-16 lane audit): in most missed maintainer
+asks the lanes lacked the code that mattered: rust-dashcore (`key-wallet`, `dash-spv`) and
+Tenderdash were not on the box, and nobody looked at what had landed on the base since the PR
+branched.
+
+- **`sister_repos`** (`sister.py`): the git dependencies the PR's root `Cargo.lock` pins from
+  a `[context] sister_owners` GitHub owner (default `dashpay`; never the reviewed repo), each
+  checked out at the pinned commit (`pinned`; a repo pinned at several commits gets the two
+  with the most packages, `also_pinned`, and names the rest in `note`) and at the tip of its
+  default branch (`default`), plus the repo's `sister_repos` from the skills `config.json`
+  (e.g. platform → `dashpay/tenderdash`) at the default branch only. Configured repos come
+  first, then by packages pinned; at most `sister_max_repos` (6) per run are checked out, the
+  rest are listed with `skipped`. An unreadable `Cargo.lock` only loses the pinned repos. Repo
+  names are lowercased. Mirrors are blob-less bare clones under `work/mirrors` made on first
+  use (the first clone is slow, once); checkouts are detached worktrees shared by every run,
+  one per (repo, commit), under `work/worktrees/sister/<owner>__<repo>@<sha12>`, reused when
+  still clean at that commit (one a lane wrote into is made afresh). The default branch is the
+  upstream's `HEAD` as of now (`ls-remote --symref`), else the mirror's. One run's sister
+  checkouts share a `sister_budget_minutes` (10) wall-clock budget, each git step at most 5
+  minutes, and stop when the run is cancelled. Everything done to one repo happens under its
+  `flock` (`work/mirrors/.<owner>__<repo>.lock`): a run waits at most 2 minutes for a repo
+  another run is fetching, then goes on without it. Lanes get each checkout still on disk as
+  an extra `--add-dir` (the sandbox only denies exec; reads anywhere are allowed).
+- **`base_drift`** (`drift.py`): against the `refs/remotes/origin/<base>` the worktree step
+  fetched, `commits_behind` (merge base..base tip), `conflicting_files` (`git merge-tree
+  --write-tree`: what conflicts when the head is merged onto today's base; null with an
+  `error` when git cannot tell) and `base_commits_touching_changed_files` (first-parent base
+  commits since the merge base that touch a path the PR changes, newest first, at most 40 of
+  the latest 2000, with the overlapping `files` and the PR number parsed from `(#N)`,
+  `Merge pull request #N` or `Merge #N:`).
+
+Reviewer and verifier prompts get one short paragraph per key that is present
+(`prompts.context_notes`; none for a PR with nothing landed on its base since): read the
+sister repos whenever the change depends on, works around, duplicates or is driven by code
+there, search their issues and PRs with `gh`, never edit them; check whether a listed base
+commit already does what the PR does, supersedes it or conflicts with it. A repo that cannot
+be had carries `error` (event `context.sister_failed`), a failed drift read `error` (event
+`context.base_drift_failed`); neither fails the run.
+
+gc treats each sister checkout like a run's worktree (removed after a day unused, LRU within
+`worktree_budget_gb`), except that one an active run uses is never removed: a run records
+every checkout it uses in kv `sister.inuse:<run id>` (under the repo's lock, before touching
+it), and gc removes a sister checkout only under that lock (never waited for: a busy repo is
+left for the next pass), reading the records and the checkout's mtime again there. The
+records are released once the run ends. A checkout gc deleted is made again on next use.
+
 ### Output contract: normalization, correction turns, repair
 
 A reviewer lane must answer one JSON object (`summary`, `findings`, `out_of_scope_findings`,
 `review_phase`, `head_sha`, and on a re-review one `prior_finding_reconciliation` row per
-prior finding); a verifier its own schema (`contract.parse_verifier_output`). Measured
+prior finding). It may add `considered_dismissed[]` (`{area, concern, why_dismissed}`: what
+it looked at and decided was fine, so an audit can tell "never looked" from "looked and
+dismissed"). The key is optional and never fails a lane: `contract.parse_reviewer_output`
+drops non-object entries, keeps at most 30 and cuts each string to 400 characters. The
+verifier is shown it with the rest of the reviewer's output, so it can rescue a dismissal it
+disagrees with; it is never published to GitHub. A verifier answers its own schema (`contract.parse_verifier_output`). Measured
 2026-09-26..10-01, about a tenth of runs failed, and the output contract was a large part of
 it: a broken answer failed the whole phase (its siblings stopped) and usually the run. Three
 layers now stand between a broken answer and a failed phase, in this order:
@@ -280,8 +337,8 @@ layers now stand between a broken answer and a failed phase, in this order:
    `lane.corrected` and `lane.correction_failed` (phase/role, model, turns, first error, and
    for a failure whether the answer stayed invalid or the session could not be resumed). The
    saved session (`$CLAUDE_CONFIG_DIR` or `~/.claude`, `projects/<worktree slug>/<uuid>.jsonl`,
-   the only file a session leaves; megabytes for a long lane) is deleted when the lane's
-   turns end; `gc` removes what a dead worker left behind, and the emptied project dirs, for
+   the only file a session leaves; megabytes for a long lane) is copied into the lane's
+   `transcript.jsonl.gz` (see "Lane transcripts") and deleted when the lane's turns end; `gc` removes what a dead worker left behind, and the emptied project dirs, for
    finished runs' worktrees only (`runs.worktree`), after a day. Verified with Claude Code
    2.1.286: `--bare --print --output-format json` keeps and resumes sessions this way (from
    any cwd, prompt cache included), and a missing session exits 1 ("No conversation found
@@ -289,9 +346,27 @@ layers now stand between a broken answer and a failed phase, in this order:
    of its turns; `total_cost_usd` is the session's running total, so a correction turn's
    `lane-meta.json` cost includes the turns before it, and `--max-budget-usd` (passed again)
    bounds the lane and its corrections together. `reviewsys doctor` runs one real
-   keep-resume-delete round trip through the launcher ("lane correction turns") whenever the
-   knob is on, and fails it when the session lands where the cleanup cannot see it (a
+   keep-resume-delete round trip through the launcher ("lane sessions"), and fails it when the session lands where the cleanup cannot see it (a
    launcher with its own config dir) or cannot be deleted.
+   **Lane transcripts.** Every lane keeps a session, not only the correctable ones: a lane
+   without a session id gets one of its own (`--session-id`, never
+   `--no-session-persistence`). When its turns end the session is written into the lane's
+   artifact dir as `transcript.jsonl.gz` (every turn, tool call and tool result once, in
+   order, correction turns included; subagent sessions in `subagents/`), with each thinking
+   block's encrypted `signature` replaced by its length (three quarters of a transcript's
+   bytes, unreadable and incompressible); spilled tool output (`<uuid>/tool-results/`) is
+   not kept, the transcript has what the model was shown. The lane's opening turn also runs
+   with `OTEL_LOG_RAW_API_BODIES=file:<temp dir>`, Claude Code's raw request-body log (no
+   headers, thinking text redacted), outside the run dir so no lane reads another's. As
+   soon as its index names the first main-thread (`query_source` "sdk") request, that one
+   is kept as `first-request.json.gz` (the exact system prompt, tool schemas and opening
+   messages, which the transcript does not record), the rest deleted and the directory made
+   read-only: every later body would be the whole conversation again, and Claude Code's
+   further writes fail quietly. Correction turns record no bodies. Both files are written
+   atomically, cleared when an attempt dir is reused, and never fail a lane. A run's lanes
+   are then read back from the attempt folders alone, keyed by run and lane, without the
+   proxy logs. `reviewsys doctor` checks the whole path through the launcher ("lane
+   sessions") whatever `correction_turns` is.
 3. **The repair lane**, the last resort for an answer that still has no readable JSON object
    (the session could not be resumed, the corrections ran out, or the knob is 0): the
    context-free `repair_model` (low effort) reformats it, now told the expected
@@ -508,7 +583,7 @@ beside the production daemon (below); never against the box's database itself.
     `degraded_for_scoring` and not scored. Under v12 no `gate-would-publish.json` is
     recorded (`gate.would_publish_note` says why).
   - Lanes take slots in the configured work dir's pools but wait in `<pool>.replay/`,
-    which production never reads (v0.24 included), so a waiting replay changes nothing for
+    which production never reads (v0.24 through v0.28 included), so a waiting replay changes nothing for
     production (its comparison-lane admission and status export read `<pool>.line`). A
     replay lane takes a slot only while `<pool>.line` holds no production ticket, never the
     side-lane slot, and at most floor((n - 1) * `[scheduling] replay_pool_share`) (0.5)
@@ -620,7 +695,43 @@ threads only when a reviewer stated that status. The verifier's kept set overrid
 reviewer (a kept finding is "still applies" even if a lane said otherwise; a dropped one
 is "withdrawn"); a defaulted withdrawal is answered but never resolves the thread.
 Threads a maintainer has already resolved are left alone. Reasons are capped at 1200
-chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded. Open bot
+chars, `@`-mentions are defused, and any CodeRabbit retrigger text is discarded. A prior
+finding (above a nitpick) the review would lift as INTENTIONALLY_DEFERRED (the verifier's
+own row decides; a reviewer's only where the verifier has none) needs a tracking reference
+visible on the PR, as in the conversation lane below: the reconciliation row's `tracking`
+(a URL or `owner/repo#N` that appears in the finding's thread, the PR description or a PR
+comment), else an issue or PR the humans in the finding's own thread (resolved or not)
+point to as tracking (on a line with a cue: "tracked", "follow-up", "filed", "opened",
+"deferred to"; "it came in with #N" does not count, nor do commit links or the PR
+itself), else a link already on record for it (kv `defer.issue:…`, or an earlier
+conversation's `conceded` row). The PR description and comments count only when the row
+cites the reference. Without one
+the worker overrides the verifier (`_hold_untracked_deferrals`, after every verifier lane):
+the finding is carried again as it was and keeps counting (a verifier's APPROVE becomes
+COMMENT: it approved with the finding lifted, so no CI watch is kept for it either), its
+thread is answered
+"**Still applies**: Deferring this needs a tracking issue …", the review body ends with
+"⏸️ Needs a tracking issue before it can be deferred (n): <titles>", and event
+`defer.needs_tracking` names the held hashes. Post-merge audits skip this. Deferrals
+accepted under the old rule are grandfathered, so no existing PR flips to REQUEST_CHANGES:
+the rule took effect at `[deferral] tracking_required_since` (ISO-8601, normalized to UTC,
+whole seconds), or, unset, at the first start of a scheduling daemon or a live (not
+`--dry-run`) worker with this code, recorded once in kv `deferral.tracking_required_since`
+and never moved (shadow daemons, `tick --no-spawn` and dry runs only read it, so running
+them from a new checkout against the production DB before deploy fixes nothing). Set the
+config value explicitly for a controlled rollout. A finding deferred before that instant
+keeps lifting without tracking (event `defer.grandfathered`) when any of these predates it:
+a conversation's INTENTIONALLY_DEFERRED `conceded` row (by its run's start; old rows have
+no link line, the oldest an empty body), an INTENTIONALLY_DEFERRED `thread.answered` event
+from either path, the bot's own "**Deferred**" answer on the open thread, or the last
+review published before the cutoff (not a conversation's verdict follow-up or a CI
+update, neither of which has a verifier set) no longer
+carrying a finding posted earlier, matched by hash or by file and title (a verifier's
+deferral on a thread nobody replied to leaves no other trace). It is not grandfathered once
+a review after the cutoff carried it again: it was standing, so deferring it now is a new
+deferral. In a conversation, such a thread whose finding this commit's review does not
+stand on is treated as settled (the lane sees `already_settled_as`): a restated deferral is
+not re-vetted. Open bot
 threads nobody replied to get the same note and resolution when a reviewer explicitly
 withdrew that finding, so a dropped finding never lingers. If the commit already has a
 review (same sha), the standing review is not re-posted; the thread answers are the
@@ -654,9 +765,10 @@ verifier lanes):
   mirror so `git show <sha>` works in the worktree; a commit that cannot be fetched is
   disclosed to the model with the reason and never fails the run).
 - It answers per thread with `STILL_VALID | FIX_PENDING | WITHDRAWN |
-  INTENTIONALLY_DEFERRED | NO_REPLY` and free prose. The rules it is given: verify claims
-  against the code, never repeat a point already made, evaluate a proposed change on its
-  merits and say whether it resolves the concern, concede when wrong, stay silent
+  INTENTIONALLY_DEFERRED | DEFERRAL_NEEDS_TRACKING | NO_REPLY` and free prose. The rules
+  it is given: verify claims against the code, never repeat a point already made,
+  evaluate a proposed change on its merits and say whether it resolves the concern,
+  concede when wrong, stay silent
   (`NO_REPLY`) when a reply is addressed to someone else or there is nothing new to add.
   Severity cannot change in a reply. There is no `FIXED`: the checkout is the reviewed
   commit, so a change that would resolve the finding (linked, sketched, or "changed it"
@@ -666,8 +778,9 @@ verifier lanes):
   `FIXED` gets `FIX_PENDING` (dashpay/dash#7778 lifted a blocker on an unpushed change).
 - Posting: the prose is the comment (marker `thepastaclaw-thread-answer v1`, once per
   human reply and head, `@` defused, CodeRabbit retriggers discarded), with a quiet
-  trailing note for FIX_PENDING / WITHDRAWN / INTENTIONALLY_DEFERRED instead of a bold
-  verdict lead; WITHDRAWN threads are resolved (where the bot may). `NO_REPLY` posts
+  trailing note for FIX_PENDING / WITHDRAWN / INTENTIONALLY_DEFERRED (naming its tracking
+  issue) / DEFERRAL_NEEDS_TRACKING instead of a bold verdict lead; WITHDRAWN threads are
+  resolved (where the bot may). `NO_REPLY` posts
   nothing, is recorded as `thread.answered` with `action: no_reply`, and the decision is
   remembered per (finding, reply) in `kv` (`converse.silent:<repo>#<n>:<hash>`), so a later
   conversation on the same PR never posts a late second opinion to that message; the
@@ -676,6 +789,48 @@ verifier lanes):
   bots (`*[bot]` logins, CodeRabbit) are part of the transcript but never count as a human
   waiting for an answer, and the router does not queue a `review_reply` head for them at
   all, so no bot-to-bot loop can start.
+- Deferrals need a tracking issue (platform#5258: a MEMBER deferred a finding "to a change
+  of its own", it was lifted under an APPROVE, and no issue was ever filed). The PR author
+  counts as a maintainer by association, but the lane accepts a deferral only when it is
+  reasonable (not something the PR introduced, made worse, or is by nature responsible
+  for) **and tracked**. Its rules: a relevant issue or PR linked in the thread, the PR
+  description or a PR comment counts (complete or not; an unrelated link does not) →
+  `INTENTIONALLY_DEFERRED` with `tracking: {"url": …}`; reasonable but untracked →
+  `DEFERRAL_NEEDS_TRACKING`, whose reply asks for a link or for permission to file one in
+  the repo that owns the follow-up (the PR's, or a sister repo such as
+  dashpay/rust-dashcore); a maintainer answering "file it" → `INTENTIONALLY_DEFERRED` with
+  `tracking: {"file": {repo, title, body}}`. Code enforces it (`converse.accept_deferrals`),
+  for anything above a nitpick: a cited reference (URL, `owner/repo#N` or `#N`) must
+  actually appear in the thread, the PR description or a PR comment, and must not be the
+  PR itself; a lane that cites nothing is covered by a reference the maintainer's own
+  latest reply points to as tracking (same cues as above); a malformed `tracking` is
+  dropped, not a failed run. Otherwise the outcome becomes `DEFERRAL_NEEDS_TRACKING` with a system-written
+  ask ("Before I mark this deferred it needs a tracking issue for the follow-up. Link one,
+  or say so and I'll file it in `<repo>`."). The maintainer-spoke-last rule still applies
+  first. `DEFERRAL_NEEDS_TRACKING` lifts nothing; its note says the finding stands, and the
+  root gets ``> ⏸️ **Needs a tracking issue** (not yet deferred)``.
+- Filing (`worker._file_tracking_issues`; lanes stay read-only): only in a repo allowed by
+  `[deferral] file_owners` (default `["dashpay"]`) or `file_repos`; elsewhere the reply
+  asks the maintainer to file it. A retry never files twice: kv
+  `defer.issue:<repo>#<n>:<finding_hash>` holds the issue URL and is checked first; it
+  reads `pending` from just before `gh issue create` until the URL is known, so a create
+  that may have gone through (timeout, server error, no URL printed, a dead worker) is
+  never repeated (later attempts ask the maintainer to check and link it); a clean refusal
+  (permissions, validation) clears it. Then
+  `gh issue list -R <repo> --state open --search "<3 title terms> in:title"` (a failed
+  search files nothing): an open issue
+  whose title overlaps the proposed one by at least 0.6 (content-word Jaccard) is linked
+  instead (`defer.issue_linked`); otherwise `gh issue create` files it (`defer.issue_filed`)
+  with the lane's description plus the PR, the thread comment URL, the maintainer who asked
+  (no `@`) and a short quote of the finding, posted as the bot with no attribution footer.
+  The reply's note links it ("Filed <url> for the follow-up. Deferred on a maintainer's
+  call …") and the finding is lifted as any deferral. On failure (permissions, network):
+  event `defer.file_failed`, the reply asks the maintainer to file and link it, and the
+  finding stands. A thread already settled on this commit stays lifted either way, but a
+  maintainer can still have the bot file its issue there (a failure reply then just asks
+  for the link). The `conceded` row keeps the tracking link on a second line of its body
+  (a later row without one keeps the earlier link); the corrected review summary and the
+  root's Deferred line show it.
 - Lifted findings on threads that stay open (the bot has no write access, e.g.
   dashpay/dash, so `resolveReviewThread` is refused; deferrals are never resolved) would
   still read as an open 🔴. The bot edits its own root comment instead: a quoted status
@@ -684,14 +839,39 @@ verifier lanes):
   later answer says the finding applies again, or a later review keeps it
   (`thread.answered` → `marked`). The full re-review path does the same for threads it
   would resolve. Dedupe strips the line before matching.
+- The standing review's own body is corrected too, after every conversation: a lifted
+  finding moves no verdict while another blocker stands, so without this the review kept
+  saying "🔴 2 blocking" and listing a deferred finding as `[BLOCKING]` in its agent prompt
+  (dashpay/dash#7892). `publish.with_lifted_findings` adds a quoted status block under the
+  title (`<!-- thepastaclaw-review-status v1 -->`: what was settled, with which outcome,
+  and how many blockers still stand), strikes the original counts through
+  (`🔴 ~~2~~ 1 blocking`), and retags the lifted entries in the agent prompt
+  (`[BLOCKING → DEFERRED …]`). Only a finding the review lists in its agent prompt is
+  annotated, matched by file header, location and exact title, each entry at most once:
+  a same-titled finding in another file keeps its tag, and a legacy thread the review
+  never counted moves no number. Everything is derived from the original numbers and
+  tags, so re-applying it is a no-op and an empty lifted set restores the original body.
+  The edit (GraphQL `updatePullRequestReview`; the REST `PUT …/reviews/<id>` answers 404 to the bot on dashpay/dash) targets the review the publishing run recorded (else
+  the newest one carrying the commit's `thepastaclaw-review-phase` marker); a failure is
+  a `review.summary_update_failed` event, never a failed run, and only the next
+  conversation on the PR retries it. `conceded` rows keep the lifting outcome in `body`.
+  The lane's prompt lists the blockers still standing and marks threads already settled
+  on this commit (`already_settled_as`, matched like concessions), so a maintainer
+  pointing at a stale summary gets the concrete state once, not another
+  acknowledgement. A settled thread stays lifted whatever a later answer says: a
+  restated deferral there is not re-vetted for a maintainer, and the root keeps its
+  status line.
 - Verdict: the verdict on a commit is its full review minus what the discussion withdrew
   or deferred. A conversation never adds blockers. The standing set is the final verifier
   set (`verify2` rows, the fresh audit's when it ran) of the run that last published
-  findings for the sha, so findings dedupe carried onto other (even resolved) threads
-  count; plus unresolved bot threads this database never posted (legacy). Threads from
+  findings or the review for the sha (any `reviews` row but a conversation's own
+  follow-up: a review that carried every finding onto existing threads posts none,
+  dashpay/dash#7861),
+  so findings dedupe carried onto other (even resolved) threads count; plus unresolved bot threads this database never posted (legacy). Threads from
   earlier heads that run re-adjudicated do not count. Lifted = `conceded` rows after that
   run, matched by hash or by file and title. Once no blocker stands, the follow-up
-  **APPROVEs** (from `CHANGES_REQUESTED` or `COMMENTED`) when nothing above a nitpick is
+  **APPROVEs** (from `CHANGES_REQUESTED` or `COMMENTED`; nothing moves unless something
+  above a nitpick of that set was lifted) when nothing above a nitpick is
   left, something of the verifier set was lifted, and that run is one the pipeline itself
   would approve on: Phase 2 `ok`, not degraded, and on a later review round (an earlier
   review of the PR exists) the fresh Phase-2 audit `ok`. A COMMENT never clears a
@@ -709,9 +889,10 @@ verifier lanes):
   sha, so findings conceded in earlier conversations stay lifted. A thread a maintainer
   resolved by hand, without the bot conceding it, still counts. In this lane a deferral lifts a blocker only when a
   maintainer (OWNER, MEMBER or COLLABORATOR, the PR author included) is among the replies
-  since the bot's last answer, and its thread stays open as the record; otherwise the
-  reply is posted with a note that the blocker stands. (The full re-review path does not
-  apply this check yet: a reviewer's deferral drops the finding from the kept set.) A later
+  since the bot's last answer, and is tracked (see above), and its thread stays open as the
+  record; otherwise the reply is posted with a note that the blocker stands. (The full
+  re-review path applies the tracking rule but not the maintainer check: a reviewer's
+  tracked deferral drops the finding from the kept set.) A later
   full review of the same sha voids earlier concessions (it re-adjudicated them).
   Known gap: if the worker dies between posting a concession
   and recording it, that blocker keeps counting until the next push is reviewed.
@@ -732,7 +913,7 @@ path remains available for "look at this again from scratch".
 
 ## Issue ledger and `reviewsys quality`
 
-The ledger (`ledger.py`, schema v6) keeps one `issues` row per issue the bot raised on a PR,
+The ledger (`ledger.py`, schema v9) keeps one `issues` row per issue the bot raised on a PR,
 keyed by the `finding_hash` it was first posted under (the hash in the GitHub marker; never
 recomputed), with its anchor, status (`open`, `fixed`, `outdated`, `withdrawn`, `deferred`,
 `deferral_pending`, `resolved`) and who set it. Each row is folded from `issue_events`, one per
@@ -764,7 +945,7 @@ same fact.
 
 Inert until the skills config carries `review_model_policy.pipeline` (v12 design
 `reviewsys-v12-design/DESIGN.md` §2–4); every switch defaults to v11 and a v11 config runs
-exactly as v0.24 did. The switches and where they live:
+exactly as v0.28 (main) does. The switches and where they live:
 
 - `finders.anchoring: unanchored` — reviewer lanes become finders (`prompts.finder_prompt`,
   skills `prompts/v12/finder.md` around `prompts/v12/<role>.md`): no prior checklist,
@@ -778,8 +959,13 @@ exactly as v0.24 did. The switches and where they live:
   reply newer than ours, standing issues whose anchored code changed since they were last
   judged, and what the one-shot reconcile left. On a reply to a reviewed commit it replaces
   the conversation lane. FIXED where the code did not change is FIX_PENDING; a deferral needs
-  a maintainer on both paths. A thread lane that fails leaves every issue as it was (no
-  approval that round).
+  a maintainer on both paths and, above a nitpick, a tracking issue or PR visible on the PR
+  (the one the reply cites, or one the maintainer points to; `worker._accept_thread_deferrals`).
+  The thread lane cannot have the bot file one, so an untracked deferral is asked for a link
+  and the issue keeps standing. On a reply to a reviewed commit the standing review's body is
+  updated for what the discussion lifted, and no discussion re-approves a commit whose CI
+  failed after its approval (as under v11). A thread lane that fails leaves every issue as it
+  was (no approval that round).
 - `verifier.contract: v12` (needs unanchored finders) — one verify+match lane per phase
   (`worker._verify12`; ≤3 shards by file above 12 candidates), answering per candidate group:
   match (`new | open:<h> | settled:<h> | fixed:<h> | coderabbit:<id>`), verdict
@@ -821,6 +1007,91 @@ off), and discloses it: the provenance starts with "Ad hoc review: this reposito
 no PastaClaw review skill …" and the gate comment carries "ad hoc (no repo skill)".
 Open-PR polling still covers only enabled repos; ad hoc is mention-driven by design.
 
+## Skip label (PRs that must not be reviewed)
+
+A PR carrying a label from `[scheduling] skip_labels` (default `["tag:skip-review"]`,
+matched case-insensitively; `[]` turns the feature off) gets no automatic review. Ingest
+records the flag on `prs.skip_label` and, while it is set:
+
+- queues no head for a new PR or push, and `enqueue_head` refuses every automatic trigger
+  (`new_pr`, `new_push`, `ci_failed`); no CI watch is registered, so a CI failure after an
+  APPROVE re-checks nothing;
+- lets a reply under a finding re-open only a commit that was reviewed, never start a review
+  of a new one ("fixed in abc" is no request);
+- ends what is in flight: automatic heads of other commits are superseded (as a push would),
+  a new PR/push head of the current commit is closed (`pr_skip_label`, event
+  `head.skip_label`), and a CI check goes back to the review it re-opened with its watch
+  ended. A requested review runs on whatever its commit (the poll can lag the router);
+- is checked before the draft rule, so a labelled draft gets no "draft" comment either;
+- leaves the PR out of the post-merge audit.
+
+An existing gate comment is rewritten once per commit to "Not reviewed — a label on the PR
+turns automatic review off; `@thepastaclaw review` still asks for one" (no boxes; no comment
+is ever created), but not while a run is still in flight or after a requested review
+finished on the commit. A box ticked on the comment before the label landed is honoured as
+a request instead of being overwritten. An explicit request
+(`@thepastaclaw review`, a review request) still runs, like on a draft. Removing the label
+re-queues the current commit as a normal head, behind the push debounce.
+
+## Unchanged diff: the earlier review stands
+
+A push that leaves the PR's own diff as it was (an empty commit, a merge of the base, a
+rebase onto it) changes nothing a reviewer read. dashpay's PR Hygiene controller
+(`dashpay/stale_prs_are_bad`, `carried_heads`) already counts the bot's review of the
+earlier commit for the new one, so reviewing it again only cost lanes and a 1–3 h wait.
+Measured over 2026-09-03..10-21: 32 of 2,644 back-to-back reviews of a PR read a diff
+identical to the one before (14 identical trees, 18 base merges or rebases), about 20 h of
+runs.
+
+Every live review run (not a conversation) records `heads.diff_print` after checkout:
+sha256 of `git diff --full-index --no-renames <merge base> <head>` as raw bytes, with no
+user or system git config. Two commits share
+it exactly when every changed file holds the same content and the same patch against its
+merge base, whatever the base or the history underneath. A conflict resolution inside a
+merge commit changes the diff and gets a full review. When git cannot say, there is no
+print, and a missing print never counts as unchanged.
+
+A run on an automatic head (`new_pr`, `new_push`) stops after checkout (step `carry`,
+event `head.carried`) when all of these hold:
+
+- the **immediately preceding** head on the PR has the same print;
+- that head has a review, or carries one;
+- the newest review is a **final** review on the primary models: not preliminary (its
+  Phase 2 is still owed, and the hygiene controller only counts final reviews), not
+  degraded, and not downgraded by a CI update (the push after those may win the full
+  verdict back).
+
+Then:
+
+- `heads.carried_from` names the reviewed commit. No lane runs and no review is posted.
+  The gate comment says "No change to this PR's diff since commit X (an empty commit, a
+  merge of the base or a rebase onto it): that review stands — approved / changes
+  requested / commented".
+- `ingest.carried_from` resolves it for everything that asks for "the verdict on this
+  commit": the verdict label (`labels.verdict_for`), the post-merge audit's clean check (a
+  PR merged right after a clean rebase is not audited), and the CI watch. A carried
+  APPROVE is watched like any other. When CI goes red, the commit is queued for a review
+  of its own (priority, trigger `manual`) instead of the light CI check, which judges a
+  review of this commit, and there is none. Red CI after a rebase is exactly what the base
+  can break underneath an unchanged diff. Every failing check counts, including one that
+  also failed on the earlier commit. The watch ends there: the review reads CI itself and
+  watches anew if it approves. A carried commit whose own review failed for good is never
+  re-opened by its watch.
+- A person asking always gets a review. `@thepastaclaw review` or a review request on a
+  carried commit re-opens it, unlike on a commit reviewed itself. A head promoted by a
+  mention, while queued or while its run checks out, is not carried: the run re-reads the
+  trigger in the transaction that would carry. One that lands after the carry, while the
+  run finishes, queues a review for when it ends. A head superseded during checkout
+  carries nothing. Once the commit has a review of its own, that
+  review takes over from the carried one.
+- A reply under a finding on a carried commit runs a full review, as before. The
+  conversation lane answers only on a commit whose own final review stands.
+- A predecessor superseded before any run recorded its print breaks the chain: what
+  changed in between is unknown, so the next commit starts over.
+- Carried runs take seconds. They are left out of the run-time median behind the queue
+  ETA, and out of the dashboard's path timing. The label pass picks up a finished carry
+  (it writes no `reviews` row) so the verdict label the push cleared comes back.
+
 ## Verdict labels (filtering by the bot's approval)
 
 GitHub counts a review toward the merge decision only when the reviewer has write
@@ -853,6 +1124,77 @@ a transient GitHub failure holds the cursor and backs off five minutes.
 Two things the label does not see: a human dismissing the bot's review on GitHub (the
 label keeps the verdict the bot last recorded), and a hand-edited `pastaclaw:*` label on
 a PR with no further activity (reconciliation only visits PRs that changed).
+
+## CI after the verdict
+
+Reviews often finish before CI does. At verdict time a failed code check is evidence the
+verifier weighs (skills prompts: a related failure comments, a flake may still approve); there
+is deliberately no "never approve on red" gate, because CI flakes. What changes after the
+verdict is handled by `ci.py`:
+
+- **Watch.** When a run publishes (or, on a bot-authored PR, records) an APPROVE, the worker
+  re-reads the head's checks (the context snapshot can be an hour old). If code checks are
+  still running, or one failed after the run read CI, it stores a watch in kv
+  `ci.watch:<repo>#<n>:<sha>` (`ci.watch`). The failures the verifier already saw are kept as
+  `known` and never judged again. A conversation that moves a verdict to APPROVE registers
+  one with nothing known (no lane weighed CI for it).
+- **`ci_watch` daemon task** (live daemon only, every `[ci] interval_seconds`, at most 30
+  heads' checks read per pass, least recently read first; it writes nothing to GitHub; every
+  check run is read, past the first page of 100, so a large matrix cannot hide one). Each
+  watch is re-read after its head's status and every write is a compare-and-set, so a
+  CI-check run settling a watch mid-pass is never overwritten with a stale copy. A
+  watch is dropped when the PR's head moved, the PR closed, the head's verdict is no longer
+  APPROVE, a CI update was already posted, or it is older than `[ci] watch_hours`
+  (`ci.watch_dropped` / `ci.watch_expired`). Checks still running: kept. All complete with
+  no new failure: dropped (`ci.watch_green`). A new failure (`failure`, `timed_out`,
+  `startup_failure`, `action_required`, or a commit status `error`), even with other checks
+  still running: the reviewed head is re-opened for a CI-check run (`ci.failed`,
+  `Trigger.CI_FAILED`, priority, no debounce).
+- **Meta checks never count**, pending or failed: names matching `[ci] ignore_checks` (a
+  case-insensitive regex; default `config.DEFAULT_CI_IGNORE`: PR title and semantic-commit
+  checks, codecov, policy, PR Hygiene, CodeRabbit / "CodeRabbit or PastaClaw review",
+  milestone, label and conflict bookkeeping, CLA, DCO; `review` only as a word, so a
+  deploy preview still counts).
+- **The CI-check run** (`worker.step_ci_check`, step `ci_check`) reviews nothing and needs no
+  checkout: it re-reads the checks (a re-run that passed ends it, `ci.recovered`) and the
+  standing verdict, then one lane on the triage model (`ModelPolicy.ci_check_lane`; the
+  selector model at low effort without triage) gets the failing checks, the last 200 lines
+  of up to three failed GitHub Actions jobs' logs (`gh api …/actions/jobs/<id>/logs`, best
+  effort), the changed files and the approving review's summary, and answers
+  `{"related": "yes|no|unclear", "reason", "checks"}`. A lane with no usable answer after two
+  attempts counts as `unclear` (`ci.check_degraded`); a quota failure flips the run to
+  degraded mode and retries on the stand-in, like triage.
+  - `yes` / `unclear`, and the bot's APPROVE still stands on this exact head: one follow-up
+    review, "CI failed after approval" (event `COMMENT`, no inline comments, the
+    `thepastaclaw-review-update v1` marker so `standing_verdict` counts it, plus
+    `thepastaclaw-ci-update v1 sha=…`), lists the failing checks and why they look related
+    (`review.verdict_updated`, `ci.related`). The verdict label follows (`commented`).
+  - `no`: nothing is posted (`ci.unrelated` with the lane's reason); while other checks still
+    run the watch goes on with the judged ones added to `known`.
+  - A REQUEST_CHANGES or COMMENT is never touched, a dismissed review never re-asserted
+    (`ci.verdict_moved`), and a head gets at most one CI update (`ci.already_updated`): kv
+    `ci.updated:<repo>#<n>:<sha>`, and the marker on GitHub (an update posted just before a
+    crash is recorded, not posted again). No re-review is queued; the next push gets one.
+  - After a CI update a conversation on that commit never approves it again (only a review,
+    which sees the failure, may), and the CI-check run never counts as the commit's
+    publication in the conversation's accounting (`_standing_findings`).
+  - A CI-check run gets two attempts; one that still fails (GitHub unreachable) leaves the
+    head `done` as its review left it, ends the watch and records `ci.check_failed`: it is
+    never a `failed` head and never pages. A cancel during the lane posts nothing.
+- A CI-check head is not in line for a review: it gets no queue comment, leaves the gate
+  comment the review wrote, has no progress estimate, and counts neither toward the backlog
+  rule nor the median run time behind queue ETAs. Whatever re-opens a reviewed commit (a
+  reply on a finding, the priority box, `enqueue`) while it waits takes the head over, and
+  the watch queues the CI check again afterwards if the APPROVE still stands and the check
+  still fails (a new review that approves registers a fresh watch instead); a mention or
+  review request changes nothing, as on any reviewed commit. While it runs, the head is
+  handed over too (a retry is their run) and a re-review is queued for right after it; a
+  reply waits for the run to end as usual, then becomes a conversation.
+- `reviewsys status` shows `ci watches: watching=N ci_check_queued=M`.
+
+A COMMENT follow-up does not clear an APPROVE from GitHub's merge box on repos where the bot
+has write access (GitHub counts a reviewer's latest APPROVE / REQUEST_CHANGES); the verdict
+label and the review timeline carry the move.
 
 ## Queue comment and priority requests
 
@@ -1092,7 +1434,7 @@ minute if it dies. `~/.reviewsys/mode` records live/shadow for the watchdog.
 ## Operations (on the box)
 
     R="$HOME/.reviewsys/venv/bin/reviewsys --config $HOME/.reviewsys/config.toml"
-    $R status [--json]            # queue counts, active runs, watchdog verdict
+    $R status [--json]            # queue counts, active runs, CI watches, watchdog verdict
     $R doctor                     # gh, claude, skills, proxy models
     $R enqueue OWNER/REPO N       # priority review of a PR's live head
     $R cancel --run-id N          # cooperative cancel of an active run
@@ -1109,7 +1451,8 @@ Where to look when something is off, in order:
 1. `sqlite3 ~/.reviewsys/review.db "select ts,kind,repo,number,run_id,substr(detail,1,160) from events order by id desc limit 40"`
 2. `~/.reviewsys/daemon.log` (rotated, 20 MB × 5) and `daemon.stderr.log` (crash output only)
 3. `~/.reviewsys/work/runs/run-N/attempts/*/` — `prompt.md`, `stdout.json`, `lane-meta.json`
-   (`turns`, `cost_usd`, `subtype`) for every lane of a run; a lane's correction turns in its
+   (`turns`, `cost_usd`, `subtype`, `session_id`), `transcript.jsonl.gz` and
+   `first-request.json.gz` (`zcat`) for every lane of a run; a lane's correction turns in its
    `correction-N/`, the repair lane in `repair/`
 4. `~/.reviewsys/watchdog.log` — every restart the cron watchdog performed
 
@@ -1131,8 +1474,22 @@ where the lanes write. It must match a launcher that forces its own: the box's
 `~/.openclaw/bin/claude` sets `~/.claude-proxy`, so the box config sets that; unset = inherited,
 else `~/.claude`).
 
+`[ci] enabled` / `interval_seconds` / `watch_hours` / `ignore_checks` (see
+[CI after the verdict](#ci-after-the-verdict)).
+
 `[retention] artifact_days` (0 = keep run artifacts forever, the default: they are the
-only per-lane record for later analysis and grow ~1 GB per two weeks), `worktree_budget_gb`.
+only per-lane record for later analysis; with lane transcripts a few hundred MB a day),
+`[retention] event_days` (0 = keep the `events` table forever, the default: thread outcomes
+and verdict updates exist nowhere else; a positive value makes `gc` delete older events;
+handled inbox rows are still pruned after 30 days),
+`worktree_budget_gb` (run worktrees and shared sister checkouts together).
+`[context] sister_owners`, `sister_max_repos` (0 = no sister checkouts),
+`sister_budget_minutes` (see [Review context](#review-context-sister-repos-and-base-drift)).
+`[deferral] file_owners` / `file_repos` (where the bot may file a deferral's tracking
+issue) and `tracking_required_since` (see
+[the conversation lane](#replies-on-an-already-reviewed-commit-the-conversation-lane)). The
+grandfathering of older deferrals reads `thread.answered` events from before that instant,
+so a positive `[retention] event_days` can let one of them flip back to standing.
 
 Never edit code under `~/.reviewsys/src` on the box; deploy a tag.
 

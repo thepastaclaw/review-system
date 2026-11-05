@@ -11,10 +11,14 @@ import hashlib
 import json
 import logging
 import os
+import re
 import tomllib
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 from typing import Any
+
+from .db import fmt_ts, parse_ts
 
 log = logging.getLogger(__name__)
 
@@ -322,6 +326,12 @@ class ModelPolicy:
             agent="conversation", model=self.phase2_reviewer.model, effort="high"
         )
 
+    @property
+    def ci_check_lane(self) -> LaneModel:
+        """The lane that judges a CI failure after an APPROVE (ci.py): the cheap side-lane
+        model triage and prep run on, or without triage the selector model at low effort."""
+        return self.triage or LaneModel(agent="ci-check", model=self.selector_model, effort="low")
+
     def tier_effort(self, tier: str) -> TierEffort:
         default = TierEffort(phase1=self.phase1_reviewer.effort, phase2=self.phase2_reviewer.effort)
         return self.tiers.get(tier) or self.tiers.get(self.fallback_tier) or default
@@ -336,6 +346,9 @@ class RepoConfig:
     # False: reviews of this repo skip Phase 1 and go straight to Phase 2 (measured to add
     # next to nothing there); disclosed in the review like the backlog rule
     phase1: bool = True
+    # other repos (`owner/name`) whose default branch the review context checks out beside
+    # the ones the repo's Cargo.lock pins (see sister.py), e.g. platform -> dashpay/tenderdash
+    sister_repos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -367,6 +380,69 @@ class AuditConfig:
     post_live: bool = False
     # repos never audited (also: never auto-enrolled on merge)
     exclude_repos: tuple[str, ...] = ()
+
+
+# check names (searched case-insensitively) that say nothing about the code: PR title and
+# semantic-commit checks, codecov, policy and hygiene bots, review bots ("CodeRabbit or
+# PastaClaw review"), milestone / label / conflict bookkeeping, CLA and DCO
+DEFAULT_CI_IGNORE = (
+    r"title|semantic|conventional.?commit|codecov|policy|hygiene|coderabbit|pastaclaw|\breview\b"
+    r"|milestone|label|conflict|check.?merge|\bcla\b|\bdco\b"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CiConfig:
+    """CI after the verdict (ci.py): an APPROVE published while code checks were still running
+    is watched until they finish, and a related failure moves it to COMMENT."""
+
+    enabled: bool = True
+    interval_seconds: int = 180  # how often the daemon reads the checks of watched heads
+    watch_hours: int = 12  # how long after the verdict a head is watched
+    # check names (regex, case-insensitive search) that never count: never pending, never a
+    # failure
+    ignore_checks: str = DEFAULT_CI_IGNORE
+
+    @property
+    def ignore_re(self) -> re.Pattern[str]:
+        return re.compile(self.ignore_checks, re.IGNORECASE)
+
+
+@dataclass(frozen=True, slots=True)
+class ContextConfig:
+    """Review context beyond the PR itself, gathered by the context step: sister repositories
+    checked out read-only for the lanes (sister.py). Best effort, never a run's failure."""
+
+    # Cargo.lock git dependencies from these GitHub owners are sister repos (case-insensitive)
+    sister_owners: tuple[str, ...] = ("dashpay",)
+    # sister repos checked out per run (configured ones first, then by pinned packages);
+    # 0 = none. Repos over the cap are listed without a checkout
+    sister_max_repos: int = 6
+    # wall-clock bound on all sister checkouts of one run (a first clone is the slow part)
+    sister_budget_minutes: int = 10
+
+
+@dataclass(frozen=True, slots=True)
+class DeferralConfig:
+    """Where the bot may file the tracking issue a deferred finding needs (converse.py): a
+    maintainer who defers a finding and asks the bot to file the follow-up gets it filed only
+    in a repository listed here (by owner, or by full name); anywhere else the bot asks the
+    maintainer to file it. Both empty: the bot never files.
+
+    `tracking_required_since` (ISO-8601) is when deferrals started needing tracking; one
+    recorded before it was accepted under the old rule and keeps lifting its finding. ""
+    = the first daemon or worker start with this code, recorded once in kv
+    (`deferral.tracking_required_since`, see converse.tracking_required_since)."""
+
+    file_owners: tuple[str, ...] = ("dashpay",)
+    file_repos: tuple[str, ...] = ()
+    tracking_required_since: str = ""
+
+    def may_file(self, repo: str) -> bool:
+        owner = repo.split("/", 1)[0].lower()
+        return owner in {o.lower() for o in self.file_owners} or repo.lower() in {
+            r.lower() for r in self.file_repos
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -405,6 +481,8 @@ class Config:
     watchdog_minutes: int
     comment_budget: int
     backlog_skip_phase1_above: int  # queued heads above this -> runs skip Phase 1 (0 disables)
+    # PR labels (case-insensitive) that turn automatic reviews off for that PR, see ingest.py
+    skip_labels: tuple[str, ...]
     # reviewer lanes one phase of one run runs at once (1 = sequential, the pre-v0.19 flow;
     # 0 = every lane of the phase at once). Model pools (lanepool.py) still bound the machine.
     phase_parallelism: int
@@ -432,6 +510,8 @@ class Config:
     trusted_reviewers: tuple[str, ...]
     # retention; 0 = run artifacts (lane outputs) are never deleted
     artifact_retention_days: int
+    # events (the history of thread outcomes and verdict updates); 0 = never deleted
+    event_retention_days: int
     worktree_budget_gb: int
     # from skills config
     repos: tuple[RepoConfig, ...]
@@ -447,6 +527,9 @@ class Config:
     # where the gpt pool's account reading is read from when it is not `db_path`: a replay's
     # database is a scratch one, the box's reading is in the production database (read-only)
     lane_capacity_db: Path | None = None
+    context: ContextConfig = field(default_factory=ContextConfig)
+    ci: CiConfig = field(default_factory=CiConfig)
+    deferral: DeferralConfig = field(default_factory=DeferralConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -540,6 +623,9 @@ DEFAULT_LANE_DENY_EXEC = (
     "~/.local/bin/sccache",
 )
 
+# [scheduling] skip_labels when a box config.toml predates the knob
+DEFAULT_SKIP_LABELS = ("tag:skip-review",)
+
 # correction turns per reviewer/verifier lane ([lanes] correction_turns); a box config.toml
 # predating the knob gets the default
 DEFAULT_CORRECTION_TURNS = 2
@@ -591,6 +677,9 @@ comment_budget = 10
 # when more heads than this are queued, new runs skip the Phase-1 reviewers and go
 # straight to Phase 2; 0 disables. Disclosed in the review and the gate comment.
 backlog_skip_phase1_above = 10
+# a PR carrying one of these labels gets no automatic review (new PR, push, post-merge audit)
+# until the label is removed; an explicit request (@mention, review request) still runs
+skip_labels = ["tag:skip-review"]
 # the general reviewer and the specialists of one phase run side by side, at most this
 # many at once per run (1 = one after another, 0 = all of them); the model pools below
 # still bound the machine
@@ -630,9 +719,13 @@ agent_session_key = "agent:main:main"
 trusted_reviewers = ["PastaPastaPasta", "QuantumExplorer", "shumkov", "lklimek", "dustinface", "thephez", "knst", "pauldelucia", "UdjinM6"]
 
 [retention]
-# run artifacts (every lane's prompt, output and meta); 0 = keep forever. They are small
-# (~1 GB per two weeks) and the only per-lane record older reviews can be analysed from.
+# run artifacts (every lane's prompt, output, meta, transcript and first request); 0 = keep
+# forever. They are the only per-lane record older reviews can be analysed from; with the
+# transcripts expect a few hundred MB a day (~1500 lanes, a few hundred KB each).
 artifact_days = 0
+# events (thread outcomes, verdict updates, ...) are the only history audits can read; 0 = keep
+# forever. Inbox pruning is separate and not configurable.
+event_days = 0
 worktree_budget_gb = 60
 
 [audit]
@@ -646,6 +739,38 @@ report_branch = "main"
 # for merges seen live: post a "Post-merge review" comment and one issue per PR with blockers
 post_live = false
 exclude_repos = []
+
+[context]
+# sister repositories checked out read-only for the lanes: git dependencies in the PR's
+# Cargo.lock from these GitHub owners (at the pinned commit and the default branch's tip),
+# plus a repo's `sister_repos` in the skills config.json (default branch only)
+sister_owners = ["dashpay"]
+# per run, configured repos first; 0 = no sister checkouts
+sister_max_repos = 6
+# wall-clock budget for all of one run's sister checkouts
+sister_budget_minutes = 10
+
+[ci]
+# re-check an APPROVE when CI finishes after it: a failed check that looks related to the
+# change moves the verdict to COMMENT (one follow-up review per commit); a flake posts nothing
+enabled = true
+# how often the daemon reads the checks of watched heads, and for how long after the verdict
+interval_seconds = 180
+watch_hours = 12
+# check names (regex, case-insensitive) that say nothing about the code and never count.
+# Unset = the built-in list (config.DEFAULT_CI_IGNORE: PR title, semantic commits, codecov,
+# policy, review bots, ...)
+# ignore_checks = "title|semantic|codecov|policy|coderabbit|pastaclaw|review"
+
+[deferral]
+# a maintainer who defers a finding can ask the bot to file the follow-up's tracking issue;
+# it files only in repositories of these owners (or listed by full name), else it asks the
+# maintainer to file it
+file_owners = ["dashpay"]
+file_repos = []
+# deferrals recorded before this instant were accepted without tracking and keep lifting
+# their finding; unset = when this code first ran (kept in kv deferral.tracking_required_since)
+# tracking_required_since = "2026-10-17T00:00:00Z"
 """
 
 
@@ -889,6 +1014,7 @@ def load_skills_config(
             enabled=bool(r.get("enabled", False)),
             disabled_reason=r.get("disabled_reason"),
             phase1=bool(r.get("phase1", True)),
+            sister_repos=_sister_repos(r.get("sister_repos")),
         )
         for r in raw["repos"]
     )
@@ -1051,6 +1177,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         watchdog_minutes=int(s["watchdog_minutes"]),
         comment_budget=int(s.get("comment_budget", settings.get("comment_budget", 10))),
         backlog_skip_phase1_above=int(s.get("backlog_skip_phase1_above", 10)),
+        skip_labels=_skip_labels(s.get("skip_labels", DEFAULT_SKIP_LABELS)),
         phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
         lane_pools={
             str(k): max(1, int(v))
@@ -1075,6 +1202,8 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         agent_session_key=str(i.get("agent_session_key", "agent:main:main")),
         trusted_reviewers=tuple(i.get("trusted_reviewers", [])),
         artifact_retention_days=max(0, int(r["artifact_days"])),
+        # optional: a config.toml written before the key existed has none
+        event_retention_days=max(0, int(r.get("event_days", 0))),
         worktree_budget_gb=int(r["worktree_budget_gb"]),
         repos=repos,
         specialists=specialists,
@@ -1083,6 +1212,9 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         audit=_audit(t.get("audit") or {}),
         replay_pool_share=_replay_share(s.get("replay_pool_share", 0.5)),
         replay_pool_slots=_replay_slots(s.get("replay_pool_slots")),
+        context=_context(t.get("context") or {}),
+        ci=_ci(t.get("ci") or {}),
+        deferral=_deferral(t.get("deferral") or {}),
     )
 
 
@@ -1115,6 +1247,11 @@ def _replay_slots(value: Any) -> dict[str, int]:
     return out
 
 
+def _skip_labels(value: Any) -> tuple[str, ...]:
+    """`[scheduling] skip_labels`, lower-cased: GitHub label names are case-insensitive."""
+    return tuple(x.lower() for x in _strings(value))
+
+
 def _deny_exec(value: Any) -> tuple[str, ...]:
     """`[lanes] deny_exec`, strictly: a string would split into characters ("~", "/") and an
     empty entry resolves to the working directory, and either denies every program a lane runs."""
@@ -1134,4 +1271,59 @@ def _audit(a: dict[str, Any]) -> AuditConfig:
         report_branch=str(a.get("report_branch") or "main"),
         post_live=bool(a.get("post_live", False)),
         exclude_repos=tuple(str(x) for x in a.get("exclude_repos") or ()),
+    )
+
+
+def _strings(value: Any) -> tuple[str, ...]:
+    """A list of strings; one written as a bare string is one entry, not one per letter."""
+    return (str(value),) if isinstance(value, str) else tuple(str(x) for x in value or ())
+
+
+_REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def _sister_repos(value: Any) -> tuple[str, ...]:
+    repos = _strings(value)
+    for r in repos:
+        if not _REPO_NAME.match(r):
+            raise ValueError(f"sister_repos entry {r!r}: need owner/name")
+    return repos
+
+
+def _context(c: dict[str, Any]) -> ContextConfig:
+    d = ContextConfig()
+    return ContextConfig(
+        sister_owners=_strings(c.get("sister_owners", d.sister_owners)),
+        sister_max_repos=max(0, int(c.get("sister_max_repos", d.sister_max_repos))),
+        sister_budget_minutes=max(1, int(c.get("sister_budget_minutes", d.sister_budget_minutes))),
+    )
+
+
+def _ci(c: dict[str, Any]) -> CiConfig:
+    pattern = str(c.get("ignore_checks") or DEFAULT_CI_IGNORE)
+    try:
+        re.compile(pattern)
+    except re.error as exc:
+        raise ValueError(f"[ci] ignore_checks is not a valid regex: {exc}") from exc
+    return CiConfig(
+        enabled=bool(c.get("enabled", True)),
+        interval_seconds=max(30, int(c.get("interval_seconds", 180))),
+        watch_hours=max(1, int(c.get("watch_hours", 12))),
+        ignore_checks=pattern,
+    )
+
+
+def _deferral(d: dict[str, Any]) -> DeferralConfig:
+    since = str(d.get("tracking_required_since") or "")
+    if since:
+        try:
+            dt = parse_ts(since)
+            dt = (dt if dt.tzinfo else dt.replace(tzinfo=UTC)).astimezone(UTC)
+            since = fmt_ts(dt.replace(microsecond=0))
+        except ValueError as exc:
+            raise ValueError(f"[deferral] tracking_required_since {since!r}: {exc}") from exc
+    return DeferralConfig(
+        file_owners=_strings(d.get("file_owners", ("dashpay",))),
+        file_repos=_strings(d.get("file_repos")),
+        tracking_required_since=since,
     )

@@ -115,12 +115,13 @@ def test_a_pipeline_under_a_stale_fingerprint_fails_the_load(cfg, skills_dir):
     assert load_with(cfg, skills_dir, None, refingerprint=False).policy.pipeline is None
 
 
-V11_FINGERPRINT = "a380fabd843567dc632efd5def3c80cd27d72c48d260c79ef8155694e624d16c"
+V11_FINGERPRINT = "7503c1767e352a859858bb3f2e183781edd0450c0451a57e9d510ac21846a6a0"
 
 
 def test_fingerprint_reproduces_the_live_v11_policy():
-    """`review_model_policy` of skills 169fcb8 (policy v11, live), copied as is: the hash
-    must match the one the skills repo stored. Its text has non-ASCII ("—"), which only the
+    """`review_model_policy` of skills c697406 (policy v11.1, live beside reviewsys v0.28.0;
+    unchanged since 6157b96), copied as is: the hash must match the one the skills repo
+    stored. Its text has non-ASCII ("—"), which only the
     default `ensure_ascii=True` encoding reproduces."""
     pol = json.loads(
         (Path(__file__).parent / "golden" / "skills-v11-policy.json").read_text(encoding="utf-8")

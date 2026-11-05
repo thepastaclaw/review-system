@@ -1,8 +1,9 @@
 """A v11 policy's published output is pinned end to end across rounds: a first review, a
 re-review of a new push that reconciles a human reply, and a same-sha conversation. The golden
-(golden/v11-e2e-rounds.json) was written by the code before the v12 review behavior landed
-(feat/review-quality-v12 @736cab9) and is compared as copied text: under a v11 policy nothing
-the bot posts may change."""
+(golden/v11-e2e-rounds.json) is compared as copied text: under a v11 policy nothing the bot
+posts may differ from production's. Everything but `ledger` was written by main at v0.28.0
+(4e75920fe) running this scenario; `ledger` (which main does not have) by the v12 branch
+before its review behavior landed (feat/review-quality-v12 @736cab9)."""
 
 from __future__ import annotations
 
@@ -134,6 +135,7 @@ def run_scenario(cfg, conn, gh, lanes) -> dict:
         "reviews": gh.posted_reviews,
         "replies": gh.replies,
         "comment_edits": gh.comment_edits,
+        "review_edits": gh.review_edits,
         "reactions": gh.reactions,
         "ledger": {h: [i.status, i.severity, i.title] for h, i in sorted(issues.items())},
     }
@@ -142,6 +144,4 @@ def run_scenario(cfg, conn, gh, lanes) -> dict:
 def test_v11_rounds_publish_exactly_what_they_did(cfg, conn, gh, lanes):
     assert cfg.policy.pipeline is None
     got = json.loads(json.dumps(run_scenario(cfg, conn, gh, lanes)))
-    if not GOLDEN.exists():  # written once, by the pre-v12 code; never regenerated after
-        GOLDEN.write_text(json.dumps(got, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     assert got == json.loads(GOLDEN.read_text(encoding="utf-8"))

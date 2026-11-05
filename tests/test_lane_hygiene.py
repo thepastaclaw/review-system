@@ -1,8 +1,8 @@
 """Policy v12 lane hygiene: isolated lane environments (with the repo's own agent guidance
 moved into the prompt), structured output through `--json-schema`, and echo fields the
 harness stamps. All of it is off under a v11 policy,
-whose lanes must start exactly as v0.24's did (pinned below, end to end through the real
-`run_claude_lane`)."""
+whose lanes must start exactly as production's (main at v0.28.0) do (pinned below, end to end
+through the real `run_claude_lane`)."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import os
 import re
 import subprocess
 import threading
+import uuid
 from pathlib import Path
 
 import pytest
@@ -42,20 +43,23 @@ from tests.test_lane_corrections import (  # fake_git: autouse, fakes the mirror
 )
 from tests.test_pipeline_policy import load_with
 
-V024_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
+V028_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
 ISOLATION = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1"}
 
 
-def v024_argv(spec: LaneSpec) -> list[str]:
-    """`lane.argv_for` as v0.24.0 shipped it, copied rather than imported: what a v11 lane's
-    command line must stay."""
+def v028_argv(spec: LaneSpec, argv: list[str]) -> list[str]:
+    """`lane.argv_for` as v0.28.0 shipped it, copied rather than imported: what a v11 lane's
+    command line must stay. `run_claude_lane` gives a lane without a session id one of its
+    own (a fresh UUID, read back from `argv`), so its transcript is kept."""
     sandbox = [lane_mod.SANDBOX_EXEC, "-p", spec.sandbox_profile] if spec.sandbox_profile else []
     if spec.resume and spec.session_id:
         session = ["--resume", spec.session_id]
     elif spec.session_id:
         session = ["--session-id", spec.session_id]
     else:
-        session = ["--no-session-persistence"]
+        own = argv[argv.index("--session-id") + 1] if "--session-id" in argv else ""
+        uuid.UUID(own)
+        session = ["--session-id", own]
     argv = [
         *sandbox,
         "nice",
@@ -73,6 +77,7 @@ def v024_argv(spec: LaneSpec) -> list[str]:
         spec.effort,
         "--add-dir",
         str(spec.add_dir),
+        *(str(d) for d in spec.extra_dirs),
         "--output-format",
         "json",
         *session,
@@ -81,6 +86,18 @@ def v024_argv(spec: LaneSpec) -> list[str]:
     if spec.max_budget_usd:
         argv += ["--max-budget-usd", f"{spec.max_budget_usd:.2f}"]
     return argv
+
+
+def v028_env(spec: LaneSpec, env: dict[str, str], extra: dict[str, str] | None = None) -> dict:
+    """The environment v0.28.0 starts a lane in (plus `extra`): the worker's own, the base
+    lane variables, and on a lane's opening turn the directory its first request is written
+    to (`lane.FirstRequest`, a fresh temporary one, read back from `env`)."""
+    want = {**os.environ, **V028_ENV, **(extra or {})}
+    if not spec.resume:
+        bodies = env.get("OTEL_LOG_RAW_API_BODIES", "")
+        assert re.fullmatch(r"file:.*/reviewsys-bodies-[^/]+", bodies), bodies
+        want["OTEL_LOG_RAW_API_BODIES"] = bodies
+    return want
 
 
 class ClaudeProcesses:
@@ -111,6 +128,17 @@ class ClaudeProcesses:
                     return self.real.communicate(input, timeout=timeout)
                 return self.out, self.err
 
+            # any other process (`worktree.diff_print` streams git's output) is the real one
+            def __getattr__(self, name):
+                return getattr(self.real, name)
+
+            def __enter__(self):
+                self.real.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self.real.__exit__(*exc)
+
         monkeypatch.setattr(lane_mod.subprocess, "Popen", Proc)
 
     def __call__(self, spec: LaneSpec, art: Path, worktree: Path) -> LaneResult:
@@ -130,7 +158,7 @@ def _review(lanes) -> None:
 # ---- v11: byte-identical lanes ----
 
 
-def test_v11_lanes_start_exactly_as_v024(cfg, conn, gh, lanes, monkeypatch, _claude_config_dir):
+def test_v11_lanes_start_exactly_as_v028(cfg, conn, gh, lanes, monkeypatch, _claude_config_dir):
     _review(lanes)
     procs = ClaudeProcesses(monkeypatch, lanes)
     _, status = _run(cfg, conn, gh, procs)
@@ -139,8 +167,8 @@ def test_v11_lanes_start_exactly_as_v024(cfg, conn, gh, lanes, monkeypatch, _cla
     assert {"prep", "general", "verifier"} <= roles
     assert any(s.resume for s, _, _ in procs.started), "a correction turn ran"
     for spec, argv, env in procs.started:
-        assert argv == v024_argv(spec), spec.role
-        assert env == {**os.environ, **V024_ENV}, spec.role
+        assert argv == v028_argv(spec, argv), spec.role
+        assert env == v028_env(spec, env), spec.role
         assert not spec.isolate_env
 
 
@@ -158,8 +186,8 @@ def test_isolated_runner_marks_every_lane_and_only_when_on(tmp_path):
     spec = _spec(tmp_path)
     lane_mod.isolated(runner, True)(spec, tmp_path, tmp_path)
     assert seen == [dataclasses.replace(spec, isolate_env=True)]
-    assert lane_mod.lane_env(seen[0]) == {**os.environ, **V024_ENV, **ISOLATION}
-    assert lane_mod.lane_env(spec) == {**os.environ, **V024_ENV}
+    assert lane_mod.lane_env(seen[0]) == {**os.environ, **V028_ENV, **ISOLATION}
+    assert lane_mod.lane_env(spec) == {**os.environ, **V028_ENV}
 
 
 def test_v12_isolation_reaches_every_lane_and_correction_turn(
@@ -176,9 +204,9 @@ def test_v12_isolation_reaches_every_lane_and_correction_turn(
     assert resumed, "a correction turn ran"
     for spec, argv, env in procs.started:
         assert spec.isolate_env, spec.role
-        assert env == {**os.environ, **V024_ENV, **ISOLATION}, spec.role
+        assert env == v028_env(spec, env, ISOLATION), spec.role
         assert env["CLAUDE_CONFIG_DIR"] == str(_claude_config_dir)
-        assert argv == v024_argv(spec), "isolation is environment only"
+        assert argv == v028_argv(spec, argv), "isolation is environment only"
     first = next(s for s, _, _ in procs.started if s.session_id == resumed[0][0].session_id)
     assert first is not resumed[0][0] and not first.resume
 
@@ -191,7 +219,7 @@ def test_v12_without_isolation_keeps_the_v11_environment(
     procs = ClaudeProcesses(monkeypatch, lanes)
     _, status = _run(cfg, conn, gh, procs)
     assert status == RunStatus.DONE
-    assert all(env == {**os.environ, **V024_ENV} for _, _, env in procs.started)
+    assert all(env == v028_env(spec, env) for spec, _, env in procs.started)
 
 
 # ---- structured_output ----
@@ -230,7 +258,7 @@ def test_json_schema_goes_on_the_command_line_only_when_given(tmp_path):
     spec = _spec(tmp_path, json_schema=SCHEMA, session_id=lane_mod.new_session_id())
     argv = lane_mod.argv_for(spec)
     assert argv[argv.index("--json-schema") + 1] == json.dumps(SCHEMA, separators=(",", ":"))
-    assert argv[: argv.index("--json-schema")] == v024_argv(spec), "appended, nothing else"
+    assert argv[: argv.index("--json-schema")] == v028_argv(spec, argv), "appended, nothing else"
     resumed = lane_mod.argv_for(dataclasses.replace(spec, resume=True))
     assert "--resume" in resumed and "--json-schema" in resumed, "a correction turn keeps it"
 

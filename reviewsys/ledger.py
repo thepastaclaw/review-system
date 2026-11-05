@@ -1,4 +1,4 @@
-"""The issue ledger (schema v6): every issue the bot raised on a PR, its identity, and where it
+"""The issue ledger (schema v9): every issue the bot raised on a PR, its identity, and where it
 stands. One `issues` row per (repo, number, hash), folded from its `issue_events` history.
 
 Identity is the `finding_hash` of the title the issue was first posted under: byte-compatible

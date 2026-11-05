@@ -187,6 +187,21 @@ def test_seeding_copies_history_from_before_the_cutoff_only(conn, history, tmp_p
     assert sha == history["old_sha"]
 
 
+def test_seeding_keeps_productions_deferral_tracking_cutoff(conn, history, tmp_path):
+    """A replay runs dry, so it never records the cutoff itself: without production's, its
+    own start would be the cutoff and every earlier deferral would count as grandfathered."""
+    from reviewsys import converse
+    from reviewsys.db import connect, kv_get, kv_set
+
+    scratch = connect(tmp_path / "scratch.db")
+    with tx(conn):
+        kv_set(conn, converse.TRACKING_CUTOFF_KEY, "2026-10-01T00:00:00Z")
+    replay.seed_history(
+        scratch, conn, repo=REPO, number=NUMBER, sha=history["head"], cutoff=CUTOFF, exclude_run=0
+    )
+    assert kv_get(scratch, converse.TRACKING_CUTOFF_KEY) == "2026-10-01T00:00:00Z"
+
+
 def test_a_finding_reposted_after_the_cutoff_keeps_its_earlier_posting(conn, history, tmp_path):
     from reviewsys.db import connect
 

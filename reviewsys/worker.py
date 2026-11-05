@@ -32,8 +32,10 @@ from typing import Any, cast
 
 from . import (
     audit,
+    ci,
     converse,
     degraded,
+    drift,
     github,
     labels,
     lanepool,
@@ -42,6 +44,7 @@ from . import (
     quota,
     rules,
     schemas,
+    sister,
 )
 from . import prep as prep_mod
 from . import progress as progress_mod
@@ -55,10 +58,17 @@ from .contract import (
     parse_verifier_output,
 )
 from .db import connect_existing, event, fmt_ts, kv_get, kv_set, now, now_dt, tx
-from .dedupe import FINDING_MARKER_RE, ExistingComment, find_duplicate
+from .dedupe import (
+    FINDING_MARKER_RE,
+    ExistingComment,
+    content_tokens,
+    find_duplicate,
+    title_similarity,
+)
 from .degraded import Prober
 from .gate import gate_score, phase1_blocks
 from .gh import Gh
+from .ingest import reviewed_sha
 from .lane import (
     LaneResult,
     LaneRunner,
@@ -270,6 +280,8 @@ class RunContext:
     mirror: Path | None = None
     meta: github.PrMeta | None = None
     base_sha: str = ""
+    merge_base: str | None = None  # of the head with the live base branch (not on an audit)
+    diff_print: str | None = None  # the PR's own diff (worktree.diff_print; not on an audit)
     selection: list[str] = field(default_factory=list)
     files: list[dict[str, Any]] = field(default_factory=list)
     triage: Triage | None = None
@@ -289,6 +301,12 @@ class RunContext:
     coderabbit: dict[str, Any] = field(default_factory=dict)
     coderabbit_ids: list[int] = field(default_factory=list)
     prior: list[dict[str, Any]] = field(default_factory=list)
+    # the same prior findings in full, by the hash they are reconciled under (`prior` is what
+    # the prompt sees, without most bodies)
+    prior_findings: dict[str, Finding] = field(default_factory=dict)
+    # identities explicitly lifted by the latest adjudication; a later head must not silently
+    # turn one back into a blocker, while an explicitly marked reintroduction remains possible
+    settled_hashes: set[str] = field(default_factory=set)
     prior_sha: str | None = None
     has_prior_review: bool = False
     fresh_final: bool = False
@@ -306,6 +324,9 @@ class RunContext:
     phase2_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
     verify1: VerifierOutput | None = None
     verify2: VerifierOutput | None = None
+    # the standing verdict a degraded same-sha re-review left in place (`_verdict_update`):
+    # recorded again after its informational summary, whose canonical event is only COMMENT
+    kept_verdict: str = ""
     reviewers: list[dict[str, Any]] = field(default_factory=list)
     lane_runner: LaneRunner = run_claude_lane
     dry_run: bool = False
@@ -332,6 +353,9 @@ class RunContext:
     gate_steps_seen: tuple[tuple[str, str, str], ...] = ()  # steps + lane notes last shown
     gate_refreshed_at: float = 0.0  # time.monotonic() of the last progress edit
     gate_body_seen: str = ""  # the in-progress body last written, to skip edits that change nothing
+    # deferrals recorded before this instant were accepted without tracking (see
+    # converse.tracking_required_since); set by `main`
+    deferral_cutoff: str = ""
     # a conversation run (answers replies on a reviewed commit); None until run() knows. The
     # progress estimate measures it against conversations from the start (see progress.py)
     conversation: bool | None = None
@@ -377,6 +401,12 @@ class RunContext:
     @property
     def is_audit(self) -> bool:
         return self.audit is not None
+
+    @property
+    def is_ci_check(self) -> bool:
+        """A check failed after this head's APPROVE: the light CI-check run (ci.py), which
+        reviews nothing and leaves the review's gate comment as it is."""
+        return self.trigger == Trigger.CI_FAILED
 
     def check_cancel(self) -> None:
         if self.cancel_flag.is_set():
@@ -607,6 +637,17 @@ def _step_end(
         )
 
 
+def _fail_run_progress(ctx: RunContext, reason: str) -> None:
+    """Close unfinished steps on either an expected failure or an unexpected crash."""
+    with tx(ctx.conn):
+        ctx.conn.execute(
+            "UPDATE steps SET status='failed', finished_at=?, detail=? "
+            "WHERE run_id=? AND status='running'",
+            (now(), json.dumps({"error": reason[:1000]}), ctx.run_id),
+        )
+    _gate_comment(ctx, "failed", reason=reason[:200])
+
+
 def _lane_row(
     ctx: RunContext,
     *,
@@ -719,7 +760,7 @@ def _gate_defaults(ctx: RunContext, kw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
-    if ctx.dry_run or ctx.is_audit:
+    if ctx.dry_run or ctx.is_audit or ctx.is_ci_check:
         return
     with ctx.gate_lock:
         live = status == "in_progress"
@@ -750,7 +791,7 @@ def _gate_closed(ctx: RunContext, reason: str) -> None:
     """The PR closed or merged before this run could review it: an existing gate comment says
     so instead of a stale "queued" / "in progress" status that nothing else would replace (no
     newer head will be queued). Never creates a comment on a closed PR just to say that."""
-    if ctx.dry_run or ctx.is_audit:
+    if ctx.dry_run or ctx.is_audit or ctx.is_ci_check:
         return
     with ctx.gate_lock:
         ctx.gate_live_kw = None
@@ -781,10 +822,15 @@ def step_worktree(ctx: RunContext) -> None:
     # leaves the comment to the newer head's writer): the checkout shows as the running step
     _gate_comment(ctx, "in_progress")
     ctx.worktree = _checkout_head(ctx)
+    # a replay reviews the range production reviewed (`coverage_base`), never the live base
     base = ctx.coverage_base or (
         wt.merge_base(ctx.worktree, meta.base_ref, ctx.sha) if meta.base_ref else None
     )
+    ctx.merge_base = base
     ctx.coverage_from = base or f"{ctx.sha}~1"
+    # what the review of this commit reads; a conversation reviews nothing and records none
+    if base and not ctx.conversation:
+        ctx.diff_print = wt.diff_print(ctx.worktree, base, ctx.sha)
     _record_worktree(ctx)
 
 
@@ -805,6 +851,92 @@ def _record_worktree(ctx: RunContext) -> None:
             "UPDATE runs SET worktree=?, run_dir=? WHERE id=?",
             (str(ctx.worktree), str(ctx.run_dir), ctx.run_id),
         )
+        if ctx.diff_print:
+            ctx.conn.execute(
+                "UPDATE heads SET diff_print=? WHERE id=?", (ctx.diff_print, ctx.head_id)
+            )
+
+
+# heads nobody asked a review of: only these may stand on the review of an earlier commit
+CARRYABLE = frozenset({Trigger.NEW_PR, Trigger.NEW_PUSH})
+CARRIED_VERDICTS = {
+    "APPROVE": "approved",
+    "REQUEST_CHANGES": "changes requested",
+    "COMMENT": "commented",
+}
+
+
+def _carry(ctx: RunContext) -> bool:
+    """A push that left the PR's own diff as it was (an empty commit, a merge of the base, a
+    rebase onto it) changes nothing a reviewer read: the review of the head before it stands
+    for this commit and no lane runs. dashpay's PR Hygiene controller applies the same rule
+    (`carried_heads`) and already counts that final review for this commit. Only an automatic
+    head (a person asking gets a review: ingest.enqueue_head), and only from the head right
+    before it, by its diff as its own run found it: a predecessor superseded before a run
+    never recorded one, so the commit after it starts over. True when carried (run done)."""
+    if ctx.trigger not in CARRYABLE or not ctx.diff_print:
+        return False
+    prev = ctx.conn.execute(
+        "SELECT sha, diff_print FROM heads WHERE repo=? AND number=? AND queue='live' AND id<? "
+        "ORDER BY id DESC LIMIT 1",
+        (ctx.repo, ctx.number, ctx.head_id),
+    ).fetchone()
+    if prev is None or prev["diff_print"] != ctx.diff_print:
+        return False
+    source = reviewed_sha(ctx.conn, ctx.repo, ctx.number, str(prev["sha"]))
+    verdict = _carryable_verdict(ctx, source)
+    if verdict is None:
+        return False
+    with tx(ctx.conn):
+        head = ctx.conn.execute(
+            "SELECT trigger, status FROM heads WHERE id=?", (ctx.head_id,)
+        ).fetchone()
+        if head["status"] != HeadStatus.RUNNING:  # superseded meanwhile: no word for the newer
+            raise Cancelled()
+        if head["trigger"] not in CARRYABLE:  # someone asked for a review during the checkout
+            ctx.trigger = str(head["trigger"])
+            return False
+        ctx.conn.execute("UPDATE heads SET carried_from=? WHERE id=?", (source, ctx.head_id))
+        event(
+            ctx.conn,
+            "head.carried",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{ctx.sha[:8]} stands on {source[:8]} ({verdict}): diff {ctx.diff_print[:12]}",
+        )
+    _step_start(ctx, StepName.CARRY)
+    _gate_comment(
+        ctx,
+        "carried",
+        carried_from=source,
+        reason=f"{CARRIED_VERDICTS[verdict]}; `@{ctx.cfg.bot_login} review` asks for a review "
+        "of this commit",
+    )
+    if verdict == "APPROVE":
+        _watch_ci(ctx, known=[])
+    _step_end(ctx, StepName.CARRY, "ok", {"carried_from": source, "verdict": verdict})
+    return True
+
+
+def _carryable_verdict(ctx: RunContext, sha: str) -> str | None:
+    """The verdict a carry may pass on: the newest review of `sha`, when it is a final review
+    (a preliminary one is no report to the hygiene controller, and its deferred Phase 2 is
+    owed) that ran on the primary models and that no CI update has weakened since (a rebase is
+    exactly the push that may win either back). None otherwise."""
+    row = ctx.conn.execute(
+        "SELECT rv.event, rv.phase, (SELECT MAX(r.degraded) FROM reviews o JOIN runs r "
+        "ON r.id=o.run_id WHERE o.repo=rv.repo AND o.number=rv.number AND o.sha=rv.sha) degraded "
+        "FROM reviews rv WHERE rv.repo=? AND rv.number=? AND rv.sha=? "
+        "ORDER BY rv.posted_at DESC, rv.id DESC LIMIT 1",
+        (ctx.repo, ctx.number, sha),
+    ).fetchone()
+    if row is None or row["phase"] != "final" or row["degraded"]:
+        return None
+    if kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, sha)):
+        return None
+    verdict = publish.canonical_event(str(row["event"]))
+    return verdict if verdict in CARRIED_VERDICTS else None
 
 
 def _audit_worktree(ctx: RunContext, meta: github.PrMeta) -> None:
@@ -845,10 +977,7 @@ def step_prep(ctx: RunContext) -> None:
     (`select.degraded` / `triage.degraded`)."""
     assert ctx.meta and ctx.worktree
     _step_start(ctx, StepName.SELECT)
-    files_raw = (
-        ctx.gh.api(f"repos/{ctx.repo}/pulls/{ctx.number}/files?per_page=100", paginate=True) or []
-    )
-    ctx.files = [f for f in files_raw if isinstance(f, dict)]
+    _fetch_files(ctx)
     lane = ctx.cfg.policy.triage
     if lane is not None and ctx.audit and ctx.audit["mode"] == audit.MODE_LIGHT:
         ctx.tier = LIGHT_AUDIT_TIER  # one cheap Phase-1 pass; escalated on a blocker
@@ -866,6 +995,13 @@ def step_prep(ctx: RunContext) -> None:
         _step_start(ctx, StepName.TRIAGE)
         _end_triage(ctx, _triage(ctx, lane))
     _gate_comment(ctx, "in_progress")
+
+
+def _fetch_files(ctx: RunContext) -> None:
+    files_raw = (
+        ctx.gh.api(f"repos/{ctx.repo}/pulls/{ctx.number}/files?per_page=100", paginate=True) or []
+    )
+    ctx.files = [f for f in files_raw if isinstance(f, dict)]
 
 
 def _prep(ctx: RunContext, lane: LaneModel) -> prep_mod.Prep:
@@ -981,6 +1117,37 @@ def _end_triage(ctx: RunContext, t: Triage) -> None:
     _step_end(ctx, StepName.TRIAGE, "ok", dataclasses.asdict(t))
 
 
+def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
+    """Return the latest explicit lift for a finding, unless a later full review re-kept it.
+
+    Full reviews write verified/posted rows; conversation outcomes write conceded rows. Ordering
+    by run id makes a later independently evidenced reintroduction active again, while a later
+    withdrawal remains a tombstone for every subsequent head.
+    """
+    row = ctx.conn.execute(
+        "SELECT f.stage, f.body FROM findings f JOIN runs r ON r.id=f.run_id "
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND f.hash=? "
+        "AND f.stage IN ('conceded','verified','verified-fresh','posted') "
+        "ORDER BY r.id DESC, f.id DESC LIMIT 1",
+        (ctx.repo, ctx.number, finding_hash),
+    ).fetchone()
+    if not row or row["stage"] != "conceded":
+        return None
+    status = str(row["body"] or "").split("\n", 1)[0]
+    # judgement lifts only: FIXED/OUTDATED rest on the code, which a later head may revert
+    return status if status in converse.LIFTING_STATUSES else None
+
+
+def _prior_extra(ctx: RunContext, h: str, thread: dict[str, Any] | None) -> dict[str, Any]:
+    """A prior finding's `extra`: its thread's replies, and the settled status if any."""
+    extra: dict[str, Any] = {"thread_replies": thread["transcript"]} if thread else {}
+    settled = _latest_settlement(ctx, h)
+    if settled:
+        extra["prior_status"] = settled
+        ctx.settled_hashes.add(h)
+    return extra
+
+
 def step_context(ctx: RunContext) -> None:
     assert ctx.meta
     threads = github.review_threads(ctx.gh, ctx.repo, ctx.number)
@@ -1042,7 +1209,7 @@ def step_context(ctx: RunContext) -> None:
                 category=r["category"] or "general",
                 line_start=r["line_start"],
                 line_end=r["line_end"],
-                extra={"thread_replies": thread["transcript"]} if thread else {},
+                extra=_prior_extra(ctx, str(r["hash"]), thread),
             )
         )
     for h, t in replied.items():
@@ -1060,11 +1227,16 @@ def step_context(ctx: RunContext) -> None:
                 line_start=t.get("line"),
                 line_end=t.get("line"),
                 prior_hash=h,
-                extra={"thread_replies": t["transcript"]},
+                extra=_prior_extra(ctx, h, t),
             )
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
+    ctx.prior_findings = {f.prior_hash or f.hash: f for f in prior}
     ctx.prior_threads = {h: t for h, t in replied.items() if h in seen}
+    # the conversation lane is given none of it; a replay neither (the sister checkouts' default
+    # tips and the base drift are live state, and sister checkouts write the mirrors)
+    if not ctx.conversation and not ctx.replay:
+        _review_context(ctx)
     (ctx.run_dir / "evidence.json").write_text(
         json.dumps(
             {"evidence": ctx.evidence, "coderabbit": ctx.coderabbit, "prior": ctx.prior}, indent=1
@@ -1411,10 +1583,7 @@ def _run_thread_lane(
             )
         else:
             outcomes.update(r.outcomes)
-    out = converse.accept_deferrals(
-        converse.ConversationOutput(outcomes=outcomes),
-        {h: {"transcript": facts[h].get("transcript") or []} for h in outcomes},
-    )
+    out = _accept_thread_deferrals(ctx, outcomes, facts)
     (ctx.run_dir / ("conversation.json" if same_sha else "threads.json")).write_text(
         json.dumps(
             {
@@ -1491,6 +1660,55 @@ def _thread_outcomes(ctx: RunContext) -> dict[str, converse.ThreadOutcome]:
     return dict(tl.out.outcomes) if tl.out is not None else {}
 
 
+def _accept_thread_deferrals(
+    ctx: RunContext,
+    outcomes: dict[str, converse.ThreadOutcome],
+    facts: dict[str, dict[str, Any]],
+) -> converse.ConversationOutput:
+    """`converse.accept_deferrals` for the thread lane: a deferral needs a maintainer's call
+    and, above a nitpick, a tracking issue or PR visible on the PR (the one its reply cites,
+    or one the maintainer points to). The lane cannot have one filed, so an untracked
+    deferral is asked for a link. An issue the ledger already holds deferred is settled: a
+    restatement is not a new deferral to vet."""
+    pr_text = _pr_text(ctx)
+    threads = {
+        h: {
+            "transcript": facts[h].get("transcript") or [],
+            "severity": i.severity if (i := ctx.issues.get(h)) else facts[h].get("severity"),
+        }
+        for h in outcomes
+    }
+
+    def cite(h: str, o: converse.ThreadOutcome) -> converse.ThreadOutcome:
+        if o.status != "INTENTIONALLY_DEFERRED" or o.tracking_url:
+            return o
+        t = threads[h]
+        link = converse.cited_reference(
+            o.reply,
+            said=converse.thread_text(t, humans_only=True),
+            visible=converse.thread_text(t) + "\n" + pr_text,
+            repo=ctx.repo,
+            number=ctx.number,
+        )
+        return dataclasses.replace(o, tracking_url=link)
+
+    return converse.accept_deferrals(
+        converse.ConversationOutput(outcomes={h: cite(h, o) for h, o in outcomes.items()}),
+        threads,
+        settled=_ledger_deferred(ctx, outcomes),
+        repo=ctx.repo,
+        number=ctx.number,
+        pr_text=pr_text,
+        can_file=False,
+    )
+
+
+def _ledger_deferred(ctx: RunContext, hashes: Iterable[str]) -> set[str]:
+    """Those of `hashes` the ledger already holds deferred: a restated deferral there is not
+    a new one to vet, and its thread keeps the status line (and tracking link) it shows."""
+    return {h for h in hashes if (i := ctx.issues.get(h)) is not None and i.status == "deferred"}
+
+
 def _pending_statuses(
     outs: dict[str, converse.ThreadOutcome], corroborated: set[str]
 ) -> dict[str, str]:
@@ -1510,6 +1728,51 @@ def _projected_lifted(outs: dict[str, converse.ThreadOutcome], corroborated: set
     """The hashes this round's thread outcomes would close were every one delivered: what a
     replay, which delivers nothing, decides on in place of `_record_thread_answers`' set."""
     return {h for h, st in _pending_statuses(outs, corroborated).items() if st in ledger.CLOSED}
+
+
+def _review_context(ctx: RunContext) -> None:
+    """Evidence from beyond the PR's own range: the sister repos it builds against, checked
+    out for the lanes (`sister_repos`, sister.py), and how the base branch moved since it
+    branched (`base_drift`, drift.py; not on an audit, whose PR is in the base by now). Best
+    effort: what cannot be had is recorded in the evidence and an event, never a failure."""
+    assert ctx.meta and ctx.worktree
+    try:
+        pins = sister.lock_pins(ctx.cfg, ctx.repo, ctx.worktree)
+    except Exception as exc:  # evidence only; the configured sister repos still come
+        pins = {}
+        _context_event(ctx, "context.sister_failed", f"Cargo.lock: {type(exc).__name__}: {exc}")
+    try:
+        repos = sister.gather(
+            ctx.cfg,
+            ctx.conn,
+            repo=ctx.repo,
+            run_id=ctx.run_id,
+            pins=pins,
+            should_stop=ctx.cancel_flag.is_set,
+        )
+    except Exception as exc:  # it records its own failures; this is a bug's safety net
+        repos = []
+        _context_event(ctx, "context.sister_failed", f"{type(exc).__name__}: {exc}")
+    ctx.check_cancel()
+    for r in repos:
+        if r.get("error"):
+            _context_event(ctx, "context.sister_failed", f"{r['repo']}: {r['error']}")
+    if repos:
+        ctx.evidence["sister_repos"] = repos
+    if ctx.is_audit or not ctx.merge_base or not ctx.meta.base_ref:
+        return
+    try:
+        bd = drift.base_drift(ctx.worktree, ctx.meta.base_ref, ctx.merge_base, ctx.sha)
+    except Exception as exc:  # evidence only, never the run's problem
+        bd = {"base_branch": ctx.meta.base_ref, "error": f"{type(exc).__name__}: {exc}"[:300]}
+    ctx.evidence["base_drift"] = bd
+    if bd.get("error"):
+        _context_event(ctx, "context.base_drift_failed", bd["error"])
+
+
+def _context_event(ctx: RunContext, kind: str, detail: str) -> None:
+    with tx(ctx.conn):
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
 
 
 def _run_lane(
@@ -1635,6 +1898,7 @@ def _run_checked_lane[T](
             prompt=prompt,
             cwd=ctx.worktree,
             add_dir=ctx.run_dir,
+            extra_dirs=sister.lane_dirs(ctx.evidence),
             timeout_seconds=ctx.cfg.lane_timeout_minutes * 60,
             claude_bin=ctx.cfg.claude_bin,
             max_budget_usd=ctx.cfg.lane_budget_usd,
@@ -2092,6 +2356,7 @@ def _reviewer_lanes(
                 source=f"{phase}:{key}",
                 prior_hashes=prior_hashes,
                 stamp_echo=stamp,
+                settled_hashes=ctx.settled_hashes,
             )
 
         def validate_candidates(raw: dict[str, Any]) -> ReviewerOutput:
@@ -2299,6 +2564,7 @@ def _verifier_lane(
             expected_coderabbit_ids=ctx.coderabbit_ids,
             prior_hashes=prior_hashes,
             stamp_echo=stamp,
+            settled_hashes=ctx.settled_hashes,
         )
 
     out = _run_checked_lane(
@@ -2334,8 +2600,198 @@ def _verifier_lane(
         ctx.reviewers,
         lane_findings,
     )
+    _hold_untracked_deferrals(ctx, out, expected_phase)
     _record_findings(ctx, phase, "verified-fresh" if fresh_final else "verified", out.findings)
     return out
+
+
+def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_phase: str) -> None:
+    """A prior finding (above a nitpick) this review would lift as INTENTIONALLY_DEFERRED
+    keeps standing unless a tracking issue or PR is visible on the PR: the row's `tracking`
+    when the thread, description or PR comments show it, else a reference in the finding's
+    own thread (resolved or not) that its humans point to as tracking
+    (`converse.review_deferral_link`), else one already on record for it
+    (`_known_tracking`), unless the deferral predates the rule (`_grandfathered`). Held, the
+    finding is carried again as it
+    was, and the verifier's row for it becomes STILL_VALID (flagged `needs_tracking`) with a
+    reason asking for the issue, which is what its thread is answered with. This overrides
+    the verifier on purpose: a deferral nobody tracks is a finding nobody fixes. In place,
+    like `publish.attribute_sources`. Post-merge audits are left alone: nobody acts on a
+    merged PR's threads, and the audit reports its own findings."""
+    if ctx.is_audit:
+        return
+    recon = _reconciliation(ctx, expected_phase, out)
+    kept = {f.prior_hash for f in out.findings if f.prior_hash} | {f.hash for f in out.findings}
+    rows = {str(r["finding_hash"]): r for r in out.prior_reconciliation}
+    pr_text = _pr_text(ctx)
+    said = _finding_thread_texts(ctx)
+    held, kept_old = [], []
+    for h, merged in recon.items():
+        # the verifier's own row decides; a reviewer's only where the verifier has none
+        row = rows.get(h, merged)
+        prior = ctx.prior_findings.get(h)
+        if (
+            row.get("status") != "INTENTIONALLY_DEFERRED"
+            or prior is None
+            or h in kept
+            or not converse.needs_tracking(prior.severity)
+        ):
+            continue
+        if converse.review_deferral_link(
+            row.get("tracking"), said.get(h, ""), pr_text=pr_text, repo=ctx.repo, number=ctx.number
+        ) or _known_tracking(ctx, h):
+            continue
+        if _grandfathered(ctx, h):
+            kept_old.append(h)
+            continue
+        out.findings.append(
+            dataclasses.replace(
+                prior, prior_hash=h, source="prior finding (deferral not tracked)", extra={}
+            )
+        )
+        rows[h] = {
+            **row,
+            "status": "STILL_VALID",
+            "reason": converse.UNTRACKED_DEFERRAL_REASON,
+            "needs_tracking": True,
+        }
+        held.append(h)
+    if kept_old:
+        _defer_event(
+            ctx,
+            "defer.grandfathered",
+            f"{expected_phase}: deferred before {ctx.deferral_cutoff}: {', '.join(kept_old)}",
+        )
+    if held:
+        out.prior_reconciliation = list(rows.values())
+        # the verifier approved with these lifted; standing again (above a nitpick), they
+        # leave nothing to approve, and an APPROVE would also be watched for CI (ci.py)
+        if out.review_action == "APPROVE":
+            out.review_action = "COMMENT"
+        _defer_event(ctx, "defer.needs_tracking", f"{expected_phase}: held {', '.join(held)}")
+
+
+def _finding_thread_texts(ctx: RunContext) -> dict[str, str]:
+    """finding hash -> what the humans said under that finding's thread: our own answers are
+    no evidence of tracking (an issue the bot filed is on record, `_known_tracking`). A
+    thread a maintainer resolved (often right after deferring) is only in the evidence, which
+    keeps the human replies alone."""
+    out = {}
+    for t in ctx.evidence.get("review_threads") or []:
+        cs = t.get("comments") or []
+        m = FINDING_MARKER_RE.search(str(cs[0].get("body") or "")) if cs else None
+        if m:
+            out[m.group(1)] = "\n".join(str(c.get("body") or "") for c in cs[1:])
+    out.update({h: converse.thread_text(t, humans_only=True) for h, t in ctx.open_threads.items()})
+    return out
+
+
+def _known_tracking(ctx: RunContext, h: str) -> str:
+    """A tracking link already on record for finding `h` on this PR: an issue the bot filed
+    (or linked) for it, or the link an earlier conversation's deferral rested on (the second
+    line of a `conceded` row's body)."""
+    filed = kv_get(ctx.conn, f"defer.issue:{ctx.repo}#{ctx.number}:{h}")
+    if filed:
+        return filed
+    rows = ctx.conn.execute(
+        "SELECT f.body FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
+        "hd.id=r.head_id WHERE hd.repo=? AND hd.number=? AND f.stage='conceded' AND f.hash=? "
+        "ORDER BY f.id DESC",
+        (ctx.repo, ctx.number, h),
+    ).fetchall()
+    return next((link for r in rows if (link := str(r["body"] or "").partition("\n")[2])), "")
+
+
+def _grandfathered(ctx: RunContext, h: str) -> bool:
+    """Finding `h` was deferred on this PR before deferrals needed tracking
+    (`ctx.deferral_cutoff`) and has not stood in a review since, so it keeps lifting without
+    one. Evidence of the old deferral, any of: a conversation's INTENTIONALLY_DEFERRED
+    concession from a run that started before it (rows older than the outcome column have
+    an empty body); an INTENTIONALLY_DEFERRED thread answer before it (event, or our answer
+    on the open thread), from either path; or the last review published before it no longer
+    carrying the finding it had posted earlier (a verifier's deferral on a thread nobody
+    replied to leaves no other trace; a finding withdrawn or fixed then and called deferred
+    now is let through too). A finding a review carried after the cutoff was standing
+    again, so deferring it now is a new deferral."""
+    cutoff = ctx.deferral_cutoff
+    if not cutoff or _stood_since(ctx, h, cutoff):
+        return False
+    pr = (ctx.repo, ctx.number)
+    if ctx.conn.execute(
+        "SELECT 1 FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON hd.id=r.head_id "
+        "WHERE hd.repo=? AND hd.number=? AND f.hash=? AND f.stage='conceded' "
+        "AND (f.body LIKE 'INTENTIONALLY_DEFERRED%' OR f.body='') AND r.started_at < ? LIMIT 1",
+        (*pr, h, cutoff),
+    ).fetchone():
+        return True
+    for r in ctx.conn.execute(
+        "SELECT detail FROM events WHERE kind='thread.answered' AND repo=? AND number=? "
+        "AND ts < ? AND detail LIKE ?",
+        (*pr, cutoff, f"%{h}%"),
+    ):
+        try:
+            a = json.loads(r["detail"] or "{}")
+        except json.JSONDecodeError:
+            continue
+        if a.get("finding_hash") == h and a.get("status") == "INTENTIONALLY_DEFERRED":
+            return True
+    for a in (ctx.open_threads.get(h) or {}).get("bot_answers") or []:
+        body = str(a.get("body") or "")
+        if str(a.get("created_at") or "~") < cutoff and (
+            "**Deferred**" in body or "_Deferred on a maintainer's call" in body
+        ):
+            return True
+    last = ctx.conn.execute(
+        "SELECT rv.run_id, r.started_at FROM reviews rv JOIN runs r ON r.id=rv.run_id "
+        "WHERE rv.repo=? AND rv.number=? AND r.started_at < ? AND rv.github_review_id IS NOT NULL "
+        f"AND {_NOT_A_FOLLOW_UP} ORDER BY r.started_at DESC, rv.id DESC LIMIT 1",
+        (*pr, cutoff, StepName.CONVERSE.value, StepName.CI_CHECK.value),
+    ).fetchone()
+    if last is None:
+        return False
+    posted_before = ctx.conn.execute(
+        "SELECT 1 FROM posted_findings WHERE repo=? AND number=? AND hash=? AND posted_at < ?",
+        (*pr, h, last["started_at"]),
+    ).fetchone()
+    return bool(posted_before) and not _carried_by(ctx, h, "r.id=?", (last["run_id"],))
+
+
+# a `reviews` row of a run that reviewed the code, not a conversation's verdict follow-up
+# or a CI update (ci.py), neither of which records a verifier set; `rv.run_id` must be in
+# scope, the two step names bound
+_NOT_A_FOLLOW_UP = (
+    "NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id AND s.name IN (?, ?))"
+)
+
+
+def _stood_since(ctx: RunContext, h: str, cutoff: str) -> bool:
+    """A review of this PR other than this run, started at or after `cutoff`, kept `h`."""
+    return _carried_by(ctx, h, "r.started_at >= ? AND r.id <> ?", (cutoff, ctx.run_id), pr=True)
+
+
+def _carried_by(
+    ctx: RunContext, h: str, where: str, params: tuple[Any, ...], *, pr: bool = False
+) -> bool:
+    """Some run matching `where` (over `runs r`) kept finding `h` in its verifier set or
+    posted it, by hash or, since a carried finding may be re-hashed, by file and title."""
+    ident = ctx.conn.execute(
+        "SELECT f.file, f.title FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
+        "hd.id=r.head_id WHERE hd.repo=? AND hd.number=? AND f.hash=? AND f.stage='posted' "
+        "LIMIT 1",
+        (ctx.repo, ctx.number, h),
+    ).fetchone()
+    file, title = (ident["file"] or "", str(ident["title"] or "")) if ident else ("", "")
+    scope = "hd.repo=? AND hd.number=? AND " if pr else ""
+    return bool(
+        ctx.conn.execute(
+            "SELECT 1 FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
+            f"hd.id=r.head_id WHERE {scope}{where} "
+            "AND f.stage IN ('verified', 'verified-fresh', 'posted') "
+            "AND (f.hash=? OR (? <> '' AND f.file=? AND lower(trim(f.title))=lower(trim(?)))) "
+            "LIMIT 1",
+            (*((ctx.repo, ctx.number) if pr else ()), *params, h, title, file, title),
+        ).fetchone()
+    )
 
 
 def _blind(outputs: dict[str, Any], *, seed: int) -> dict[str, Any]:
@@ -2813,6 +3269,62 @@ def _backfill_posted(
     _ledger_write(ctx, "publication", record)
 
 
+def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
+    """Persist full-review lifts as tombstones for later PR heads.
+
+    Conversation concessions already use this table. Full reviews used to answer and publish a
+    withdrawal but leave only the original ``posted_findings`` identity, so the next head fed it
+    back as an ordinary active blocker. A later full review may explicitly reintroduce the same
+    identity; its marker is evidence that the new finding is intentional and keeps the tombstone
+    from winning over the new publication.
+    """
+    # a hash the verifier published (carried, held or reintroduced) stands, whatever a
+    # reviewer lane's row merged in by `_reconciliation` says
+    kept = {
+        h
+        for f in verified.findings
+        for h in (f.hash, f.prior_hash, f.extra.get("reintroduced_finding_hash"))
+        if h
+    }
+    rows = []
+    for h, outcome in _reconciliation(ctx, phase, verified).items():
+        status = str(outcome.get("status") or "")
+        prior = ctx.prior_findings.get(h)
+        if status not in converse.LIFTING_STATUSES or h in kept or prior is None:
+            continue
+        # a deferral keeps the tracking link it was checked against on a second line, as
+        # `_record_conceded` does, so `_known_tracking` still finds it on later heads
+        tracking = ""
+        if status == "INTENTIONALLY_DEFERRED":
+            tracking = converse.review_deferral_link(
+                outcome.get("tracking"),
+                _finding_thread_texts(ctx).get(h, ""),
+                pr_text=_pr_text(ctx),
+                repo=ctx.repo,
+                number=ctx.number,
+            )
+        rows.append(
+            (
+                ctx.run_id,
+                phase,
+                "conceded",
+                h,
+                prior.file,
+                prior.line_start,
+                prior.line_end,
+                prior.severity,
+                None,
+                prior.category,
+                prior.title,
+                status + (f"\n{tracking}" if tracking else ""),
+                None,
+            )
+        )
+    if rows:
+        with tx(ctx.conn):
+            ctx.conn.executemany(_FINDINGS_INSERT, rows)
+
+
 def step_publish(
     ctx: RunContext,
     *,
@@ -2838,6 +3350,7 @@ def step_publish(
         # threads that were replied to, and, if the verdict moved (a blocker withdrawn or a new
         # one found), post a short follow-up review so the standing verdict is not left stale.
         _backfill_posted(ctx, phase, existing, verified)
+        _record_lifted_reconciliations(ctx, phase, verified)
         _answer_threads(ctx, phase, verified)
         update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
         if update is not None:
@@ -2925,6 +3438,10 @@ def _publish_review(
         with contextlib.suppress(OSError):  # the posted body (with its transport note)
             (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
         _record_publication(ctx, phase, model, result, verified)
+        if ctx.kept_verdict:
+            # the APPROVE still stands on GitHub: the label and the CI watch (ci.py) read
+            # our record, which the summary's COMMENT just overwrote
+            _record_verdict(ctx, phase, verified, ctx.kept_verdict)
         return model, result
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
     result = publish.publish(
@@ -2934,6 +3451,7 @@ def _publish_review(
         dry_run=ctx.dry_run,
     )
     _record_publication(ctx, phase, model, result, verified)
+    _record_lifted_reconciliations(ctx, phase, verified)
     if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
         publish.post_coderabbit_reactions(
             ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
@@ -3064,6 +3582,7 @@ def _verdict_update(
                 run_id=ctx.run_id,
                 detail=f"APPROVED stands on {ctx.sha[:8]}: degraded re-review found no blockers",
             )
+        ctx.kept_verdict = "APPROVE"
         return None
     if lifted_titles is not None:
         titles = lifted_titles
@@ -3188,7 +3707,7 @@ def _build_review(
     if head_row and head_row["status"] == "superseded":
         live = github.pr_meta(ctx.gh, ctx.repo, ctx.number).head_sha
         note = f"_This review was completed for commit `{ctx.sha[:8]}`; the PR has since moved to `{live[:8]}`. A fresh review of the new head is queued._"
-    return publish.build(
+    model = publish.build(
         ctx.gh,
         repo=ctx.repo,
         number=ctx.number,
@@ -3202,7 +3721,16 @@ def _build_review(
         superseded_note=note,
         rereview=rereview,
         fresh=_fresh_threads(ctx),
+        settled_hashes=ctx.settled_hashes,
     )
+    held = [
+        ctx.prior_findings[str(r["finding_hash"])].title
+        for r in verified.prior_reconciliation
+        if r.get("needs_tracking") and str(r["finding_hash"]) in ctx.prior_findings
+    ]
+    if held:
+        model.extra_lines.append(publish.untracked_deferrals_line(held))
+    return model
 
 
 def _fresh_threads(ctx: RunContext) -> Callable[[Finding, Any], bool] | None:
@@ -3584,6 +4112,37 @@ def _publish_step(
         phase2_skipped=phase2_skipped,
         **score,
     )
+    # the verifier weighed the checks that had failed when the context was read
+    _watch_ci(ctx, known=ci.failing_names(ctx.evidence.get("ci"), ctx.cfg.ci.ignore_re))
+
+
+def _watch_ci(ctx: RunContext, *, known: list[str]) -> None:
+    """Once an APPROVE stands on this head, watch its CI if checks are still running or
+    failed since `known` (ci.register). Best effort: the verdict is already published."""
+    if ctx.dry_run or ctx.is_audit:
+        return
+    try:
+        ci.register(
+            ctx.conn,
+            ctx.cfg,
+            ctx.gh,
+            repo=ctx.repo,
+            number=ctx.number,
+            sha=ctx.sha,
+            run_id=ctx.run_id,
+            known=known,
+        )
+    except Exception as exc:
+        log.warning("CI watch for %s#%s not registered: %s", ctx.repo, ctx.number, exc)
+        with contextlib.suppress(sqlite3.Error), tx(ctx.conn):
+            event(
+                ctx.conn,
+                "ci.watch_failed",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=str(exc)[:500],
+            )
 
 
 def _audit_publish(
@@ -3913,6 +4472,8 @@ NO_PHASE1_TRIVIAL_EFFORT = "low"
 # ---- conversation mode: answer replies on an already-reviewed commit ----
 
 LINKED_COMMIT_LIMIT = 5
+TRACKING_ISSUE_MATCH = 0.6  # title overlap at which an open issue already tracks a follow-up
+TRACKING_ISSUE_PENDING = "pending"  # kv: `gh issue create` started, its outcome not yet known
 
 
 def _standing_review(ctx: RunContext) -> dict[str, Any] | None:
@@ -3998,12 +4559,26 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     if not threads:
         # the reply came from another bot, landed on a resolved thread, or was already
         # considered: nothing to say, restore the gate comment we overwrote at run start
-        remaining = _open_blockers(ctx, phase)
-        _gate_comment(ctx, "done", phase=phase, blocker_count=remaining)
-        return {"answered": 0, "reason": "no thread awaiting an answer"}
+        kept = _standing_findings(ctx, phase)
+        _gate_comment(ctx, "done", phase=phase, blocker_count=kept.blockers)
+        return {
+            "answered": 0,
+            "reason": "no thread awaiting an answer",
+            "review_summary": _mark_lifted_in_review(ctx, phase, kept, reviews),
+        }
     fetched, unfetched = _fetch_linked_commits(ctx, threads)
     project_skill, review_skill = skill_texts(ctx.cfg, ctx.repo)
     lm = ctx.lane_model(ctx.cfg.policy.conversation_lane)
+    before = _standing_findings(ctx, phase)
+    settled = before.settled(threads)
+    # a deferral from before the tracking rule, of a finding this commit's review does not
+    # stand on, is settled: restating it is no new deferral to vet (the lane is told so),
+    # and a reply must not say the finding stands when it does not
+    settled |= {
+        h: "INTENTIONALLY_DEFERRED"
+        for h in threads
+        if h not in settled and h not in before.findings and _grandfathered(ctx, h)
+    }
     out = _run_conversation_lane(
         ctx,
         lm,
@@ -4018,6 +4593,10 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         unfetched_commits=unfetched,
         standing_verdict=publish.standing_verdict(reviews, ctx.sha, phase, ctx.cfg.bot_login),
         evidence=ctx.evidence,
+        still_blocking=[
+            before.titles.get(h) or h for h, sev in before.findings.items() if sev == "blocking"
+        ],
+        settled=settled,
     )
     (ctx.run_dir / "conversation.json").write_text(
         json.dumps({h: dataclasses.asdict(o) for h, o in out.outcomes.items()}, indent=1)
@@ -4026,11 +4605,25 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     # follow-up must never be posted against an obsolete commit (the run ends superseded and
     # ingest queues the live one)
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
-    out = converse.accept_deferrals(out, threads)
+    out = converse.accept_deferrals(
+        out,
+        threads,
+        settled=set(settled),
+        repo=ctx.repo,
+        number=ctx.number,
+        pr_text=_pr_text(ctx),
+    )
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
+        out = _file_tracking_issues(ctx, out, threads, settled)
         answered = publish.answer_conversation(
-            ctx.gh, ctx.repo, ctx.number, ctx.sha, threads=threads, outcomes=out.outcomes
+            ctx.gh,
+            ctx.repo,
+            ctx.number,
+            ctx.sha,
+            threads=threads,
+            outcomes=out.outcomes,
+            settled=settled,
         )
     # Posting happens before the bookkeeping below is committed. If the worker dies in
     # between, the reply is public but no `conceded` row exists, and the requeued run will not
@@ -4046,7 +4639,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         _record_answered_events(ctx, answered)
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
-        _record_conceded(ctx, phase, lifted)
+        _record_conceded(ctx, phase, {h: out.outcomes[h] for h in lifted})
     _ledger_write(
         ctx,
         "conversation",
@@ -4062,6 +4655,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         ),
     )
     kept = _standing_findings(ctx, phase, lifted=lifted)
+    summary = _mark_lifted_in_review(ctx, phase, kept, reviews)
     update = None
     if not ctx.dry_run:
         update = _conversation_verdict_update(ctx, phase, lm, kept, lifted=lifted)
@@ -4069,22 +4663,164 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     return {
         "answered": len(posted_ok),
         "outcomes": {h: o.status for h, o in out.outcomes.items()},
+        "tracking": {h: o.tracking_url for h, o in out.outcomes.items() if o.tracking_url},
         "linked_commits": {
             "fetched": [c["sha"] for c in fetched],
             "unfetched": [c["sha"] for c in unfetched],
         },
         "blockers_remaining": kept.blockers,
         "verdict_updated": bool(update and update.posted),
+        "review_summary": summary,
     }
 
 
-def _record_conceded(ctx: RunContext, phase: str, lifted: set[str]) -> None:
+def _pr_text(ctx: RunContext) -> str:
+    """What a reader of the PR sees besides the review threads: its description and the PR
+    comments (where a deferral's tracking issue may be linked)."""
+    comments = [str(c.get("body") or "") for c in ctx.evidence.get("issue_comments") or []]
+    return "\n".join([ctx.meta.body if ctx.meta else "", *comments])
+
+
+def _file_tracking_issues(
+    ctx: RunContext,
+    out: converse.ConversationOutput,
+    threads: dict[str, dict[str, Any]],
+    settled: dict[str, str],
+) -> converse.ConversationOutput:
+    """File the tracking issue for every deferral a maintainer asked the bot to file. Filed
+    (or an open issue that already matches) -> the deferral stands with that link; not
+    filable -> DEFERRAL_NEEDS_TRACKING, with a reply asking the maintainer to file it (a
+    `settled` thread stays lifted either way, and its reply says nothing else)."""
+    outcomes = dict(out.outcomes)
+    for h, o in out.outcomes.items():
+        req = o.file_request
+        if o.status != "INTENTIONALLY_DEFERRED" or req is None:
+            continue
+        url, filed = _tracking_issue(ctx, h, req, threads[h])
+        if url:
+            outcomes[h] = dataclasses.replace(
+                o, tracking_url=url, tracking_filed=filed, file_request=None
+            )
+        else:
+            outcomes[h] = dataclasses.replace(
+                o,
+                status=converse.DEFERRAL_NEEDS_TRACKING,
+                reply=converse.filing_failed_reply(
+                    req.repo, allowed=ctx.cfg.deferral.may_file(req.repo), settled=h in settled
+                ),
+                file_request=None,
+            )
+    return converse.ConversationOutput(outcomes=outcomes)
+
+
+def _tracking_issue(
+    ctx: RunContext, h: str, req: converse.FileRequest, thread: dict[str, Any]
+) -> tuple[str, bool]:
+    """(url, filed now) of the issue tracking finding `h`'s follow-up, or ("", False) when it
+    cannot be had. Never files twice: kv holds the answer, and `pending` from just before
+    `gh issue create` until its URL is known. A create that may have gone through (a
+    timeout, a server error, no URL printed, or a worker that died) leaves `pending`, and
+    every later attempt asks the maintainer to check and link it instead; a create GitHub
+    refused outright (permissions, validation) clears it. An open issue whose title clearly
+    matches is linked instead of filing another; a search that fails files nothing."""
+    key = f"defer.issue:{ctx.repo}#{ctx.number}:{h}"
+    known = kv_get(ctx.conn, key)
+    if known == TRACKING_ISSUE_PENDING:
+        _defer_event(ctx, "defer.file_failed", f"{h}: an earlier attempt may have filed it")
+        return "", False
+    if known:
+        return known, False
+    if not ctx.cfg.deferral.may_file(req.repo):
+        _defer_event(
+            ctx, "defer.file_failed", f"{h}: {req.repo} is not in [deferral] file_owners/file_repos"
+        )
+        return "", False
+    try:
+        url = _matching_issue(ctx, req)
+    except ReviewError as exc:
+        _defer_event(ctx, "defer.file_failed", f"{h}: search in {req.repo}: {exc}")
+        return "", False
+    filed = not url
+    if filed:
+        with tx(ctx.conn):
+            kv_set(ctx.conn, key, TRACKING_ISSUE_PENDING)
+        try:
+            url = github.create_issue(ctx.gh, req.repo, req.title, _issue_body(ctx, req, thread))
+        except ReviewError as exc:
+            with tx(ctx.conn):
+                if exc.kind is FailKind.CONTRACT:  # refused: nothing was created
+                    ctx.conn.execute("DELETE FROM kv WHERE key=?", (key,))
+                event(
+                    ctx.conn,
+                    "defer.file_failed",
+                    repo=ctx.repo,
+                    number=ctx.number,
+                    run_id=ctx.run_id,
+                    detail=f"{h}: create in {req.repo}: {exc}",
+                )
+            return "", False
+    with tx(ctx.conn):
+        kv_set(ctx.conn, key, url)
+        event(
+            ctx.conn,
+            "defer.issue_filed" if filed else "defer.issue_linked",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{h}: {url}",
+        )
+    return url, filed
+
+
+def _issue_body(ctx: RunContext, req: converse.FileRequest, thread: dict[str, Any]) -> str:
+    asker = converse.maintainer_reply(thread) or {}
+    cid = asker.get("id") or thread.get("comment_id")
+    return publish.tracking_issue_body(
+        req.body,
+        repo=ctx.repo,
+        number=ctx.number,
+        comment_url=f"https://github.com/{ctx.repo}/pull/{ctx.number}#discussion_r{cid}",
+        asker=str(asker.get("author") or "a maintainer"),
+        severity=str(thread.get("severity") or "nitpick"),
+        title=str(thread.get("title") or ""),
+        finding=converse.finding_text(str(thread.get("body") or "")),
+    )
+
+
+def _matching_issue(ctx: RunContext, req: converse.FileRequest) -> str:
+    """An open issue in the target repo whose title clearly matches the one to file, or ""."""
+    # GitHub ANDs search terms: the three most distinctive words, so a reworded title that
+    # still passes the overlap threshold below is found
+    terms = sorted(content_tokens(req.title), key=len, reverse=True)[:3]
+    if not terms:
+        return ""
+    rows = github.open_issues_matching(ctx.gh, req.repo, " ".join(terms))
+    score, url = max(
+        (
+            (title_similarity(req.title, str(r.get("title") or "")), str(r.get("url") or ""))
+            for r in rows
+        ),
+        default=(0.0, ""),
+    )
+    return url if score >= TRACKING_ISSUE_MATCH else ""
+
+
+def _defer_event(ctx: RunContext, kind: str, detail: str) -> None:
+    with tx(ctx.conn):
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
+
+
+def _record_conceded(
+    ctx: RunContext, phase: str, lifted: dict[str, converse.ThreadOutcome]
+) -> None:
     """A finding the conversation withdrew or accepted as deferred gets a `conceded` findings
-    row for this run (and so this sha), which `_standing_findings` honours on every later run. Caller holds the write transaction."""
+    row for this run (and so this sha), which `_standing_findings` honours on every later run.
+    `lifted` maps finding hash -> outcome; the row's body keeps the status, plus a deferral's
+    tracking link on a second line. Caller holds the write transaction."""
     if not lifted:
         return
     rows = []
-    for h in lifted:
+    for h, o in lifted.items():
         t = ctx.open_threads.get(h) or {}
         rows.append(
             (
@@ -4099,7 +4835,7 @@ def _record_conceded(ctx: RunContext, phase: str, lifted: set[str]) -> None:
                 None,
                 "general",
                 t.get("title") or h,
-                "",
+                o.status + (f"\n{o.tracking_url}" if o.tracking_url else ""),
                 None,
             )
         )
@@ -4114,6 +4850,20 @@ class _Standing:
     run_id: int | None  # the run that published it (None: no recorded findings)
     verified: bool  # that run's final verifier set is on record (an approval needs it)
     lifted_any: bool  # at least one of that set's non-nitpick findings has been lifted
+    titles: dict[str, str] = field(default_factory=dict)  # hash -> title, lifted ones too
+    lifted: list[publish.LiftedFinding] = field(default_factory=list)
+
+    def settled(self, threads: dict[str, dict[str, Any]]) -> dict[str, str]:
+        """thread hash -> the outcome that already lifted its finding on this commit, matched
+        the way concessions are (by hash, or by file and title for a re-hashed carry)."""
+        by_hash = {f.hash: f.status or "SETTLED" for f in self.lifted}
+        by_id = {_identity(f.file, f.title): f.status or "SETTLED" for f in self.lifted}
+        out = {}
+        for h, t in threads.items():
+            st = by_hash.get(h) or by_id.get(_identity(t.get("path"), t.get("title")))
+            if st:
+                out[h] = st
+        return out
 
     @property
     def blockers(self) -> int:
@@ -4127,8 +4877,8 @@ def _identity(file: Any, title: Any) -> tuple[str, str]:
 def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None = None) -> _Standing:
     """Findings on this commit's `phase` publication that still stand.
 
-    The publication is the latest run that posted findings for this sha (a same-sha re-review
-    refreshes it). Its standing set is that run's final verifier set (`verify2` rows, the
+    The publication is the latest run that posted findings or published the review for this
+    sha (a same-sha re-review refreshes it). Its standing set is that run's final verifier set (`verify2` rows, the
     fresh audit's when it ran), which includes findings that dedupe carried onto an existing
     thread instead of posting; runs without those rows fall back to their `posted` rows. Plus
     unresolved bot finding threads this database never posted (legacy findings); threads from
@@ -4140,13 +4890,37 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     preliminary publication stacked on the same sha never leaks into the final accounting.
     """
     rows = ctx.conn.execute(
-        "SELECT f.run_id, f.hash, f.severity, f.stage, f.file, f.title FROM findings f "
+        "SELECT f.run_id, f.hash, f.severity, f.stage, f.file, f.title, f.body FROM findings f "
         "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
         "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded')",
         (ctx.repo, ctx.number, ctx.sha, phase),
     ).fetchall()
-    run_id = max((int(r["run_id"]) for r in rows if r["stage"] == "posted"), default=None)
+    # a full review that carried every finding onto existing threads posts none, so it has
+    # no `posted` rows, but it is still this commit's publication (dashpay/dash#7861: missing
+    # it left "the verifier record ... is not available" and a COMMENT that never cleared the
+    # REQUEST_CHANGES it had just posted). Every run that writes a `reviews` row posted or
+    # recorded that review, except a conversation's own verdict follow-up and a CI update
+    # (ci.py), neither of which reviewed anything.
+    published = ctx.conn.execute(
+        "SELECT MAX(rv.run_id) FROM reviews rv WHERE rv.repo=? AND rv.number=? AND rv.sha=? "
+        "AND rv.phase=? AND NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=rv.run_id "
+        "AND s.name IN (?, ?))",
+        (
+            ctx.repo,
+            ctx.number,
+            ctx.sha,
+            phase,
+            StepName.CONVERSE.value,
+            StepName.CI_CHECK.value,
+        ),
+    ).fetchone()[0]
+    run_id = max(
+        [int(r["run_id"]) for r in rows if r["stage"] == "posted"]
+        + ([int(published)] if published is not None else []),
+        default=None,
+    )
     pub: dict[str, tuple[str, tuple[str, str]]] = {}
+    titles: dict[str, str] = {}
     verified = False
     if run_id is not None:
         final = ctx.conn.execute(
@@ -4159,11 +4933,13 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
             verified = True
             for r in fresh or final:
                 pub[str(r["hash"])] = (str(r["severity"]), _identity(r["file"], r["title"]))
+                titles[str(r["hash"])] = str(r["title"] or "")
         for r in rows:
             if r["stage"] == "posted" and int(r["run_id"]) == run_id:
                 pub.setdefault(
                     str(r["hash"]), (str(r["severity"]), _identity(r["file"], r["title"]))
                 )
+                titles.setdefault(str(r["hash"]), str(r["title"] or ""))
     ever_posted = {
         str(r["hash"])
         for r in ctx.conn.execute(
@@ -4173,12 +4949,21 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     for h, t in ctx.open_threads.items():
         if h not in pub and h not in ever_posted:
             pub[h] = (str(t.get("severity") or "nitpick"), _identity(t.get("path"), t.get("title")))
-    # a later full review of this sha re-adjudicated everything: older concessions are void
-    gone = {
-        str(r["hash"]): _identity(r["file"], r["title"])
-        for r in rows
-        if r["stage"] == "conceded" and (run_id is None or int(r["run_id"]) > run_id)
-    }
+            titles[h] = str(t.get("title") or "")
+    # a later full review of this sha re-adjudicated everything: older concessions are void.
+    # Each concession row's body is the outcome that lifted it (empty on rows older than that)
+    gone: dict[str, tuple[str, str]] = {}
+    outcome: dict[tuple[str, str] | str, str] = {}
+    tracking: dict[tuple[str, str] | str, str] = {}
+    for r in rows:
+        if r["stage"] == "conceded" and (run_id is None or int(r["run_id"]) > run_id):
+            h, ident = str(r["hash"]), _identity(r["file"], r["title"])
+            gone[h] = ident
+            status, _, link = str(r["body"] or "").partition("\n")
+            outcome[h] = outcome[ident] = status
+            # a later answer on a settled thread may not restate the link: keep the one known
+            tracking[h] = link or tracking.get(h, "")
+            tracking[ident] = link or tracking.get(ident, "")
     for h in lifted or set():
         t = ctx.open_threads.get(h) or {}
         gone[h] = _identity(t.get("path"), t.get("title"))
@@ -4189,6 +4974,19 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
         run_id=run_id,
         verified=verified,
         lifted_any=any(pub[h][0] != "nitpick" for h in lifted_hashes),
+        titles=titles,
+        lifted=[
+            publish.LiftedFinding(
+                hash=h,
+                severity=sev,
+                file=ident[0],
+                title=titles.get(h) or h,
+                status=outcome.get(h) or outcome.get(ident) or "",
+                tracking=tracking.get(h) or tracking.get(ident) or "",
+            )
+            for h, (sev, ident) in sorted(pub.items())
+            if h in lifted_hashes
+        ],
     )
 
 
@@ -4224,6 +5022,55 @@ def _strength_row(ctx: RunContext, run_id: int) -> sqlite3.Row | None:
         ),
     ).fetchone()
     return row
+
+
+def _mark_lifted_in_review(
+    ctx: RunContext, phase: str, standing: _Standing, reviews: list[dict[str, Any]]
+) -> str:
+    """Bring the body of this commit's standing `phase` review in line with what the
+    discussion lifted (`publish.with_lifted_findings`). Runs after every conversation, so a
+    body left stale by an earlier run (or an edit that failed) is repaired by the next one.
+    Returns what happened; a failed edit never fails the run."""
+    if ctx.dry_run:
+        return "dry_run"
+    marker = f"thepastaclaw-review-phase v1 phase={phase} sha={ctx.sha}"
+    ours = [
+        r
+        for r in reviews
+        if (r.get("user") or {}).get("login") == ctx.cfg.bot_login
+        and marker in str(r.get("body") or "")
+    ]
+    # the publication the standing set describes; the newest marked review when the run that
+    # published it recorded no review id (adopted an existing one, or a legacy import)
+    row = ctx.conn.execute(
+        "SELECT github_review_id FROM reviews WHERE run_id=? AND phase=? "
+        "AND github_review_id IS NOT NULL ORDER BY id DESC LIMIT 1",
+        (standing.run_id, phase),
+    ).fetchone()
+    review = next(
+        (r for r in ours if row and str(r.get("id")) == str(row["github_review_id"])),
+        ours[-1] if ours else None,
+    )
+    if review is None:
+        return "no_review"
+    body = str(review.get("body") or "")
+    new = publish.with_lifted_findings(body, standing.lifted)
+    if new == body:
+        return "unchanged"
+    try:
+        github.edit_review(ctx.gh, str(review["node_id"]), new)
+    except (ReviewError, ValueError, KeyError) as exc:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "review.summary_update_failed",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"review {review.get('id')}: {exc}",
+            )
+        return f"failed: {exc}"
+    return "updated"
 
 
 def _review_strength(ctx: RunContext, run_id: int | None) -> str:
@@ -4279,7 +5126,9 @@ def _conversation_verdict_update(
     queued instead. Otherwise, with every blocker gone, a standing REQUEST_CHANGES becomes
     COMMENT. A conversation never adds blockers, and posts nothing when the verdict would not
     move."""
-    if standing.blockers or not lifted:
+    if standing.blockers or not lifted or not standing.lifted_any:
+        # nothing of the publication's own set was lifted (it was clean, or only nitpicks
+        # went): the discussion removed nothing the verdict rests on, so it stays
         return None
     state = _live_verdict_state(ctx, phase)
     if state is None:
@@ -4287,8 +5136,13 @@ def _conversation_verdict_update(
     left = sum(1 for sev in standing.findings.values() if sev != "nitpick")
     strength = _review_strength(ctx, standing.run_id)
     clear = standing.verified and standing.lifted_any and not left
+    # a code check failed after this commit's approval and looked related (ci.py): only a
+    # review that sees that failure may approve the commit again, not a discussion
+    ci_hold = kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)) is not None
     prov = _conversation_provenance(ctx, lm)
-    verified = _verdict_only(phase, "APPROVE" if clear and strength == "ok" else "COMMENT")
+    verified = _verdict_only(
+        phase, "APPROVE" if clear and strength == "ok" and not ci_hold else "COMMENT"
+    )
     new_event = publish.verdict_event(verified, prov)
     source = f"the full review of `{ctx.sha[:8]}`" + (
         f" (run {standing.run_id})" if standing.run_id else ""
@@ -4302,6 +5156,11 @@ def _conversation_verdict_update(
         note = f"Not approved: {left} non-blocking finding(s) from {source} still stand."
     elif prov.degraded:
         note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
+    elif clear and ci_hold:
+        note = (
+            "Not approved: CI failed on this commit after its review, in checks that looked "
+            "related (see the CI follow-up); the next push gets a full review."
+        )
     elif clear and strength == "needs_fresh":
         queued = _request_fresh_audit(ctx)
         note = (
@@ -4319,8 +5178,6 @@ def _conversation_verdict_update(
             "Not approved: the verifier record an approval after discussion rests on is not "
             "available for the standing review of this commit."
         )
-    elif not standing.lifted_any:
-        note = "Not approved: the findings settled here are not the ones the standing review of this commit raised."
     else:
         note = (
             "Not approved: the standing review of this commit did not run at full strength "
@@ -4390,7 +5247,12 @@ def _post_conversation_update(
     assert ctx.meta
     own = ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
     if publish.EVENT_STATE[publish.transport_event(new_event, own_pr=own)] == state:
+        approved = new_event == "APPROVE" and (
+            labels.latest_verdict(ctx.conn, ctx.repo, ctx.number, ctx.sha) != "APPROVE"
+        )
         _record_verdict(ctx, phase, verified, new_event)
+        if approved:  # a bot-authored PR: the APPROVE exists only in our record
+            _watch_ci(ctx, known=[])
         return None
     result = publish.publish_verdict_update(
         ctx.gh,
@@ -4431,6 +5293,9 @@ def _post_conversation_update(
             run_id=ctx.run_id,
             detail=f"{state} -> {result.event} on {ctx.sha[:8]} (conversation: {what} withdrawn or deferred)",
         )
+    if result.event == "APPROVE":
+        # nothing weighed CI for this approval: the discussion only lifted findings
+        _watch_ci(ctx, known=[])
     return result
 
 
@@ -4609,7 +5474,7 @@ def _record_thread_answers(
         _record_answered_events(ctx, answered)
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(ctx.open_threads[h].get("latest_reply_id")))
-        _record_conceded(ctx, phase, conceded)
+        _record_conceded(ctx, phase, {h: outs[h] for h in conceded})
 
     def record(c: sqlite3.Connection) -> None:
         ledger.record_answers(
@@ -4664,6 +5529,7 @@ def _apply_thread_outcomes(ctx: RunContext, verified: VerifierOutput, phase: str
             threads=ctx.open_threads,
             same_sha=False,
             keep=corroborated,
+            settled=_ledger_deferred(ctx, deliver),
         )
     if not outs and not answered:
         return set()
@@ -4979,10 +5845,17 @@ def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     assert ctx.meta and ctx.worktree
     phase = str(standing["phase"])
     threads = _threads_to_answer(ctx)
-    if not threads:
-        _gate_comment(ctx, "done", phase=phase, blocker_count=_ledger_blockers(ctx))
-        return {"answered": 0, "reason": "no thread awaiting an answer"}
     reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    if not threads:
+        # nothing to say; a review body an earlier run left stale is repaired (as under v11)
+        _gate_comment(ctx, "done", phase=phase, blocker_count=_ledger_blockers(ctx))
+        return {
+            "answered": 0,
+            "reason": "no thread awaiting an answer",
+            "review_summary": _mark_lifted_in_review(
+                ctx, phase, _lifted_standing12(ctx, phase), reviews
+            ),
+        }
     out, lm = _run_thread_lane(
         ctx,
         {h: ["reply"] for h in threads},
@@ -5001,8 +5874,12 @@ def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
             outcomes=out.outcomes,
             threads=ctx.open_threads,
             same_sha=True,
+            settled=_ledger_deferred(ctx, out.outcomes),
         )
     lifted = _record_thread_answers(ctx, answered, out.outcomes, source="conversation", phase=phase)
+    # the standing review's body says what the discussion lifted, as under v11 (its counts
+    # and agent prompt would otherwise go on listing a withdrawn blocker)
+    summary = _mark_lifted_in_review(ctx, phase, _lifted_standing12(ctx, phase), reviews)
     issues = (
         ledger.load(ctx.conn, ctx.repo, ctx.number)
         if not ctx.dry_run
@@ -5027,8 +5904,49 @@ def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         "outcomes": {h: o.status for h, o in out.outcomes.items()},
         "blockers_remaining": blockers,
         "verdict_updated": bool(update and update.posted),
+        "review_summary": summary,
         **replayed,
     }
+
+
+# ledger statuses a discussion lifts an issue to -> the outcome the review body names
+_LIFTED12 = {"withdrawn": "WITHDRAWN", "deferred": "INTENTIONALLY_DEFERRED"}
+
+
+def _lifted_standing12(ctx: RunContext, phase: str) -> _Standing:
+    """What the discussion lifted on this commit, from the ledger, for `_mark_lifted_in_review`:
+    every issue withdrawn or deferred on it, those its review raised and those it carried from
+    earlier rounds alike (`publish.with_lifted_findings` marks only what the review lists),
+    with a deferral's tracking link from its concession row."""
+    links: dict[str, str] = {}
+    for r in ctx.conn.execute(
+        "SELECT f.hash, f.body FROM findings f JOIN runs r ON r.id=f.run_id "
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND h.sha=? "
+        "AND f.stage='conceded' ORDER BY f.id",
+        (ctx.repo, ctx.number, ctx.sha),
+    ):
+        link = str(r["body"] or "").partition("\n")[2]
+        if link:
+            links[str(r["hash"])] = link
+    lifted = [
+        publish.LiftedFinding(
+            hash=h,
+            severity=i.severity,
+            file=i.file,
+            title=i.title,
+            status=_LIFTED12[i.status],
+            tracking=links.get(h, ""),
+        )
+        for h, i in sorted(ledger.load(ctx.conn, ctx.repo, ctx.number).items())
+        if i.status in _LIFTED12 and i.status_sha == ctx.sha
+    ]
+    return _Standing(
+        findings={},
+        run_id=_standing_run12(ctx, phase),
+        verified=True,
+        lifted_any=bool(lifted),
+        lifted=lifted,
+    )
 
 
 def _standing_run12(ctx: RunContext, phase: str) -> int | None:
@@ -5175,7 +6093,10 @@ def _decide_conversation12(
     run_id = _standing_run12(ctx, phase)
     strength, why = _review_strength12(ctx, run_id)
     prov = _conversation_provenance(ctx, lm)
-    approve = not left and strength == "ok" and not ctx.thread_failed
+    # a code check failed after this commit's approval and looked related (ci.py): only a
+    # review that sees that failure may approve the commit again, not a discussion
+    ci_hold = kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)) is not None
+    approve = not left and strength == "ok" and not ctx.thread_failed and not ci_hold
     verified = _verdict_only(phase, "APPROVE" if approve else "COMMENT")
     new_event = publish.verdict_event(verified, prov)
     source = f"the full review of `{ctx.sha[:8]}`" + (f" (run {run_id})" if run_id else "")
@@ -5193,6 +6114,11 @@ def _decide_conversation12(
         )
     elif prov.degraded:
         note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
+    elif ci_hold:
+        note = (
+            "Not approved: CI failed on this commit after its review, in checks that looked "
+            "related (see the CI follow-up); the next push gets a full review."
+        )
     elif strength == "needs_fresh":
         queued = queue()
         note = (
@@ -5219,16 +6145,227 @@ def _decide_conversation12(
     )
 
 
+# ---- CI after the verdict: a check failed after this head's APPROVE (ci.py) ----
+
+
+def step_ci_check(ctx: RunContext) -> dict[str, Any]:
+    """The light run the `ci_watch` daemon task queues when a code check failed after this
+    head's APPROVE: no checkout, no review. Re-reads CI and the standing verdict, asks one
+    cheap lane whether the failure relates to the change, and when it does (or the lane
+    cannot tell) posts one follow-up review that moves the APPROVE to COMMENT. Unrelated: an
+    event, nothing posted. Never touches a REQUEST_CHANGES or COMMENT, never posts twice for a
+    head. Returns the step detail."""
+    live = github.pr_meta(ctx.gh, ctx.repo, ctx.number)
+    _require_live(ctx, live)
+    ctx.meta = live
+    state = ci.read(ctx.gh, ctx.cfg, ctx.repo, ctx.sha)
+    if state.error is not None:
+        raise ReviewError(FailKind.INFRA, f"CI checks unreadable: {state.error}")
+    w = ci.load(ctx.conn, ctx.repo, ctx.number, ctx.sha) or {}
+    failing = state.unjudged(w.get("known") or [])
+    names = [str(c["name"]) for c in failing]
+    pending = bool(state.pending)
+    if not failing:  # re-run and passed since the daemon looked
+        _ci_done(ctx, "ci.recovered", "no failing check left to judge", pending=pending)
+        return {"outcome": "recovered"}
+    reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    if held := _ci_held(ctx, reviews, {}):
+        return held
+    _fetch_files(ctx)
+    logs = ci.job_logs(ctx.gh, ctx.repo, failing)
+    text = ci.prompt(
+        repo=ctx.repo,
+        number=ctx.number,
+        base_ref=live.base_ref,
+        title=live.title,
+        body=live.body,
+        files=ctx.files,
+        failing=failing,
+        logs=logs,
+        review=_ci_review_summary(ctx, reviews),
+    )
+    j = _ci_judge(ctx, text, names)
+    ctx.check_cancel()  # a lane stopped by a cancel is no "could not judge"
+    detail = {"outcome": j.related, "checks": names, "method": j.method, "related": j.checks}
+    (ctx.run_dir / "ci_check.json").write_text(
+        json.dumps({**dataclasses.asdict(j), "failing": failing, "logs": logs}, indent=1)
+    )
+    if j.related == "no":
+        why = f"{', '.join(names)}: {j.reason}"
+        _ci_done(ctx, "ci.unrelated", why, judged=names, pending=pending)
+        return detail
+    # the lane ran for a minute or more: a push, a dismissal or another verdict since then
+    _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
+    if held := _ci_held(ctx, github.reviews(ctx.gh, ctx.repo, ctx.number), detail):
+        return held
+    ctx.check_cancel()
+    if ctx.dry_run:
+        return {**detail, "posted": False}
+    result = publish.publish_ci_update(
+        ctx.gh,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        failing=failing,
+        related=j.related,
+        reason=j.reason,
+        lane=_lane_provenance(ctx.lane_model(ctx.cfg.policy.ci_check_lane), "ci-check"),
+        judged=j.judged,
+        logs_read=sum(1 for lg in logs if lg.get("tail")),
+        degraded=_degraded_provenance(ctx),
+    )
+    with tx(ctx.conn):
+        _ci_record_update(ctx, result.review_id, result.event)
+        _set_run_review(
+            ctx, blocker_count=0, review_id=result.review_id, review_url=result.review_url
+        )
+        event(
+            ctx.conn,
+            "review.verdict_updated",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"APPROVED -> {result.event} on {ctx.sha[:8]} (CI failed after the review: {', '.join(names)}; related={j.related})",
+        )
+        why = f"{j.related}: {', '.join(names)}: {j.reason or j.error or ''}"
+        _ci_end(ctx, "ci.related", why, pending=False)
+    return {**detail, "posted": True, "event": result.event}
+
+
+def _ci_held(
+    ctx: RunContext, reviews: list[dict[str, Any]], detail: dict[str, Any]
+) -> dict[str, Any] | None:
+    """The step detail when the CI check has nothing to change (the watch ends, with an event
+    saying why), else None: while the bot's APPROVE stands on this exact head and the head
+    has no CI update yet. A COMMENT or REQUEST_CHANGES is never touched, a dismissal never
+    re-asserted, and a head gets one CI update (one posted just before a crash, which this
+    database missed, is recorded now)."""
+    bot = ctx.cfg.bot_login
+    kind, why = "ci.already_updated", ""
+    marker = publish.CI_UPDATE_MARKER.format(sha=ctx.sha)
+    posted = next(
+        (
+            r
+            for r in reviews
+            if (r.get("user") or {}).get("login") == bot and marker in str(r.get("body") or "")
+        ),
+        None,
+    )
+    if kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)):
+        why = "a CI update was already posted for this head"
+    elif posted is not None:
+        with tx(ctx.conn):
+            _ci_record_update(ctx, posted.get("id"), "COMMENT")
+        why = f"a CI update was already posted for this head (review {posted.get('id')})"
+    else:
+        state = publish.standing_verdict(reviews, ctx.sha, "final", bot)
+        assert ctx.meta
+        own = ctx.meta.author.lower() == bot.lower()
+        if state == "APPROVED" or (
+            # a bot-authored PR: GitHub shows COMMENTED, our record says APPROVE
+            own and labels.latest_verdict(ctx.conn, ctx.repo, ctx.number, ctx.sha) == "APPROVE"
+        ):
+            return None
+        kind, why = "ci.verdict_moved", f"the standing verdict is {state or 'none'}"
+    _ci_done(ctx, kind, why, pending=False)
+    return {**detail, "outcome": "no_approve", "reason": why}
+
+
+def _ci_record_update(ctx: RunContext, review_id: Any, event_name: str) -> None:
+    """Record the head's CI update: its verdict (the label follows) and the once-per-head
+    guard. Caller holds the write transaction."""
+    ctx.conn.execute(
+        "INSERT INTO reviews (run_id, repo, number, sha, phase, github_review_id, event, posted_at) VALUES (?,?,?,?,?,?,?,?)",
+        (ctx.run_id, ctx.repo, ctx.number, ctx.sha, "final", review_id, event_name, now()),
+    )
+    kv_set(
+        ctx.conn,
+        ci.updated_key(ctx.repo, ctx.number, ctx.sha),
+        json.dumps({"review_id": review_id, "run_id": ctx.run_id, "at": now()}),
+    )
+
+
+def _ci_end(
+    ctx: RunContext, kind: str, why: str, *, pending: bool, judged: list[str] | None = None
+) -> None:
+    """The CI check is done with the head: say why, and watch on while checks still run.
+    Caller holds the write transaction."""
+    event(
+        ctx.conn,
+        kind,
+        repo=ctx.repo,
+        number=ctx.number,
+        run_id=ctx.run_id,
+        detail=f"{ctx.sha[:8]}: {why}",
+    )
+    ci.release(ctx.conn, ctx.repo, ctx.number, ctx.sha, judged=judged or [], pending=pending)
+
+
+def _ci_done(
+    ctx: RunContext, kind: str, why: str, *, pending: bool, judged: list[str] | None = None
+) -> None:
+    with tx(ctx.conn):
+        _ci_end(ctx, kind, why, pending=pending, judged=judged)
+
+
+def _ci_review_summary(ctx: RunContext, reviews: list[dict[str, Any]]) -> str:
+    """The body of the review the APPROVE came from, as the lane reads it."""
+    for r in reversed(reviews):
+        body = str(r.get("body") or "")
+        if (r.get("user") or {}).get("login") == ctx.cfg.bot_login and (
+            f"phase=final sha={ctx.sha}" in body and github.REVIEW_MARKER in body
+        ):
+            return ci.review_summary(body)
+    return ""
+
+
+def _ci_judge(ctx: RunContext, text: str, names: list[str]) -> ci.Judgement:
+    lane = ctx.cfg.policy.ci_check_lane
+
+    def attempt(first: int = 1) -> ci.Judgement:
+        return ci.judge(
+            ctx.cfg,
+            lane=ctx.lane_model(lane),
+            text=text,
+            names=names,
+            run_dir=ctx.run_dir,
+            runner=ctx.lane_runner,
+            should_stop=ctx.cancel_flag.is_set,
+            first_attempt=first,
+        )
+
+    j = attempt()
+    if j.infra_error and _degrade_on_side_lane_failure(ctx, "ci_check", lane.model, j.infra_error):
+        j = attempt(3)  # once more, on the stand-in (its artifacts numbered on)
+    if j.error:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "ci.check_degraded",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"related={j.related} method={j.method} error={j.error}",
+            )
+    return j
+
+
 def run(ctx: RunContext) -> RunStatus:
     pol = ctx.cfg.policy
     ctx.run_dir.mkdir(parents=True, exist_ok=True)
     _detect_degraded(ctx)
+    if ctx.is_ci_check:
+        _step_start(ctx, StepName.CI_CHECK)
+        _step_end(ctx, StepName.CI_CHECK, "ok", step_ci_check(ctx))
+        return RunStatus.DONE
     standing = _standing_review(ctx) if ctx.trigger == Trigger.REVIEW_REPLY else None
     ctx.conversation = standing is not None
     ctx.check_cancel()
     _step_start(ctx, StepName.WORKTREE)
     step_worktree(ctx)
     _step_end(ctx, StepName.WORKTREE, "ok")
+    if not standing and _carry(ctx):
+        return RunStatus.DONE
     if not standing:  # a conversation needs no specialist selection or effort triage
         ctx.check_cancel()
         step_prep(ctx)
@@ -5647,6 +6784,9 @@ def main(
         force_phase2=force_phase2,
         coverage_base=coverage_base,
     )
+    ctx.deferral_cutoff = converse.tracking_required_since(
+        conn, cfg.deferral.tracking_required_since, record=not dry_run
+    )
     if row["queue"] == "audit":
         ctx.audit = audit.load(conn, ctx.head_id)
         if ctx.audit is None:
@@ -5714,14 +6854,11 @@ def main(
             _gate_closed(ctx, exc.reason)
     except ReviewError as exc:
         status, reason, kind = RunStatus.FAILED, exc.message, exc.kind
-        current = ctx.conn.execute("SELECT phase FROM runs WHERE id=?", (run_id,)).fetchone()
-        if current and current["phase"]:
-            with contextlib.suppress(ValueError):
-                _step_end(ctx, StepName(current["phase"]), "failed", {"error": exc.message[:1000]})
-        _gate_comment(ctx, "failed", reason=exc.message[:200])
+        _fail_run_progress(ctx, reason)
     except Exception as exc:
         status, reason, kind = RunStatus.FAILED, f"{type(exc).__name__}: {exc}", FailKind.INFRA
         log.exception("worker crashed")
+        _fail_run_progress(ctx, reason)
     finally:
         with ctx.gate_lock:  # no progress edit may follow the run's end (requeue, cancel)
             ctx.gate_live_kw = None

@@ -1,4 +1,4 @@
-"""The issue ledger (ledger.py): schema v6, identity, transitions, folding, backfill, git."""
+"""The issue ledger (ledger.py): schema v9, identity, transitions, folding, backfill, git."""
 
 from __future__ import annotations
 
@@ -56,9 +56,9 @@ def _answer(conn, run_id, sha, h, status, action="replied", source="verifier", c
 # ---- schema ----
 
 
-def test_v6_migration_is_additive_on_a_v5_database(tmp_path, monkeypatch):
+def test_v9_migration_is_additive_on_a_v8_database(tmp_path, monkeypatch):
     path = tmp_path / "old.db"
-    monkeypatch.setattr(db_mod, "MIGRATIONS", {k: v for k, v in db_mod.MIGRATIONS.items() if k < 6})
+    monkeypatch.setattr(db_mod, "MIGRATIONS", {k: v for k, v in db_mod.MIGRATIONS.items() if k < 9})
     old = connect(path)
     with tx(old):
         hid = old.execute(
@@ -76,12 +76,12 @@ def test_v6_migration_is_additive_on_a_v5_database(tmp_path, monkeypatch):
             "VALUES (?,?,?,?,?,?,?)",
             (rid, "final", "posted", "abc", "blocking", "T", "B"),
         )
-    assert old.execute("SELECT version FROM schema_version").fetchone()[0] == 5
+    assert old.execute("SELECT version FROM schema_version").fetchone()[0] == 8
     old.close()
     monkeypatch.undo()
     new = connect(path)
-    assert new.execute("SELECT version FROM schema_version").fetchone()[0] == 6
-    assert db_mod.SCHEMA_VERSION == 6
+    assert new.execute("SELECT version FROM schema_version").fetchone()[0] == 9
+    assert db_mod.SCHEMA_VERSION == 9
     row = new.execute("SELECT hash, title, candidate_id FROM findings").fetchone()
     assert tuple(row) == ("abc", "T", None)
     assert new.execute("SELECT count(*) FROM issues").fetchone()[0] == 0
@@ -96,7 +96,26 @@ def test_v6_migration_is_additive_on_a_v5_database(tmp_path, monkeypatch):
     new.close()
     again = connect(path)
     assert again.execute("SELECT count(*) FROM findings").fetchone()[0] == 2
-    assert [tuple(r) for r in again.execute("SELECT version FROM schema_version")] == [(6,)]
+    assert [tuple(r) for r in again.execute("SELECT version FROM schema_version")] == [(9,)]
+
+
+def test_a_database_the_unmerged_v12_branch_migrated_still_opens(tmp_path, monkeypatch):
+    """Before the merge with main, the ledger was migration 6 (main's 6 is an index): a copy
+    that code migrated (an eval snapshot) has the ledger and `findings.candidate_id` already,
+    and must still reach the current version instead of failing on the column."""
+    path = tmp_path / "v12-v6.db"
+    old_v6 = db_mod.MIGRATIONS[9] + "CREATE INDEX IF NOT EXISTS events_run ON events (run_id);"
+    early = {k: v for k, v in db_mod.MIGRATIONS.items() if k < 6}
+    monkeypatch.setattr(db_mod, "MIGRATIONS", {**early, 6: old_v6})
+    connect(path).close()
+    monkeypatch.undo()
+    new = connect(path)
+    assert new.execute("SELECT version FROM schema_version").fetchone()[0] == db_mod.SCHEMA_VERSION
+    cols = {r[1] for r in new.execute("PRAGMA table_info(findings)")}
+    assert "candidate_id" in cols
+    assert {r[1] for r in new.execute("PRAGMA table_info(heads)")} >= {"diff_print", "carried_from"}
+    assert {r[1] for r in new.execute("PRAGMA table_info(prs)")} >= {"skip_label"}
+    new.close()
 
 
 # ---- identity ----

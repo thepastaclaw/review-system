@@ -1,5 +1,5 @@
 """Replay (policy eval) lanes in the machine's pools: they wait in their own directory, which
-production (v0.24.0 included) never reads, take a slot only while no production lane waits,
+production (v0.24.0 through v0.28.0 included) never reads, take a slot only while no production lane waits,
 never the side-lane slot, and at most floor((n - 1) * share) of a pool."""
 
 from __future__ import annotations
@@ -31,8 +31,9 @@ def _t(rank: int, run: int = 1, n: int = 0) -> str:
 
 @pytest.fixture
 def v024() -> ModuleType:
-    """The production daemon's lanepool (v0.24.0, `git show 72ff47d:reviewsys/lanepool.py`),
-    loaded beside this one as a module of the same package."""
+    """The production daemon's lanepool (v0.24.0, `git show 72ff47d:reviewsys/lanepool.py`;
+    byte-identical in v0.28.0, 4e75920fe), loaded beside this one as a module of the same
+    package."""
     from importlib.machinery import SourceFileLoader
 
     name = "reviewsys._lanepool_v0_24_0"

@@ -18,6 +18,7 @@ REVIEW_MARKER = "<!-- thepastaclaw-review v1 -->"
 # stand-in models were in use; prefixes gate comments, queue comments and review titles
 DEGRADED_BADGE = "⚠️ DEGRADED"
 CODERABBIT_USER = "coderabbitai[bot]"
+ISSUE_URL_RE = re.compile(r"https://github\.com/[\w.-]+/[\w.-]+/issues/\d+")
 
 NON_ACTIONABLE_CR = (
     "confirmed as addressed",
@@ -141,9 +142,14 @@ def reviews(gh: Gh, repo: str, number: int) -> list[dict[str, Any]]:
 
 
 def pr_diff(gh: Gh, repo: str, number: int) -> str | None:
-    """Unified diff, or None when GitHub refuses it as too large (body-only fallback)."""
+    """Unified diff, or None when GitHub refuses it as too large (body-only fallback).
+
+    Git can emit non-UTF-8 blob bytes in text hunks (including small binary files).
+    Only hunk headers/paths are used for inline placement; replace undecodable bytes
+    rather than losing the whole diff. Valid Unicode is preserved.
+    """
     try:
-        return gh.run("pr", "diff", str(number), "--repo", repo, timeout=300)
+        return gh.run("pr", "diff", str(number), "--repo", repo, timeout=300, errors="replace")
     except ReviewError as exc:
         msg = exc.message.lower()
         if "too_large" in msg or "exceeded the maximum number of lines" in msg:
@@ -203,15 +209,18 @@ def evidence_bundle(
 
 def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
     """The head's CI as reviewers need it: check runs and commit statuses, one line each,
-    as of `fetched_at` (the run's later lanes read it hours on). The first 100 of each;
-    `truncated` says when GitHub has more. Best effort: lanes can still ask `gh pr checks`
-    themselves, so a failed read only notes the error instead of failing the run."""
+    as of `fetched_at` (the run's later lanes read it hours on). Every check run (a large
+    matrix passes 100; ci.py must not miss a pending or failed one past the first page) and
+    the first 100 statuses; `truncated` says when GitHub has more. Best effort: lanes can
+    still ask `gh pr checks` themselves, so a failed read only notes the error instead of
+    failing the run."""
     fetched_at = now()
     try:
-        runs = gh.api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100") or {}
+        pages = gh.api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100", paginate=True)
         status = gh.api(f"repos/{repo}/commits/{sha}/status?per_page=100") or {}
     except Exception as exc:  # evidence only, never the run's problem
         return {"error": str(exc)[:300]}
+    pages = [p for p in (pages if isinstance(pages, list) else [pages]) if isinstance(p, dict)]
     checks = [
         {
             "name": r.get("name"),
@@ -219,7 +228,8 @@ def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
             "conclusion": r.get("conclusion"),
             "url": r.get("html_url") or r.get("details_url"),
         }
-        for r in (runs.get("check_runs") or [])
+        for p in pages
+        for r in (p.get("check_runs") or [])
         if isinstance(r, dict)
     ]
     checks += [
@@ -232,7 +242,8 @@ def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
         for st in (status.get("statuses") or [])
         if isinstance(st, dict)
     ]
-    total = int(runs.get("total_count") or 0) + int(status.get("total_count") or 0)
+    runs_total = max((int(p.get("total_count") or 0) for p in pages), default=0)
+    total = runs_total + int(status.get("total_count") or 0)
     return {
         "head_sha": sha,
         "fetched_at": fetched_at,
@@ -525,6 +536,7 @@ def gate_body(
     points: int | None = None,
     block_above: int | None = None,
     progress: dict[str, Any] | None = None,
+    carried_from: str | None = None,
 ) -> str:
     s = sha[:8]
     t = f" · triage: {tier}" if tier else ""
@@ -560,6 +572,12 @@ def gate_body(
         head = warn or ("⛔" if n else "✅")
         scope = " — Phase 1 only" if phase2_skipped else ""
         return f"{GATE_MARKER}\n{head} Final review complete{scope} — {'no blockers' if not n else f'{n} blocking finding(s)'} (commit {s}){t}"
+    if status == "carried":  # the push left the PR's diff as reviewed (worker._carry)
+        return (
+            f"{GATE_MARKER}\n♻️ No change to this PR's diff since commit {(carried_from or '')[:8]} "
+            f"(an empty commit, a merge of the base or a rebase onto it): that review stands"
+            f" — {reason or 'see it above'} (commit {s})"
+        )
     if status == "closed":  # the PR closed or merged before its review finished
         return f"{GATE_MARKER}\n⏹️ Not reviewed — {reason or 'the PR is closed'} (commit {s})"
     if status == "failed":
@@ -576,8 +594,47 @@ def post_reply(gh: Gh, repo: str, number: int, comment_id: int, body: str) -> No
     )
 
 
+def open_issues_matching(gh: Gh, repo: str, terms: str) -> list[dict[str, Any]]:
+    """Open issues in `repo` whose title matches the search `terms`: [{number, title, url}]."""
+    rows = gh.json(
+        "issue",
+        "list",
+        "-R",
+        repo,
+        "--state",
+        "open",
+        "--search",
+        f"{terms} in:title",
+        "--json",
+        "number,title,url",
+        "--limit",
+        "20",
+    )
+    return [r for r in rows or [] if isinstance(r, dict)]
+
+
+def create_issue(gh: Gh, repo: str, title: str, body: str) -> str:
+    """Open an issue in `repo`; returns its URL. The body goes in on stdin (no argv limit)."""
+    out = gh.run("issue", "create", "-R", repo, "--title", title, "--body-file", "-", stdin=body)
+    m = ISSUE_URL_RE.search(out)
+    if not m:  # it exited 0, so the issue may well exist: not a clean refusal
+        raise ReviewError(FailKind.INFRA, f"gh issue create printed no issue URL: {out[:200]}")
+    return m.group(0)
+
+
 def edit_review_comment(gh: Gh, repo: str, comment_id: int, body: str) -> None:
     gh.api(f"repos/{repo}/pulls/comments/{comment_id}", method="PATCH", body={"body": body})
+
+
+def edit_review(gh: Gh, node_id: str, body: str) -> None:
+    """Replace the body of one of our own reviews. GraphQL, not REST: on dashpay/dash (triage
+    access) `PUT …/pulls/<n>/reviews/<id>` answers 404 for the bot's own review, while
+    `updatePullRequestReview` succeeds."""
+    gh.graphql(
+        "mutation($id: ID!, $body: String!) { updatePullRequestReview(input: "
+        "{pullRequestReviewId: $id, body: $body}) { pullRequestReview { id } } }",
+        {"id": node_id, "body": body},
+    )
 
 
 def react(gh: Gh, repo: str, comment_id: int, content: str) -> None:

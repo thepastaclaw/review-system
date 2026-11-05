@@ -203,6 +203,10 @@ class FakeGh(Gh):
         # False: the bot lacks write access, so resolveReviewThread is refused (dashpay/dash)
         self.can_resolve = True
         self.comment_edits: list[tuple[int, str]] = []  # (comment id, new body) via PATCH
+        self.review_edits: list[tuple[int, str]] = []  # (review id, new body) via PUT
+        self.open_issues: list[dict[str, Any]] = []  # what `gh issue list` finds
+        self.created_issues: list[dict[str, Any]] = []  # `gh issue create` calls
+        self.issue_create_error = ""  # set: `gh issue create` fails with this message
 
     def _runner(
         self, argv: Sequence[str], stdin: str | None, timeout: int
@@ -239,6 +243,15 @@ class FakeGh(Gh):
     def _dispatch(self, args: list[str], stdin: str | None) -> Any:
         if args[:2] == ["pr", "diff"]:
             return self.diff
+        if args[:2] == ["issue", "list"]:
+            return self.open_issues
+        if args[:2] == ["issue", "create"]:
+            if self.issue_create_error:
+                raise _GhFailure(self.issue_create_error)
+            repo, n = args[args.index("-R") + 1], 9000 + len(self.created_issues)
+            title = args[args.index("--title") + 1]
+            self.created_issues.append({"repo": repo, "title": title, "body": stdin, "number": n})
+            return f"https://github.com/{repo}/issues/{n}\n"
         if args[:2] == ["api", "graphql"]:
             q = next(a for a in args if a.startswith("query="))
             if "pullRequests(" in q:
@@ -275,6 +288,15 @@ class FakeGh(Gh):
                 return {
                     "data": {"resolveReviewThread": {"thread": {"id": "t", "isResolved": True}}}
                 }
+            if "updatePullRequestReview" in q:
+                node = next(a for a in args if a.startswith("id=")).split("=", 1)[1]
+                new_body = next(a for a in args if a.startswith("body=")).split("=", 1)[1]
+                rid = int(node.removeprefix("PRR_"))
+                self.review_edits.append((rid, new_body))
+                for r in self.posted_reviews:
+                    if r["id"] == rid:
+                        r["body"] = new_body
+                return {"data": {"updatePullRequestReview": {"pullRequestReview": {"id": node}}}}
             if "userContentEdits" in q and "graphql:userContentEdits" in self.routes:
                 return {"data": self.routes["graphql:userContentEdits"]}
             if "node(id:" in q:
@@ -326,11 +348,15 @@ class FakeGh(Gh):
                     "id": rid,
                     "html_url": f"https://github.com/r/pull/1#pullrequestreview-{rid}",
                 }
+            if "/pulls/" in ep and "/reviews/" in ep and method == "PUT":
+                # what dashpay/dash answers the bot for its own review: use the mutation
+                raise _GhFailure("gh: Not Found (HTTP 404)")
             if "/pulls/" in ep and "/reviews" in ep:
                 states = {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}
                 return [
                     {
                         "id": r["id"],
+                        "node_id": f"PRR_{r['id']}",
                         "user": {"login": "thepastaclaw"},
                         "body": r.get("body", ""),
                         "state": r.get("state") or states.get(r.get("event", ""), "COMMENTED"),
@@ -405,6 +431,7 @@ class FakeLanes:
         self.selector: Any = {"selected": ["security-auditor"], "reasoning": "rust crypto"}
         self.triage: Any = {"tier": "normal", "reasoning": "ordinary change"}
         self.conversation: Any = {"threads": []}
+        self.ci_check: Any = {"related": "yes", "reason": "the failing test covers f.rs"}
         self.broken_once: set[str] = set()
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
@@ -500,6 +527,8 @@ class FakeLanes:
             out = self.prep_output()
         elif spec.role == "conversation":
             out = self.conversation
+        elif spec.role == "ci_check":
+            out = self.ci_check
         elif spec.role == "repair":
             # the broken payload is the original JSON with its closing brace removed
             out = json.loads(spec.prompt.split("Do not add fences.\n\n", 1)[1] + "}")
@@ -573,6 +602,28 @@ def _fast_lane_slots(monkeypatch):
     from reviewsys import lanepool
 
     monkeypatch.setattr(lanepool, "POLL_SECONDS", 0.005)
+
+
+@pytest.fixture
+def binary_diff_gh(tmp_path: Path) -> Gh:
+    """Real subprocess boundary: Git may print a small binary blob as a text hunk."""
+    import sys
+
+    diff = (
+        "diff --git a/f.rs b/f.rs\n"
+        "--- a/f.rs\n+++ b/f.rs\n@@ -1,3 +10,5 @@\n+café 東京 🦀\n"
+        "diff --git a/key-hash.bin b/key-hash.bin\n"
+        "new file mode 100644\n--- /dev/null\n+++ b/key-hash.bin\n@@ -0,0 +1 @@\n"
+    ).encode() + (
+        b"+Dc\xa1\xa9\x94\xd5\x04\x0ei\xc0\x90\xb6\x98]z\xf2\x95\xbf\xd1\x1a\n"
+        b"\\ No newline at end of file\n"
+        b"diff --git a/proof.bin b/proof.bin\n"
+        b"Binary files /dev/null and b/proof.bin differ\n"
+    )
+    script = tmp_path / "gh-binary-diff"
+    script.write_text(f"#!{sys.executable}\nimport sys\nsys.stdout.buffer.write({diff!r})\n")
+    script.chmod(0o755)
+    return Gh(str(script))
 
 
 # ---- policy v12 tests (tests/v12_support.py) ----

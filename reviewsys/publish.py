@@ -93,7 +93,13 @@ def line_in_diff(parsed: dict[str, list[dict[str, int]]], path: str, line: int) 
     return any(h["new_start"] <= line <= h["new_end"] for h in parsed.get(path, []))
 
 
-LEGACY_SOURCE_PHASE = {"codex": "phase1", "claude": "phase2"}  # verifier template slot names
+# the verifier's `source` labels; `codex`/`claude` are the names older templates used
+LEGACY_SOURCE_PHASE = {
+    "phase1": "phase1",
+    "phase2": "phase2",
+    "codex": "phase1",
+    "claude": "phase2",
+}
 
 
 def attribute_sources(
@@ -101,8 +107,8 @@ def attribute_sources(
     reviewers: list[dict[str, Any]],
     lane_findings: dict[str, list[Finding]],
 ) -> None:
-    """Rewrite each verified finding's `source` from the verifier's legacy labels (`codex` =
-    Phase-1 lanes, `claude` = Phase-2 lanes, `coderabbit`) into the model ids and agents that
+    """Rewrite each verified finding's `source` from the verifier's labels (`phase1` or the older `codex` =
+    Phase-1 lanes, `phase2` or `claude` = Phase-2 lanes, `coderabbit`) into the model ids and agents that
     actually raised it. Within a phase the lanes whose own output carries the same
     `finding_hash` are named; if the verifier retitled or merged, every lane of that phase is.
     `reviewers` is the run's completed-lane provenance, `lane_findings` maps `"phase:role"`
@@ -650,6 +656,7 @@ def dedupe_against_github(
     *,
     dry_run: bool,
     fresh: Callable[[Finding, ExistingComment], bool] | None = None,
+    settled_hashes: set[str] | None = None,
 ) -> tuple[list[Finding], list[Suppressed]]:
     """`fresh(f, comment)`: `f` is never folded onto that comment (policy v12: a regression or a
     revival gets a new thread instead of disappearing into a closed one)."""
@@ -666,7 +673,18 @@ def dedupe_against_github(
     # receive one carry-forward reply for a reviewed head; otherwise aliases turn into
     # duplicate GitHub comments even though each finding was considered once.
     seen_matches: set[tuple[str, str]] = set()
+    settled_hashes = settled_hashes or set()
     for f in findings:
+        # A finding explicitly reintroduced after a prior lift is new evidence, not a carry
+        # onto the old resolved root. Give it a fresh inline comment so the old withdrawal is
+        # never silently turned back into a live thread; a reworded one whose own comment is
+        # already up (an earlier head) is deduped onto that as usual.
+        marker = f.extra.get("reintroduced_finding_hash")
+        if marker in settled_hashes and (
+            f.hash == marker or not any(r.finding_hash == f.hash for r in records)
+        ):
+            kept.append(f)
+            continue
         candidates = records if fresh is None else [r for r in records if not fresh(f, r)]
         match, reason = find_duplicate(f, candidates)
         if not match:
@@ -733,10 +751,19 @@ def build(
     superseded_note: str | None = None,
     rereview: bool = False,
     fresh: Callable[[Finding, ExistingComment], bool] | None = None,
+    settled_hashes: set[str] | None = None,
 ) -> ReviewModel:
     findings, collapsed = collapse_same_root(list(verified.findings))
     kept, sup = dedupe_against_github(
-        gh, repo, number, head_sha, findings, bot_login, dry_run=dry_run, fresh=fresh
+        gh,
+        repo,
+        number,
+        head_sha,
+        findings,
+        bot_login,
+        dry_run=dry_run,
+        fresh=fresh,
+        settled_hashes=settled_hashes,
     )
     suppressed = list(collapsed) + list(sup)
     if has_same_root_duplicates(kept):
@@ -871,11 +898,15 @@ _CONVERSATION_NOTE = {
         "full review._"
     ),
     "INTENTIONALLY_DEFERRED": (
-        "\n\n_Noted as intentionally deferred; I will not press it further here._"
+        "\n\n_Deferred on a maintainer's call: this finding no longer blocks this pull request._"
     ),
     "DEFERRAL_PENDING": (
         "\n\n_Deferring this needs a maintainer's call; until then it still blocks this pull "
         "request._"
+    ),
+    "DEFERRAL_NEEDS_TRACKING": (
+        "\n\n_Not deferred yet: a deferral needs a tracking issue for the follow-up; until "
+        "then the finding stands._"
     ),
 }
 
@@ -890,16 +921,22 @@ _THREAD_STATUS_LINE = {
     "FIXED": "✅ **Resolved**",
     "OUTDATED": "✅ **No longer applies**",
     "INTENTIONALLY_DEFERRED": "⏭️ **Deferred** (maintainer decision; not blocking)",
+    # not a lift: the finding stands, but its root says what the deferral is waiting for
+    "DEFERRAL_NEEDS_TRACKING": "⏸️ **Needs a tracking issue** (not yet deferred)",
 }
 
 
-def with_thread_status(body: str, *, status: str | None, head_sha: str) -> str:
+def with_thread_status(
+    body: str, *, status: str | None, head_sha: str, tracking_url: str = ""
+) -> str:
     """`body` (a bot finding's root comment) with its status line set for `status`, or removed
-    when `status` is None or has no line."""
+    when `status` is None or has no line. A deferral's line names its tracking issue."""
     body = THREAD_STATUS_RE.sub("", body, count=1)
     line = _THREAD_STATUS_LINE.get(status or "")
     if not line:
         return body
+    if status == "INTENTIONALLY_DEFERRED" and tracking_url:
+        line = line.replace("not blocking)", f"not blocking; tracked in {tracking_url})")
     lines = body.split("\n")
     i = 0
     while i < len(lines) and lines[i].lstrip().startswith("<!--"):
@@ -909,13 +946,20 @@ def with_thread_status(body: str, *, status: str | None, head_sha: str) -> str:
 
 
 def _set_thread_status(
-    gh: Gh, repo: str, *, comment_id: Any, root_body: str, status: str | None, head_sha: str
+    gh: Gh,
+    repo: str,
+    *,
+    comment_id: Any,
+    root_body: str,
+    status: str | None,
+    head_sha: str,
+    tracking_url: str = "",
 ) -> bool | str:
     """Edit our own finding root to show `status`. True when the root now shows it (or already
     did), else the failure; only ever touches a comment carrying our finding marker."""
     if not FINDING_MARKER_RE.search(root_body):
         return "failed: root carries no finding marker"
-    new = with_thread_status(root_body, status=status, head_sha=head_sha)
+    new = with_thread_status(root_body, status=status, head_sha=head_sha, tracking_url=tracking_url)
     if new == root_body:
         return True
     try:
@@ -944,10 +988,21 @@ def render_thread_answer(*, marker: str, status: str, head_sha: str, reply: str)
     return f"{marker}\n**{lead}** (re-reviewed at `{head_sha[:8]}`): {reply}"
 
 
-def render_conversation_answer(*, marker: str, status: str, reply: str) -> str:
+def render_conversation_answer(
+    *, marker: str, status: str, reply: str, tracking_url: str = "", filed: bool = False
+) -> str:
     """A conversational answer: the model's prose, with the status as a quiet trailing note
-    rather than a bold lead, so the thread reads like a discussion, not a verdict log."""
-    return f"{marker}\n{reply}{_CONVERSATION_NOTE.get(status, '')}"
+    rather than a bold lead, so the thread reads like a discussion, not a verdict log. A
+    deferral's note links the issue that tracks the follow-up (`filed`: the bot just filed
+    it on a maintainer's request)."""
+    note = _CONVERSATION_NOTE.get(status, "")
+    if status == "INTENTIONALLY_DEFERRED" and tracking_url:
+        lead = f"Filed {tracking_url} for the follow-up" if filed else f"Tracked in {tracking_url}"
+        note = (
+            f"\n\n_{lead}. Deferred on a maintainer's call: this finding no longer blocks this "
+            "pull request._"
+        )
+    return f"{marker}\n{reply}{note}"
 
 
 def _deliver_answer(
@@ -961,14 +1016,16 @@ def _deliver_answer(
     resolve: bool,
     item: dict[str, Any],
     root_body: str,
-    lifted_status: str | None,
+    root_status: str | None,
     head_sha: str,
+    tracking_url: str = "",
 ) -> None:
     """Post one answer on a finding thread and, when the outcome retires the finding, resolve
     the thread. Records what happened on `item` (`action`, and `resolved` when we tried).
 
-    `lifted_status` is the outcome when it lifts the finding. If the thread then stays open,
-    the root comment gets that status line (`marked`); any other answer clears a stale one."""
+    `root_status` is the outcome when it lifts the finding (or says what a deferral waits
+    for). If the thread then stays open, the root comment gets that status line (`marked`);
+    any other answer clears a stale one."""
     try:
         github.post_reply(gh, repo, number, int(comment_id), body)
         item["action"] = "replied"
@@ -983,10 +1040,16 @@ def _deliver_answer(
             item["resolved"] = f"failed: {exc}"
     if not root_body:
         return
-    status = None if item.get("resolved") is True else lifted_status
+    status = None if item.get("resolved") is True else root_status
     if status or THREAD_STATUS_MARKER in root_body:
         item["marked"] = _set_thread_status(
-            gh, repo, comment_id=comment_id, root_body=root_body, status=status, head_sha=head_sha
+            gh,
+            repo,
+            comment_id=comment_id,
+            root_body=root_body,
+            status=status,
+            head_sha=head_sha,
+            tracking_url=tracking_url,
         )
 
 
@@ -998,9 +1061,14 @@ def answer_conversation(
     *,
     threads: dict[str, dict[str, Any]],
     outcomes: dict[str, Any],
+    settled: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Post the conversation lane's replies: one per replied thread with something to say,
-    exactly once per (human reply, head), resolving threads the model conceded. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done."""
+    exactly once per (human reply, head), resolving threads the model conceded. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done.
+
+    `settled` (hash -> outcome) are threads an earlier answer already lifted on this commit:
+    the lift stands whatever this answer says, so their root keeps its status line (a
+    restated deferral without a tracking link would otherwise drop the link it shows)."""
     posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
     done: list[dict[str, Any]] = []
     seen_roots: set[tuple[str, str]] = set()  # same alias guard as answer_replied_threads
@@ -1037,31 +1105,57 @@ def answer_conversation(
             item["action"] = "suppressed_reply"
             done.append(item)
             continue
+        if o.tracking_url:
+            item["tracking"] = o.tracking_url
+        # a settled thread's root keeps the line its lift put there unless this answer lifts
+        # it again (a re-deferral by a maintainer that names its tracking refreshes the line)
+        relift = o.status in _RESOLVING or (
+            o.status == "INTENTIONALLY_DEFERRED" and bool(o.tracking_url)
+        )
         _deliver_answer(
             gh,
             repo,
             number,
             comment_id=cid,
-            body=render_conversation_answer(marker=marker, status=o.status, reply=reply),
+            body=render_conversation_answer(
+                marker=marker,
+                # a settled finding stays lifted: no note claiming it stands
+                status=""
+                if h in (settled or {}) and o.status == "DEFERRAL_NEEDS_TRACKING"
+                else o.status,
+                reply=reply,
+                tracking_url=o.tracking_url,
+                filed=o.tracking_filed,
+            ),
             thread_id=t.get("thread_id"),
             resolve=o.status in _RESOLVING,
             item=item,
-            root_body=str(t.get("body") or ""),
-            lifted_status=o.status if o.status in _THREAD_STATUS_LINE else None,
+            root_body="" if h in (settled or {}) and not relift else str(t.get("body") or ""),
+            root_status=o.status if o.status in _THREAD_STATUS_LINE else None,
             head_sha=head_sha,
+            tracking_url=o.tracking_url,
         )
         done.append(item)
     return done
 
 
 def render_thread_lane_answer(
-    *, marker: str, status: str, head_sha: str, reply: str, same_sha: bool
+    *,
+    marker: str,
+    status: str,
+    head_sha: str,
+    reply: str,
+    same_sha: bool,
+    tracking_url: str = "",
 ) -> str:
-    """A policy v12 thread-lane answer: conversational on a same-sha reply; on a new push a
-    settled status leads (as v11's re-review answers did), the pending ones end in a note."""
+    """A policy v12 thread-lane answer: conversational on a same-sha reply (a deferral's note
+    links its tracking issue); on a new push a settled status leads (as v11's re-review
+    answers did), the pending ones end in a note."""
     if not same_sha and status in _ANSWER_LEAD:
         return render_thread_answer(marker=marker, status=status, head_sha=head_sha, reply=reply)
-    return render_conversation_answer(marker=marker, status=status, reply=reply)
+    return render_conversation_answer(
+        marker=marker, status=status, reply=reply, tracking_url=tracking_url
+    )
 
 
 def shown_status(body: str) -> str:
@@ -1087,20 +1181,24 @@ def answer_thread_lane(
     threads: dict[str, dict[str, Any]],
     same_sha: bool,
     keep: set[str] | frozenset[str] = frozenset(),
+    settled: set[str] | frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Post the policy v12 thread lane's outcomes (`outcomes`: finding_hash -> ThreadOutcome):
     exactly once per (human reply, head) on each open thread, resolving the thread when the
     outcome retires the issue and marking its root comment where it stays open. An issue with
     no open thread (`threads`: the PR's unresolved bot finding threads) gets no reply: its
     outcome stands as is (`no_thread`). `keep`: issues this round restated, whose root must
-    not go on showing an earlier head's "✅ Withdrawn". Returns what was done, one item per
-    outcome (the `thread.answered` events and ledger outcomes are recorded from these)."""
+    not go on showing an earlier head's "✅ Withdrawn". `settled`: issues already deferred;
+    a deferral restated there without a link leaves the root's line (and link) as it is. Returns what was done, one item per outcome (the
+    `thread.answered` events and ledger outcomes are recorded from these)."""
     posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
     done: list[dict[str, Any]] = []
     seen_roots: set[tuple[str, str]] = set()
     mode = "conversation" if same_sha else "thread"
     for h, o in outcomes.items():
         item: dict[str, Any] = {"finding_hash": h, "status": o.status, "mode": mode}
+        if o.tracking_url:
+            item["tracking"] = o.tracking_url
         t = threads.get(h)
         if t is None or not t.get("comment_id"):
             item["action"] = "no_thread"
@@ -1140,20 +1238,29 @@ def answer_thread_lane(
             item["action"] = "suppressed_reply"
             done.append(item)
             continue
+        # a deferral restated without its link keeps the line (and link) the root shows; any
+        # other answer rewrites or clears it (the lane may re-open a deferred issue)
+        keep_root = h in settled and o.status == "INTENTIONALLY_DEFERRED" and not o.tracking_url
         _deliver_answer(
             gh,
             repo,
             number,
             comment_id=cid,
             body=render_thread_lane_answer(
-                marker=marker, status=o.status, head_sha=head_sha, reply=reply, same_sha=same_sha
+                marker=marker,
+                status=o.status,
+                head_sha=head_sha,
+                reply=reply,
+                same_sha=same_sha,
+                tracking_url=o.tracking_url,
             ),
             thread_id=t.get("thread_id"),
             resolve=o.status in _RESOLVING,
             item=item,
-            root_body=str(t.get("body") or ""),
-            lifted_status=o.status if o.status in _THREAD_STATUS_LINE else None,
+            root_body="" if keep_root else str(t.get("body") or ""),
+            root_status=o.status if o.status in _THREAD_STATUS_LINE else None,
             head_sha=head_sha,
+            tracking_url=o.tracking_url,
         )
         done.append(item)
     for h in sorted(keep):
@@ -1308,7 +1415,7 @@ def answer_replied_threads(
             resolve=resolve,
             item=item,
             root_body=str(t.get("body") or ""),
-            lifted_status=status if resolve else None,
+            root_status=status if resolve else None,
             head_sha=head_sha,
         )
         done.append(item)
@@ -1329,6 +1436,184 @@ def answer_replied_threads(
             )
             done.append(item)
     return done
+
+
+# ---- the standing review after discussion ----
+
+# A finding the discussion lifted while other blockers stand moves no verdict, so no follow-up
+# review is posted, and the standing review kept saying "🔴 2 blocking" and listing the
+# deferred finding as [BLOCKING] in its agent prompt (dashpay/dash#7892). The bot can edit its
+# own review body: a status block under the title, struck-through counts, and a retagged prompt
+# entry, all derived from the original text so a re-edit is idempotent and reversible.
+REVIEW_STATUS_MARKER = "<!-- thepastaclaw-review-status v1 -->"
+_REVIEW_STATUS_RE = re.compile(re.escape(REVIEW_STATUS_MARKER) + r"\n(?:>[^\n]*\n)*\n?")
+_COUNT_LABELS = {"blocking": "blocking", "suggestion(s)": "suggestion", "nitpick(s)": "nitpick"}
+_COUNT_SEGMENT = r"(\S+) (?:~~(\d+)~~ )?(\d+) (blocking|suggestion\(s\)|nitpick\(s\))"
+_COUNT_SEGMENT_RE = re.compile(_COUNT_SEGMENT)
+_COUNTS_LINE_RE = re.compile(rf"^{_COUNT_SEGMENT}(?: \| {_COUNT_SEGMENT})*$")
+_PROMPT_ITEM_RE = re.compile(r"^- \[([A-Z]+)(?: → [^\]]*)?\] (.*)$")
+# status -> (status-block label, agent-prompt tag)
+_LIFTED_LABEL = {
+    "WITHDRAWN": ("✅ Withdrawn", "WITHDRAWN in discussion; do not fix"),
+    "INTENTIONALLY_DEFERRED": (
+        "⏭️ Deferred (maintainer decision)",
+        "DEFERRED by a maintainer; not blocking, do not fix in this PR",
+    ),
+}
+_LIFTED_DEFAULT = ("Settled in discussion", "SETTLED in discussion; do not fix")
+
+
+@dataclass(frozen=True, slots=True)
+class LiftedFinding:
+    hash: str
+    severity: str
+    file: str
+    title: str
+    status: str  # the conversation outcome that lifted it ("" when not on record)
+    tracking: str = ""  # a deferral's tracking issue, when on record
+
+
+def _recount(line: str, lifted: list[LiftedFinding]) -> tuple[str, int | None]:
+    """The counts line with `lifted` struck off the original numbers, and the blocking count
+    it now shows (None when the line has no blocking segment)."""
+    by_sev: dict[str, int] = {}
+    for f in lifted:
+        by_sev[f.severity] = by_sev.get(f.severity, 0) + 1
+    blocking: int | None = None
+
+    def seg(m: re.Match[str]) -> str:
+        nonlocal blocking
+        icon, orig, label = m.group(1), int(m.group(2) or m.group(3)), m.group(4)
+        now = max(orig - by_sev.get(_COUNT_LABELS[label], 0), 0)
+        if label == "blocking":
+            blocking = now
+        return f"{icon} ~~{orig}~~ {now} {label}" if now != orig else f"{icon} {orig} {label}"
+
+    return _COUNT_SEGMENT_RE.sub(seg, line), blocking
+
+
+def _block_text(title: str) -> str:
+    """A title as one inert line: a newline would end the quoted status block early (and the
+    next edit could not find its end), an HTML comment could fake a marker."""
+    return " ".join(title.split()).replace("<!--", "&lt;!--")
+
+
+def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
+    """`body` (the bot's standing review) annotated for the findings the discussion lifted:
+    a status block under the title, the counts struck through, and the agent-prompt entries
+    retagged. Only a finding this review lists in its agent prompt (by file, location and
+    exact title; each entry at most once) is annotated, so a finding the review never counted
+    (a legacy thread) moves no number, and a same-titled finding elsewhere keeps its tag.
+    With nothing lifted every annotation is removed again."""
+    lines = _REVIEW_STATUS_RE.sub("", body, count=1).split("\n")
+    todo = list(lifted)
+    matched: list[LiftedFinding] = []
+    path = ""
+    for i, line in enumerate(lines):
+        if line.startswith("In `") and line.endswith("`:"):
+            path = line[4:-2]
+            continue
+        m = _PROMPT_ITEM_RE.match(line)
+        if not m:
+            continue
+        sev, rest = m.group(1), m.group(2)
+        hit = next(
+            (
+                f
+                for f in todo
+                if (f.file or "(no file)") == path
+                and rest.endswith(f": {f.title}")
+                and _is_location(rest[: -len(f.title) - 2], path)
+            ),
+            None,
+        )
+        tag = ""
+        if hit:
+            todo.remove(hit)
+            matched.append(hit)
+            tag = f" → {_LIFTED_LABEL.get(hit.status, _LIFTED_DEFAULT)[1]}"
+        lines[i] = f"- [{sev}{tag}] {rest}"
+    # the counts line sits between the summary and the first <details>; the last full-line
+    # match there, so a summary sentence shaped like a count is never the one rewritten
+    details = next((i for i, ln in enumerate(lines) if ln == "<details>"), len(lines))
+    counts = [i for i in range(details) if _COUNTS_LINE_RE.match(lines[i])]
+    left: int | None = None
+    if counts:
+        lines[counts[-1]], left = _recount(lines[counts[-1]], matched)
+    if not matched:
+        return "\n".join(lines)
+    if left is None:
+        tail = "."
+    elif left == 0:
+        tail = "; no blocking finding remains."
+    else:
+        tail = f"; {left} blocking finding(s) still stand."
+    block = [
+        REVIEW_STATUS_MARKER,
+        f"> **Updated after discussion:** {len(matched)} finding(s) of this review were settled "
+        f"in the inline threads{tail}",
+        *(
+            f"> - {_LIFTED_LABEL.get(f.status, _LIFTED_DEFAULT)[0]}: "
+            f"{SEVERITY_ICONS.get(f.severity, '')} {_block_text(f.title)}"
+            + (f" (tracked in {_block_text(f.tracking)})" if f.tracking else "")
+            for f in matched
+        ),
+        "",
+    ]
+    title = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), None)
+    if title is None:  # no heading: after the leading markers
+        title = next((i for i, ln in enumerate(lines) if not ln.startswith("<!--")), len(lines)) - 1
+    at = title + 1
+    if at < len(lines) and not lines[at].strip():
+        at += 1
+    return "\n".join(lines[:at] + block + lines[at:])
+
+
+def _is_location(loc: str, path: str) -> bool:
+    """`loc` is what `_location` renders for a finding in `path`."""
+    return loc == path or (
+        loc.startswith(f"{path}:") and loc[len(path) + 1 :].replace("-", "").isdigit()
+    )
+
+
+def untracked_deferrals_line(titles: list[str]) -> str:
+    """The review-body line for prior findings the discussion would defer but nothing tracks:
+    they stay standing until a tracking issue is linked (or the bot is asked to file one)."""
+    named = "; ".join(_block_text(t) for t in titles)
+    return (
+        f"\n_⏸️ Needs a tracking issue before it can be deferred ({len(titles)}): {named}. "
+        "Link one in the finding's thread, or ask there and PastaClaw files it._"
+    )
+
+
+def tracking_issue_body(
+    body: str,
+    *,
+    repo: str,
+    number: int,
+    comment_url: str,
+    asker: str,
+    severity: str,
+    title: str,
+    finding: str,
+) -> str:
+    """The body of a tracking issue the bot files for a deferred finding: the lane's
+    description of the follow-up, then where it came from (the PR, the thread, who asked) and
+    a short quote of the finding. Mentions are defused: the bot never pages anyone, and posts
+    as itself with no attribution footer."""
+    quote = "\n".join(f"> {ln}" for ln in finding.strip()[:600].splitlines()) or "> (no text)"
+    origin = [
+        "### Origin",
+        "",
+        f"Deferred from https://github.com/{repo}/pull/{number} "
+        f"(review thread: {comment_url}) at the request of maintainer `{asker}`.",
+        "",
+        f"PastaClaw finding ({severity}): **{_block_text(title)}**",
+        "",
+        quote,
+    ]
+    described = scrub_reply(body, 4000)
+    return (described + "\n\n" if described else "") + "\n".join(origin).replace("@", "@\u200b")
 
 
 # ---- same-sha verdict update ----
@@ -1498,6 +1783,118 @@ def publish_verdict_update(
         posted=True,
         event=event,
         transport_event=transport,
+        body=body,
+        review_id=int(resp["id"]),
+        review_url=str(resp.get("html_url") or "") or None,
+    )
+
+
+# ---- CI after the verdict (ci.py) ----
+
+# beside UPDATE_MARKER (which makes `standing_verdict` count the follow-up): says it is the
+# head's CI update, of which there is at most one per commit
+CI_UPDATE_MARKER = "<!-- thepastaclaw-ci-update v1 sha={sha} -->"
+_CI_LEAD = {
+    "yes": "checks that failed after the review look related to this change.",
+    "unclear": "checks that failed after the review may relate to this change, and the "
+    "evidence does not rule it out.",
+}
+_CI_REASON = {"yes": "Why they look related", "unclear": "Why it is unclear"}
+_CI_REASON_MAX = 1200
+
+
+def _ci_check_line(c: dict[str, Any]) -> str:
+    name = str(c.get("name") or "?").replace("`", "")
+    label = f"[`{name}`]({c['url']})" if c.get("url") else f"`{name}`"
+    return f"- {label} ({c.get('conclusion') or 'failed'})"
+
+
+def render_ci_update(
+    *,
+    head_sha: str,
+    failing: list[dict[str, Any]],
+    related: str,
+    reason: str,
+    lane: dict[str, Any],
+    judged: bool,
+    logs_read: int,
+    degraded: dict[str, Any] | None = None,
+) -> str:
+    """The follow-up review that moves an APPROVE to COMMENT when CI failed after it.
+    `judged` False: the CI-check lane gave no answer, so the failure counts as unclear."""
+    title = f"CI failed after approval — commit {head_sha[:8]}"
+    if degraded:
+        title = f"{DEGRADED_BADGE} — {title}"
+    why = (
+        scrub_reply(reason, _CI_REASON_MAX)
+        if judged
+        else "the CI-check lane could not judge the failure, so it is treated as possibly related."
+    )
+    parts = [
+        UPDATE_MARKER.format(phase="final", sha=head_sha),
+        CI_UPDATE_MARKER.format(sha=head_sha),
+        f"## {title}",
+        "",
+        "The standing review approved this commit; this follow-up moves the verdict to "
+        f"`COMMENT`: {_CI_LEAD.get(related, _CI_LEAD['unclear'])}",
+        "",
+        "Failing checks:",
+        *(_ci_check_line(c) for c in failing),
+        "",
+    ]
+    if why:
+        parts += [f"{_CI_REASON.get(related, _CI_REASON['unclear'])}: {why}", ""]
+    parts += [
+        "_Nothing was re-reviewed: the findings of the standing review are unchanged. The next "
+        "push gets a full review; a re-run that passes does not restore the approval._",
+        "",
+        "<details>",
+        "<summary>Review provenance</summary>",
+        "",
+        f"Source: CI-check lane {_model_label(lane)} (agent: `{lane['agent']}`); no reviewer "
+        "or verifier lanes ran for this follow-up",
+        "",
+        *([_degraded_line(degraded)] if degraded else []),
+        "- Verdict moved because CI failed on this commit after the review; failure logs read: "
+        f"{logs_read} GitHub Actions job(s)",
+        "",
+        "</details>",
+    ]
+    return "\n".join(parts)
+
+
+def publish_ci_update(
+    gh: Gh,
+    *,
+    repo: str,
+    number: int,
+    head_sha: str,
+    failing: list[dict[str, Any]],
+    related: str,
+    reason: str,
+    lane: dict[str, Any],
+    judged: bool,
+    logs_read: int,
+    degraded: dict[str, Any] | None = None,
+) -> PublishResult:
+    """Post the CI follow-up review: always COMMENT, so it needs no own-PR transport rule."""
+    body = render_ci_update(
+        head_sha=head_sha,
+        failing=failing,
+        related=related,
+        reason=reason,
+        lane=lane,
+        judged=judged,
+        logs_read=logs_read,
+        degraded=degraded,
+    )
+    resp = github.post_review(
+        gh, repo, number, {"commit_id": head_sha, "body": body, "event": "COMMENT", "comments": []}
+    )
+    return PublishResult(
+        posted=True,
+        event="COMMENT",
+        transport_event="COMMENT",
         body=body,
         review_id=int(resp["id"]),
         review_url=str(resp.get("html_url") or "") or None,

@@ -20,7 +20,10 @@ query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
     pullRequests(first: 100, states: OPEN, after: $cursor, orderBy: {field: UPDATED_AT, direction: DESC}) {
       pageInfo { hasNextPage endCursor }
-      nodes { number headRefOid isDraft title updatedAt author { login } }
+      nodes {
+        number headRefOid isDraft title updatedAt author { login }
+        labels(first: 50) { nodes { name } }
+      }
     }
   }
 }
@@ -39,6 +42,7 @@ class OpenPr:
     title: str
     author: str
     updated_at: str
+    labels: tuple[str, ...] = ()
 
 
 def fetch_open_prs(gh: Gh, repo: str) -> list[OpenPr]:
@@ -60,12 +64,74 @@ def fetch_open_prs(gh: Gh, repo: str) -> list[OpenPr]:
                     title=str(n.get("title") or ""),
                     author=str((n.get("author") or {}).get("login") or ""),
                     updated_at=str(n.get("updatedAt") or ""),
+                    labels=label_names(n),
                 )
             )
         if not conn.get("pageInfo", {}).get("hasNextPage"):
             break
         cursor = conn["pageInfo"]["endCursor"]
     return out
+
+
+def label_names(node: dict[str, Any]) -> tuple[str, ...]:
+    """Label names of a GraphQL PR node (`labels { nodes { name } }`)."""
+    return tuple(
+        str(n["name"]) for n in (node.get("labels") or {}).get("nodes") or [] if n and n.get("name")
+    )
+
+
+def skip_label(cfg: Config, labels: tuple[str, ...]) -> str | None:
+    """The first of the PR's labels that turns automatic reviews off (`skip_labels`), or None."""
+    return next((name for name in labels if name.lower() in cfg.skip_labels), None)
+
+
+# a head ingest closed because the PR carries a skip label; re-opened when the label goes
+SKIP_LABEL_REASON = "pr_skip_label"
+# heads the ingest pass creates on its own; every other trigger is someone asking for a review
+AUTOMATIC_TRIGGERS = frozenset({Trigger.NEW_PR.value, Trigger.NEW_PUSH.value})
+# what a skip label refuses: the heads nobody asked for (a new PR or push, a CI check)
+SKIPPABLE_TRIGGERS = AUTOMATIC_TRIGGERS | {Trigger.CI_FAILED.value}
+
+
+def skip_noted_key(repo: str, number: int) -> str:
+    """kv: the commit whose gate comment last got the skip-label note (queue_status.py)."""
+    return f"queue.skip_noted:{repo}#{number}"
+
+
+def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
+    row = conn.execute(
+        "SELECT skip_label FROM prs WHERE repo=? AND number=?", (repo, number)
+    ).fetchone()
+    return bool(row and row["skip_label"])
+
+
+# what re-opens an already-reviewed commit: a reply under a finding, an operator, either
+# gate-comment box (a mention or review request on a reviewed commit changes nothing)
+REOPENING = frozenset(
+    {Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST}
+)
+# ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`)
+ASKING = frozenset({Trigger.MENTION, Trigger.REVIEW_REQUESTED})
+
+
+def carried_from(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str | None:
+    """The earlier commit whose review stands for `sha` (worker._carry), or None. A review of
+    `sha` itself, once there is one, takes over."""
+    row = conn.execute(
+        "SELECT carried_from FROM heads WHERE repo=? AND number=? AND sha=? AND queue='live'",
+        (repo, number, sha),
+    ).fetchone()
+    if not row or not row["carried_from"]:
+        return None
+    own = conn.execute(
+        "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1", (repo, number, sha)
+    ).fetchone()
+    return None if own else str(row["carried_from"])
+
+
+def reviewed_sha(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str:
+    """The commit whose review stands for `sha`: `sha` itself unless it is carried over."""
+    return carried_from(conn, repo, number, sha) or sha
 
 
 def enqueue_head(
@@ -80,17 +146,68 @@ def enqueue_head(
 ) -> str:
     """Create a queued head for (repo, number, sha), superseding any older active head.
 
-    Returns one of: created, promoted (existing head got priority), requeued (a finished
-    head re-opened by a review reply), noop. Caller holds a transaction.
+    Returns one of: created, promoted (an existing head got priority, or a normal request
+    took over a debounced one), requeued (a finished head re-opened), noop. Caller holds a
+    transaction.
+
+    `Trigger.CI_FAILED` (a check failed after the head's APPROVE, ci.py) only ever re-opens
+    a finished head for the light CI-check run: it never creates a head or takes one over.
+    A person asking for anything on a head whose CI check is waiting gets their run instead
+    (the CI check is re-queued by its watch if still needed), or, while it runs, right after.
     """
     ts = ts or now()
+    labelled = _has_skip_label(conn, repo, number)
+    if labelled and trigger in SKIPPABLE_TRIGGERS:
+        return "noop"
     existing = conn.execute(
-        "SELECT id, status, priority, queue FROM heads WHERE repo=? AND number=? AND sha=?",
+        "SELECT id, status, priority, queue, trigger, reason FROM heads WHERE repo=? AND number=? AND sha=?",
         (repo, number, sha),
     ).fetchone()
+    skip_closed = (
+        existing is not None
+        and existing["status"] == HeadStatus.CLOSED
+        and existing["reason"] == SKIP_LABEL_REASON
+    )
+    if (
+        labelled
+        and trigger == Trigger.REVIEW_REPLY
+        and (existing is None or existing["status"] in (HeadStatus.CLOSED, HeadStatus.SUPERSEDED))
+    ):
+        # an answer under a finding of an older commit ("fixed in ...") asks for no review of
+        # this one; on a labelled PR it only reaches a commit that was (being) reviewed
+        return "noop"
     if existing and existing["queue"] == "audit":
         return "noop"  # the PR merged: its head belongs to the audit queue now
+    if trigger == Trigger.CI_FAILED:
+        # a reviewed head only, at the front of the line like any same-sha follow-up
+        if existing is None or existing["status"] != HeadStatus.DONE:
+            return "noop"
+        return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
     priority = 1 if trigger.priority else 0
+    # the push debounce waits for pushes to settle; someone asking says they have
+    eligible = (
+        ts
+        if priority or trigger == Trigger.NORMAL_REQUEST
+        else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
+    )
+    if existing and skip_closed:
+        # closed only because of a skip label: the label is gone (ingest) or someone asked
+        supersede_other_heads(conn, repo, number, sha, ts)
+        return _requeue(
+            conn,
+            existing["id"],
+            repo,
+            number,
+            sha,
+            trigger,
+            ts,
+            priority=priority,
+            eligible=eligible,
+        )
+    if existing and existing["trigger"] == Trigger.CI_FAILED.value and trigger in REOPENING:
+        taken = _take_over_ci_check(conn, existing, trigger, ts)
+        if taken:
+            return taken
     if existing:
         if (
             existing["status"] in (HeadStatus.QUEUED, HeadStatus.RUNNING)
@@ -101,46 +218,40 @@ def enqueue_head(
                 "UPDATE heads SET priority=1, trigger=?, eligible_at=? WHERE id=?",
                 (trigger.value, ts, existing["id"]),
             )
+            if existing["status"] == HeadStatus.RUNNING and carried_from(conn, repo, number, sha):
+                # its run carried an earlier review and is finishing: review it right after
+                _rereview_after_run(conn, existing["id"])
             return "promoted"
-        if trigger in (Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST) and existing[
-            "status"
-        ] in (
+        if (
+            trigger == Trigger.NORMAL_REQUEST
+            and existing["status"] == HeadStatus.QUEUED
+            and existing["trigger"] in AUTOMATIC_TRIGGERS
+        ):
+            # asked for on a head still in its push debounce: it is no longer only automatic
+            # (a draft keeps it), and it waits in line from now, without jumping ahead
+            conn.execute(
+                "UPDATE heads SET trigger=?, eligible_at=MIN(eligible_at, ?) WHERE id=?",
+                (trigger.value, ts, existing["id"]),
+            )
+            return "promoted"
+        if trigger in REOPENING and existing["status"] in (
             HeadStatus.DONE,
             HeadStatus.FAILED,
             HeadStatus.CLOSED,
         ):
             # same commit, already reviewed: a human answered a finding (or an operator asked),
-            # so review it again with the threads in context and answer on them
-            conn.execute(
-                "UPDATE heads SET status='queued', priority=1, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
-                (trigger.value, ts, ts, existing["id"]),
-            )
-            event(
-                conn,
-                "head.requeued",
-                repo=repo,
-                number=number,
-                detail=f"{sha[:8]} re-opened by {trigger.value}",
-            )
-            return "requeued"
+            # so review it again with the threads in context and answer on them; the normal
+            # box re-opens it at the back of the line, everything else at the front
+            return _requeue(conn, existing["id"], repo, number, sha, trigger, ts, priority=priority)
+        if (
+            trigger in ASKING
+            and existing["status"] == HeadStatus.DONE
+            and carried_from(conn, repo, number, sha)
+        ):
+            # nothing reviewed this commit itself: someone asking gets a review
+            return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
-    # supersede older active heads for this PR
-    for row in conn.execute(
-        "SELECT id, status FROM heads WHERE repo=? AND number=? AND status IN ('queued','running') AND queue='live'",
-        (repo, number),
-    ).fetchall():
-        conn.execute(
-            "UPDATE heads SET status='superseded', superseded_at=?, finished_at=?, reason=? WHERE id=?",
-            (ts, ts, f"new head {sha[:8]}", row["id"]),
-        )
-        event(
-            conn,
-            "head.superseded",
-            repo=repo,
-            number=number,
-            detail=f"head {row['id']} superseded by {sha[:8]}",
-        )
-    eligible = ts if priority else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
+    supersede_other_heads(conn, repo, number, sha, ts)
     conn.execute(
         "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) VALUES (?,?,?,?,?,?,?,?)",
         (repo, number, sha, trigger.value, priority, HeadStatus.QUEUED.value, ts, eligible),
@@ -155,14 +266,121 @@ def enqueue_head(
     return "created"
 
 
+def supersede_other_heads(
+    conn: sqlite3.Connection,
+    repo: str,
+    number: int,
+    sha: str,
+    ts: str,
+    *,
+    triggers: frozenset[str] | None = None,
+) -> None:
+    """End the PR's queued and running live heads for commits other than `sha` (only those
+    with one of `triggers`, when given)."""
+    for row in conn.execute(
+        "SELECT id, trigger FROM heads WHERE repo=? AND number=? AND sha<>? AND status IN ('queued','running') AND queue='live'",
+        (repo, number, sha),
+    ).fetchall():
+        if triggers is not None and row["trigger"] not in triggers:
+            continue
+        conn.execute(
+            "UPDATE heads SET status='superseded', superseded_at=?, finished_at=?, reason=? WHERE id=?",
+            (ts, ts, f"new head {sha[:8]}", row["id"]),
+        )
+        event(
+            conn,
+            "head.superseded",
+            repo=repo,
+            number=number,
+            detail=f"head {row['id']} superseded by {sha[:8]}",
+        )
+
+
+def _requeue(
+    conn: sqlite3.Connection,
+    head_id: int,
+    repo: str,
+    number: int,
+    sha: str,
+    trigger: Trigger,
+    ts: str,
+    *,
+    priority: int = 1,
+    eligible: str | None = None,
+) -> str:
+    """Re-open a finished head, by default at the front of the line."""
+    conn.execute(
+        "UPDATE heads SET status='queued', priority=?, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
+        (priority, trigger.value, ts, eligible or ts, head_id),
+    )
+    event(
+        conn,
+        "head.requeued",
+        repo=repo,
+        number=number,
+        detail=f"{sha[:8]} re-opened by {trigger.value}",
+    )
+    return "requeued"
+
+
+def _take_over_ci_check(
+    conn: sqlite3.Connection, existing: sqlite3.Row, trigger: Trigger, ts: str
+) -> str | None:
+    """Someone re-opened (`REOPENING`) a head whose CI-check run is queued or running: the CI
+    check must not swallow the request. A queued one becomes their run (the watch queues the
+    CI check again after it, if still needed). A running one hands them the head: a retry of
+    it is their run, and once it ends a re-review is queued (`scheduler.finish_run`); a reply
+    is the exception, which the router holds until the head finishes and then queues as a
+    conversation."""
+    if existing["status"] == HeadStatus.QUEUED:
+        conn.execute(
+            "UPDATE heads SET trigger=?, eligible_at=? WHERE id=?",
+            (trigger.value, ts, existing["id"]),
+        )
+        return "promoted"
+    if (
+        existing["status"] == HeadStatus.RUNNING
+        and trigger != Trigger.REVIEW_REPLY
+        and _rereview_after_run(conn, existing["id"])
+    ):
+        conn.execute("UPDATE heads SET trigger=? WHERE id=?", (trigger.value, existing["id"]))
+        return "promoted"
+    return None
+
+
+def _rereview_after_run(conn: sqlite3.Connection, head_id: int) -> bool:
+    """Queue a re-review of the head once its running run ends (`scheduler.finish_run`).
+    False when no run of it is running."""
+    run = conn.execute(
+        "SELECT id FROM runs WHERE head_id=? AND status IN ('spawned','running') ORDER BY id DESC LIMIT 1",
+        (head_id,),
+    ).fetchone()
+    if run:
+        kv_set(conn, f"rereview.after_run:{run['id']}", "1")
+    return run is not None
+
+
 def close_pr_heads(
-    conn: sqlite3.Connection, repo: str, number: int, reason: str, *, ts: str | None = None
+    conn: sqlite3.Connection,
+    repo: str,
+    number: int,
+    reason: str,
+    *,
+    ts: str | None = None,
+    keep_requested_sha: str | None = None,
 ) -> int:
+    """Close the PR's queued and running heads. A head for `keep_requested_sha` that someone
+    asked for (not a new PR/push head) stays open."""
     ts = ts or now()
     rows = conn.execute(
-        "SELECT id FROM heads WHERE repo=? AND number=? AND status IN ('queued','running') AND queue='live'",
+        "SELECT id, sha, trigger FROM heads WHERE repo=? AND number=? AND status IN ('queued','running') AND queue='live'",
         (repo, number),
     ).fetchall()
+    rows = [
+        r
+        for r in rows
+        if not (r["sha"] == keep_requested_sha and r["trigger"] not in AUTOMATIC_TRIGGERS)
+    ]
     for row in rows:
         conn.execute(
             "UPDATE heads SET status='closed', finished_at=?, reason=? WHERE id=?",
@@ -172,18 +390,63 @@ def close_pr_heads(
     return len(rows)
 
 
+def skip_pr_heads(conn: sqlite3.Connection, repo: str, number: int, sha: str, *, ts: str) -> int:
+    """The PR carries a skip label: end the reviews nobody asked for. Automatic heads of other
+    commits are superseded (as a push would), a new PR/push head of `sha` closes (re-opened
+    when the label goes), and a queued or running CI check goes back to the review it
+    re-opened, its watch ended. A review someone asked for runs on, whatever its commit: the
+    poll can lag the router, so `sha` may be older than the request's. Returns how many heads
+    of `sha` ended."""
+    from . import ci  # ci imports this module
+
+    supersede_other_heads(conn, repo, number, sha, ts, triggers=SKIPPABLE_TRIGGERS)
+    n = 0
+    for row in conn.execute(
+        "SELECT id, trigger FROM heads WHERE repo=? AND number=? AND sha=? AND status IN ('queued','running') AND queue='live'",
+        (repo, number, sha),
+    ).fetchall():
+        if row["trigger"] == Trigger.CI_FAILED.value:
+            conn.execute(
+                "UPDATE heads SET status='done', finished_at=?, reason=? WHERE id=?",
+                (ts, SKIP_LABEL_REASON, row["id"]),
+            )
+            ci.release(conn, repo, number, sha, judged=[], pending=False)
+        elif row["trigger"] in AUTOMATIC_TRIGGERS:
+            conn.execute(
+                "UPDATE heads SET status='closed', finished_at=?, reason=? WHERE id=?",
+                (ts, SKIP_LABEL_REASON, row["id"]),
+            )
+        else:
+            continue
+        n += 1
+    return n
+
+
 def ingest_repo(
     conn: sqlite3.Connection, cfg: Config, gh: Gh, repo: str, prs: list[OpenPr]
 ) -> dict[str, int]:
     """Reconcile one repo's open PR set into the DB. Pure DB work; PRs already fetched."""
-    stats = {"created": 0, "promoted": 0, "noop": 0, "closed": 0, "draft": 0, "ignored": 0}
+    stats = {
+        "created": 0,
+        "promoted": 0,
+        "requeued": 0,
+        "noop": 0,
+        "closed": 0,
+        "draft": 0,
+        "skipped": 0,
+        "ignored": 0,
+    }
     ts = now()
     open_numbers = {p.number for p in prs}
     with tx(conn):
         for p in prs:
+            label = skip_label(cfg, p.labels)
+            if not label and _has_skip_label(conn, repo, p.number):
+                # label removed: a later one gets its note again (queue_status.py)
+                conn.execute("DELETE FROM kv WHERE key=?", (skip_noted_key(repo, p.number),))
             conn.execute(
-                "INSERT INTO prs (repo, number, head_sha, title, author, is_draft, state, updated_at) VALUES (?,?,?,?,?,?,?,?) "
-                "ON CONFLICT(repo, number) DO UPDATE SET head_sha=excluded.head_sha, title=excluded.title, author=excluded.author, is_draft=excluded.is_draft, state='open', updated_at=excluded.updated_at",
+                "INSERT INTO prs (repo, number, head_sha, title, author, is_draft, skip_label, state, updated_at) VALUES (?,?,?,?,?,?,?,?,?) "
+                "ON CONFLICT(repo, number) DO UPDATE SET head_sha=excluded.head_sha, title=excluded.title, author=excluded.author, is_draft=excluded.is_draft, skip_label=excluded.skip_label, state='open', updated_at=excluded.updated_at",
                 (
                     repo,
                     p.number,
@@ -191,6 +454,7 @@ def ingest_repo(
                     p.title,
                     p.author,
                     int(p.is_draft),
+                    int(bool(label)),
                     "open",
                     p.updated_at or ts,
                 ),
@@ -198,8 +462,19 @@ def ingest_repo(
             if p.author.lower() in IGNORED_AUTHORS:
                 stats["ignored"] += 1
                 continue
+            if label:
+                # checked before the draft rule: a labelled draft gets no draft comment either
+                if skip_pr_heads(conn, repo, p.number, p.head_sha, ts=ts):
+                    stats["skipped"] += 1
+                    event(conn, "head.skip_label", repo=repo, number=p.number, detail=label)
+                continue
             if p.is_draft:
-                if close_pr_heads(conn, repo, p.number, "pr_draft", ts=ts):
+                # drafts are not reviewed on their own, but a review requested on the draft's
+                # current commit (its gate comment's boxes) runs to the end: closing it here
+                # cancelled it minutes after it started (dashpay/platform#5285, 2026-10-05)
+                if close_pr_heads(
+                    conn, repo, p.number, "pr_draft", ts=ts, keep_requested_sha=p.head_sha
+                ):
                     stats["draft"] += 1
                 continue
             prior = conn.execute(

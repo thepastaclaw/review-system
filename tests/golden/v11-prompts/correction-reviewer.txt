@@ -6,7 +6,7 @@ Validation error(s):
 
 Fix exactly what the errors name. Keep your review as it was (the same findings, wording, severities and reasoning) unless an error requires a change; there is no need to inspect the code again.
 
-The answer must be one JSON object with the keys summary, findings[], out_of_scope_findings[], review_phase, head_sha, and prior_finding_reconciliation[] when prior findings were supplied, where:
+The answer must be one JSON object with the keys summary, findings[], out_of_scope_findings[], review_phase, head_sha, optionally considered_dismissed[], and prior_finding_reconciliation[] when prior findings were supplied, where:
 - `review_phase` is exactly "final"
 - `head_sha` is exactly "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 - `prior_finding_reconciliation` has exactly one row per prior finding below, with its `finding_hash` copied exactly as listed (never shortened or extended) and a `status` from STILL_VALID | FIXED | OUTDATED | INTENTIONALLY_DEFERRED | WITHDRAWN. No other hashes, no repeats, no other status words.

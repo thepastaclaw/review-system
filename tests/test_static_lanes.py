@@ -159,6 +159,18 @@ def test_ci_checks_says_when_github_has_more(gh):
     assert ci["truncated"] is True and ci["fetched_at"]
 
 
+def test_ci_checks_reads_every_page_of_check_runs(gh):
+    run = {"status": "completed", "conclusion": "success"}
+    gh.routes["repos/o/r/commits/abc/check-runs?per_page=100"] = [  # what --slurp returns
+        {"total_count": 102, "check_runs": [{**run, "name": f"j{i}"} for i in range(100)]},
+        {"total_count": 102, "check_runs": [{**run, "name": "j100"}, {**run, "name": "j101"}]},
+    ]
+    gh.routes["repos/o/r/commits/abc/status?per_page=100"] = {"total_count": 0, "statuses": []}
+    ci = github.ci_checks(gh, "o/r", "abc")
+    assert len(ci["checks"]) == 102 and ci["truncated"] is False
+    assert "--paginate" in next(c for c in gh.calls if "check-runs" in c[1])
+
+
 def test_ci_checks_never_fails_the_run(gh):
     gh.fail_next = ["HTTP 502: Bad Gateway"]
     assert "error" in github.ci_checks(gh, "o/r", "abc")

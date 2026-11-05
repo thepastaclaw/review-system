@@ -13,7 +13,7 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-from . import audit, proc, progress
+from . import audit, ci, proc, progress
 from .config import Config
 from .db import event, fmt_ts, kv_get, now, parse_ts, tx
 from .ingest import enqueue_head
@@ -47,10 +47,12 @@ def eligible_audits(conn: sqlite3.Connection, *, ts: str) -> list[sqlite3.Row]:
 
 def live_queued_count(conn: sqlite3.Connection) -> int:
     """Queued live heads: what the backlog rules and queue comments measure. Audit heads are
-    left out so a backfill never pushes live reviews into backlog mode."""
+    left out so a backfill never pushes live reviews into backlog mode, and so are CI checks
+    (ci.py), which review nothing."""
     return int(
         conn.execute(
-            "SELECT COUNT(*) FROM heads WHERE status='queued' AND queue='live'"
+            "SELECT COUNT(*) FROM heads WHERE status='queued' AND queue='live' AND trigger<>?",
+            (Trigger.CI_FAILED.value,),
         ).fetchone()[0]
     )
 
@@ -255,11 +257,33 @@ def retire_obsolete_head(
     return bool(n)
 
 
+# attempts a CI check (ci.py) gets before its head goes back to the review it re-opened
+CI_CHECK_ATTEMPTS = 2
+
+
 def _requeue_or_fail(
     conn: sqlite3.Connection, cfg: Config, head_id: int, kind: FailKind, reason: str
 ) -> None:
     head = conn.execute("SELECT * FROM heads WHERE id=?", (head_id,)).fetchone()
     attempts = int(head["attempts"])
+    if head["trigger"] == Trigger.CI_FAILED.value and (
+        kind == FailKind.FATAL or attempts >= CI_CHECK_ATTEMPTS
+    ):
+        # a CI check that cannot finish is not a failed review: no `failed` head, no alert,
+        # the head is done as its review left it, and its watch ends
+        conn.execute(
+            "UPDATE heads SET status='done', finished_at=?, reason=? WHERE id=?",
+            (now(), reason[:500], head_id),
+        )
+        ci.release(conn, head["repo"], head["number"], head["sha"], judged=[], pending=False)
+        event(
+            conn,
+            "ci.check_failed",
+            repo=head["repo"],
+            number=head["number"],
+            detail=f"{head['sha'][:8]} after {attempts} attempt(s): {reason[:300]}",
+        )
+        return
     # A push raced with the worker's initial metadata read.  The assigned SHA is obsolete;
     # this is normal queue churn, not a review failure and must not page the operator.
     if kind == FailKind.FATAL and reason.startswith("live base "):

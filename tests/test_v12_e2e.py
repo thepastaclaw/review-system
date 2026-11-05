@@ -195,6 +195,57 @@ def test_same_sha_reply_withdrawing_the_last_finding_approves(v12, conn, gh, lan
     assert by_title(conn)["Add a regression test"].status == "withdrawn"
     (answer,) = [r for r in gh.replies if f"finding={sugg}" in r["body"]]
     assert answer["body"].endswith("_Withdrawing this finding._")
+    # the standing review's own body says what the discussion settled (#41)
+    ((rid, body),) = gh.review_edits
+    assert rid == gh.posted_reviews[0]["id"]
+    assert "**Updated after discussion:** 1 finding(s) of this review were settled" in body
+    assert "✅ Withdrawn: 🟡 Add a regression test" in body
+
+
+def test_a_carried_issue_lifted_in_discussion_is_marked_in_the_review(v12, conn, gh, lanes, git):
+    """The standing review of a later round lists the issues it carried from earlier rounds;
+    a same-sha reply that withdraws one updates that review's body too (#41), though no
+    findings row of that review names it (the ledger does)."""
+    lanes.verify12 = confirm_matches
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Fee estimate omits drainage", severity="suggestion")]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    fee = by_title(conn)["Fee estimate omits drainage"].hash
+    lanes.candidates["general"] = [
+        cand(f"Fee estimate omits drainage [open:{fee}]", severity="suggestion")
+    ]
+    run_round(v12, conn, gh, lanes, B)
+    review_b = gh.posted_reviews[-1]
+    reply(gh, ids[fee], "The caller adds the drainage cost; see wallet.rs:40.", rid=901)
+    lanes.thread_out[fee] = {"status": "WITHDRAWN", "reply": "You are right: the caller adds it."}
+    run_round(v12, conn, gh, lanes, B, Trigger.REVIEW_REPLY)
+    assert by_title(conn)["Fee estimate omits drainage"].status == "withdrawn"
+    ((rid, body),) = gh.review_edits
+    assert rid == review_b["id"]
+    assert "✅ Withdrawn: 🟡 Fee estimate omits drainage" in body
+    assert "WITHDRAWN in discussion; do not fix" in body
+
+
+def test_no_same_sha_approval_after_a_related_ci_failure(v12, conn, gh, lanes, git):
+    """As under v11 (ci.py): once CI failed after this commit's approval in checks that looked
+    related, a discussion alone never approves it again."""
+    from reviewsys import ci
+    from reviewsys.db import kv_set, tx
+
+    lanes.verify12 = confirm_matches
+    lanes.candidates["default"] = []
+    lanes.candidates["general"] = [cand("Add a regression test", severity="suggestion", line=20)]
+    run_round(v12, conn, gh, lanes, A)
+    ids = publish_threads(gh)
+    sugg = by_title(conn)["Add a regression test"].hash
+    reply(gh, ids[sugg], "There is a test in tests/fee.rs already.", rid=902)
+    lanes.thread_out[sugg] = {"status": "WITHDRAWN", "reply": "Right, tests/fee.rs covers it."}
+    with tx(conn):
+        kv_set(conn, ci.updated_key("dashpay/platform", 1, A), json.dumps({"review_id": 1}))
+    run_round(v12, conn, gh, lanes, A, Trigger.REVIEW_REPLY)
+    assert by_title(conn)["Add a regression test"].status == "withdrawn"
+    assert all(r["event"] != "APPROVE" for r in gh.posted_reviews)
 
 
 def test_critical_tier_is_single_stage_with_the_thread_lane_beside(

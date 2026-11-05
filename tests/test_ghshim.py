@@ -12,7 +12,7 @@ from typing import Any
 import pytest
 
 from reviewsys.gh import Gh, read_only_runner
-from reviewsys.ghshim import Broker, Pin, install_shim, pinned_runner, serve
+from reviewsys.ghshim import Broker, Pin, install_shim, pinned_runner, real_gh, serve
 from reviewsys.models import ReviewError
 
 CUTOFF = "2026-09-20T12:00:00Z"
@@ -584,3 +584,16 @@ def test_read_only_runner_refuses_mutations_anywhere_in_the_document():
     with pytest.raises(ReviewError, match="read-only gh"):
         gh.graphql("query A { x }\nmutation B { resolveReviewThread(input: {}) { y } }")
     assert calls == []
+
+
+def test_the_real_gh_is_read_as_text_whatever_the_runner_returns():
+    """The default gh runner hands back bytes (a diff may hold non-UTF-8 blob bytes); the
+    pinned view reads text, a bad byte as U+FFFD as `github.get_diff` does."""
+    from types import SimpleNamespace
+
+    def runner(argv, stdin, timeout):
+        return subprocess.CompletedProcess(argv, 0, b"+caf\xc3\xa9 \xa1\n", b"")
+
+    res = real_gh(SimpleNamespace(real_gh="gh"), runner)(["pr", "diff", "1"])  # type: ignore[arg-type]
+    assert res.args == ["gh", "pr", "diff", "1"]
+    assert (res.stdout, res.stderr) == ("+café �\n", "")

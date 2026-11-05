@@ -1,6 +1,7 @@
-"""Under a v11 policy every lane prompt must stay exactly what v0.24.0 sent. The expected
-text under golden/v11-prompts/ was generated with v0.24.0's prompts.py (72ff47d) from the
-cases below and is compared as copied text, never re-derived from today's code."""
+"""Under a v11 policy every lane prompt must stay exactly what production's v11 pipeline
+sends. The expected text under golden/v11-prompts/ was generated with main's prompts.py at
+v0.28.0 (4e75920fe) from the cases below and is compared as copied text, never re-derived
+from today's code."""
 
 from __future__ import annotations
 
@@ -26,6 +27,25 @@ PRIOR = [
     }
 ]
 EVIDENCE = {"pr": {"title": "t"}, "ci": {"state": "pending"}}
+# what the context step adds beyond the PR (sister.py, drift.py)
+CONTEXT_EVIDENCE = {
+    **EVIDENCE,
+    "sister_repos": [
+        {
+            "repo": "dashpay/rust-dashcore",
+            "packages": ["dashcore"],
+            "pinned": {"sha": "d" * 40, "ref": None, "path": "/sister/pinned"},
+            "default": {"branch": "master", "sha": "e" * 40, "path": "/sister/default"},
+        }
+    ],
+    "base_drift": {
+        "base_branch": "v3.1-dev",
+        "merge_base": "b" * 40,
+        "commits_behind": 2,
+        "conflicting_files": [],
+        "base_commits_touching_changed_files": [],
+    },
+}
 
 
 def v11_prompts(p: ModuleType, cfg) -> dict[str, str]:
@@ -48,7 +68,7 @@ def v11_prompts(p: ModuleType, cfg) -> dict[str, str]:
         "evidence": EVIDENCE,
     }
     correct = {"errors": ["first", "second"], "turn": 1, "turns": 2}
-    return {
+    out = {
         "reviewer-first": p.reviewer_prompt(
             cfg, **review, phase="preliminary", role="general", prior=[], prior_sha=None
         ),
@@ -115,14 +135,38 @@ def v11_prompts(p: ModuleType, cfg) -> dict[str, str]:
         "repair-plain": p.repair_prompt(
             "{", kind="", expected_phase="", head_sha=HEAD, prior_hashes=[]
         ),
+        "reviewer-context": p.reviewer_prompt(
+            cfg,
+            **{**review, "evidence": CONTEXT_EVIDENCE},
+            phase="preliminary",
+            role="general",
+            prior=[],
+            prior_sha=None,
+        ),
     }
+    # a repo's verifier-only instructions are appended to the verifier's review skill
+    verifier_md = cfg.skills_dir / cfg.repo("dashpay/platform").skill_path / "verifier.md"
+    verifier_md.write_text("VERIFIER-ONLY SKILL")
+    try:
+        out["verifier-context"] = p.verifier_prompt(
+            cfg,
+            **{**verify, "evidence": CONTEXT_EVIDENCE},
+            phase="preliminary",
+            coderabbit_ids=[11],
+            prior=[],
+            prior_sha=None,
+            phase1_skipped="was skipped by the gate",
+        )
+    finally:
+        verifier_md.unlink()
+    return out
 
 
 @pytest.mark.parametrize(
     "name",
     sorted(path.stem for path in GOLDEN.glob("*.txt")),
 )
-def test_v11_prompt_is_v024s(cfg, name):
+def test_v11_prompt_is_mains(cfg, name):
     assert cfg.policy.pipeline is None
     got = v11_prompts(prompts, cfg)[name]
     assert got == (GOLDEN / f"{name}.txt").read_text(encoding="utf-8")

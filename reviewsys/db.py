@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 from collections.abc import Callable, Iterator
@@ -9,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 9
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -124,15 +125,29 @@ MIGRATIONS: dict[int, str] = {
         WHEN h.priority<>0 THEN 'priority' ELSE 'normal' END
         FROM heads h WHERE h.id=runs.head_id AND h.queued_at<=runs.started_at);
     """,
+    # events are kept forever by default (`[retention] event_days = 0`), and progress, compare
+    # and the exporter look them up by run and kind; without this they scan the whole table
+    6: """
+    CREATE INDEX IF NOT EXISTS events_run ON events (run_id, kind);
+    """,
+    # the PR carries a `[scheduling] skip_labels` label: no automatic review (see ingest.py)
+    7: """
+    ALTER TABLE prs ADD COLUMN skip_label INTEGER NOT NULL DEFAULT 0;
+    """,
+    # the PR's own diff as a live run found it, and the earlier review it carries (worker._carry)
+    8: """
+    ALTER TABLE heads ADD COLUMN diff_print TEXT;
+    ALTER TABLE heads ADD COLUMN carried_from TEXT;
+    """,
     # the issue ledger (ledger.py): one row per issue the bot raised on a PR, keyed by its
     # `finding_hash` (byte-compatible with the markers on GitHub), and the event history it is
     # folded from. `issue_events.key` names the fact an event records (`posted:<run>:<hash>`,
     # ...): the backfill and the live write-through derive the same key for the same fact, so
     # either can run first and neither duplicates the other. Only additive statements: the old
     # code keeps working against this schema (it never names these tables or the new column).
-    # `findings.candidate_id` is the harness-assigned candidate id of v12 finder lanes;
-    # `events_run` serves the v12 review-strength query (a run's own events).
-    6: """
+    # `findings.candidate_id` is the harness-assigned candidate id of v12 finder lanes. The v12
+    # review-strength query (a run's own events) is served by migration 6's `events_run`.
+    9: """
     CREATE TABLE IF NOT EXISTS issues (
         repo TEXT NOT NULL, number INTEGER NOT NULL, hash TEXT NOT NULL,
         file TEXT NOT NULL DEFAULT '', line_start INTEGER, line_end INTEGER, anchor_sha TEXT,
@@ -152,7 +167,6 @@ MIGRATIONS: dict[int, str] = {
         UNIQUE (repo, number, key));
     CREATE INDEX IF NOT EXISTS issue_events_issue ON issue_events (repo, number, hash);
     CREATE INDEX IF NOT EXISTS issue_events_run ON issue_events (run_id);
-    CREATE INDEX IF NOT EXISTS events_run ON events (run_id);
     ALTER TABLE findings ADD COLUMN candidate_id TEXT;
     """,
 }
@@ -232,12 +246,24 @@ def migrate(conn: sqlite3.Connection) -> None:
             if version > current:
                 # executescript() would implicitly COMMIT; run statements one by one instead
                 for stmt in MIGRATIONS[version].split(";"):
-                    if stmt.strip():
+                    if stmt.strip() and not _column_exists(conn, stmt):
                         conn.execute(stmt)
                 if row is None:
                     conn.execute("INSERT INTO schema_version VALUES (?)", (version,))
                 else:
                     conn.execute("UPDATE schema_version SET version=?", (version,))
+
+
+_ADD_COLUMN_RE = re.compile(r"\s*ALTER\s+TABLE\s+(\w+)\s+ADD\s+COLUMN\s+(\w+)", re.IGNORECASE)
+
+
+def _column_exists(conn: sqlite3.Connection, stmt: str) -> bool:
+    """`stmt` adds a column the table already has: a database the unmerged policy v12 branch
+    migrated to its own schema v6 has `findings.candidate_id`, which migration 9 adds."""
+    m = _ADD_COLUMN_RE.match(stmt)
+    if not m:
+        return False
+    return any(r[1] == m.group(2) for r in conn.execute(f"PRAGMA table_info({m.group(1)})"))
 
 
 @contextmanager

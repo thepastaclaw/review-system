@@ -29,6 +29,7 @@ from urllib.parse import quote
 
 from .db import event, fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
 from .gh import Gh
+from .ingest import reviewed_sha
 from .models import FailKind, ReviewError
 from .publish import canonical_event
 
@@ -58,6 +59,11 @@ def latest_verdict(conn: sqlite3.Connection, repo: str, number: int, sha: str) -
     return canonical_event(str(row["event"])) if row else None
 
 
+def verdict_for(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str | None:
+    """`latest_verdict` of the review that stands for this commit, its own or a carried one."""
+    return latest_verdict(conn, repo, number, reviewed_sha(conn, repo, number, sha))
+
+
 def wanted(conn: sqlite3.Connection, repo: str, number: int) -> str | None:
     """The label this PR should carry right now, or None: the bot's latest verdict on the PR's
     live head. The live head is the newest head row (ingest and the router both create one for
@@ -76,13 +82,13 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int) -> str | None:
     ).fetchone()
     if not head or (pr and pr["head_sha"] != head["sha"]):
         return None
-    verdict = latest_verdict(conn, repo, number, str(head["sha"]))
+    verdict = verdict_for(conn, repo, number, str(head["sha"]))
     return VERDICT_LABELS.get(verdict) if verdict else None
 
 
 def _dirty_prs(conn: sqlite3.Connection, since: str) -> list[tuple[str, int]]:
     """PRs whose wanted label may have changed since `since`: a review row written, a head
-    created or re-queued, or GitHub activity on the PR (`prs.updated_at` is GitHub's updatedAt:
+    created, re-queued or carried over, or GitHub activity on the PR (`prs.updated_at` is GitHub's updatedAt:
     a push, a reopen, a close, a label change). With no cursor yet (first pass after deploy)
     every open PR is dirty once, which backfills labels for standing verdicts; closed history
     is never swept."""
@@ -92,8 +98,11 @@ def _dirty_prs(conn: sqlite3.Connection, since: str) -> list[tuple[str, int]]:
         rows = conn.execute(
             "SELECT repo, number FROM reviews WHERE posted_at >= ?"
             " UNION SELECT repo, number FROM heads WHERE queued_at >= ? AND queue='live'"
+            # a carried-over review (worker._carry) writes no `reviews` row
+            " UNION SELECT repo, number FROM heads WHERE finished_at >= ? AND carried_from IS NOT NULL"
+            " AND queue='live'"
             " UNION SELECT repo, number FROM prs WHERE updated_at >= ?",
-            (since, since, since),
+            (since, since, since, since),
         ).fetchall()
     return [(str(r["repo"]), int(r["number"])) for r in rows]
 

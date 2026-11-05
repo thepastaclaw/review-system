@@ -156,8 +156,19 @@ def serve(
 
 
 def real_gh(pin: Pin, run: GhRunner, timeout: int = 600) -> RealGh:
-    """The real gh as `serve` calls it, through a `Gh` runner."""
-    return lambda args: run([pin.real_gh, *args], None, timeout)
+    """The real gh as `serve` calls it, through a `Gh` runner, decoded: the default runner
+    hands back bytes (a diff may hold non-UTF-8 blob bytes, which read as U+FFFD here, as
+    `github.get_diff` reads them)."""
+
+    def call(args: list[str]) -> Result:
+        res = run([pin.real_gh, *args], None, timeout)
+        return Result(res.args, res.returncode, _text(res.stdout), _text(res.stderr))
+
+    return call
+
+
+def _text(out: str | bytes | None) -> str:
+    return out.decode("utf-8", errors="replace") if isinstance(out, bytes) else out or ""
 
 
 def pinned_runner(pin: Pin, inner: GhRunner | None = None) -> GhRunner:

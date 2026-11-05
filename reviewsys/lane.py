@@ -4,22 +4,27 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import gzip
 import hashlib
 import json
+import logging
 import os
 import re
 import shutil
 import signal
 import subprocess
+import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .contract import parse_json_object
 from .models import FailKind, ReviewError
+
+log = logging.getLogger(__name__)
 
 LaneRunner = Callable[["LaneSpec", Path, Path], "LaneResult"]
 STRUCTURED_RETRIES_EXHAUSTED = "error_max_structured_output_retries"
@@ -56,6 +61,12 @@ CORRECTION_TIMEOUT_SECONDS = 30 * 60
 # (artifact dir, spec, "running" | None): how `run_with_corrections` tells the slot holder
 # (lanepool.gated) that a correction turn started or ended abnormally, for the status page
 TurnMark = Callable[[Path, "LaneSpec", str | None], None]
+# What a lane leaves in its artifact dir beside prompt.md / stdout.json / lane-meta.json: its
+# whole Claude Code session (`save_transcript`), any subagent sessions it ran, and the first
+# request it sent (`FirstRequest`): the system prompt and tool schemas the model was given
+TRANSCRIPT = "transcript.jsonl.gz"
+SUBAGENT_TRANSCRIPTS = "subagents"
+FIRST_REQUEST = "first-request.json.gz"
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +93,8 @@ class LaneSpec:
     # lane may not use (see `with_overrides`)
     env: tuple[tuple[str, str], ...] = ()
     disallowed_tools: tuple[str, ...] = ()
+    # more directories the lane may read beside `cwd` and `add_dir` (sister repo checkouts)
+    extra_dirs: tuple[Path, ...] = ()
     # Correction turns (see `run_with_corrections`). `session_id` (a UUID) makes the lane keep
     # its Claude Code session under that id instead of `--no-session-persistence`; with
     # `resume` the lane continues that session, `prompt` being the next user turn. `check` looks
@@ -273,8 +286,9 @@ def session_args(spec: LaneSpec) -> list[str]:
     --session-id <uuid>` saves the session under that id (the envelope's `session_id` echoes
     it), and `--resume <uuid>` with the same flags continues it with the full earlier context
     (prompt cache included), from any cwd, keeping the id. A missing session exits 1 with "No
-    conversation found with session ID" on stderr. Every lane without a session id keeps
-    `--no-session-persistence`: nothing to clean up."""
+    conversation found with session ID" on stderr. `run_claude_lane` gives every lane a
+    session id (its transcript is kept), so `--no-session-persistence` is only for a spec run
+    some other way."""
     if spec.resume and spec.session_id:
         return ["--resume", spec.session_id]
     if spec.session_id:
@@ -314,16 +328,148 @@ def project_slug(cwd: Path) -> str:
 
 
 def forget_session(session_id: str) -> None:
-    """Delete a lane's saved session once its corrections are over. A transcript holds every
-    tool result of the lane (megabytes for a long review) and nothing reads it again: the
-    lane's artifacts keep the prompts and answers. The per-worktree project directory stays
-    (the run's other lanes share it); gc removes it once empty, and any leftover."""
+    """Delete a lane's saved session once its turns are over (`save_transcript` has copied
+    it into the lane's artifacts). The per-worktree project directory stays (the run's other
+    lanes share it); gc removes it once empty, and any leftover."""
     for p in session_files(session_id):
         if p.is_dir():
             shutil.rmtree(p, ignore_errors=True)
         else:
             with contextlib.suppress(OSError):
                 p.unlink()
+
+
+def save_transcript(session_id: str, artifact_dir: Path) -> None:
+    """Keep a lane's session as `artifact_dir/TRANSCRIPT`, before `forget_session` deletes
+    it: every turn, tool call and tool result once, in order, correction turns included (they
+    resume the same session). Subagent sessions (`<id>/subagents/*.jsonl`) go to
+    `SUBAGENT_TRANSCRIPTS/`. The encrypted reasoning `signature` on thinking blocks (three
+    quarters of a review's transcript, unreadable and incompressible) is replaced by its
+    length. Tool output Claude Code spilled to `<id>/tool-results/` is not kept: the
+    transcript holds what the model was shown. Never fails the lane."""
+    files = session_files(session_id)
+    copies = [(p, artifact_dir / TRANSCRIPT) for p in files if p.suffix == ".jsonl"][:1]
+    copies += [
+        (q, artifact_dir / SUBAGENT_TRANSCRIPTS / f"{q.name}.gz")
+        for p in files
+        if p.is_dir()
+        for q in sorted((p / "subagents").glob("*.jsonl"))
+    ]
+    for src, dest in copies:
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            with src.open(encoding="utf-8", errors="replace") as fin, _gzip_to(dest, "wt") as out:
+                for line in fin:
+                    out.write(_without_signatures(line))
+        except OSError as exc:
+            log.warning("lane transcript %s not saved to %s: %s", session_id, dest, exc)
+
+
+def clear_lane_records(artifact_dir: Path) -> None:
+    """Drop what an earlier lane left in a reused artifact dir (a stand-in retry of triage or
+    selection reuses its attempt dir), so a transcript is never paired with another lane's
+    prompt."""
+    for name in (TRANSCRIPT, FIRST_REQUEST):
+        with contextlib.suppress(OSError):
+            (artifact_dir / name).unlink()
+    shutil.rmtree(artifact_dir / SUBAGENT_TRANSCRIPTS, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def _gzip_to(dest: Path, mode: str) -> Iterator[Any]:
+    """gzip `dest` through a temporary file, so a worker killed mid-write leaves no truncated
+    archive behind."""
+    tmp = dest.with_name(dest.name + ".tmp")
+    try:
+        with gzip.open(tmp, mode, compresslevel=6) as out:
+            yield out
+        os.replace(tmp, dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _without_signatures(line: str) -> str:
+    if '"signature"' not in line:
+        return line
+    try:
+        entry = json.loads(line)
+    except json.JSONDecodeError:
+        return line
+    message = entry.get("message") if isinstance(entry, dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return line
+    for block in content:
+        sig = block.get("signature") if isinstance(block, dict) else None
+        if isinstance(sig, str) and sig:
+            block["signature"] = f"<{len(sig)} bytes removed>"
+    return json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+class FirstRequest:
+    """Keep a lane's first request as `artifact_dir/FIRST_REQUEST`: the exact system prompt,
+    tool schemas and opening messages the model was given, which the transcript does not
+    record. Claude Code writes request bodies with `OTEL_LOG_RAW_API_BODIES=file:<dir>`
+    (verified with 2.1.280: one `<id>.request.json` / `<id>.response.json` per call and an
+    `index.jsonl` line naming each pair as its response lands; thinking text redacted, no
+    headers). Every later body is the whole conversation again, so once the index names the
+    first main-thread call (`query_source` "sdk") it is kept, the rest deleted and the
+    directory made read-only: Claude Code's further writes fail quietly (verified: exit 0,
+    nothing on stdout or stderr). The directory is a temporary one outside the run dir, where
+    no lane can read another's bodies. `poll` runs while the lane runs, `close` at the end;
+    neither ever fails the lane."""
+
+    def __init__(self, artifact_dir: Path) -> None:
+        self.dest = artifact_dir / FIRST_REQUEST
+        self.dir = Path(tempfile.mkdtemp(prefix="reviewsys-bodies-"))
+        self.done = False
+
+    @property
+    def env(self) -> dict[str, str]:
+        return {"OTEL_LOG_RAW_API_BODIES": f"file:{self.dir}"}
+
+    def poll(self) -> None:
+        if self.done:
+            return
+        first = _first_request(self.dir)
+        if first is None:
+            return
+        self.done = True
+        try:
+            with first.open("rb") as fin, _gzip_to(self.dest, "wb") as out:
+                shutil.copyfileobj(fin, out)
+        except OSError as exc:
+            log.warning("first request not kept in %s: %s", self.dest.parent, exc)
+        for p in self.dir.iterdir():
+            with contextlib.suppress(OSError):
+                p.unlink()
+        with contextlib.suppress(OSError):
+            self.dir.chmod(0o500)
+
+    def close(self) -> None:
+        try:
+            self.poll()
+        finally:
+            with contextlib.suppress(OSError):
+                self.dir.chmod(0o700)
+            shutil.rmtree(self.dir, ignore_errors=True)
+
+
+def _first_request(bodies: Path) -> Path | None:
+    """The first main-thread request the index names, or None (no response yet). Only "sdk"
+    calls count: a renamed source keeps nothing rather than some side call's prompt, and
+    `reviewsys doctor` says so."""
+    with contextlib.suppress(OSError):
+        for line in (bodies / "index.jsonl").read_text(encoding="utf-8").splitlines():
+            with contextlib.suppress(json.JSONDecodeError):
+                entry = json.loads(line)
+                if not isinstance(entry, dict) or entry.get("query_source") != "sdk":
+                    continue
+                name = entry.get("request_file")
+                if isinstance(name, str) and name and Path(name).name == name:
+                    path = bodies / name
+                    return path if path.is_file() else None
+    return None
 
 
 def run_with_corrections(
@@ -340,8 +486,9 @@ def run_with_corrections(
     `correction-<n>/` and a timeout of at most CORRECTION_TIMEOUT_SECONDS. Called by the slot
     holder (lanepool.gated), so the corrections run in the lane's slot: never released, never
     lined up again. A turn that did not finish (failed, timed out, stopped; see
-    `LaneResult.answered`) ends the corrections; the caller reads every turn in `followups` and decides. The saved session is
-    deleted at the end however it went."""
+    `LaneResult.answered`) ends the corrections; the caller reads every turn in `followups`
+    and decides. The saved session is kept in `artifact_dir` (`save_transcript`) and deleted
+    at the end however it went."""
     try:
         res = runner(spec, artifact_dir, worktree)
         turn = res
@@ -375,6 +522,7 @@ def run_with_corrections(
             res.followups.append(turn)
     finally:
         if spec.session_id:
+            save_transcript(spec.session_id, artifact_dir)
             forget_session(spec.session_id)
     return res
 
@@ -401,6 +549,7 @@ def argv_for(spec: LaneSpec) -> list[str]:
         spec.effort,
         "--add-dir",
         str(spec.add_dir),
+        *(str(d) for d in spec.extra_dirs),
         "--output-format",
         "json",
         *(["--disallowedTools", ",".join(spec.disallowed_tools)] if spec.disallowed_tools else []),
@@ -416,9 +565,34 @@ def argv_for(spec: LaneSpec) -> list[str]:
 
 def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneResult:
     """Spawn `claude` in the worktree with the prompt on stdin. Same process group as the worker
-    so a group kill takes the lane down with us."""
+    so a group kill takes the lane down with us. A lane's opening turn keeps its first request
+    (`FirstRequest`; a resumed turn's first request is the whole session again); a lane
+    without a session id gets one of its own, saved into `artifact_dir` and deleted with the
+    turn (a correctable lane's session belongs to `run_with_corrections`, which saves it once
+    all its turns are in)."""
+    own = not spec.session_id
+    if own:
+        spec = dataclasses.replace(spec, session_id=new_session_id())
+    first = None
+    if not spec.resume:
+        clear_lane_records(artifact_dir)
+        first = FirstRequest(artifact_dir)
+    try:
+        return _run_turn(spec, artifact_dir, first)
+    finally:
+        if first is not None:
+            first.close()
+        if own:
+            save_transcript(spec.session_id, artifact_dir)
+            forget_session(spec.session_id)
+
+
+def _run_turn(spec: LaneSpec, artifact_dir: Path, first: FirstRequest | None) -> LaneResult:
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "prompt.md").write_text(spec.prompt, encoding="utf-8")
+    env = lane_env(spec)
+    if first is not None:
+        env.update(first.env)
     t0 = time.monotonic()
     proc = subprocess.Popen(
         argv_for(spec),
@@ -427,7 +601,7 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        env=lane_env(spec),
+        env=env,
     )
     timed_out = cancelled = False
     deadline = t0 + spec.timeout_seconds
@@ -442,6 +616,8 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
             break
         except subprocess.TimeoutExpired as exc:
             stdin = None
+            if first is not None:
+                first.poll()
             if proc.poll() is not None:
                 # claude is done but a tool it started still holds the pipes: keep what it
                 # wrote rather than waiting out the deadline for an EOF that is not coming
@@ -480,7 +656,7 @@ def run_claude_lane(spec: LaneSpec, artifact_dir: Path, _unused: Path) -> LaneRe
                 "cost_usd": res.cost_usd,
                 "turns": res.turns,
                 "subtype": res.subtype,
-                "session_id": res.session_id if spec.session_id else None,
+                "session_id": res.session_id,
                 "argv": argv_for(spec),
             },
             indent=1,

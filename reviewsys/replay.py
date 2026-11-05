@@ -68,8 +68,8 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg_mod
-from . import degraded, github, ledger, replaygit, worker
-from .db import connect, now, parse_ts, tx
+from . import converse, degraded, github, ledger, replaygit, worker
+from .db import connect, kv_get, kv_set, now, parse_ts, tx
 from .degraded import Prober
 from .gh import Gh, GhRunner, _default_runner, env_runner, read_only_runner
 from .ghshim import Broker, Pin, install_shim, pinned_runner, real_gh
@@ -473,6 +473,12 @@ def seed_history(
             },
             "INSERT OR REPLACE",
         )
+        # when production started requiring tracking for deferrals: one recorded before it
+        # keeps lifting its finding (converse.tracking_required_since; never recorded by a
+        # replay, which would otherwise take its own start as the cutoff)
+        since = kv_get(source, converse.TRACKING_CUTOFF_KEY) if _has_table(source, "kv") else None
+        if since:
+            kv_set(scratch, converse.TRACKING_CUTOFF_KEY, since)
         for r in runs:
             hid = _ensure_head(scratch, repo, number, str(r["sha"]), str(r["trigger"]))
             ids[int(r["id"])] = _insert(

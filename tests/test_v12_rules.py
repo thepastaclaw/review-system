@@ -458,23 +458,65 @@ def test_thread_answer_rules():
         )
 
 
-def test_a_deferral_needs_a_maintainer_on_the_thread():
-    def out(h):
+def test_a_deferral_needs_a_maintainer_on_the_thread_and_a_visible_tracking_issue():
+    def out(h, cited=""):
         return converse.ConversationOutput(
-            {h: converse.ThreadOutcome(h, "INTENTIONALLY_DEFERRED", "ok")}
+            {h: converse.ThreadOutcome(h, "INTENTIONALLY_DEFERRED", "ok", tracking_url=cited)}
         )
 
-    maint = [{"is_bot": True}, {"association": "MEMBER"}]
+    def status(o, transcript, **kw):
+        t = {"a": {"transcript": transcript, "severity": "blocking"}}
+        return converse.accept_deferrals(o, t, repo="r/x", number=1, can_file=False, **kw)
+
+    maint = [{"is_bot": True}, {"association": "MEMBER", "body": "defer, tracked in #12"}]
+    untracked = [{"is_bot": True}, {"association": "MEMBER", "body": "a follow-up later"}]
     outsider = [{"association": "MEMBER"}, {"is_bot": True}, {"association": "CONTRIBUTOR"}]
-    assert (
-        converse.accept_deferrals(out("a"), {"a": {"transcript": maint}}).outcomes["a"].status
-        == "INTENTIONALLY_DEFERRED"
+    tracked = status(out("a"), maint).outcomes["a"]
+    assert (tracked.status, tracked.tracking_url) == (
+        "INTENTIONALLY_DEFERRED",
+        "https://github.com/r/x/issues/12",
     )
-    assert (
-        converse.accept_deferrals(out("a"), {"a": {"transcript": outsider}}).outcomes["a"].status
-        == "DEFERRAL_PENDING"
+    # cited by the lane (its reply) and visible on the PR (here: the description)
+    cited = status(out("a", "r/x#40"), untracked, pr_text="Follow-up: r/x#40").outcomes["a"]
+    assert cited.status == "INTENTIONALLY_DEFERRED"
+    # a maintainer's call, but nothing tracks it: the issue stands and the reply asks for a
+    # link (the thread lane cannot have one filed)
+    held = status(out("a", "r/x#41"), untracked).outcomes["a"]
+    assert held.status == converse.DEFERRAL_NEEDS_TRACKING
+    assert "Link one here" in held.reply and "file it" not in held.reply
+    assert status(out("a"), outsider).outcomes["a"].status == "DEFERRAL_PENDING"
+    assert status(out("a"), []).outcomes["a"].status == "DEFERRAL_PENDING"
+    # already deferred in the ledger: a restatement is not vetted again
+    assert status(out("a"), untracked, settled={"a"}).outcomes["a"].status == (
+        "INTENTIONALLY_DEFERRED"
     )
-    assert converse.accept_deferrals(out("a"), {"a": {}}).outcomes["a"].status == "DEFERRAL_PENDING"
+
+
+def test_a_thread_lane_reply_cites_its_tracking_reference():
+    def cite(reply, said="", visible=""):
+        return converse.cited_reference(
+            reply, said=said, visible=said + "\n" + visible, repo="r/x", number=1
+        )
+
+    reply = "This matches upstream bitcoin/bitcoin#31000; the follow-up is tracked in #7012."
+    # the one the maintainer named beats an upstream PR the description links
+    assert (
+        cite(reply, said="I opened #7012", visible="Backport of bitcoin/bitcoin#31000")
+        == "https://github.com/r/x/issues/7012"
+    )
+    assert cite(reply, said="see #7012") == "https://github.com/r/x/issues/7012"
+    # only the description links one: that one
+    assert cite(reply, visible="Tracked in #7012.") == "https://github.com/r/x/issues/7012"
+    # none visible: the first named, which accept_deferrals reports as not found
+    assert cite(reply) == "https://github.com/bitcoin/bitcoin/issues/31000"
+    # the line the reply marks as tracking wins over an upstream PR a maintainer named
+    both = "This mirrors bitcoin/bitcoin#31000.\nTracked in #7012."
+    assert (
+        cite(both, said="Defer, mirrors bitcoin/bitcoin#31000", visible="Follow-up: #7012")
+        == "https://github.com/r/x/issues/7012"
+    )
+    assert cite("Deferred to #3; see #1.") == "https://github.com/r/x/issues/3"
+    assert cite("This PR (#1) only.") == ""
 
 
 # ---- ledger: reconcile, severity, seen, outcomes without a thread ----
@@ -846,3 +888,52 @@ def test_cut_json_says_so_inside_its_fence():
         and "more characters not shown" in text
     )
     assert _json_block([1]) == "```json\n[\n 1\n]\n```"
+
+
+@pytest.mark.parametrize(
+    "status, cited",
+    [
+        ("INTENTIONALLY_DEFERRED", ""),
+        ("INTENTIONALLY_DEFERRED", "https://github.com/r/x/issues/12"),
+        ("STILL_VALID", ""),
+    ],
+)
+def test_a_restated_deferral_keeps_the_roots_line_unless_it_names_tracking(gh, status, cited):
+    """An issue the ledger already holds deferred, restated without a tracking link (the
+    author asking "still deferred?"), keeps the status line and link its root shows; one that
+    names its tracking refreshes the line, and one the lane re-opens loses it."""
+    from reviewsys import publish
+
+    root = "<!-- thepastaclaw-review v1 finding=abc -->\n" + publish.with_thread_status(
+        "**T**\n\nbody",
+        status="INTENTIONALLY_DEFERRED",
+        head_sha="c" * 40,
+        tracking_url="https://github.com/r/x/issues/9",
+    )
+    thread = {
+        "comment_id": 800,
+        "thread_id": "T",
+        "latest_reply_id": 901,
+        "awaiting_answer": True,
+        "body": root,
+    }
+    out = {"abc": converse.ThreadOutcome("abc", status, "Yes, still deferred.", tracking_url=cited)}
+    (item,) = publish.answer_thread_lane(
+        gh,
+        "r/x",
+        1,
+        "h" * 40,
+        outcomes=out,
+        threads={"abc": thread},
+        same_sha=True,
+        settled={"abc"},
+    )
+    assert item["action"] == "replied"
+    if status == "STILL_VALID":  # the lane re-opened it: the root no longer says deferred
+        ((_, edited),) = gh.comment_edits
+        assert "Deferred" not in edited
+    elif cited:
+        ((_, edited),) = gh.comment_edits
+        assert "tracked in https://github.com/r/x/issues/12" in edited
+    else:
+        assert gh.comment_edits == [] and "marked" not in item

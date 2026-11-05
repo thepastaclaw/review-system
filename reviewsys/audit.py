@@ -41,6 +41,7 @@ from .config import Config
 from .contract import Finding, parse_json_object
 from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, tx
 from .gh import Gh
+from .ingest import label_names, reviewed_sha, skip_label
 from .models import FailKind, ReviewError
 
 log = logging.getLogger(__name__)
@@ -62,7 +63,8 @@ SYNC_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 CANONICAL_RC = "Canonical verifier result: `REQUEST_CHANGES`"
-BLOCKING_COUNT_RE = re.compile(r"🔴 ([1-9]\d*) blocking")
+# a count the conversation lane struck through reads "🔴 ~~2~~ 1 blocking"
+BLOCKING_COUNT_RE = re.compile(r"🔴 (?:~~\d+~~ )?([1-9]\d*) blocking")
 PHASE_MARKER_RE = re.compile(r"phase=([a-z]+) sha=([0-9a-f]{40})")
 
 MODE_FULL, MODE_LIGHT, MODE_SYNC = "full", "light", "sync"
@@ -80,7 +82,7 @@ query($q: String!, $cursor: String) {
     pageInfo { hasNextPage endCursor }
     nodes { ... on PullRequest {
       number title url mergedAt headRefOid baseRefName additions deletions
-      author { login } mergedBy { login } mergeCommit { oid }
+      author { login } mergedBy { login } mergeCommit { oid } labels(first: 50) { nodes { name } }
       reviews(last: 60) { nodes { author { login } state submittedAt commit { oid } body } }
     } }
   }
@@ -101,6 +103,7 @@ class MergedPr:
     merge_commit: str
     size: int
     reviews: list[dict[str, Any]] = field(default_factory=list)
+    labels: tuple[str, ...] = ()
 
     @classmethod
     def from_node(cls, repo: str, n: dict[str, Any]) -> MergedPr:
@@ -116,6 +119,7 @@ class MergedPr:
             merge_commit=str((n.get("mergeCommit") or {}).get("oid") or ""),
             size=int(n.get("additions") or 0) + int(n.get("deletions") or 0),
             reviews=[r for r in (n.get("reviews") or {}).get("nodes") or [] if r],
+            labels=label_names(n),
         )
 
 
@@ -259,11 +263,16 @@ def seed_rank(pr: MergedPr, mode: str, first_mergers: tuple[str, ...]) -> int:
 
 
 def _excluded(cfg: Config, pr: MergedPr) -> bool:
-    return pr.repo in cfg.audit.exclude_repos or pr.author.lower() in IGNORED_AUTHORS
+    return (
+        pr.repo in cfg.audit.exclude_repos
+        or pr.author.lower() in IGNORED_AUTHORS
+        or skip_label(cfg, pr.labels) is not None
+    )
 
 
 def _clean(conn: sqlite3.Connection, cfg: Config, pr: MergedPr) -> bool:
-    return is_clean(pr, cfg.bot_login, db_verdict(conn, pr.repo, pr.number, pr.head_sha))
+    sha = reviewed_sha(conn, pr.repo, pr.number, pr.head_sha)
+    return is_clean(pr, cfg.bot_login, db_verdict(conn, pr.repo, pr.number, sha))
 
 
 def enqueue(

@@ -177,6 +177,61 @@ def test_the_finder_prompt_carries_no_anchor(cfg):
     assert later.endswith(prompts.STRUCTURED_CONTRACT) and prompts.RAW_JSON_CONTRACT not in later
 
 
+def test_v12_lanes_are_told_about_sister_checkouts_and_base_drift(cfg):
+    """As v11's reviewer and verifier are (prompts.context_notes), and only when the context
+    step found them."""
+    evidence = {
+        "pr": {"title": "Fix it"},
+        "sister_repos": [{"repo": "dashpay/rust-dashcore", "pinned": None, "default": None}],
+        "base_drift": {"commits_behind": 3, "conflicting_files": []},
+    }
+    assert prompts.SISTER_REPOS_NOTE not in _finder(cfg)
+    finder = _finder(cfg, evidence=evidence)
+    assert prompts.SISTER_REPOS_NOTE in finder and prompts.BASE_DRIFT_NOTE in finder
+    verify = prompts.verify_prompt(
+        cfg,
+        repo=REPO,
+        number=1,
+        head_sha=A,
+        meta={"title": "Fix it", "body": "Body", "baseRefName": "develop"},
+        coverage_from="b" * 40,
+        candidates=[],
+        coderabbit={},
+        ledger_summary={},
+        evidence=evidence,
+        guidance="",
+        phase_note="",
+        structured=False,
+    )
+    assert prompts.SISTER_REPOS_NOTE in verify and prompts.BASE_DRIFT_NOTE in verify
+
+
+def test_the_v12_verifier_reads_the_repos_verifier_skill(cfg, skills_dir):
+    """A repo's verifier-only `verifier.md` reaches the v12 verify lane as it does v11's
+    verifier (in its `{review_skill}`, as the skills repo's template has it), and never a
+    finder."""
+    template = skills_dir / "prompts" / "v12" / "verifier.md"
+    template.write_text("{review_skill}\n" + template.read_text())
+    path = cfg.skills_dir / cfg.repo(REPO).skill_path / "verifier.md"
+    path.write_text("VERIFIER-ONLY SKILL")
+    kw = dict(
+        repo=REPO,
+        number=1,
+        head_sha=A,
+        meta={"title": "Fix it", "body": "Body", "baseRefName": "develop"},
+        coverage_from="b" * 40,
+        candidates=[],
+        coderabbit={},
+        ledger_summary={},
+        evidence={},
+        guidance="",
+        phase_note="",
+        structured=False,
+    )
+    assert "VERIFIER-ONLY SKILL" in prompts.verify_prompt(cfg, **kw)
+    assert "VERIFIER-ONLY SKILL" not in _finder(cfg)
+
+
 def test_a_template_without_its_slots_is_fatal(cfg, skills_dir):
     (skills_dir / "prompts" / "v12" / "finder.md").write_text("no slots here")
     with pytest.raises(ReviewError) as exc:
