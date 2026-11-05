@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T00:35:01Z",
-  "generated_at": "2026-11-05T00:35:01Z",
+  "data_as_of": "2026-11-05T00:36:01Z",
+  "generated_at": "2026-11-05T00:36:01Z",
   "history": {
     "daily": [
       {
@@ -328,7 +328,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 775,
+            "n": 776,
             "p90_seconds": 1825
           }
         },
@@ -354,6 +354,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=40194422",
+        "kind": "run.spawned",
+        "number": 8051,
+        "repo": "dashpay/dash",
+        "run_id": 8933,
+        "ts": "2026-11-05T00:35:46Z"
+      },
+      {
+        "detail": "40194422 trigger=normal_request priority=0",
+        "kind": "head.queued",
+        "number": 8051,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-05T00:35:14Z"
+      },
       {
         "detail": null,
         "kind": "label.synced",
@@ -657,22 +673,6 @@
         "repo": "dashpay/dashwallet-ios",
         "run_id": 8927,
         "ts": "2026-11-04T22:57:08Z"
-      },
-      {
-        "detail": "phase=phase2 kept=2 dropped=0",
-        "kind": "compare.lanes",
-        "number": 1662,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 8926,
-        "ts": "2026-11-04T22:55:19Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-11-04T22:51:05Z"
       }
     ],
     "tokens_by_effort": [
@@ -1266,14 +1266,88 @@
       "findings_posted": 8145,
       "reviews": 8458,
       "reviews_imported": 2245,
-      "runs": 8932,
+      "runs": 8933,
       "tokens_in": 97898966882,
       "tokens_out": 1059183795,
       "tokens_total": 98958150677
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-05T06:35:46Z",
+        "deadline_in_seconds": 21585,
+        "degraded": false,
+        "elapsed_seconds": 15,
+        "findings": null,
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-11-05T00:35:46Z",
+        "id": 8933,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 8051,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/dash/pull/8051",
+        "priority": false,
+        "progress": 0.004,
+        "queue": "live",
+        "queued_at": "2026-11-05T00:34:28Z",
+        "remaining_seconds": 3819,
+        "repo": "dashpay/dash",
+        "sha": "4019442227d600317830ed4302ce635c8aed525f",
+        "started_at": "2026-11-05T00:35:46Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-11-05T00:35:48Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-11-05T00:35:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a small, contained connection-intent fix and flag separation with focused regression tests, without intricate changes or changes to a qualifying critical surface.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-11-05T00:35:54Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "low",
+        "title": "fix(net): stop masternode connect opening probes and untangle the probe flag",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "normal_request",
+        "upcoming": [
+          "context",
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 78
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1289,7 +1363,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1307,7 +1381,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-05T00:33:42Z",
+        "at": "2026-11-05T00:35:48Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1327,10 +1401,11 @@
       "closed": 618,
       "done": 8376,
       "failed": 100,
+      "running": 1,
       "superseded": 2951
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-05T00:31:33Z",
+    "ingest_last_at": "2026-11-05T00:35:46Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1364,7 +1439,7 @@
       }
     ],
     "last_run_done_at": "2026-11-05T00:23:40Z",
-    "last_run_started_at": "2026-11-05T00:09:41Z",
+    "last_run_started_at": "2026-11-05T00:35:46Z",
     "median_run_minutes": 23.95,
     "notify_last_at": "2026-11-05T00:34:02Z",
     "oldest_queued_at": null,
@@ -1377,7 +1452,7 @@
       "reviews": 3,
       "tokens": 19103504
     },
-    "ts": "2026-11-05T00:35:01Z",
+    "ts": "2026-11-05T00:36:01Z",
     "typical_minutes_by_tier": {
       "critical": 29.5,
       "low": 36.3,
@@ -1386,9 +1461,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 25.333333333333332,
+      "idle_minutes": 0.25,
       "ingest_stale": false,
       "stuck": false
     }
