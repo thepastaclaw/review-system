@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T02:57:01Z",
-  "generated_at": "2026-11-05T02:57:01Z",
+  "data_as_of": "2026-11-05T02:58:00Z",
+  "generated_at": "2026-11-05T02:58:01Z",
   "history": {
     "daily": [
       {
@@ -328,7 +328,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 774,
+            "n": 775,
             "p90_seconds": 1825
           }
         },
@@ -354,6 +354,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=dbc10adc",
+        "kind": "run.spawned",
+        "number": 5729,
+        "repo": "dashpay/platform",
+        "run_id": 8934,
+        "ts": "2026-11-05T02:57:37Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -664,14 +672,6 @@
         "number": 8046,
         "repo": "dashpay/dash",
         "run_id": 8925,
-        "ts": "2026-11-04T23:04:54Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.requeued",
-        "number": 8046,
-        "repo": "dashpay/dash",
-        "run_id": null,
         "ts": "2026-11-04T23:04:54Z"
       }
     ],
@@ -1266,14 +1266,99 @@
       "findings_posted": 8145,
       "reviews": 8459,
       "reviews_imported": 2245,
-      "runs": 8933,
+      "runs": 8934,
       "tokens_in": 97904122728,
       "tokens_out": 1059375521,
       "tokens_total": 98963498249
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "xdustinface",
+        "deadline_at": "2026-11-05T08:57:37Z",
+        "deadline_in_seconds": 21577,
+        "degraded": false,
+        "elapsed_seconds": 23,
+        "findings": null,
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-11-05T02:57:52Z",
+        "id": 8934,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5729,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5729",
+        "priority": false,
+        "progress": 0.018,
+        "queue": "live",
+        "queued_at": "2026-11-05T02:27:18Z",
+        "remaining_seconds": 1251,
+        "repo": "dashpay/platform",
+        "sha": "dbc10adc2660aee571915bebef24a4fa2496ecc2",
+        "started_at": "2026-11-05T02:57:37Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 8,
+            "started_at": "2026-11-05T02:57:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor",
+                "tenderdash-consensus-security"
+              ]
+            },
+            "name": "select",
+            "seconds": 12,
+            "started_at": "2026-11-05T02:57:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "Despite its broad reach, the diff is primarily a dependency/API migration with equivalence-preserving hash and key adaptations and contained finality-error handling, rather than a clearly large or intricate change to critical behavior.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 11,
+            "started_at": "2026-11-05T02:57:46Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-11-05T02:57:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "chore(platform)!: update rust-dashcore past the FFI removal",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1819
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1289,7 +1374,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1327,7 +1412,7 @@
       "closed": 618,
       "done": 8377,
       "failed": 100,
-      "queued": 1,
+      "running": 1,
       "superseded": 2951
     },
     "ingest_error_streak": 0,
@@ -1365,32 +1450,12 @@
       }
     ],
     "last_run_done_at": "2026-11-05T01:50:34Z",
-    "last_run_started_at": "2026-11-05T00:35:46Z",
+    "last_run_started_at": "2026-11-05T02:57:37Z",
     "median_run_minutes": 23.95,
     "notify_last_at": "2026-11-05T02:56:32Z",
-    "oldest_queued_at": "2026-11-05T02:27:18Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1783,
-        "attempts": 0,
-        "author": "xdustinface",
-        "eligible": false,
-        "eligible_at": "2026-11-05T02:57:18Z",
-        "eligible_in_seconds": 17,
-        "number": 5729,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5729",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5729#issuecomment-6595521776",
-        "priority": false,
-        "queued_at": "2026-11-05T02:27:18Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "dbc10adc2660aee571915bebef24a4fa2496ecc2",
-        "title": "chore(platform)!: update rust-dashcore past the FFI removal",
-        "trigger": "new_pr"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-11-05",
       "failed": 0,
@@ -1398,7 +1463,7 @@
       "reviews": 4,
       "tokens": 24451076
     },
-    "ts": "2026-11-05T02:57:01Z",
+    "ts": "2026-11-05T02:58:00Z",
     "typical_minutes_by_tier": {
       "critical": 29.4,
       "low": 36.3,
@@ -1407,9 +1472,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 141.25,
+      "idle_minutes": 0.38333333333333336,
       "ingest_stale": false,
       "stuck": false
     }
