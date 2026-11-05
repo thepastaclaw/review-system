@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -409,13 +410,20 @@ def _dropped(g: Group, reason: str) -> dict[str, Any]:
     merely quotes "outside" never reaches that list."""
     d: dict[str, Any] = {"original_title": g.title, "members": g.members, "reason": reason}
     ev = g.evidence.strip()
-    d["follow_up"] = g.verdict == "REFUTED" and ev.lower().startswith(OUT_OF_SCOPE)
+    body = ev[len(OUT_OF_SCOPE) :].strip() if ev.lower().startswith(OUT_OF_SCOPE) else ""
+    d["follow_up"] = g.verdict == "REFUTED" and bool(body)
     if d["follow_up"]:
-        body = ev[len(OUT_OF_SCOPE) :].strip()
-        refuted_default = g.title.startswith("refuted ")
-        d["title"] = (body.split(". ")[0][:120] or "Follow-up") if refuted_default else g.title
+        d["title"] = _follow_up_title(body) if g.title.startswith("refuted ") else g.title
         d["body"] = body
     return d
+
+
+def _follow_up_title(body: str) -> str:
+    """A one-line title from a follow-up's first sentence (the verifier gave none)."""
+    line = body.splitlines()[0].strip()
+    m = re.search(r"(?<!e\.g)(?<!i\.e)[.!?](?:\s|$)", line)  # "e.g." does not end it
+    first = line[: m.start()] if m else line
+    return first if len(first) <= 120 else first[:119].rsplit(" ", 1)[0] + "…"
 
 
 def _representative(members: list[Finding]) -> Finding:

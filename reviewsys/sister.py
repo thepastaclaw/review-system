@@ -225,6 +225,52 @@ def sister_root(cfg: Config) -> Path:
     return cfg.worktrees_dir / SISTER_DIR
 
 
+LEASE_DIR = "sister-leases"
+
+
+def slot_paths(evidence_repos: list[Any]) -> list[str]:
+    """Every checkout path a `sister_repos` evidence list names (pinned, also pinned, default)."""
+    out = []
+    for entry in evidence_repos or []:
+        if isinstance(entry, dict):
+            for slot in (*_pin_slots(entry), entry.get("default")):
+                if isinstance(slot, dict) and slot.get("path"):
+                    out.append(str(slot["path"]))
+    return out
+
+
+def lease(cfg: Config, paths: list[str], *, owner: str, hours: float) -> Path | None:
+    """Keep gc off `paths` for `hours` (a replay reads checkouts production recorded; it has no
+    run in the production database for `paths_in_use` to see). Remove the file when done."""
+    if not paths:
+        return None
+    d = cfg.work_dir / LEASE_DIR
+    d.mkdir(parents=True, exist_ok=True)
+    f = d / f"{re.sub(r'[^A-Za-z0-9_.-]', '_', owner)}-{os.getpid()}.json"
+    f.write_text(json.dumps({"paths": paths, "expires": time.time() + hours * 3600}))
+    return f
+
+
+def leased_paths(cfg: Config) -> set[str]:
+    """The paths unexpired leases hold; an expired or unreadable lease file is removed."""
+    d = cfg.work_dir / LEASE_DIR
+    out: set[str] = set()
+    if not d.is_dir():
+        return out
+    now = time.time()
+    for f in d.glob("*.json"):
+        try:
+            data = json.loads(f.read_text())
+            if float(data["expires"]) > now:
+                out |= {str(p) for p in data["paths"]}
+                continue
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        with contextlib.suppress(OSError):
+            f.unlink()
+    return out
+
+
 def _lock_path(cfg: Config, repo: str) -> Path:
     return cfg.mirrors_dir / f".{repo.replace('/', '__')}.lock"
 

@@ -17,6 +17,7 @@ import dataclasses
 import functools
 import json
 import logging
+import os
 import random
 import shutil
 import sqlite3
@@ -1778,16 +1779,32 @@ def _review_context(ctx: RunContext) -> None:
 
 def _replayed_context(ctx: RunContext, recorded: dict[str, Any]) -> None:
     """The source run's `sister_repos` and `base_drift`, so a replay's lanes see the evidence
-    the production lanes saw. A sister checkout that is gone since is listed without a path."""
+    the production lanes saw. A checkout slot that is gone since gets a null path (the lanes'
+    "not checked out"); one still there is touched, as live reuse does (gc goes by mtime; the
+    replay also holds a lease on them, `sister.lease`)."""
     repos = []
     for r in recorded.get("sister_repos") or []:
         if not isinstance(r, dict):
             continue
         r = dict(r)
-        path = r.get("path")
-        if path and not Path(str(path)).is_dir():
-            r["path"] = None
-            r["skipped"] = "checkout no longer present for the replay"
+        if r.get("also_pinned"):
+            r["also_pinned"] = [dict(s) for s in r["also_pinned"] if isinstance(s, dict)]
+        for key in ("pinned", "default"):
+            if isinstance(r.get(key), dict):
+                r[key] = dict(r[key])
+        gone = False
+        for slot in (*sister._pin_slots(r), r.get("default")):
+            if not isinstance(slot, dict) or not slot.get("path"):
+                continue
+            p = Path(str(slot["path"]))
+            if p.is_dir():
+                with contextlib.suppress(OSError):
+                    os.utime(p)
+            else:
+                slot["path"] = None
+                gone = True
+        if gone:
+            r["skipped"] = "a checkout production used is no longer present for the replay"
         repos.append(r)
     if repos:
         ctx.evidence["sister_repos"] = repos

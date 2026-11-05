@@ -976,3 +976,18 @@ def test_publish_lists_v12_follow_ups_by_marker_and_v11_drops_by_wording():
     assert not _follow_up({"reason": "REFUTED: the guard outside the loop", "follow_up": False})
     assert _follow_up({"reason": "Valid but outside this PR's scope"})  # v11, as on main
     assert not _follow_up({"reason": "False positive"})
+
+
+def test_an_empty_or_abbreviated_out_of_scope_refutation():
+    out = apply(
+        answer(
+            {"members": ["p2-general-1"], "verdict": "REFUTED", "title": "refuted p2-general-1",
+             "evidence": "Out of scope:"},
+            {"members": ["p2-general-2"], "verdict": "REFUTED", "title": "refuted p2-general-2",
+             "evidence": "Out of scope: e.g. the cache ignores the network.\nSecond line."},
+        ),
+        cands("suggestion", "suggestion"),
+    )  # fmt: skip
+    empty, abbrev = out.dropped
+    assert empty["follow_up"] is False  # nothing to publish
+    assert abbrev["title"] == "e.g. the cache ignores the network"

@@ -68,7 +68,7 @@ from pathlib import Path
 from typing import Any
 
 from . import config as cfg_mod
-from . import converse, degraded, github, ledger, replaygit, worker
+from . import converse, degraded, github, ledger, replaygit, sister, worker
 from .db import connect, kv_get, kv_set, now, parse_ts, tx
 from .degraded import Prober
 from .gh import Gh, GhRunner, _default_runner, env_runner, read_only_runner
@@ -988,27 +988,39 @@ def _replay(
                 **dict.fromkeys(TOKEN_VARS, ""),
             }
             t0 = time.monotonic()
-            status = worker.main(
-                rc,
-                scratch,
-                new_run,
-                gh=gh,
-                lane_runner=with_overrides(
-                    lane_runner or run_claude_lane,
-                    env=env,
-                    disallowed_tools=LANE_DISALLOWED_TOOLS,
-                ),
-                dry_run=True,
-                heartbeat=False,
-                replay=True,
-                force_phase2=force_phase2,
-                coverage_base=merge_base,
-                replay_context={
-                    k: v
-                    for k, v in (evidence.get("evidence") or {}).items()
-                    if k in ("sister_repos", "base_drift")
-                },
+            recorded = {
+                k: v
+                for k, v in (evidence.get("evidence") or {}).items()
+                if k in ("sister_repos", "base_drift")
+            }
+            # production gc never sees this replay's run: hold the checkouts it reads
+            held = sister.lease(
+                arm,  # the configured work dir: where the checkouts and production's gc live
+                sister.slot_paths(recorded.get("sister_repos") or []),
+                owner=f"replay-{run_id}",
+                hours=12,
             )
+            try:
+                status = worker.main(
+                    rc,
+                    scratch,
+                    new_run,
+                    gh=gh,
+                    lane_runner=with_overrides(
+                        lane_runner or run_claude_lane,
+                        env=env,
+                        disallowed_tools=LANE_DISALLOWED_TOOLS,
+                    ),
+                    dry_run=True,
+                    heartbeat=False,
+                    replay=True,
+                    force_phase2=force_phase2,
+                    coverage_base=merge_base,
+                    replay_context=recorded,
+                )
+            finally:
+                if held is not None:
+                    held.unlink(missing_ok=True)
             wall = time.monotonic() - t0
         report = build_report(
             scratch,
