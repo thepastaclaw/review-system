@@ -8,12 +8,16 @@
 #
 # Usage:  deploy/deploy.sh [ref]            (default: main)
 #         deploy/deploy.sh <ref> --force    (skip CI check; emergencies only)
+#         deploy/deploy.sh <ref> --with-shadow  (also install/restart the live v12 shadow
+#                                                runner: deploy/shadow.sh install)
+# An enabled shadow runner is restarted onto the new code either way; the daemon never
+# depends on it.
 set -euo pipefail
 
 REF="${1:-main}"
 if [ $# -gt 0 ]; then shift; fi
-FORCE=""; SHADOW=""
-for a in "$@"; do case "$a" in --force) FORCE=1;; --shadow) SHADOW=1;; esac; done
+FORCE=""; SHADOW=""; WITH_SHADOW=""
+for a in "$@"; do case "$a" in --force) FORCE=1;; --shadow) SHADOW=1;; --with-shadow) WITH_SHADOW=1;; esac; done
 REPO="thepastaclaw/review-system"
 HOST="${REVIEWSYS_HOST:-claw@100.81.48.28}"
 LABEL="ai.thepastaclaw.reviewsys"
@@ -28,9 +32,9 @@ if [ -z "$FORCE" ]; then
 fi
 
 echo "deploying $REF ($SHA) to $HOST"
-ssh -o BatchMode=yes "$HOST" bash -s -- "$REF" "$SHA" "$LABEL" "$SHADOW" <<'REMOTE'
+ssh -o BatchMode=yes "$HOST" bash -s -- "$REF" "$SHA" "$LABEL" "$SHADOW" "$WITH_SHADOW" <<'REMOTE'
 set -euo pipefail
-REF="$1"; SHA="$2"; LABEL="$3"; SHADOW="${4:-}"
+REF="$1"; SHA="$2"; LABEL="$3"; SHADOW="${4:-}"; WITH_SHADOW="${5:-}"
 export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin
 BASE=$HOME/.reviewsys
 SRC=$BASE/src
@@ -76,4 +80,11 @@ NEW=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
 if [ -z "$NEW" ]; then echo "daemon NOT RUNNING after deploy; see $BASE/daemon.stderr.log" >&2; exit 1; fi
 echo "daemon pid: $NEW"
 "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" status
+# the v12 shadow runner (deploy/shadow.sh): its own label and root; a failure here is reported,
+# never a failed production deploy
+if [ -n "$WITH_SHADOW" ]; then
+  "$SRC/deploy/shadow.sh" install || echo "shadow runner NOT installed; see deploy/shadow.sh status" >&2
+elif [ -f "$HOME/.reviewsys-shadow/enabled" ]; then
+  "$SRC/deploy/shadow.sh" restart || echo "shadow runner did not restart; see deploy/shadow.sh status" >&2
+fi
 REMOTE

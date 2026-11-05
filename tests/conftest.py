@@ -604,3 +604,10 @@ def v12(cfg: cfg_mod.Config, skills_dir: Path) -> cfg_mod.Config:
     from tests.v12_support import v12_cfg
 
     return v12_cfg(cfg, skills_dir)
+
+
+@pytest.fixture(autouse=True)
+def _no_live_shadow(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The status export reads the live shadow's database when there is one: never the
+    developer's ~/.reviewsys-shadow in tests."""
+    monkeypatch.setenv("REVIEWSYS_SHADOW_ROOT", str(tmp_path / "no-shadow"))

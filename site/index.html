@@ -132,6 +132,16 @@ details.done-lanes .lanegrid{margin-top:6px;overflow-x:auto}
 .ev .d{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .paths td{vertical-align:middle;white-space:nowrap}.paths td:first-child{width:1%}
 .hidden{display:none!important}
+/* shadow: v12 vs production */
+.scards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
+.scards .card{padding:13px;box-shadow:none}.scards .value{font-size:24px}
+.sgrid{display:grid;grid-template-columns:minmax(0,.9fr) minmax(0,1.1fr);gap:16px;margin-bottom:12px}
+table.cm td,table.cm th{text-align:center;padding:5px 8px}table.cm th:first-child,table.cm td:first-child{text-align:left}
+table.cm td.diag{color:var(--green);font-weight:700}table.cm td.off{color:var(--amber);font-weight:700}
+tr.dis td{background:color-mix(in srgb,var(--amber) 9%,transparent)}tr.dis td:first-child{box-shadow:inset 3px 0 0 var(--amber)}
+.vs{white-space:nowrap}.vs .arrow{color:var(--muted);margin:0 4px}
+@media(max-width:900px){.scards{grid-template-columns:repeat(3,1fr)}.sgrid{grid-template-columns:1fr}}
+@media(max-width:560px){.scards{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}
 @media(max-width:700px){.arun-head{flex-direction:column;align-items:stretch}.arun .elapsed{text-align:left}.live{grid-template-columns:auto minmax(0,1fr) auto}.live .m{display:none}}
 @media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:stretch;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
@@ -159,6 +169,7 @@ details.done-lanes .lanegrid{margin-top:6px;overflow-x:auto}
       <section class="panel"><h2>Token usage</h2><div id="tokens"></div></section>
     </div>
   </div>
+  <section id="shadow" class="panel hidden"><h2>Shadow: v12 vs production <span id="shadow-sub"></span></h2><div id="shadow-body"></div></section>
 </div>
 
 <div id="dayview" class="hidden">
@@ -305,6 +316,7 @@ function renderOverview(d){
   $('#active').innerHTML=(gone?`<div class=gone>${starting?`Run ${focusRun} is starting — it shows up here within a minute or two.`:`Run ${focusRun} is no longer running — its review is in <a href="#day=${esc(publishedDays()[0]||'')}">today's reviews</a>.`}</div>`:'')+rows(active,a=>activeCard(a,l),'No active reviews');
   renderDaily(d.history?.daily||[]);
   renderPaths(d.history?.path_timing);
+  renderShadow(d.shadow);
   const pools=l.lane_pools||[];
   $('#pools').innerHTML=rows(pools,p=>{const n=p.slots||0,busy=p.running;return `<div class=pool><b>${esc(p.pool)}</b><div class=bar title="${busy} running of ${n}">${n?`<i style="width:${Math.min(100,busy/n*100)}%"></i>`:''}</div><span><b>${busy}</b> of ${n} running${p.waiting?` · <b style="color:var(--amber)">${p.waiting}</b> waiting`:''}</span></div>`},'No pools configured')
     +`<div class=foot style="margin-top:8px">Every lane lines up in its pool: verifiers, triage and other short lanes first, then reviewers; priority before live, older runs first, audits last. A pool's top slot is kept for the short lanes.</div>`;
@@ -318,6 +330,45 @@ function renderOverview(d){
     +rows(models,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.model)} <em>${share(n)}</em></span><b>${n.toLocaleString()} · ${Number(x.avg_tokens_per_lane||0).toLocaleString()} avg</b></div><div class=bar><i style="width:${n/maxModel*100}%"></i></div>`})
     +`<h3>Usage by thinking level <small>share · total</small></h3>`
     +rows(efforts,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.effort==='unknown'?'not recorded':x.effort)} <em>${share(n)}</em></span><b>${n.toLocaleString()}</b></div><div class=bar><i style="width:${n/maxEffort*100}%"></i></div>`});
+}
+
+// the live v12 shadow (shadow.public_export): counts, verdicts and links only, never a finding's text
+const VERDICT_SHORT={APPROVE:['approve','good'],REQUEST_CHANGES:['changes','bad'],COMMENT:['comment','']};
+const vpill=v=>{const x=VERDICT_SHORT[v];return x?`<span class="pill ${x[1]}">${x[0]}</span>`:'<span class=muted>—</span>'};
+const pct=x=>x==null?'—':Math.round(x*100)+'%',ratio=x=>x==null?'—':x.toFixed(2)+'×',num=x=>x==null?'—':x;
+function renderShadow(sh){
+  const box=$('#shadow');if(!sh){box.classList.add('hidden');return}
+  box.classList.remove('hidden');
+  const s=sh.summary||{},h=s.heads||{},o=s.outcomes||{},c=s.cost||{},l=s.latency||{},ph=s.per_head||{},f=s.findings||{},rn=sh.runner||{};
+  $('#shadow-sub').textContent=`policy ${sh.policy} replays every live review beside production, posts nothing · runner ${rn.running?(rn.state==='waiting'?'waiting: '+(rn.reason||'?'):rn.state||'up'):'stopped'}`;
+  const cards=[['Heads shadowed',h.shadowed_24h??0,`${h.shadowed_7d??0} in 7 d · ${h.shadowed_total??0} total`],
+    ['Verdict agreement',pct(s.verdict_agreement),`findings ${pct(f.agreement)} matched`],
+    ['Blockers per head',`${num(ph.prod_blockers)} → ${num(ph.shadow_blockers)}`,'production → v12'],
+    ['v12 caught earlier',o.shadow_caught_earlier??0,`raised later by production · ${o.shadow_caught_earlier_heads??0} heads`],
+    ['Production false alarms',o.prod_false_alarms??0,`withdrawn or deferred · v12 also raised ${o.prod_false_alarms_shadow_also_raised??0}`],
+    ['Cost · time',ratio(c.gpt_tokens_ratio),`gpt tokens v12/prod · wall ${ratio(l.wall_ratio)}, active ${ratio(l.active_ratio)}`]];
+  const labels=['APPROVE','REQUEST_CHANGES','COMMENT','none'],cm=s.confusion||{};
+  const matrix=`<div class=tablewrap><table class=cm><thead><tr><th>prod ↓ · v12 →</th>${labels.map(x=>`<th>${esc((VERDICT_SHORT[x]||['none'])[0])}</th>`).join('')}</tr></thead><tbody>${labels.map(p=>`<tr><td>${esc((VERDICT_SHORT[p]||['none'])[0])}</td>${labels.map(q=>{const n=(cm[p]||{})[q]||0;return `<td class="${n?(p===q?'diag':'off'):'muted'}">${n}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const reasons=Object.entries({...(h.skipped_by_reason||{})}).filter(([k])=>k!=='not sampled'),failed=Object.entries(h.failed_by_reason||{}),waiting=Object.entries(h.waiting_by_reason||{});
+  const facts=`<div class=metric><span>Confirmed production blockers (fixed later)</span><b>${o.prod_confirmed_blockers??0} <em>v12 also raised ${o.prod_confirmed_shadow_also_raised??0}</em></b></div>
+    <div class=metric><span>Findings: matched · production only · v12 only</span><b>${f.matched??0} · ${f.prod_only??0} · ${f.shadow_only??0}</b></div>
+    <div class=metric><span>Median review time production · v12</span><b>${dur(l.prod_wall_median_s==null?null:Math.round(l.prod_wall_median_s))} · ${dur(l.shadow_wall_median_s==null?null:Math.round(l.shadow_wall_median_s))}</b></div>
+    <div class=metric><span>Skipped</span><b>${reasons.length?esc(reasons.map(([k,v])=>`${v} ${k}`).join(' · ')):'none'}</b></div>
+    <div class=metric><span>Failed</span><b>${failed.length?esc(failed.map(([k,v])=>`${v} ${k}`).join(' · ')):'none'}</b></div>
+    ${waiting.length?`<div class=metric><span>Waiting</span><b>${esc(waiting.map(([k,v])=>`${v} ${k}`).join(' · '))}</b></div>`:''}`;
+  const sev=x=>`<span class=sev><span class="${x?.blocking?'b':'z'}">${x?.blocking??'—'}</span><span class="${x?.suggestion?'g':'z'}">${x?.suggestion??'—'}</span></span>`;
+  const statusCell=x=>x.status==='done'?'':`<span class="pill${x.status==='failed'?' bad':x.status==='running'?' good':x.status==='waiting'?' warn':''}">${esc(x.status)}${x.reason?' · '+esc(x.reason):''}</span>`;
+  const recent=(sh.recent||[]).map(x=>`<tr class="${x.disagree?'dis':''}">
+      <td><a class=pr href="${esc(x.pr_url)}" target=_blank rel=noopener>${esc(x.repo)} #${x.number}</a> <a href="${esc(x.commit_url)}" target=_blank rel=noopener><code>${esc(x.sha.slice(0,8))}</code></a><div class=t title="${esc(x.title)}">${esc(x.title)}</div></td>
+      <td class=vs>${x.status==='done'?`${vpill(x.prod_verdict)}<span class=arrow>→</span>${vpill(x.shadow_verdict)}`:statusCell(x)}</td>
+      <td class=num>${sev(x.prod)}</td><td class=num>${sev(x.shadow)}</td>
+      <td class=num>${x.status==='done'?`${x.matched} · ${x.prod_only} · ${x.shadow_only}`:'<span class=muted>—</span>'}${x.caught_earlier?`<span class=s>${x.caught_earlier} caught earlier</span>`:''}${x.prod_false_alarms?`<span class=s>${x.prod_false_alarms} prod false alarm${x.prod_false_alarms===1?'':'s'}</span>`:''}</td>
+      <td class=num>${dur(x.prod_wall_s==null?null:Math.round(x.prod_wall_s))}<span class=s>v12 ${dur(x.shadow_wall_s==null?null:Math.round(x.shadow_wall_s))}</span></td></tr>`).join('');
+  $('#shadow-body').innerHTML=`<div class=scards>${cards.map(x=>`<div class=card><div class=label>${x[0]}</div><div class=value>${esc(x[1])}</div><div class=csub title="${esc(x[2])}">${esc(x[2])}</div></div>`).join('')}</div>
+    <div class=sgrid><div><h3 style="margin-top:0">Verdicts <small>production rows · v12 columns</small></h3>${matrix}</div><div><h3 style="margin-top:0">Outcomes and cost</h3>${facts}</div></div>
+    <h3>Recent heads <small>highlighted: the verdicts differ · findings matched · production only · v12 only</small></h3>
+    <div class=tablewrap><table><thead><tr><th>Pull request</th><th>Verdict prod → v12</th><th class=num title="blocking · suggestion">Production</th><th class=num title="blocking · suggestion">v12</th><th class=num>Findings</th><th class=num>Review time</th></tr></thead><tbody>${recent||'<tr><td colspan=6 class=empty>No shadowed heads yet</td></tr>'}</tbody></table></div>
+    <div class=foot style="margin-top:8px">Each shadow replays a finished production review's exact head under v12 with a read-only view of GitHub, behind every production lane. Findings are matched by file, line (±10) and title; only counts are published here.</div>`;
 }
 
 function renderDaily(daily){

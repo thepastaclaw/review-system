@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.thepastaclaw.reviewsys-shadow</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/claw/.reviewsys/venv/bin/reviewsys</string>
+    <string>--config</string>
+    <string>/Users/claw/.reviewsys/config.toml</string>
+    <string>shadow</string>
+    <string>run</string>
+    <string>--root</string>
+    <string>/Users/claw/.reviewsys-shadow</string>
+    <string>--skills</string>
+    <string>/Users/claw/Projects/skills-v12</string>
+    <string>--guard-cmd</string>
+    <string>/opt/homebrew/bin/python3 /Users/claw/.reviewsys-exp/bin/quota_guard.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>HOME</key><string>/Users/claw</string>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/Users/claw/.npm-global/bin:/Users/claw/.local/bin</string>
+    <key>GODEBUG</key><string>netdns=go</string>
+    <key>REVIEWSYS_CONFIG</key><string>/Users/claw/.reviewsys/config.toml</string>
+    <key>PYTHONUNBUFFERED</key><string>1</string>
+  </dict>
+  <key>WorkingDirectory</key><string>/Users/claw/.reviewsys-shadow</string>
+  <key>StandardOutPath</key><string>/Users/claw/.reviewsys-shadow/logs/shadow.stderr.log</string>
+  <key>StandardErrorPath</key><string>/Users/claw/.reviewsys-shadow/logs/shadow.stderr.log</string>
+  <key>Nice</key><integer>10</integer>
+  <key>ProcessType</key><string>Background</string>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>60</integer>
+  <key>ExitTimeOut</key><integer>90</integer>
+</dict>
+</plist>
