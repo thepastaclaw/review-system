@@ -393,3 +393,20 @@ def test_attribute_sources_ignores_phases_that_did_not_run():
         "<sub>source: `gpt-6-astra` (phase2-reviewer: general, security-auditor)</sub>"
         in comment_body(y)
     )
+
+
+def test_attribute_sources_reads_phase_labels():
+    from reviewsys.publish import attribute_sources
+
+    a = f("Race in flush", source="['phase2']")
+    b = f("Missing bounds check", source="['phase1', 'phase2', 'coderabbit']")
+    lanes = {
+        "phase1:general": [f("Missing bounds check")],
+        "phase2:general": [f("Race in flush"), f("Missing bounds check")],
+    }
+    attribute_sources(_verified(a, b), LANES, lanes)
+    assert a.source == "`gpt-6-astra` (phase2-reviewer: general)"
+    assert b.source == (
+        "`glm-5.3-flash` (phase1-reviewer: general); "
+        "`gpt-6-astra` (phase2-reviewer: general); coderabbit"
+    )

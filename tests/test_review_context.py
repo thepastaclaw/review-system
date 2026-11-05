@@ -572,3 +572,38 @@ def test_ensure_mirror_clones_aside_and_replaces_an_interrupted_one(tmp_path, mo
     assert [p.name for p in tmp_path.iterdir()] == ["dashpay__x.git"]
     calls.clear()
     assert wt.ensure_mirror(tmp_path, "dashpay/x") == mirror and calls == []
+
+
+def test_a_repo_verifier_md_reaches_the_verifier_only(cfg, skills_dir):
+    from reviewsys.prompts import verifier_prompt
+
+    common = dict(repo="dashpay/platform", number=9, head_sha="a" * 40, prior=[], prior_sha=None)
+    kw = dict(
+        common,
+        phase="final",
+        phase1_outputs={},
+        phase2_outputs={},
+        coderabbit={},
+        coderabbit_ids=[],
+        evidence={},
+    )
+    rkw = dict(
+        common,
+        phase="final",
+        role="general",
+        meta={"title": "T"},
+        coverage_from="b" * 40,
+        evidence={},
+    )
+    assert "VERIFIER ONLY" not in verifier_prompt(cfg, **kw)
+    (skills_dir / "skills" / "platform" / "verifier.md").write_text("VERIFIER ONLY {braces}")
+    v = verifier_prompt(cfg, **kw)
+    assert "REVIEW SKILL\n\nVERIFIER ONLY {braces}" in v
+    assert "VERIFIER ONLY" not in reviewer_prompt(cfg, **rkw)
+    assert "'Codex'" not in v and "historical" not in v
+
+
+def test_an_unregistered_repo_has_no_verifier_skill(cfg):
+    from reviewsys.prompts import verifier_skill_text
+
+    assert verifier_skill_text(cfg, "someone/else") == ""

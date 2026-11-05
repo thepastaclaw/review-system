@@ -92,7 +92,13 @@ def line_in_diff(parsed: dict[str, list[dict[str, int]]], path: str, line: int) 
     return any(h["new_start"] <= line <= h["new_end"] for h in parsed.get(path, []))
 
 
-LEGACY_SOURCE_PHASE = {"codex": "phase1", "claude": "phase2"}  # verifier template slot names
+# the verifier's `source` labels; `codex`/`claude` are the names older templates used
+LEGACY_SOURCE_PHASE = {
+    "phase1": "phase1",
+    "phase2": "phase2",
+    "codex": "phase1",
+    "claude": "phase2",
+}
 
 
 def attribute_sources(
@@ -100,8 +106,8 @@ def attribute_sources(
     reviewers: list[dict[str, Any]],
     lane_findings: dict[str, list[Finding]],
 ) -> None:
-    """Rewrite each verified finding's `source` from the verifier's legacy labels (`codex` =
-    Phase-1 lanes, `claude` = Phase-2 lanes, `coderabbit`) into the model ids and agents that
+    """Rewrite each verified finding's `source` from the verifier's labels (`phase1` or the older `codex` =
+    Phase-1 lanes, `phase2` or `claude` = Phase-2 lanes, `coderabbit`) into the model ids and agents that
     actually raised it. Within a phase the lanes whose own output carries the same
     `finding_hash` are named; if the verifier retitled or merged, every lane of that phase is.
     `reviewers` is the run's completed-lane provenance, `lane_findings` maps `"phase:role"`
