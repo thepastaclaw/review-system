@@ -783,5 +783,5 @@ def build_shadow(root: Path | None = None) -> dict[str, Any] | None:
         return None
     try:
         return shadow.public_export(db)
-    except (sqlite3.Error, OSError, KeyError, ValueError):
+    except Exception:  # whatever the shadow's state, production's page still publishes
         return None

@@ -56,17 +56,17 @@ import sys
 import threading
 import time
 from collections import Counter
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import IO, Any, Protocol
 
-from . import degraded
-from .db import fmt_ts, kv_get, now_dt, parse_ts
+from .db import fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
+from .exporter import SLOT_WAIT_RECORDED_SINCE
 from .lanepool import pool_of
 from .proc import alive
-from .replay import EXIT_ABORTED, TOKEN_ENV, read_json
+from .replay import EXIT_ABORTED, TOKEN_ENV, _has_table, read_json
 from .replayscore import assign, matches
 from .replayset import DEFAULT_JOB_GB, DEFAULT_MIN_FREE_GB, Gate, production_guard
 
@@ -84,7 +84,6 @@ LIFTING = frozenset({"WITHDRAWN", "INTENTIONALLY_DEFERRED"})
 LEDGER_LIFTED = frozenset({"withdrawn", "deferred"})
 GUARD_FAILS_TO_STOP = 2
 GUARD_TIMEOUT_S = 120
-SLOT_WAIT_RECORDED_SINCE = "2026-10-01T19:14:37Z"  # exporter.SLOT_WAIT_RECORDED_SINCE
 
 # every reason a row or the runner can carry; the public export shows nothing else
 REASONS = frozenset(
@@ -106,6 +105,7 @@ REASONS = frozenset(
         "invalid: live github",
         "invalid: quota",
         "launch error",
+        "compare error",
     }
 )
 
@@ -129,7 +129,7 @@ SCHEMA = (
         prod_wall_s REAL, prod_active_s REAL, shadow_wall_s REAL, shadow_active_s REAL,
         prod_gpt_lanes REAL, prod_gpt_tokens INTEGER, prod_tokens INTEGER,
         shadow_gpt_lanes REAL, shadow_gpt_tokens INTEGER, shadow_tokens INTEGER,
-        shadow_tier TEXT, v12 TEXT,
+        shadow_tier TEXT, v12 TEXT, scoring_degraded INTEGER NOT NULL DEFAULT 0,
         scored_at TEXT, pr_state TEXT, merged_at TEXT,
         caught_earlier INTEGER, prod_false_alarms INTEGER, prod_confirmed INTEGER)
     """,
@@ -190,44 +190,12 @@ def connect_ro(path: Path) -> sqlite3.Connection:
     return conn
 
 
-@contextlib.contextmanager
-def tx(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        yield conn
-    except BaseException:
-        conn.execute("ROLLBACK")
-        raise
-    conn.execute("COMMIT")
-
-
-def kv_put(conn: sqlite3.Connection, key: str, value: str) -> None:
-    conn.execute(
-        "INSERT INTO kv (key, value) VALUES (?,?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-        (key, value),
-    )
-
-
 def _event(
     conn: sqlite3.Connection, kind: str, detail: str = "", shadow_id: int | None = None
 ) -> None:
     conn.execute(
         "INSERT INTO events (ts, kind, shadow_id, detail) VALUES (?,?,?,?)",
         (fmt_ts(now_dt()), kind, shadow_id, detail[:4000]),
-    )
-
-
-def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
-    return any(r[1] == column for r in conn.execute(f"PRAGMA table_info({table})"))
-
-
-def _has_table(conn: sqlite3.Connection, name: str) -> bool:
-    return (
-        conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-        ).fetchone()
-        is not None
     )
 
 
@@ -254,7 +222,6 @@ class Options:
     root: Path
     skills: Path
     prod_db: Path
-    runs_dir: Path
     config: str | None = None
     sample_rate: float = 1.0
     max_age_hours: float = 24.0  # <= 0: no limit
@@ -371,37 +338,13 @@ def command_guard(cmd: str) -> GuardFn:
     return check
 
 
-def _prod_degraded(db: Path) -> str:
-    """Why production is in degraded mode now ("" = it is not), from its database read-only."""
-    if not db.exists():
-        return ""
-    try:
-        conn = connect_ro(db)
-    except sqlite3.Error:
-        return ""
-    try:
-        if degraded.forced(conn) == "on":
-            return "degraded mode is forced on"
-        try:
-            state = json.loads(kv_get(conn, degraded.KV_STATE) or "{}")
-        except ValueError:
-            state = {}
-        return "degraded mode is active" if isinstance(state, dict) and state.get("active") else ""
-    except sqlite3.Error:
-        return ""
-    finally:
-        conn.close()
-
-
 def production_gate(opts: Options) -> GateFn:
     """replayset's checks, sorted by what the shadow does: degraded mode skips the head (a
     replay on stand-ins would measure nothing), everything else holds launches."""
     disk = Gate(opts.replays, min_free_gb=opts.min_free_gb, job_gb=opts.disk_per_job_gb)
 
     def check(running: int) -> tuple[str, str, str]:
-        why = _prod_degraded(opts.prod_db)
-        if why:
-            return "skip", "degraded", why
+        # production_guard checks degraded mode first; its messages are matched here
         why, _ = production_guard(
             opts.prod_db, min_accounts=opts.min_usable_accounts, backlog_limit=opts.backlog_limit
         )
@@ -424,33 +367,35 @@ def production_gate(opts: Options) -> GateFn:
 # ---- discovery ----
 
 
-def _later_head(prod: sqlite3.Connection, repo: str, number: int, head_id: int, sha: str) -> bool:
-    """Whether the PR moved on from `sha`: the PR's recorded head is another commit, or a newer
-    live head exists."""
+def _later_head(prod: sqlite3.Connection, repo: str, number: int, run_id: int, sha: str) -> bool:
+    """Whether the PR moved on from run `run_id`'s commit `sha`: the PR's recorded head is
+    another commit, or a newer live head exists."""
     pr = prod.execute(
         "SELECT head_sha FROM prs WHERE repo=? AND number=?", (repo, number)
     ).fetchone()
     if pr is not None and pr["head_sha"] and pr["head_sha"] != sha:
         return True
     newer = prod.execute(
-        "SELECT 1 FROM heads WHERE repo=? AND number=? AND queue='live' AND id>? AND sha<>? "
-        "LIMIT 1",
-        (repo, number, head_id, sha),
+        "SELECT 1 FROM heads WHERE repo=? AND number=? AND queue='live' AND sha<>? "
+        "AND id > (SELECT head_id FROM runs WHERE id=?) LIMIT 1",
+        (repo, number, sha, run_id),
     ).fetchone()
     return newer is not None
 
 
 def candidates(prod: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
     """Production runs that qualify for a shadow (module docstring), finished at or after
-    `since`, newest first."""
-    carried = "AND h.carried_from IS NULL " if _has_column(prod, "heads", "carried_from") else ""
+    `since`, newest first. A run is an audit by the path it took (`runs.path`): an audit takes
+    an uncleanly merged PR's live head over (`heads.queue` becomes `audit`) after its live
+    runs finished. A carried head is left out by its run's `carry` step, not by
+    `heads.carried_from`: a review someone asks for of a carried commit is a real review."""
     return prod.execute(
-        "SELECT r.id, r.started_at, r.finished_at, r.tier, h.id head_id, h.repo, h.number, "
+        "SELECT r.id, r.started_at, r.finished_at, r.tier, h.repo, h.number, "
         "h.sha, COALESCE(p.title, '') title FROM runs r JOIN heads h ON h.id=r.head_id "
         "LEFT JOIN prs p ON p.repo=h.repo AND p.number=h.number "
         "WHERE r.status='done' AND r.finished_at IS NOT NULL AND r.finished_at >= ? "
-        "AND h.queue='live' AND COALESCE(r.degraded, 0)=0 "
-        f"{carried}"
+        "AND COALESCE(r.path, CASE WHEN h.queue='audit' THEN 'audit' END, '') <> 'audit' "
+        "AND COALESCE(r.degraded, 0)=0 "
         "AND EXISTS (SELECT 1 FROM reviews v WHERE v.run_id=r.id AND v.phase='final' "
         "AND COALESCE(v.imported, 0)=0) "
         "AND NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=r.id "
@@ -574,6 +519,9 @@ def compare(
         "policy": report.get("policy"),
         "policy_fingerprint": report.get("policy_fingerprint"),
         "v12": json.dumps(report.get("v12") or {}),
+        # a thread-lane shard failed: some issues were never judged (replayscore leaves such
+        # heads out; so does the summary)
+        "scoring_degraded": int(bool(report.get("degraded_for_scoring"))),
     }
     keys = ("hash", "severity", "file", "line_start", "line_end", "category", "title")
 
@@ -709,10 +657,13 @@ def score_head(
             "SELECT merged_at FROM audits WHERE repo=? AND number=?", (repo, number)
         ).fetchone()
         merged_at = a["merged_at"] if a is not None and a["merged_at"] else None
+    # `prs.state` is only open/closed; a merge is known only from an audit row (a PR merged
+    # over findings), never for a clean merge: `pr_closed` covers both, its status says
+    # `merged` when known
     state = "merged" if merged_at else (str(pr["state"]) if pr is not None else None)
     if state in ("merged", "closed"):
-        found[(f"pr_{state}", "")] = {"severity": None, "in_shadow": None, "later_run": None,
-                                      "later_sha": None, "status": state, "source": "prs"}  # fmt: skip
+        found[("pr_closed", "")] = {"severity": None, "in_shadow": None, "later_run": None,
+                                    "later_sha": None, "status": state, "source": "prs"}  # fmt: skip
     at = fmt_ts(now_dt())
     counts = Counter(kind for kind, _ in found)
     with tx(conn):
@@ -782,6 +733,8 @@ class Runner:
     kill_grace: float = 30.0
     running: dict[int, Handle] = field(default_factory=dict)  # shadow id -> process
     guard_fails: int = 0
+    _guard_last: tuple[bool, str] | None = None
+    _pidfile: bool = False
     _lock: IO[str] | None = None
 
     def __post_init__(self) -> None:
@@ -800,14 +753,14 @@ class Runner:
         first start's time (no backfill)."""
         with tx(self.conn):
             if since:
-                kv_put(self.conn, "watermark", since)
+                kv_set(self.conn, "watermark", since)
             elif kv_get(self.conn, "watermark") is None:
-                kv_put(self.conn, "watermark", self.now())
+                kv_set(self.conn, "watermark", self.now())
         return str(kv_get(self.conn, "watermark"))
 
     def _state(self, state: str, reason: str = "", detail: str = "") -> None:
         with tx(self.conn):
-            kv_put(self.conn, "runner.state", json.dumps(
+            kv_set(self.conn, "runner.state", json.dumps(
                 {"state": state, "reason": reason, "detail": detail[:2000], "at": self.now()}
             ))  # fmt: skip
 
@@ -840,7 +793,7 @@ class Runner:
                 status, reason = "queued", None
                 if not sampled(int(c["id"]), self.opts.sample_rate):
                     status, reason = "skipped", "not sampled"
-                elif _later_head(prod, c["repo"], c["number"], c["head_id"], c["sha"]):
+                elif _later_head(prod, c["repo"], c["number"], int(c["id"]), c["sha"]):
                     status, reason = "skipped", "superseded"
                 with tx(self.conn):
                     self.conn.execute(
@@ -858,10 +811,11 @@ class Runner:
     # -- launching --
 
     def launched_today(self) -> int:
+        """Replays launched this UTC day, every attempt (a stopped one spent quota too)."""
         day = self.now()[:10]
         return int(
             self.conn.execute(
-                "SELECT COUNT(*) FROM shadows WHERE started_at >= ?", (day,)
+                "SELECT COUNT(*) FROM events WHERE kind='launch' AND ts >= ?", (day,)
             ).fetchone()[0]
         )
 
@@ -870,10 +824,11 @@ class Runner:
             return True
         ok, line = self.guard()
         self.guard_fails = 0 if ok else self.guard_fails + 1
-        with tx(self.conn):
-            _event(self.conn, "guard.ok" if ok else "guard.refused", line)
-        if not ok:
-            log.info("shadow: quota guard refused a launch: %s", line)
+        if (ok, line) != self._guard_last:
+            self._guard_last = (ok, line)
+            with tx(self.conn):
+                _event(self.conn, "guard.ok" if ok else "guard.refused", line)
+            log.info("shadow: quota guard %s: %s", "allows" if ok else "refuses", line)
         return ok
 
     def _next(self) -> sqlite3.Row | None:
@@ -887,6 +842,14 @@ class Runner:
         """Start queued heads, newest first, while slots are free and every gate allows."""
         counts: Counter[str] = Counter()
         guard_checked = False
+        with tx(self.conn):
+            aged = self.conn.execute(
+                "UPDATE shadows SET status='skipped', reason='aged out', finished_at=? "
+                "WHERE status IN ('queued','waiting') AND source_finished_at < ?",
+                (self.now(), self._oldest_allowed()),
+            ).rowcount
+        if aged:
+            counts["aged out"] += aged
         prod = connect_ro(self.opts.prod_db)
         try:
             while len(self.running) < max(1, self.opts.concurrency):
@@ -895,11 +858,7 @@ class Runner:
                     self._state("idle" if not self.running else "running")
                     break
                 sid = int(row["id"])
-                if str(row["source_finished_at"]) < self._oldest_allowed():
-                    self._set(sid, status="skipped", reason="aged out", finished_at=self.now())
-                    counts["aged out"] += 1
-                    continue
-                if _later_head(prod, row["repo"], row["number"], self._head_id(prod, row),
+                if _later_head(prod, row["repo"], row["number"], int(row["source_run"]),
                                row["sha"]):  # fmt: skip
                     self._set(sid, status="skipped", reason="superseded", finished_at=self.now())
                     counts["superseded"] += 1
@@ -925,8 +884,8 @@ class Runner:
                     self._hold(sid, "quota guard", "")
                     counts["quota guard"] += 1
                     break
-                self._start(row)
-                counts["launched"] += 1
+                if self._start(row):
+                    counts["launched"] += 1
         finally:
             prod.close()
         if not guard_checked and self.running and self.opts.stop_on_guard and self.guard:
@@ -937,19 +896,11 @@ class Runner:
             counts["stopped by guard"] += n
         return dict(counts)
 
-    @staticmethod
-    def _head_id(prod: sqlite3.Connection, row: sqlite3.Row) -> int:
-        h = prod.execute(
-            "SELECT h.id FROM runs r JOIN heads h ON h.id=r.head_id WHERE r.id=?",
-            (row["source_run"],),
-        ).fetchone()
-        return int(h["id"]) if h else 0
-
     def _hold(self, sid: int, reason: str, why: str) -> None:
         self._set(sid, status="waiting", reason=reason)
         self._state("waiting", reason, why)
 
-    def _start(self, row: sqlite3.Row) -> None:
+    def _start(self, row: sqlite3.Row) -> bool:
         sid, rid = int(row["id"]), int(row["source_run"])
         report = self.opts.report(rid)
         report.unlink(missing_ok=True)  # a stale report would read as this attempt's
@@ -958,14 +909,24 @@ class Runner:
         except Exception as exc:  # a launch that cannot start fails its head only
             self._set(sid, status="failed", reason="launch error", detail=str(exc)[:2000],
                       finished_at=self.now())  # fmt: skip
-            return
+            return False
+        try:
+            with tx(self.conn):
+                self.conn.execute(
+                    "UPDATE shadows SET status='running', reason=NULL, attempts=attempts+1, "
+                    "pid=?, started_at=?, finished_at=NULL, report_path=?, log_path=? WHERE id=?",
+                    (handle.pid, self.now(), str(report), str(self.opts.log(rid)), sid),
+                )
+                _event(self.conn, "launch", str(rid), sid)
+        except BaseException:
+            # unbooked, the head would be launched again next tick beside this replay
+            kill_groups([(handle.pid, handle.poll)], grace=self.kill_grace)
+            raise
         self.running[sid] = handle
-        self._set(sid, status="running", reason=None, attempts=int(row["attempts"]) + 1,
-                  pid=handle.pid, started_at=self.now(), finished_at=None,
-                  report_path=str(report), log_path=str(self.opts.log(rid)))  # fmt: skip
         self._state("running")
         log.info("shadow: launched run %s (%s#%s) pid %s", rid, row["repo"], row["number"],
                  handle.pid)  # fmt: skip
+        return True
 
     # -- reaping --
 
@@ -978,15 +939,24 @@ class Runner:
             if rc is None:
                 started = parse_ts(str(row["started_at"]))
                 if limit > 0 and (self.clock() - started).total_seconds() > limit:
-                    kill_group(handle.pid, grace=self.kill_grace)
-                    self.running.pop(sid)
+                    kill_groups([(handle.pid, handle.poll)], grace=self.kill_grace)
                     self._cleanup(int(row["source_run"]))
                     self._set(sid, status="failed", reason="timed out", finished_at=self.now())
+                    self.running.pop(sid)
                     counts["timed out"] += 1
                 continue
+            counts[self._finish_safely(row, rc)] += 1
             self.running.pop(sid)
-            counts[self.finish(row, rc)] += 1
         return dict(counts)
+
+    def _finish_safely(self, row: sqlite3.Row, rc: int) -> str:
+        try:
+            return self.finish(row, rc)
+        except Exception as exc:
+            log.exception("shadow: booking run %s failed", row["source_run"])
+            self._set(int(row["id"]), status="failed", reason="compare error",
+                      detail=repr(exc)[:2000], exit_code=rc, finished_at=self.now())  # fmt: skip
+            return "compare error"
 
     def finish(self, row: sqlite3.Row, rc: int) -> str:
         """Book a replay that exited with `rc`: compare it, or say why not."""
@@ -1032,10 +1002,14 @@ class Runner:
         """Terminate every running replay's process group and put its head back in the queue
         (the attempt does not count)."""
         n = 0
-        kill_groups([h.pid for h in self.running.values()], grace=self.kill_grace)
         for sid, handle in list(self.running.items()):
-            with contextlib.suppress(Exception):
-                handle.poll()
+            rc = handle.poll()
+            if rc is not None:  # it ended since the last reap: book it, never run it again
+                row = self.conn.execute("SELECT * FROM shadows WHERE id=?", (sid,)).fetchone()
+                self._finish_safely(row, rc)
+                self.running.pop(sid)
+        kill_groups([(h.pid, h.poll) for h in self.running.values()], grace=self.kill_grace)
+        for sid in list(self.running):
             self.running.pop(sid)
             row = self.conn.execute("SELECT * FROM shadows WHERE id=?", (sid,)).fetchone()
             self._cleanup(int(row["source_run"]))
@@ -1050,18 +1024,29 @@ class Runner:
         after `max_attempts`."""
         n = 0
         for row in self.conn.execute("SELECT * FROM shadows WHERE status='running'").fetchall():
-            sid, rid, pid = int(row["id"]), int(row["source_run"]), row["pid"]
+            sid, rid, pid = int(row["id"]), int(row["source_run"]), int(row["pid"] or 0)
             if sid in self.running:
                 continue
-            if pid and _is_replay(int(pid), rid):
-                kill_group(int(pid), grace=self.kill_grace)
+            n += 1
+            mine = _is_replay(pid, rid) if pid and alive(pid) else False
+            if mine is None:
+                # alive, and nothing can say whether it is still that replay: never signal it,
+                # never run the head again beside it
+                self._set(sid, status="failed", reason="interrupted", pid=None,
+                          finished_at=self.now(),
+                          detail=f"pid {pid} alive but unverifiable at recovery")  # fmt: skip
+                continue
+            if mine:
+                kill_groups([(pid, None)], grace=self.kill_grace)
+            elif self.opts.report(rid).exists():  # it finished while no runner watched
+                self._finish_safely(row, 0)
+                continue
             self._cleanup(rid)
             if int(row["attempts"]) >= self.opts.max_attempts:
                 self._set(sid, status="failed", reason="interrupted", pid=None,
                           finished_at=self.now())  # fmt: skip
             else:
                 self._set(sid, status="queued", reason="interrupted", pid=None)
-            n += 1
         return n
 
     def prune(self) -> int:
@@ -1080,6 +1065,7 @@ class Runner:
                 if (d / sub).exists():
                     shutil.rmtree(d / sub, ignore_errors=True)
                     n += 1
+            self.opts.log(int(row["source_run"])).unlink(missing_ok=True)
         return n
 
     def tick(self) -> dict[str, Any]:
@@ -1096,9 +1082,9 @@ class Runner:
 
     # -- the long-running loop --
 
-    def lock(self) -> None:
+    def lock(self, *, pidfile: bool = True) -> None:
         """One runner per root: an exclusive flock (released by the kernel when the process
-        dies, so a killed runner never blocks the next) and a pidfile."""
+        dies, so a killed runner never blocks the next) and, for `shadow run`, a pidfile."""
         import fcntl
 
         self.opts.root.mkdir(parents=True, exist_ok=True)
@@ -1111,11 +1097,14 @@ class Runner:
                 f"another shadow runner holds {self.opts.root / 'shadow.lock'}"
             ) from None
         self._lock = fd
-        (self.opts.root / "shadow.pid").write_text(f"{os.getpid()}\n")
+        self._pidfile = pidfile
+        if pidfile:
+            (self.opts.root / "shadow.pid").write_text(f"{os.getpid()}\n")
 
     def unlock(self) -> None:
-        with contextlib.suppress(OSError):
-            (self.opts.root / "shadow.pid").unlink()
+        if self._pidfile:
+            with contextlib.suppress(OSError):
+                (self.opts.root / "shadow.pid").unlink()
         if self._lock is not None:
             self._lock.close()
             self._lock = None
@@ -1149,16 +1138,16 @@ class Runner:
             log.info("shadow: stopped (%s replays terminated)", n)
 
 
-def kill_group(pid: int, *, grace: float) -> None:
-    kill_groups([pid], grace=grace)
-
-
-def kill_groups(pids: list[int], *, grace: float) -> None:
-    """SIGTERM every process group led by one of `pids` at once, SIGKILL whatever is left of
-    them after `grace` seconds. A pid that does not lead its own group (a replay always does)
-    is never signalled."""
-    leaders = []
-    for pid in pids:
+def kill_groups(
+    targets: list[tuple[int, Callable[[], int | None] | None]], *, grace: float
+) -> None:
+    """SIGTERM every process group led by one of the pids at once, SIGKILL whatever is left of
+    them after `grace` seconds. `poll` (our own child's Popen.poll) reaps the leader the way
+    its owner will read it; a pid that does not lead its own group (a replay always does) is
+    never signalled. A group is signalled again only while it still has members: once empty,
+    its id could be handed to another session (a production worker leads its own group too)."""
+    groups = []
+    for pid, poll in targets:
         if pid <= 0:
             continue
         try:
@@ -1166,26 +1155,41 @@ def kill_groups(pids: list[int], *, grace: float) -> None:
                 continue
         except ProcessLookupError:
             continue
-        with contextlib.suppress(ProcessLookupError):
+        with contextlib.suppress(ProcessLookupError, PermissionError):
             os.killpg(pid, signal.SIGTERM)
-        leaders.append(pid)
+        groups.append((pid, poll))
+
+    def members(pid: int, poll: Callable[[], int | None] | None) -> bool:
+        if poll is not None:
+            poll()  # an exited leader we started stays a zombie (and a member) until reaped
+        try:
+            os.killpg(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            # macOS answers EPERM for a group whose only member is a zombie: nothing to signal
+            return False
+        return True
+
     deadline = time.monotonic() + grace
-    while time.monotonic() < deadline and any(alive(p) for p in leaders):
+    while time.monotonic() < deadline and any(members(p, q) for p, q in groups):
         time.sleep(0.2)
-    for pid in leaders:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(pid, signal.SIGKILL)
+    for pid, poll in groups:
+        if members(pid, poll):
+            with contextlib.suppress(ProcessLookupError, PermissionError):
+                os.killpg(pid, signal.SIGKILL)
 
 
-def _is_replay(pid: int, run_id: int) -> bool:
-    """Whether `pid` is still the replay of `run_id` (pids are reused)."""
+def _is_replay(pid: int, run_id: int) -> bool | None:
+    """Whether `pid` is still the replay of `run_id` (pids are reused); None when `ps` cannot
+    say."""
     if not alive(pid):
         return False
     try:
         r = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True,
                            text=True, timeout=10, check=False)  # fmt: skip
     except (OSError, subprocess.TimeoutExpired):
-        return False
+        return None
+    if r.returncode != 0:
+        return False if not alive(pid) else None
     cmd = r.stdout.strip()
     return "reviewsys" in cmd and " replay " in cmd and f" {run_id} " in f"{cmd} "
 
@@ -1221,17 +1225,22 @@ def summary(
     skipped = Counter(_public_reason(r["reason"]) for r in rows if r["status"] == "skipped")
     failed = Counter(_public_reason(r["reason"]) for r in rows if r["status"] == "failed")
     waiting = Counter(_public_reason(r["reason"]) for r in rows if r["status"] == "waiting")
-    done = [r for r in rows if r["status"] == "done" and r["compared_at"]]
+    compared = [r for r in rows if r["status"] == "done" and r["compared_at"]]
+    done = [r for r in compared if not r["scoring_degraded"]]
 
     def within(hours: float) -> int:
         edge = fmt_ts(at - timedelta(hours=hours))
-        return sum(1 for r in done if str(r["finished_at"] or "") >= edge)
+        return sum(1 for r in compared if str(r["finished_at"] or "") >= edge)
 
     labels = [*VERDICTS, "none"]
     confusion = {p: dict.fromkeys(labels, 0) for p in labels}
+
+    def verdict(v: str | None) -> str:
+        return v if v in VERDICTS else "none"
+
     for r in done:
-        confusion[r["prod_verdict"] or "none"][r["shadow_verdict"] or "none"] += 1
-    agree = sum(1 for r in done if (r["prod_verdict"] or "none") == (r["shadow_verdict"] or "none"))
+        confusion[verdict(r["prod_verdict"])][verdict(r["shadow_verdict"])] += 1
+    agree = sum(1 for r in done if verdict(r["prod_verdict"]) == verdict(r["shadow_verdict"]))
     m = sum(r["matched"] or 0 for r in done)
     po = sum(r["prod_only"] or 0 for r in done)
     so = sum(r["shadow_only"] or 0 for r in done)
@@ -1244,7 +1253,7 @@ def summary(
 
     outcomes: Counter[str] = Counter()
     for o in conn.execute(
-        "SELECT o.kind, o.in_shadow, o.severity FROM outcomes o JOIN shadows s ON s.id=o.shadow_id "
+        "SELECT o.kind, o.in_shadow, o.severity, o.status FROM outcomes o JOIN shadows s ON s.id=o.shadow_id "
         "WHERE s.discovered_at >= ?",
         (since,),
     ):
@@ -1253,12 +1262,15 @@ def summary(
             outcomes[f"{o['kind']}_in_shadow"] += 1
         if o["kind"] == "prod_false_alarm" and o["severity"] == "blocking":
             outcomes["prod_false_alarm_blockers"] += 1
+        if o["kind"] == "pr_closed" and o["status"] == "merged":
+            outcomes["pr_merged_known"] += 1
     return {
         "heads": {
             "discovered": len(rows),
             "shadowed_24h": within(24),
             "shadowed_7d": within(24 * 7),
-            "shadowed_total": len(done),
+            "shadowed_total": len(compared),
+            "scoring_degraded": len(compared) - len(done),
             "by_status": dict(status),
             "skipped_by_reason": dict(skipped),
             "failed_by_reason": dict(failed),
@@ -1286,8 +1298,9 @@ def summary(
             "prod_false_alarms_shadow_also_raised": outcomes["prod_false_alarm_in_shadow"],
             "prod_confirmed_blockers": outcomes["prod_confirmed"],
             "prod_confirmed_shadow_also_raised": outcomes["prod_confirmed_in_shadow"],
-            "prs_merged": outcomes["pr_merged"],
+            # closed covers merged; a merge is known only when the audit queue recorded it
             "prs_closed": outcomes["pr_closed"],
+            "prs_merged_known": outcomes["pr_merged_known"],
         },
         "cost": {
             "gpt_tokens_ratio": _ratio(total("shadow_gpt_tokens"), total("prod_gpt_tokens")),
@@ -1410,7 +1423,8 @@ def render(s: dict[str, Any], state: dict[str, Any] | None = None) -> str:
         )
     lines += [
         f"heads: {h['shadowed_total']} compared ({h['shadowed_24h']} in 24 h, "
-        f"{h['shadowed_7d']} in 7 d) of {h['discovered']} discovered; by status "
+        f"{h['shadowed_7d']} in 7 d; {h['scoring_degraded']} left out of the numbers below: "
+        f"a thread-lane shard failed) of {h['discovered']} discovered; by status "
         + ", ".join(f"{k} {v}" for k, v in sorted(h["by_status"].items())),
     ]
     for key, label in (("skipped_by_reason", "skipped"), ("failed_by_reason", "failed"),
@@ -1435,8 +1449,8 @@ def render(s: dict[str, Any], state: dict[str, Any] | None = None) -> str:
         f"{o['prod_false_alarms']} ({o['prod_false_alarm_blockers']} blockers, shadow also "
         f"raised {o['prod_false_alarms_shadow_also_raised']}); production blockers confirmed "
         f"fixed {o['prod_confirmed_blockers']} (shadow also raised "
-        f"{o['prod_confirmed_shadow_also_raised']}); PRs merged {o['prs_merged']}, closed "
-        f"{o['prs_closed']}",
+        f"{o['prod_confirmed_shadow_also_raised']}); PRs closed {o['prs_closed']} (merged, "
+        f"where known: {o['prs_merged_known']})",
         f"cost (shadow / production): gpt tokens {c['gpt_tokens_ratio']}, gpt lanes "
         f"{c['gpt_lanes_ratio']}, all tokens {c['tokens_ratio']}",
         f"latency: wall median prod {lat['prod_wall_median_s']} s / shadow "

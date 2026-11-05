@@ -62,9 +62,15 @@ def _guard(cmd: Any) -> str:
     return "" if cmd.lower() == "none" else cmd
 
 
-def root_of(args: argparse.Namespace) -> Path:
-    table = _table(args.config)
-    return Path(_pick(args, table, "root", str(shadow.DEFAULT_ROOT))).expanduser()
+def root_of(args: argparse.Namespace, table: dict[str, Any] | None = None) -> Path:
+    """--root, else REVIEWSYS_SHADOW_ROOT (what the status export and doctor read), else
+    `[shadow] root`, else ~/.reviewsys-shadow."""
+    if args.root:
+        return Path(args.root).expanduser()
+    if os.environ.get(shadow.ROOT_ENV):
+        return Path(os.environ[shadow.ROOT_ENV]).expanduser()
+    table = _table(args.config) if table is None else table
+    return Path(table.get("root") or shadow.DEFAULT_ROOT).expanduser()
 
 
 def options(args: argparse.Namespace) -> shadow.Options:
@@ -79,17 +85,16 @@ def options(args: argparse.Namespace) -> shadow.Options:
     if not (skills_path / "config.json").exists():
         raise SystemExit(f"shadow: {skills_path} has no config.json")
     return shadow.Options(
-        root=root_of(args),
+        root=root_of(args, table),
         skills=skills_path.resolve(),
         prod_db=cfg.db_path,
-        runs_dir=cfg.runs_dir,
         config=args.config,
         sample_rate=float(_pick(args, table, "sample_rate", 1.0)),
         max_age_hours=float(_pick(args, table, "max_age_hours", 24.0)),
         concurrency=int(_pick(args, table, "concurrency", 2)),
         max_heads_per_day=int(_pick(args, table, "max_heads_per_day", 40)),
         guard_cmd=_guard(_pick(args, table, "guard_cmd", "")),
-        stop_on_guard=bool(args.stop_on_guard or table.get("stop_on_guard", False)),
+        stop_on_guard=bool(_pick(args, table, "stop_on_guard", False)),
         min_usable_accounts=args.min_usable_accounts,
         backlog_limit=cfg.backlog_skip_phase1_above,
         min_free_gb=args.min_free_gb,
@@ -105,12 +110,13 @@ def options(args: argparse.Namespace) -> shadow.Options:
 
 
 def _log_to(root: Path) -> None:
+    """The runner logs to a rotated file only (stderr goes to an unrotated one on the box)."""
     (root / "logs").mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(
         root / "logs" / "shadow.log", maxBytes=10 * 1024 * 1024, backupCount=3
     )
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
-    logging.getLogger().addHandler(handler)
+    logging.getLogger().handlers[:] = [handler]
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -121,13 +127,13 @@ def cmd_run(args: argparse.Namespace) -> int:
     stop = threading.Event()
 
     def _stop(signum: int, _frame: object) -> None:
-        logging.getLogger("reviewsys.shadow").info("shadow: signal %s, stopping", signum)
+        shadow.log.info("shadow: signal %s, stopping", signum)
         stop.set()
 
     signal.signal(signal.SIGTERM, _stop)
     signal.signal(signal.SIGINT, _stop)
     wm = runner.set_watermark(args.since)
-    logging.getLogger("reviewsys.shadow").info(
+    shadow.log.info(
         "shadow: runner pid %s, root %s, skills %s, watermark %s, guard %s",
         os.getpid(), opts.root, opts.skills, wm, opts.guard_cmd or "none",
     )  # fmt: skip
@@ -143,7 +149,7 @@ def cmd_tick(args: argparse.Namespace) -> int:
     end. Holds the runner's lock: refused while `shadow run` is up."""
     opts = options(args)
     runner = shadow.Runner(opts, shadow.connect(opts.db_path))
-    runner.lock()
+    runner.lock(pidfile=False)
     try:
         runner.set_watermark(args.since)
         runner.recover()
@@ -224,7 +230,10 @@ def cmd_score(args: argparse.Namespace) -> int:
         return 1
     cfg = cfg_mod.load(Path(args.config) if args.config else None)
     conn = shadow.connect(db)
-    print(json.dumps(shadow.score(conn, cfg.db_path, days=args.days)))
+    try:
+        print(json.dumps(shadow.score(conn, cfg.db_path, days=args.days)))
+    finally:
+        conn.close()
     return 0
 
 
@@ -236,7 +245,10 @@ def add_parser(sub: Any) -> None:
     ssub = s.add_subparsers(dest="action", required=True)
 
     def common(p: argparse.ArgumentParser) -> None:
-        p.add_argument("--root", help="shadow root (default ~/.reviewsys-shadow)")
+        p.add_argument(
+            "--root",
+            help="shadow root (default $REVIEWSYS_SHADOW_ROOT, [shadow] root, ~/.reviewsys-shadow)",
+        )
 
     def launching(p: argparse.ArgumentParser) -> None:
         common(p)
@@ -251,7 +263,8 @@ def add_parser(sub: Any) -> None:
         )
         p.add_argument(
             "--since",
-            help="shadow runs finished at or after this ISO time (default: from the first start)",
+            help="shadow runs finished at or after this ISO time (default: from the first "
+            "start); older than --max-age-hours still needs --max-age-hours 0",
         )
         p.add_argument(
             "--guard-cmd",
@@ -259,9 +272,9 @@ def add_parser(sub: Any) -> None:
         )
         p.add_argument(
             "--stop-on-guard",
-            action="store_true",
+            action=argparse.BooleanOptionalAction,
             default=None,
-            help="terminate running replays after two failed guard checks in a row",
+            help="terminate running replays after two failed guard checks in a row (off)",
         )
         p.add_argument("--min-usable-accounts", type=int, default=2)
         p.add_argument("--min-free-gb", type=float, default=DEFAULT_MIN_FREE_GB)

@@ -8,16 +8,18 @@
 #
 # Usage:  deploy/deploy.sh [ref]            (default: main)
 #         deploy/deploy.sh <ref> --force    (skip CI check; emergencies only)
-#         deploy/deploy.sh <ref> --with-shadow  (also install/restart the live v12 shadow
-#                                                runner: deploy/shadow.sh install)
-# An enabled shadow runner is restarted onto the new code either way; the daemon never
-# depends on it.
+#         deploy/deploy.sh <ref> --with-v12-shadow  (also install/restart the live v12
+#                                   shadow runner: deploy/shadow.sh install; NOT `--shadow`,
+#                                   which puts the production daemon in --no-spawn mode)
+# An enabled v12 shadow runner is paused before the venv upgrade and started again on the new
+# code either way; the daemon never depends on it.
 set -euo pipefail
 
 REF="${1:-main}"
 if [ $# -gt 0 ]; then shift; fi
 FORCE=""; SHADOW=""; WITH_SHADOW=""
-for a in "$@"; do case "$a" in --force) FORCE=1;; --shadow) SHADOW=1;; --with-shadow) WITH_SHADOW=1;; esac; done
+for a in "$@"; do case "$a" in --force) FORCE=1;; --shadow) SHADOW=1;; --with-v12-shadow) WITH_SHADOW=1;;
+  --with-shadow) echo "unknown flag --with-shadow: --with-v12-shadow installs the v12 shadow runner; --shadow puts the daemon in no-spawn mode" >&2; exit 2;; esac; done
 REPO="thepastaclaw/review-system"
 HOST="${REVIEWSYS_HOST:-claw@100.81.48.28}"
 LABEL="ai.thepastaclaw.reviewsys"
@@ -45,6 +47,11 @@ if [ ! -d "$SRC/.git" ]; then
 fi
 git -C "$SRC" fetch -q --tags origin
 git -C "$SRC" checkout -q --detach "$SHA"
+# replays launched mid-upgrade would run half-installed code: pause an enabled shadow runner
+SHADOW_ON=""
+if [ -f "$HOME/.reviewsys-shadow/enabled" ] && [ -x "$SRC/deploy/shadow.sh" ]; then
+  SHADOW_ON=1; "$SRC/deploy/shadow.sh" pause || true
+fi
 if [ ! -x "$BASE/venv/bin/python" ]; then uv venv -q --python 3.14 "$BASE/venv"; fi
 uv pip install -q --python "$BASE/venv/bin/python" "$SRC"
 [ -f "$BASE/config.toml" ] || "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" init-config
@@ -84,7 +91,7 @@ echo "daemon pid: $NEW"
 # never a failed production deploy
 if [ -n "$WITH_SHADOW" ]; then
   "$SRC/deploy/shadow.sh" install || echo "shadow runner NOT installed; see deploy/shadow.sh status" >&2
-elif [ -f "$HOME/.reviewsys-shadow/enabled" ]; then
-  "$SRC/deploy/shadow.sh" restart || echo "shadow runner did not restart; see deploy/shadow.sh status" >&2
+elif [ -n "$SHADOW_ON" ]; then
+  "$SRC/deploy/shadow.sh" start || echo "shadow runner did not start; see deploy/shadow.sh status" >&2
 fi
 REMOTE

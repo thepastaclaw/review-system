@@ -574,13 +574,20 @@ read-only) or the production mirrors.
   newest. It takes the newest first and leaves out runs older than `max_age_hours` (24). A
   `sample_rate` (1.0) keeps a share, chosen by a hash of the run id so the choice is
   deterministic. Each run gets one row and is never shadowed twice. It starts from the first
-  start (the watermark) and backfills only with `--since`.
+  start (the watermark) and backfills only with `--since` (older than `max_age_hours` also
+  needs `--max-age-hours 0`).
+  - An audit is told by the path its run took (`runs.path`), so a live review whose head an
+    audit later took over still counts.
+  - A carried head is left out by its run's `carry` step, so a review someone asks for of a
+    carried commit is shadowed.
 - **How.** Each head is one `reviewsys replay RUN --skills <v12> --policy-name v12` in its own
   process group, into `~/.reviewsys-shadow/replays/run-<id>/`. That is the replay harness above:
   - a scratch database as of the run's start;
   - the worker's dry run;
-  - the pinned read-only gh broker (with `REVIEWSYS_REPLAY_GH_TOKEN` when set, else the box's own
-    gh credentials; lanes get no token and every write is refused);
+  - the pinned read-only gh broker. It uses `REVIEWSYS_REPLAY_GH_TOKEN` when set: `shadow.sh`
+    reads it from `~/.reviewsys-shadow/gh-token`, mode 600. Otherwise it uses the box's own gh
+    credentials and the bot's REST budget, with writes refused by code. Lanes get no token
+    either way;
   - git pinned to the cutoff.
 
   No `--force-phase2`: the gate decides as it would live. Replay lanes wait in
@@ -588,7 +595,8 @@ read-only) or the production mirrors.
   production. At most `concurrency` (2) replays run at once. A replay running past
   `--replay-timeout-hours` (8) is killed.
 - **Gates before every launch**, in order:
-  - `max_heads_per_day` (40) launches per UTC day;
+  - `max_heads_per_day` (40) launches per UTC day. Every attempt counts, including one a stop
+    terminated;
   - degraded mode skips the head (recorded `skipped`, `degraded`);
   - fewer than 2 usable OpenAI accounts, a production backlog (half of
     `backlog_skip_phase1_above`) or a short disk (35 GB floor, 6 GB per running replay) holds
@@ -596,7 +604,7 @@ read-only) or the production mirrors.
   - then the quota guard: `guard_cmd` (`--guard-cmd`, or `[shadow] guard_cmd` in config.toml) is
     a shell command, and exit 0 allows the launch. Anything else holds launches for this tick
     (`waiting`, `quota guard`), and the guard's one-line JSON stdout goes to the shadow
-    database's `events` table and `logs/shadow.log`.
+    database's `events` table and `logs/shadow.log`. Only a changed answer is logged.
 
   On the box the guard is `/opt/homebrew/bin/python3 ~/.reviewsys-exp/bin/quota_guard.py`. A
   missing guard script blocks every launch (`deploy/shadow.sh status` says so). A failed guard
@@ -605,10 +613,18 @@ read-only) or the production mirrors.
 - **Head states** (`shadows.status`): `queued` → `waiting` (a gate holds it) → `running` →
   `done` | `failed` | `skipped`. Skip reasons are `not sampled`, `superseded`, `aged out` and
   `degraded`. Failure reasons are `run failed` (the v12 run itself failed), `invalid: quota`,
-  `invalid: live github`, `no report`, `timed out`, `interrupted` and `launch error`. A replay
-  interrupted by a runner stop goes back to the queue. One left by a runner that was killed is
-  terminated on the next start (only if its command line is still that replay) and re-queued
-  once, then failed. Its worktrees and pinned clone are removed either way.
+  `invalid: live github`, `no report`, `timed out`, `interrupted`, `launch error` and
+  `compare error`.
+  - A replay a runner stop interrupts goes back to the queue; one that had already finished is
+    booked, not run again.
+  - A replay left by a killed runner is handled on the next start:
+    - one that finished meanwhile is booked from its report;
+    - one whose command line still shows it is that replay is terminated and re-queued once,
+      then failed;
+    - one that is alive but cannot be verified (`ps` failing) is failed and never signalled,
+      so it never runs twice.
+  - Worktrees and pinned clones are removed in every case.
+  - Process groups are signalled only while they lead their own group and still have members.
 - **Comparison** (when a replay finishes):
   - Production side: the run's `posted` findings of phase `final` (what its published review
     stood on, the same set as a replay's `published`), its final `reviews.event`, its lanes and
@@ -626,7 +642,8 @@ read-only) or the production mirrors.
     is a `conceded` row as `_latest_settlement` reads it, a delivered thread answer, or the
     ledger's `withdrawn`/`deferred` status.
   - `prod_confirmed`: a production blocker later FIXED.
-  - `pr_merged` / `pr_closed`.
+  - `pr_closed`: its status is `merged` only when an audit row recorded the merge (a PR merged
+    over findings). `prs.state` cannot tell a clean merge from a close.
 
   Each outcome row carries `in_shadow` (did v12 raise it too). An outcome that stops holding
   (a re-raised finding) is removed.
@@ -638,14 +655,19 @@ read-only) or the production mirrors.
   - `shadow.pid` and `shadow.lock` (a flock: a killed runner never blocks the next);
   - `enabled`.
 - **Running it.**
-  - `deploy/deploy.sh <ref> --with-shadow` installs it (or `deploy/shadow.sh install` on the box).
+  - `deploy/deploy.sh <ref> --with-v12-shadow` installs it (or `deploy/shadow.sh install` on
+    the box). This is not `--shadow`, which puts the production daemon in no-spawn mode;
+    `--with-shadow` is refused.
     It needs the v12 skills checkout at `~/Projects/skills-v12` (or `REVIEWSYS_SHADOW_SKILLS`).
   - It has its own LaunchAgent, `ai.thepastaclaw.reviewsys-shadow` (Nice 10, ProcessType
     Background). Because launchd does not supervise `claw`, a `lockf` cron line runs
     `deploy/shadow.sh start` every minute; that path uses `nice -n 10` without background QoS.
   - `deploy/shadow.sh stop` disables and stops it: replays are terminated and their heads
-    re-queued. `restart` keeps it enabled; `status` shows the state.
-  - A deploy restarts an enabled shadow onto the new code.
+    re-queued. `pause` and `restart` keep it enabled; `status` shows the state.
+  - A runner counts as up only while it holds `shadow.lock`, so a stale pidfile is never
+    trusted.
+  - A deploy pauses an enabled shadow before it upgrades the shared venv and starts it again
+    on the new code. A deploy restart re-runs in-flight replays from the start.
   - The daemon never depends on it: stopped or absent, production is unchanged.
   - `reviewsys doctor` prints one informational line about it.
 - **Reading results.**
@@ -674,7 +696,8 @@ read-only) or the production mirrors.
   - Private: `shadow.db` and the replay directories stay on the box. They hold finding titles
     (`findings`), failure text (`shadows.detail`) and the guard's output.
   - Public: the status export gets a `shadow` block (exporter `build_shadow`, only when
-    `~/.reviewsys-shadow/shadow.db` exists, or `REVIEWSYS_SHADOW_ROOT`), shown as the dashboard's
+    `~/.reviewsys-shadow/shadow.db` exists, or the root `REVIEWSYS_SHADOW_ROOT` names; a
+    `[shadow] root` in config.toml is not seen by the export or doctor), shown as the dashboard's
     "Shadow: v12 vs production" panel. It holds:
     - the summary numbers;
     - the confusion matrix;
@@ -691,6 +714,10 @@ read-only) or the production mirrors.
     latency.
   - "Caught earlier" counts production raising the finding later, which is a lower bound:
     a defect nobody raised again is not counted.
+  - Heads whose replay had a thread-lane shard fail (`degraded_for_scoring`) are compared and
+    stored, but left out of the summary numbers, as replay-score does.
+  - An accepted deferral counts as a production "false alarm" signal; `outcomes.status` tells
+    WITHDRAWN from INTENTIONALLY_DEFERRED.
 
 ## Final approval after an iterative review
 

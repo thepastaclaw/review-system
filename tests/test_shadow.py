@@ -58,6 +58,7 @@ class Prod:
         finished: str | None = None,
         started: str | None = None,
         queue: str = "live",
+        path: str | None = None,
         status: str = "done",
         degraded_: int = 0,
         review: str | None = "final",
@@ -82,8 +83,8 @@ class Prod:
             rid = int(
                 c.execute(
                     "INSERT INTO runs (head_id, attempt, status, token, started_at, finished_at, "
-                    "deadline_at, tier, degraded) VALUES (?,?,?,?,?,?,?,?,?)",
-                    (hid, 1, status, "t", started, finished, started, "normal", degraded_),
+                    "deadline_at, tier, degraded, path) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                    (hid, 1, status, "t", started, finished, started, "normal", degraded_, path),
                 ).lastrowid
                 or 0
             )
@@ -149,7 +150,6 @@ def _opts(tmp_path: Path, prod: Path, **kw: Any) -> shadow.Options:
         root=tmp_path / "shadow",
         skills=skills,
         prod_db=prod,
-        runs_dir=tmp_path / "runs",
         min_free_gb=0,
         tick_seconds=0.05,
         **kw,
@@ -193,7 +193,8 @@ def prod(tmp_path: Path) -> Prod:
 def test_selection_takes_finished_published_live_reviews_only(tmp_path, prod):
     ok = prod.run(1)
     excluded = {
-        "audit": prod.run(2, queue="audit"),
+        "audit": prod.run(2, queue="audit", path="audit"),
+        "audit (before runs.path)": prod.run(12, queue="audit"),
         "conversation": prod.run(3, steps=("converse",)),
         "carried": prod.run(4, steps=("carry",)),
         "degraded": prod.run(5, degraded_=1),
@@ -205,28 +206,28 @@ def test_selection_takes_finished_published_live_reviews_only(tmp_path, prod):
     }
     old_head = prod.run(11)
     prod.run(11, review=None, status="running")  # a newer push since
+    # a live review whose head an audit took over after it finished (an unclean merge)
+    taken_over = prod.run(13, queue="audit", path="normal")
     r = _runner(_opts(tmp_path, prod.path))
     r.discover()
     rows = _rows(r)
-    assert rows[ok]["status"] == "queued"
+    assert rows[ok]["status"] == "queued" and rows[taken_over]["status"] == "queued"
     assert rows[old_head]["status"] == "skipped" and rows[old_head]["reason"] == "superseded"
     for why, rid in excluded.items():
         assert rid not in rows, why
 
 
-def test_selection_tolerates_and_honours_carried_from(tmp_path, prod):
+def test_a_carried_head_is_left_out_by_its_carry_run_not_its_column(tmp_path, prod):
+    # main's schema: heads.carried_from (absent on this branch's: the query never names it)
     with tx(prod.conn):
         prod.conn.execute("ALTER TABLE heads ADD COLUMN carried_from TEXT")
-    carried = prod.run(1)
-    plain = prod.run(2)
+    carried = prod.run(1, steps=("carry",))
+    asked = prod.run(2)  # someone asked for a review of a carried commit: a real review
     with tx(prod.conn):
-        prod.conn.execute(
-            "UPDATE heads SET carried_from='abc' WHERE id=(SELECT head_id FROM runs WHERE id=?)",
-            (carried,),
-        )
+        prod.conn.execute("UPDATE heads SET carried_from='abc'")
     r = _runner(_opts(tmp_path, prod.path))
     r.discover()
-    assert set(_rows(r)) == {plain}
+    assert set(_rows(r)) == {asked} and carried not in _rows(r)
 
 
 def test_the_watermark_keeps_history_out_unless_asked(tmp_path, prod):
@@ -602,7 +603,7 @@ def test_outcome_scoring_on_a_seeded_production_database(tmp_path, prod):
     assert out[("caught_earlier", "sh")]["later_run"] == later
     assert out[("prod_false_alarm", "fa")]["in_shadow"] == 0
     assert out[("prod_confirmed", "ok")]["status"] == "FIXED"
-    assert ("pr_merged", "") in out
+    assert out[("pr_closed", "")]["status"] == "merged"
     row = _rows(r)[src]
     assert (row["pr_state"], row["caught_earlier"]) == ("merged", 1)
     # idempotent, and an outcome that no longer holds goes away
@@ -616,6 +617,7 @@ def test_outcome_scoring_on_a_seeded_production_database(tmp_path, prod):
     rep = shadow.summary(r.conn)
     assert rep["outcomes"]["shadow_caught_earlier"] == 1
     assert rep["outcomes"]["prod_confirmed_blockers"] == 1
+    assert (rep["outcomes"]["prs_closed"], rep["outcomes"]["prs_merged_known"]) == (1, 1)
     assert "Shared overflow" not in json.dumps(rep)
 
 
@@ -770,6 +772,61 @@ def test_is_replay_reads_the_command_line():
         p.wait()
 
 
+def test_a_stop_books_a_replay_that_already_finished(tmp_path, prod):
+    rid = prod.run(1)
+    r = _runner(_opts(tmp_path, prod.path), kill_grace=2)
+    r.discover()
+    p = subprocess.Popen(["true"], start_new_session=True)
+    r.launcher = lambda o, row: p
+    r.launch()
+    p.wait()
+    r.opts.report(rid).parent.mkdir(parents=True, exist_ok=True)
+    r.opts.report(rid).write_text(json.dumps(_report()))
+    r.stop_all()
+    assert _rows(r)[rid]["status"] == "done"
+
+
+def test_a_failed_booking_never_strands_a_head(tmp_path, prod, monkeypatch):
+    rid = prod.run(1)
+    r = _runner(_opts(tmp_path, prod.path), launcher=lambda o, row: Fake(rc=0))
+    r.tick()
+    monkeypatch.setattr(r, "finish", lambda row, rc: 1 / 0)
+    r.reap()
+    row = _rows(r)[rid]
+    assert (row["status"], row["reason"]) == ("failed", "compare error") and not r.running
+
+
+def test_the_daily_cap_counts_stopped_attempts(tmp_path, prod):
+    prod.run(1)
+    r = _runner(_opts(tmp_path, prod.path, max_heads_per_day=1), kill_grace=1)
+    procs = []
+
+    def launcher(o, row):
+        procs.append(subprocess.Popen(["sleep", "600"], start_new_session=True))
+        return procs[-1]
+
+    r.launcher = launcher
+    r.tick()
+    r.stop_all()  # back in the queue, but the attempt spent quota
+    procs[0].wait(timeout=10)
+    r.tick()
+    assert not r.running and r.launched_today() == 1
+
+
+def test_an_unknown_verdict_never_breaks_the_report(tmp_path, prod):
+    r = _populated(tmp_path, prod)
+    r.conn.execute("UPDATE shadows SET prod_verdict='DISMISSED' WHERE status='done'")
+    assert shadow.summary(r.conn)["confusion"]["none"]["APPROVE"] == 1
+
+
+def test_scoring_degraded_heads_are_left_out_of_the_numbers(tmp_path, prod):
+    r = _populated(tmp_path, prod)
+    r.conn.execute("UPDATE shadows SET scoring_degraded=1 WHERE status='done'")
+    s = shadow.summary(r.conn)
+    assert s["heads"]["shadowed_total"] == 1 and s["heads"]["scoring_degraded"] == 1
+    assert s["verdict_agreement"] is None
+
+
 def test_recover_after_a_killed_runner(tmp_path, prod, monkeypatch):
     rid = prod.run(1)
     other = prod.run(2)
@@ -797,6 +854,33 @@ def test_recover_after_a_killed_runner(tmp_path, prod, monkeypatch):
         assert not (r.opts.replays / f"run-{rid}" / "work" / "mirrors").exists()
     finally:
         for p in (leftover, bystander):
+            if p.poll() is None:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.wait()
+
+
+def test_recover_never_runs_an_unverifiable_replay_twice_and_books_a_finished_one(
+    tmp_path, prod, monkeypatch
+):
+    unknown, finished = prod.run(1), prod.run(2)
+    r = _runner(_opts(tmp_path, prod.path), kill_grace=2)
+    r.discover()
+    live = subprocess.Popen(["sleep", "600"], start_new_session=True)
+    monkeypatch.setattr(shadow, "_is_replay", lambda pid, run_id: None)  # `ps` cannot say
+    rows = _rows(r)
+    r._set(int(rows[unknown]["id"]), status="running", pid=live.pid, attempts=1)
+    r._set(int(rows[finished]["id"]), status="running", pid=999999, attempts=1)
+    rep = r.opts.report(finished)
+    rep.parent.mkdir(parents=True)
+    rep.write_text(json.dumps(_report()))
+    try:
+        r.recover()
+        rows = _rows(r)
+        assert (rows[unknown]["status"], rows[unknown]["reason"]) == ("failed", "interrupted")
+        assert alive(live.pid)  # never signalled
+        assert rows[finished]["status"] == "done" and rows[finished]["compared_at"]
+    finally:
+        for p in (live,):
             if p.poll() is None:
                 os.killpg(p.pid, signal.SIGKILL)
                 p.wait()
@@ -856,7 +940,7 @@ def test_one_head_end_to_end_through_replay(tmp_path, monkeypatch):
     subprocess.run(["git", "-C", str(skills), "checkout", "-q", "--detach", fx["v12"]], check=True)
     cfg = cfg_mod.load(Path(fx["config"]))
     opts = shadow.Options(root=tmp_path / "shadow", skills=skills, prod_db=db,
-                          runs_dir=cfg.runs_dir, max_age_hours=0, min_free_gb=0)  # fmt: skip
+                          max_age_hours=0, min_free_gb=0)  # fmt: skip
 
     class Done:
         pid = 0
@@ -896,14 +980,15 @@ def test_one_head_end_to_end_through_replay(tmp_path, monkeypatch):
 DEPLOY = Path(__file__).resolve().parent.parent / "deploy"
 
 FAKE_RUNNER = r"""#!/bin/sh
-# a stand-in for `reviewsys ... shadow run|status`: holds the pidfile until TERM
+# a stand-in for `reviewsys ... shadow run|status`: holds the lock and the pidfile until TERM
 root=""; prev=""
 for a in "$@"; do [ "$prev" = "--root" ] && root="$a"; prev="$a"; done
 case " $* " in *" status "*) echo "fake status"; exit 0;; esac
 echo "$*" > "$root/argv"
-echo $$ > "$root/shadow.pid"
-trap 'rm -f "$root/shadow.pid"; exit 0' TERM
-while :; do sleep 0.2; done
+exec /usr/bin/lockf -s -k -t 0 "$root/shadow.lock" /bin/sh -c '
+  echo $$ > "$1/shadow.pid"
+  trap "rm -f \"$1/shadow.pid\"; exit 0" TERM
+  while :; do sleep 0.2; done' sh "$root"
 """
 
 
@@ -956,3 +1041,21 @@ def test_shadow_sh_starts_only_when_enabled_and_stops_cleanly(tmp_path):
     assert "stopped" in sh("stop").stdout
     assert not (root / "enabled").exists() and not alive(pid)
     assert "not enabled" in sh("start").stdout
+    # a stale pidfile naming someone else's live process: never signalled, never trusted
+    other = subprocess.Popen(["sleep", "600"], start_new_session=True)
+    try:
+        (root / "shadow.pid").write_text(f"{other.pid}\n")
+        (root / "enabled").touch()
+        assert "not running" in sh("pause").stdout and alive(other.pid)
+        assert "started" in sh("start").stdout
+        for _ in range(50):
+            if (root / "shadow.pid").read_text().strip() != str(other.pid):
+                break
+            time.sleep(0.1)
+        new = int((root / "shadow.pid").read_text())
+        assert new != other.pid
+        assert "stopped" in sh("pause").stdout and (root / "enabled").exists()
+        assert alive(other.pid) and not alive(new)
+    finally:
+        other.kill()
+        other.wait()

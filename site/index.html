@@ -335,7 +335,10 @@ function renderOverview(d){
 // the live v12 shadow (shadow.public_export): counts, verdicts and links only, never a finding's text
 const VERDICT_SHORT={APPROVE:['approve','good'],REQUEST_CHANGES:['changes','bad'],COMMENT:['comment','']};
 const vpill=v=>{const x=VERDICT_SHORT[v];return x?`<span class="pill ${x[1]}">${x[0]}</span>`:'<span class=muted>—</span>'};
-const pct=x=>x==null?'—':Math.round(x*100)+'%',ratio=x=>x==null?'—':x.toFixed(2)+'×',num=x=>x==null?'—':x;
+const pct=x=>x==null?'—':Math.round(x*100)+'%',ratio=x=>x==null?'—':x.toFixed(2)+'×',num=x=>x==null?'—':x,
+  rdur=x=>dur(x==null?null:Math.round(x)),
+  tally=o=>Object.entries(o||{}).filter(([k])=>k!=='not sampled').map(([k,v])=>`${v} ${k}`).join(' · '),
+  vname=x=>(VERDICT_SHORT[x]||['none'])[0];
 function renderShadow(sh){
   const box=$('#shadow');if(!sh){box.classList.add('hidden');return}
   box.classList.remove('hidden');
@@ -348,14 +351,15 @@ function renderShadow(sh){
     ['Production false alarms',o.prod_false_alarms??0,`withdrawn or deferred · v12 also raised ${o.prod_false_alarms_shadow_also_raised??0}`],
     ['Cost · time',ratio(c.gpt_tokens_ratio),`gpt tokens v12/prod · wall ${ratio(l.wall_ratio)}, active ${ratio(l.active_ratio)}`]];
   const labels=['APPROVE','REQUEST_CHANGES','COMMENT','none'],cm=s.confusion||{};
-  const matrix=`<div class=tablewrap><table class=cm><thead><tr><th>prod ↓ · v12 →</th>${labels.map(x=>`<th>${esc((VERDICT_SHORT[x]||['none'])[0])}</th>`).join('')}</tr></thead><tbody>${labels.map(p=>`<tr><td>${esc((VERDICT_SHORT[p]||['none'])[0])}</td>${labels.map(q=>{const n=(cm[p]||{})[q]||0;return `<td class="${n?(p===q?'diag':'off'):'muted'}">${n}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
-  const reasons=Object.entries({...(h.skipped_by_reason||{})}).filter(([k])=>k!=='not sampled'),failed=Object.entries(h.failed_by_reason||{}),waiting=Object.entries(h.waiting_by_reason||{});
+  const matrix=`<div class=tablewrap><table class=cm><thead><tr><th>prod ↓ · v12 →</th>${labels.map(x=>`<th>${esc(vname(x))}</th>`).join('')}</tr></thead><tbody>${labels.map(p=>`<tr><td>${esc(vname(p))}</td>${labels.map(q=>{const n=(cm[p]||{})[q]||0;return `<td class="${n?(p===q?'diag':'off'):'muted'}">${n}</td>`}).join('')}</tr>`).join('')}</tbody></table></div>`;
+  const skipped=tally(h.skipped_by_reason),failed=tally(h.failed_by_reason),waiting=tally(h.waiting_by_reason);
   const facts=`<div class=metric><span>Confirmed production blockers (fixed later)</span><b>${o.prod_confirmed_blockers??0} <em>v12 also raised ${o.prod_confirmed_shadow_also_raised??0}</em></b></div>
     <div class=metric><span>Findings: matched · production only · v12 only</span><b>${f.matched??0} · ${f.prod_only??0} · ${f.shadow_only??0}</b></div>
-    <div class=metric><span>Median review time production · v12</span><b>${dur(l.prod_wall_median_s==null?null:Math.round(l.prod_wall_median_s))} · ${dur(l.shadow_wall_median_s==null?null:Math.round(l.shadow_wall_median_s))}</b></div>
-    <div class=metric><span>Skipped</span><b>${reasons.length?esc(reasons.map(([k,v])=>`${v} ${k}`).join(' · ')):'none'}</b></div>
-    <div class=metric><span>Failed</span><b>${failed.length?esc(failed.map(([k,v])=>`${v} ${k}`).join(' · ')):'none'}</b></div>
-    ${waiting.length?`<div class=metric><span>Waiting</span><b>${esc(waiting.map(([k,v])=>`${v} ${k}`).join(' · '))}</b></div>`:''}`;
+    <div class=metric><span>Median review time production · v12</span><b>${rdur(l.prod_wall_median_s)} · ${rdur(l.shadow_wall_median_s)}</b></div>
+    <div class=metric><span>Skipped</span><b>${esc(skipped||'none')}</b></div>
+    <div class=metric><span>Failed</span><b>${esc(failed||'none')}</b></div>
+    ${waiting?`<div class=metric><span>Waiting</span><b>${esc(waiting)}</b></div>`:''}
+    ${h.scoring_degraded?`<div class=metric><span>Left out (a thread-lane shard failed)</span><b>${h.scoring_degraded}</b></div>`:''}`;
   const sev=x=>`<span class=sev><span class="${x?.blocking?'b':'z'}">${x?.blocking??'—'}</span><span class="${x?.suggestion?'g':'z'}">${x?.suggestion??'—'}</span></span>`;
   const statusCell=x=>x.status==='done'?'':`<span class="pill${x.status==='failed'?' bad':x.status==='running'?' good':x.status==='waiting'?' warn':''}">${esc(x.status)}${x.reason?' · '+esc(x.reason):''}</span>`;
   const recent=(sh.recent||[]).map(x=>`<tr class="${x.disagree?'dis':''}">
@@ -363,7 +367,7 @@ function renderShadow(sh){
       <td class=vs>${x.status==='done'?`${vpill(x.prod_verdict)}<span class=arrow>→</span>${vpill(x.shadow_verdict)}`:statusCell(x)}</td>
       <td class=num>${sev(x.prod)}</td><td class=num>${sev(x.shadow)}</td>
       <td class=num>${x.status==='done'?`${x.matched} · ${x.prod_only} · ${x.shadow_only}`:'<span class=muted>—</span>'}${x.caught_earlier?`<span class=s>${x.caught_earlier} caught earlier</span>`:''}${x.prod_false_alarms?`<span class=s>${x.prod_false_alarms} prod false alarm${x.prod_false_alarms===1?'':'s'}</span>`:''}</td>
-      <td class=num>${dur(x.prod_wall_s==null?null:Math.round(x.prod_wall_s))}<span class=s>v12 ${dur(x.shadow_wall_s==null?null:Math.round(x.shadow_wall_s))}</span></td></tr>`).join('');
+      <td class=num>${rdur(x.prod_wall_s)}<span class=s>v12 ${rdur(x.shadow_wall_s)}</span></td></tr>`).join('');
   $('#shadow-body').innerHTML=`<div class=scards>${cards.map(x=>`<div class=card><div class=label>${x[0]}</div><div class=value>${esc(x[1])}</div><div class=csub title="${esc(x[2])}">${esc(x[2])}</div></div>`).join('')}</div>
     <div class=sgrid><div><h3 style="margin-top:0">Verdicts <small>production rows · v12 columns</small></h3>${matrix}</div><div><h3 style="margin-top:0">Outcomes and cost</h3>${facts}</div></div>
     <h3>Recent heads <small>highlighted: the verdicts differ · findings matched · production only · v12 only</small></h3>
