@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T22:13:01Z",
-  "generated_at": "2026-11-05T22:13:02Z",
+  "data_as_of": "2026-11-05T22:14:01Z",
+  "generated_at": "2026-11-05T22:14:02Z",
   "history": {
     "daily": [
       {
@@ -309,7 +309,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 28292,
+        "count": 28293,
         "severity": "suggestion"
       }
     ],
@@ -696,9 +696,9 @@
       },
       {
         "effort": "medium",
-        "lanes": 5391,
-        "tokens_in": 781071478,
-        "tokens_out": 8615507
+        "lanes": 5392,
+        "tokens_in": 781210634,
+        "tokens_out": 8616392
       },
       {
         "effort": "high",
@@ -750,11 +750,11 @@
         "tokens_out": 47438302
       },
       {
-        "avg_tokens_per_lane": 1892631.0,
-        "lanes": 32715,
+        "avg_tokens_per_lane": 1892578.0,
+        "lanes": 32716,
         "model": "gpt-6.1-sol",
-        "tokens_in": 61634933058,
-        "tokens_out": 282502346
+        "tokens_in": 61635072214,
+        "tokens_out": 282503231
       }
     ],
     "tokens_by_run": [
@@ -765,8 +765,8 @@
       },
       {
         "run_id": 9070,
-        "tokens_in": 5141399,
-        "tokens_out": 179692
+        "tokens_in": 5280555,
+        "tokens_out": 180577
       },
       {
         "run_id": 9069,
@@ -1260,16 +1260,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14345008,
+      "avg_tokens_per_completed_review": 14345028,
       "completed_reviews": 6997,
-      "findings": 53295,
+      "findings": 53296,
       "findings_posted": 8271,
       "reviews": 8574,
       "reviews_imported": 2245,
       "runs": 9071,
-      "tokens_in": 99293030513,
-      "tokens_out": 1078990162,
-      "tokens_total": 100372020675
+      "tokens_in": 99293169669,
+      "tokens_out": 1078991047,
+      "tokens_total": 100372160716
     }
   },
   "live": {
@@ -1278,12 +1278,16 @@
         "attempt": 1,
         "author": "knst",
         "deadline_at": "2026-11-06T03:43:55Z",
-        "deadline_in_seconds": 19854,
+        "deadline_in_seconds": 19794,
         "degraded": false,
-        "elapsed_seconds": 1746,
-        "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-11-05T22:12:59Z",
+        "elapsed_seconds": 1806,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 1
+        },
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-11-05T22:13:46Z",
         "id": 9070,
         "lanes": [
           {
@@ -1295,29 +1299,59 @@
             "status": "completed",
             "tokens_in": 5141399,
             "tokens_out": 179692
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 139156,
+            "tokens_out": 885
           }
         ],
         "live_lanes": [
           {
-            "effort": "medium",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify1",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 5,
+            "role": "backport-reviewer",
+            "since_seconds": 36,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "dash-core-commit-history",
+            "since_seconds": 35,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 37,
             "state": "running"
           }
         ],
         "number": 8062,
         "overdue": false,
-        "phase": "verify1",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/8062",
         "priority": false,
-        "progress": 0.752,
+        "progress": 0.774,
         "queue": "live",
         "queued_at": "2026-11-05T21:13:55Z",
-        "remaining_seconds": 577,
+        "remaining_seconds": 527,
         "repo": "dashpay/dash",
         "sha": "617e04b8b0e4a589e8940437692efb1fc8395d69",
         "started_at": "2026-11-05T21:43:55Z",
@@ -1375,21 +1409,54 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 1
+            },
             "name": "verify1",
-            "seconds": 5,
+            "seconds": 28,
             "started_at": "2026-11-05T22:12:56Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "admit_phase2": true,
+              "blockers": 0,
+              "phase2_effort": "high",
+              "tier": "normal"
+            },
+            "name": "gate",
+            "seconds": 0,
+            "started_at": "2026-11-05T22:13:24Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "backport-reviewer",
+                "dash-core-commit-history"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "backport-reviewer",
+              "dash-core-commit-history"
+            ],
+            "lanes_total": 3,
+            "name": "phase2",
+            "seconds": 37,
+            "started_at": "2026-11-05T22:13:24Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "backport: bitcoin#27987, #28414, #28450, #28458, #28471, #28472, bitcoin-core/gui#739",
-        "tokens_in": 5141399,
-        "tokens_out": 179692,
+        "tokens_in": 5280555,
+        "tokens_out": 180577,
         "trigger": "new_push",
         "upcoming": [
-          "gate",
-          "phase2",
           "verify2",
           "fresh_phase2",
           "fresh_verify2",
@@ -1431,7 +1498,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-05T22:11:07Z",
+        "at": "2026-11-05T22:13:17Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1478,7 +1545,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 3,
         "slots": 8,
         "waiting": 0
       },
@@ -1492,17 +1559,17 @@
     "last_run_done_at": "2026-11-05T21:58:27Z",
     "last_run_started_at": "2026-11-05T21:43:55Z",
     "median_run_minutes": 20.9,
-    "notify_last_at": "2026-11-05T22:11:27Z",
+    "notify_last_at": "2026-11-05T22:13:38Z",
     "oldest_queued_at": "2026-11-05T22:06:39Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 382,
+        "age_seconds": 442,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-05T22:36:39Z",
-        "eligible_in_seconds": 1418,
+        "eligible_in_seconds": 1358,
         "number": 8064,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8064",
@@ -1516,12 +1583,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 125,
+        "age_seconds": 185,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-05T22:40:56Z",
-        "eligible_in_seconds": 1675,
+        "eligible_in_seconds": 1615,
         "number": 7623,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/7623",
@@ -1542,7 +1609,7 @@
       "reviews": 134,
       "tokens": 1397959653
     },
-    "ts": "2026-11-05T22:13:01Z",
+    "ts": "2026-11-05T22:14:01Z",
     "typical_minutes_by_tier": {
       "critical": 27.4,
       "low": 37.6,
@@ -1553,7 +1620,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 29.1,
+      "idle_minutes": 30.1,
       "ingest_stale": false,
       "stuck": false
     }
