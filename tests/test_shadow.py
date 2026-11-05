@@ -197,6 +197,7 @@ def test_selection_takes_finished_published_live_reviews_only(tmp_path, prod):
         "audit (before runs.path)": prod.run(12, queue="audit"),
         "conversation": prod.run(3, steps=("converse",)),
         "carried": prod.run(4, steps=("carry",)),
+        "ci re-check": prod.run(14, steps=("ci_check",)),
         "degraded": prod.run(5, degraded_=1),
         "failed": prod.run(6, status="failed"),
         "no review": prod.run(7, review=None),
@@ -1064,3 +1065,28 @@ def test_shadow_sh_starts_only_when_enabled_and_stops_cleanly(tmp_path):
     finally:
         other.kill()
         other.wait()
+
+
+def test_a_head_is_shadowed_once_whatever_reviews_it_again(tmp_path, prod):
+    first = prod.run(7, finished=_ago(minutes=20))
+    c = prod.conn
+    hid, started = c.execute("SELECT head_id, started_at FROM runs WHERE id=?", (first,)).fetchone()
+    with tx(c):
+        again = int(
+            c.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, finished_at, "
+                "deadline_at, tier) VALUES (?,?,?,?,?,?,?,?)",
+                (hid, 1, "done", "t2", started, _ago(minutes=5), started, "normal"),
+            ).lastrowid
+            or 0
+        )
+        c.execute(
+            "INSERT INTO reviews (run_id, repo, number, sha, phase, event, posted_at) "
+            "SELECT ?, repo, number, sha, 'final', 'COMMENT', ? FROM heads WHERE id=?",
+            (again, _ago(minutes=5), hid),
+        )
+    r = _runner(_opts(tmp_path, prod.path))
+    r.discover()
+    rows = _rows(r)
+    assert rows[first]["status"] == "queued"
+    assert rows[again]["status"] == "skipped" and rows[again]["reason"] == "head already shadowed"
