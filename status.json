@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T01:48:01Z",
-  "generated_at": "2026-11-05T01:48:01Z",
+  "data_as_of": "2026-11-05T01:49:01Z",
+  "generated_at": "2026-11-05T01:49:02Z",
   "history": {
     "daily": [
       {
@@ -696,15 +696,15 @@
       },
       {
         "effort": "medium",
-        "lanes": 5278,
-        "tokens_in": 764805869,
-        "tokens_out": 8460931
+        "lanes": 5279,
+        "tokens_in": 764921249,
+        "tokens_out": 8462363
       },
       {
         "effort": "high",
-        "lanes": 21664,
-        "tokens_in": 21954504555,
-        "tokens_out": 199272031
+        "lanes": 21665,
+        "tokens_in": 21954622296,
+        "tokens_out": 199273220
       },
       {
         "effort": "low",
@@ -750,18 +750,18 @@
         "tokens_out": 47344540
       },
       {
-        "avg_tokens_per_lane": 1910665.0,
-        "lanes": 31910,
+        "avg_tokens_per_lane": 1910553.0,
+        "lanes": 31912,
         "model": "gpt-6.1-sol",
-        "tokens_in": 60691977331,
-        "tokens_out": 277355334
+        "tokens_in": 60692210452,
+        "tokens_out": 277357955
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 8933,
-        "tokens_in": 4548145,
-        "tokens_out": 185207
+        "tokens_in": 4781266,
+        "tokens_out": 187828
       },
       {
         "run_id": 8932,
@@ -1260,16 +1260,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14413470,
+      "avg_tokens_per_completed_review": 14413504,
       "completed_reviews": 6866,
       "findings": 51861,
       "findings_posted": 8145,
       "reviews": 8458,
       "reviews_imported": 2245,
       "runs": 8933,
-      "tokens_in": 97903515027,
-      "tokens_out": 1059369002,
-      "tokens_total": 98962884029
+      "tokens_in": 97903748148,
+      "tokens_out": 1059371623,
+      "tokens_total": 98963119771
     }
   },
   "live": {
@@ -1278,16 +1278,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-05T06:35:46Z",
-        "deadline_in_seconds": 17265,
+        "deadline_in_seconds": 17205,
         "degraded": false,
-        "elapsed_seconds": 4335,
+        "elapsed_seconds": 4395,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-11-05T01:47:57Z",
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-11-05T01:48:59Z",
         "id": 8933,
         "lanes": [
           {
@@ -1319,6 +1319,26 @@
             "status": "completed",
             "tokens_in": 53738,
             "tokens_out": 627
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 115380,
+            "tokens_out": 1432
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 117741,
+            "tokens_out": 1189
           }
         ],
         "live_lanes": [
@@ -1328,20 +1348,30 @@
             "model": "gpt-6.1-sol",
             "phase": "phase2",
             "pool": "gpt",
+            "role": "dash-core-commit-history",
+            "since_seconds": 11,
+            "state": "running"
+          },
+          {
+            "effort": "medium",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
             "role": "general",
-            "since_seconds": 24,
+            "since_seconds": 12,
             "state": "running"
           }
         ],
         "number": 8051,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/8051",
         "priority": false,
-        "progress": 0.972,
+        "progress": 0.986,
         "queue": "live",
         "queued_at": "2026-11-05T00:34:28Z",
-        "remaining_seconds": 124,
+        "remaining_seconds": 62,
         "repo": "dashpay/dash",
         "sha": "4019442227d600317830ed4302ce635c8aed525f",
         "started_at": "2026-11-05T00:35:46Z",
@@ -1426,24 +1456,49 @@
                 "dash-core-commit-history"
               ]
             },
-            "lanes_done": 1,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 2,
+            "lanes_left": [],
             "lanes_total": 2,
             "name": "phase2",
-            "seconds": 25,
+            "seconds": 40,
             "started_at": "2026-11-05T01:47:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
+            "name": "verify2",
+            "seconds": 33,
+            "started_at": "2026-11-05T01:48:16Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "dash-core-commit-history"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "dash-core-commit-history"
+            ],
+            "lanes_total": 2,
+            "name": "fresh_phase2",
+            "seconds": 12,
+            "started_at": "2026-11-05T01:48:49Z",
             "status": "running"
           }
         ],
         "tier": "low",
         "title": "fix(net): stop masternode connect opening probes and untangle the probe flag",
-        "tokens_in": 4548145,
-        "tokens_out": 185207,
+        "tokens_in": 4781266,
+        "tokens_out": 187828,
         "trigger": "normal_request",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 78
@@ -1482,7 +1537,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-05T01:46:15Z",
+        "at": "2026-11-05T01:48:22Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1528,7 +1583,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
@@ -1553,7 +1608,7 @@
       "reviews": 3,
       "tokens": 19103504
     },
-    "ts": "2026-11-05T01:48:01Z",
+    "ts": "2026-11-05T01:49:01Z",
     "typical_minutes_by_tier": {
       "critical": 29.4,
       "low": 36.3,
@@ -1564,7 +1619,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 72.25,
+      "idle_minutes": 73.25,
       "ingest_stale": false,
       "stuck": false
     }
