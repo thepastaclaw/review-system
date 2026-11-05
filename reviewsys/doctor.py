@@ -268,6 +268,11 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             True,
             f"{state}; stand-ins {subs}; phase1 effort cap {dp.phase1_effort_cap or 'none'}",
         )
+    from .shadow import doctor_line, export_root
+
+    shadow = doctor_line(export_root())
+    if shadow is not None:
+        _ok("v12 shadow", True, shadow[1])  # informational: never fails production's doctor
     for rel in ("prompts/review-agent.md", "prompts/verifier-agent.md"):
         ok &= _ok(f"template {rel}", (cfg.skills_dir / rel).exists())
     for rc in cfg.repos:

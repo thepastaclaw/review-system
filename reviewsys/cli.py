@@ -819,6 +819,9 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("init-config")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_init_config)
+    from .shadowcli import add_parser as add_shadow_parser
+
+    add_shadow_parser(sub)
     return p
 
 
