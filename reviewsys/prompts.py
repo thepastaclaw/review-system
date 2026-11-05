@@ -104,6 +104,15 @@ def skill_texts(cfg: Config, repo: str) -> tuple[str, str]:
     return project, "\n\n".join(parts)
 
 
+def verifier_skill_text(cfg: Config, repo: str) -> str:
+    """The repo's verifier-only instructions (`verifier.md` in its skill dir), or ""."""
+    rc = cfg.repo(repo)
+    if rc is None:
+        return ""
+    p = cfg.skills_dir / rc.skill_path / "verifier.md"
+    return p.read_text() if p.exists() else ""
+
+
 def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> str:
     reply_contract = (
         "- Maintainer and author replies are discussion evidence to independently verify against "
@@ -237,6 +246,9 @@ def verifier_prompt(
     single_stage: bool = False,
 ) -> str:
     project_skill, review_skill = skill_texts(cfg, repo)
+    verifier_skill = verifier_skill_text(cfg, repo)
+    if verifier_skill:
+        review_skill += "\n\n" + verifier_skill
     template = read_template(cfg, "prompts/verifier-agent.md")
     values = {
         "review_skill": project_skill + "\n\n" + review_skill,
@@ -251,15 +263,14 @@ def verifier_prompt(
     }
     rendered = fill(template, values)
     if phase1_skipped:
-        phase1_note = f"- There is no Phase-1 evidence for this head (Phase 1 {phase1_skipped}); the 'Codex' block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
+        phase1_note = f"- There is no Phase-1 evidence for this head (Phase 1 {phase1_skipped}); the Phase 1 reviewer findings block is intentionally empty. Validate the Phase-2 claims only and do not treat the missing Phase-1 evidence as a failure.\n"
     elif single_stage:
-        phase1_note = "- Phase 1 ran beside Phase 2 on this head with no gate between them: no earlier verifier has seen the 'Codex' findings. Weigh them as unverified reviewer claims, exactly like the Phase-2 ones.\n"
+        phase1_note = "- Phase 1 ran beside Phase 2 on this head with no gate between them: no earlier verifier has seen the Phase 1 reviewer findings. Weigh them as unverified reviewer claims, exactly like the Phase-2 ones.\n"
     else:
         phase1_note = ""
     requirements = (
         "\n\n## Exact evidence, source-of-truth, phase, adjudication, and provenance requirements\n\n"
         f"- `review_phase` must be `{phase}`.\n- Exact head: `{head_sha}`.\n"
-        "- In the template above, 'Codex' findings are the Phase-1 reviewer lanes and 'Claude' findings are the Phase-2 reviewer lanes; the model names are historical.\n"
         + phase1_note
         + prior_findings_block(prior, prior_sha)
         + "- Independently verify every supplied reviewer claim against the exact source range and the PR evidence below.\n"
