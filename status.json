@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T05:06:01Z",
-  "generated_at": "2026-11-05T05:06:01Z",
+  "data_as_of": "2026-11-05T05:07:01Z",
+  "generated_at": "2026-11-05T05:07:01Z",
   "history": {
     "daily": [
       {
@@ -344,9 +344,9 @@
             "p90_seconds": 208
           },
           "wait": {
-            "median_seconds": 11,
-            "n": 557,
-            "p90_seconds": 418
+            "median_seconds": 12,
+            "n": 556,
+            "p90_seconds": 421
           }
         }
       },
@@ -354,6 +354,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "51b4943c trigger=new_pr priority=0",
+        "kind": "head.queued",
+        "number": 5770,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-05T05:06:14Z"
+      },
       {
         "detail": null,
         "kind": "phase1.model_selected",
@@ -665,14 +673,6 @@
         "repo": "dashpay/platform",
         "run_id": 8932,
         "ts": "2026-11-05T00:23:40Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 5767,
-        "repo": "dashpay/platform",
-        "run_id": 8932,
-        "ts": "2026-11-05T00:23:39Z"
       }
     ],
     "tokens_by_effort": [
@@ -690,9 +690,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 26123,
-        "tokens_in": 73265533977,
-        "tokens_out": 832148456
+        "lanes": 26124,
+        "tokens_in": 73266010838,
+        "tokens_out": 832168714
       },
       {
         "effort": "medium",
@@ -715,11 +715,11 @@
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 1961364.0,
-        "lanes": 8826,
+        "avg_tokens_per_lane": 1961198.0,
+        "lanes": 8827,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 16696322237,
-        "tokens_out": 614673522
+        "tokens_in": 16696799098,
+        "tokens_out": 614693780
       },
       {
         "avg_tokens_per_lane": 5040381.0,
@@ -760,8 +760,8 @@
     "tokens_by_run": [
       {
         "run_id": 8937,
-        "tokens_in": 125044,
-        "tokens_out": 2525
+        "tokens_in": 601905,
+        "tokens_out": 22783
       },
       {
         "run_id": 8936,
@@ -1260,16 +1260,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14412935,
+      "avg_tokens_per_completed_review": 14413008,
       "completed_reviews": 6870,
       "findings": 51911,
       "findings_posted": 8151,
       "reviews": 8462,
       "reviews_imported": 2245,
       "runs": 8937,
-      "tokens_in": 97956961135,
-      "tokens_out": 1059905663,
-      "tokens_total": 99016866798
+      "tokens_in": 97957437996,
+      "tokens_out": 1059925921,
+      "tokens_total": 99017363917
     }
   },
   "live": {
@@ -1278,12 +1278,12 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-11-05T11:03:15Z",
-        "deadline_in_seconds": 21434,
+        "deadline_in_seconds": 21374,
         "degraded": false,
-        "elapsed_seconds": 166,
+        "elapsed_seconds": 226,
         "findings": null,
         "heartbeat_age_seconds": 15,
-        "heartbeat_at": "2026-11-05T05:05:46Z",
+        "heartbeat_at": "2026-11-05T05:06:46Z",
         "id": 8937,
         "lanes": [
           {
@@ -1295,29 +1295,39 @@
             "status": "completed",
             "tokens_in": 125044,
             "tokens_out": 2525
+          },
+          {
+            "attempt": 1,
+            "effort": "xhigh",
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 476861,
+            "tokens_out": 20258
           }
         ],
         "live_lanes": [
           {
-            "effort": "xhigh",
+            "effort": "medium",
             "line_position": null,
-            "model": "muse-spark-1.3-contributor",
-            "phase": "phase1",
-            "pool": "muse",
-            "role": "general",
-            "since_seconds": 138,
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 7,
             "state": "running"
           }
         ],
         "number": 5768,
         "overdue": false,
-        "phase": "phase1",
+        "phase": "verify1",
         "pr_url": "https://github.com/dashpay/platform/pull/5768",
         "priority": false,
-        "progress": 0.113,
+        "progress": 0.279,
         "queue": "live",
         "queued_at": "2026-11-05T04:33:05Z",
-        "remaining_seconds": 1302,
+        "remaining_seconds": 583,
         "repo": "dashpay/platform",
         "sha": "4aae747f85929c257dfe1a220072ec837c27532c",
         "started_at": "2026-11-05T05:03:15Z",
@@ -1369,24 +1379,28 @@
                 "rust-quality"
               ]
             },
-            "lanes_done": 1,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 2,
+            "lanes_left": [],
             "lanes_total": 2,
             "name": "phase1",
-            "seconds": 141,
+            "seconds": 194,
             "started_at": "2026-11-05T05:03:40Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify1",
+            "seconds": 7,
+            "started_at": "2026-11-05T05:06:54Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "fix(drive-abci)!: re-enable the voter key of the address a masternode returns to (PV15)",
-        "tokens_in": 125044,
-        "tokens_out": 2525,
+        "tokens_in": 601905,
+        "tokens_out": 22783,
         "trigger": "new_pr",
         "upcoming": [
-          "verify1",
           "gate",
           "phase2",
           "verify2",
@@ -1428,7 +1442,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-05T05:04:37Z",
+        "at": "2026-11-05T05:06:41Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1448,12 +1462,12 @@
       "closed": 620,
       "done": 8380,
       "failed": 100,
-      "queued": 1,
+      "queued": 2,
       "running": 1,
       "superseded": 2951
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-05T05:02:08Z",
+    "ingest_last_at": "2026-11-05T05:06:19Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1475,13 +1489,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 0,
         "slots": 20,
         "waiting": 0
       }
@@ -1494,12 +1508,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1727,
+        "age_seconds": 1787,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-05T05:07:14Z",
-        "eligible_in_seconds": 73,
+        "eligible_in_seconds": 13,
         "number": 5769,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5769",
@@ -1511,6 +1525,25 @@
         "sha": "608e598dd7880430703cfe90612e66e1ba5e9d59",
         "title": "fix(sdk): stop banning nodes for proofs the SDK's context provider cannot verify",
         "trigger": "new_pr"
+      },
+      {
+        "age_seconds": 47,
+        "attempts": 0,
+        "author": "shumkov",
+        "eligible": false,
+        "eligible_at": "2026-11-05T05:36:14Z",
+        "eligible_in_seconds": 1753,
+        "number": 5770,
+        "position": 2,
+        "pr_url": "https://github.com/dashpay/platform/pull/5770",
+        "prioritize_url": "https://github.com/dashpay/platform/pull/5770#issuecomment-new",
+        "priority": false,
+        "queued_at": "2026-11-05T05:06:14Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/platform",
+        "sha": "51b4943c0572b57e00845a9bd03f082ea33a8340",
+        "title": "feat(drive-abci)!: check the IdentityCreate identity id in basic structure (PV15)",
+        "trigger": "new_pr"
       }
     ],
     "today": {
@@ -1520,7 +1553,7 @@
       "reviews": 7,
       "tokens": 77692056
     },
-    "ts": "2026-11-05T05:06:01Z",
+    "ts": "2026-11-05T05:07:01Z",
     "typical_minutes_by_tier": {
       "critical": 29.1,
       "low": 36.3,
@@ -1531,7 +1564,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 2.7666666666666666,
+      "idle_minutes": 3.7666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
