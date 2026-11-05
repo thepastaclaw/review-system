@@ -1006,6 +1006,9 @@ def test_the_launch_agent_is_low_priority_and_separate():
     assert "quota_guard.py" in args[args.index("--guard-cmd") + 1]
 
 
+@pytest.mark.skipif(
+    not Path("/usr/bin/lockf").exists(), reason="deploy/shadow.sh runs on the macOS box (lockf)"
+)
 def test_shadow_sh_starts_only_when_enabled_and_stops_cleanly(tmp_path):
     home = tmp_path / "home"
     venv = home / ".reviewsys" / "venv" / "bin"
