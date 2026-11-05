@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-05T23:42:01Z",
-  "generated_at": "2026-11-05T23:42:01Z",
+  "data_as_of": "2026-11-05T23:43:01Z",
+  "generated_at": "2026-11-05T23:43:01Z",
   "history": {
     "daily": [
       {
@@ -345,7 +345,7 @@
           },
           "wait": {
             "median_seconds": 12,
-            "n": 507,
+            "n": 508,
             "p90_seconds": 310
           }
         }
@@ -354,6 +354,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 7623,
+        "repo": "dashpay/dash",
+        "run_id": 9077,
+        "ts": "2026-11-05T23:42:38Z"
+      },
+      {
+        "detail": "attempt 1 sha=534ff040",
+        "kind": "run.spawned",
+        "number": 7623,
+        "repo": "dashpay/dash",
+        "run_id": 9077,
+        "ts": "2026-11-05T23:42:19Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.requeued",
+        "number": 7623,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-05T23:42:19Z"
+      },
       {
         "detail": null,
         "kind": "label.synced",
@@ -649,30 +673,6 @@
         "repo": "dashpay/dash",
         "run_id": 9073,
         "ts": "2026-11-05T22:19:06Z"
-      },
-      {
-        "detail": "c3661480 trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 8047,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-05T22:18:54Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 8064,
-        "repo": "dashpay/dash",
-        "run_id": 9072,
-        "ts": "2026-11-05T22:15:24Z"
-      },
-      {
-        "detail": "attempt 1 sha=800cba18",
-        "kind": "run.spawned",
-        "number": 8064,
-        "repo": "dashpay/dash",
-        "run_id": 9072,
-        "ts": "2026-11-05T22:15:08Z"
       }
     ],
     "tokens_by_effort": [
@@ -1266,14 +1266,122 @@
       "findings_posted": 8278,
       "reviews": 8579,
       "reviews_imported": 2245,
-      "runs": 9076,
+      "runs": 9077,
       "tokens_in": 99309983538,
       "tokens_out": 1079335854,
       "tokens_total": 100389319392
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-06T05:42:19Z",
+        "deadline_in_seconds": 21558,
+        "degraded": false,
+        "elapsed_seconds": 42,
+        "findings": null,
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-11-05T23:42:50Z",
+        "id": 9077,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 23,
+            "state": "running"
+          }
+        ],
+        "number": 7623,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash/pull/7623",
+        "priority": true,
+        "progress": 0.037,
+        "queue": "live",
+        "queued_at": "2026-11-05T23:42:18Z",
+        "remaining_seconds": 1092,
+        "repo": "dashpay/dash",
+        "sha": "534ff040ed6a26a05aa094e3dcf15f16a60d3188",
+        "started_at": "2026-11-05T23:42:19Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-11-05T23:42:20Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-11-05T23:42:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change introduces substantial cross-platform dependency build, configuration, bundling, and CI logic, but the diff does not itself change a critical surface such as consensus, funds movement, cryptography, or key handling.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-11-05T23:42:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-11-05T23:42:32Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 25,
+            "started_at": "2026-11-05T23:42:36Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "build: build the Dash Platform CXX bindings in depends behind PLATFORM_GUI=1",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "mention",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1289,7 +1397,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1325,8 +1433,9 @@
     "failed_heads_24h": 0,
     "heads": {
       "closed": 625,
-      "done": 8493,
+      "done": 8492,
       "failed": 100,
+      "running": 1,
       "superseded": 2962
     },
     "ingest_error_streak": 0,
@@ -1358,15 +1467,15 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-05T23:39:28Z",
-    "last_run_started_at": "2026-11-05T23:39:22Z",
+    "last_run_started_at": "2026-11-05T23:42:19Z",
     "median_run_minutes": 20.516666666666666,
-    "notify_last_at": "2026-11-05T23:40:05Z",
+    "notify_last_at": "2026-11-05T23:42:14Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1377,7 +1486,7 @@
       "reviews": 140,
       "tokens": 1420579461
     },
-    "ts": "2026-11-05T23:42:01Z",
+    "ts": "2026-11-05T23:43:01Z",
     "typical_minutes_by_tier": {
       "critical": 27.4,
       "low": 38.0,
@@ -1386,9 +1495,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 2.65,
+      "idle_minutes": 0.7,
       "ingest_stale": false,
       "stuck": false
     }
