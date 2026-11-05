@@ -90,6 +90,7 @@ REASONS = frozenset(
     {
         "not sampled",
         "superseded",
+        "head already shadowed",
         "aged out",
         "degraded",
         "daily cap",
@@ -388,7 +389,9 @@ def candidates(prod: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
     `since`, newest first. A run is an audit by the path it took (`runs.path`): an audit takes
     an uncleanly merged PR's live head over (`heads.queue` becomes `audit`) after its live
     runs finished. A carried head is left out by its run's `carry` step, not by
-    `heads.carried_from`: a review someone asks for of a carried commit is a real review."""
+    `heads.carried_from`: a review someone asks for of a carried commit is a real review. A
+    CI re-check (`ci_check`: an APPROVE moved to COMMENT after a related CI failure) records
+    a final review too, but reviews nothing."""
     return prod.execute(
         "SELECT r.id, r.started_at, r.finished_at, r.tier, h.repo, h.number, "
         "h.sha, COALESCE(p.title, '') title FROM runs r JOIN heads h ON h.id=r.head_id "
@@ -399,7 +402,7 @@ def candidates(prod: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
         "AND EXISTS (SELECT 1 FROM reviews v WHERE v.run_id=r.id AND v.phase='final' "
         "AND COALESCE(v.imported, 0)=0) "
         "AND NOT EXISTS (SELECT 1 FROM steps s WHERE s.run_id=r.id "
-        "AND s.name IN ('converse', 'carry')) "
+        "AND s.name IN ('converse', 'carry', 'ci_check')) "
         "ORDER BY r.finished_at DESC, r.id DESC",
         (since,),
     ).fetchall()
@@ -787,11 +790,21 @@ class Runner:
         prod = connect_ro(self.opts.prod_db)
         try:
             known = {int(r[0]) for r in self.conn.execute("SELECT source_run FROM shadows")}
-            for c in candidates(prod, self._oldest_allowed()):
+            heads = {
+                (str(r[0]), int(r[1]), str(r[2]))
+                for r in self.conn.execute(
+                    "SELECT repo, number, sha FROM shadows WHERE status <> 'skipped'"
+                )
+            }
+            # oldest first, so a head's first qualifying review is the one that gets shadowed
+            for c in reversed(candidates(prod, self._oldest_allowed())):
                 if int(c["id"]) in known:
                     continue
                 status, reason = "queued", None
-                if not sampled(int(c["id"]), self.opts.sample_rate):
+                head = (str(c["repo"]), int(c["number"]), str(c["sha"]))
+                if head in heads:
+                    status, reason = "skipped", "head already shadowed"
+                elif not sampled(int(c["id"]), self.opts.sample_rate):
                     status, reason = "skipped", "not sampled"
                 elif _later_head(prod, c["repo"], c["number"], int(c["id"]), c["sha"]):
                     status, reason = "skipped", "superseded"
@@ -803,6 +816,8 @@ class Runner:
                         (c["id"], c["repo"], c["number"], c["sha"], c["title"], c["tier"],
                          c["started_at"], c["finished_at"], self.now(), status, reason),
                     )  # fmt: skip
+                if status != "skipped":
+                    heads.add(head)
                 counts[reason or status] += 1
         finally:
             prod.close()
