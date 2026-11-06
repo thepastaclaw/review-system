@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-06T09:06:01Z",
-  "generated_at": "2026-11-06T09:06:01Z",
+  "data_as_of": "2026-11-06T09:07:01Z",
+  "generated_at": "2026-11-06T09:07:01Z",
   "history": {
     "daily": [
       {
@@ -360,6 +360,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5775,
+        "repo": "dashpay/platform",
+        "run_id": 9109,
+        "ts": "2026-11-06T09:06:33Z"
+      },
+      {
         "detail": "attempt 1 sha=a20b9e4c",
         "kind": "run.spawned",
         "number": 5775,
@@ -670,14 +678,6 @@
         "repo": "dashpay/grovedb",
         "run_id": 9105,
         "ts": "2026-11-06T08:30:25Z"
-      },
-      {
-        "detail": "ok in 3614s",
-        "kind": "run.done",
-        "number": 5736,
-        "repo": "dashpay/platform",
-        "run_id": 9095,
-        "ts": "2026-11-06T08:27:30Z"
       }
     ],
     "tokens_by_effort": [
@@ -1283,35 +1283,105 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-11-06T15:05:42Z",
-        "deadline_in_seconds": 21581,
+        "deadline_in_seconds": 21521,
         "degraded": false,
-        "elapsed_seconds": 19,
+        "elapsed_seconds": 79,
         "findings": null,
         "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-11-06T09:05:57Z",
+        "heartbeat_at": "2026-11-06T09:06:57Z",
         "id": 9109,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 27,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 28,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "prep",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 10,
+            "role": "architecture-layering",
+            "since_seconds": 29,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 26,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 28,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 27,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 26,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "tenderdash-consensus-security",
+            "since_seconds": 30,
             "state": "running"
           }
         ],
         "number": 5775,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5775",
         "priority": false,
-        "progress": 0.013,
+        "progress": 0.044,
         "queue": "live",
         "queued_at": "2026-11-06T08:34:35Z",
-        "remaining_seconds": 1455,
+        "remaining_seconds": 1707,
         "repo": "dashpay/platform",
         "sha": "a20b9e4c96d411f861872fc944f4da0aca55c470",
         "started_at": "2026-11-06T09:05:42Z",
@@ -1325,29 +1395,89 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor",
+                "tenderdash-consensus-security"
+              ]
+            },
             "name": "select",
-            "seconds": 10,
+            "seconds": 28,
             "started_at": "2026-11-06T09:05:51Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate changes to update_operator_identity/v1, reconcile_operator_payouts_with_core, and Drive identity key updates alter withdrawal-authorizing keys and persisted consensus state at protocol 15 activation.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 28,
+            "started_at": "2026-11-06T09:05:51Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
+            "name": "context",
             "seconds": 10,
-            "started_at": "2026-11-06T09:05:51Z",
+            "started_at": "2026-11-06T09:06:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor",
+                "tenderdash-consensus-security"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor",
+              "tenderdash-consensus-security"
+            ],
+            "lanes_total": 6,
+            "name": "phase2",
+            "seconds": 30,
+            "started_at": "2026-11-06T09:06:31Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 30,
+            "started_at": "2026-11-06T09:06:31Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(drive-abci)!: follow operator payout changes and repair operator keys at protocol 15",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1433,13 +1563,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 6,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1458,7 +1588,7 @@
       "reviews": 27,
       "tokens": 518559507
     },
-    "ts": "2026-11-06T09:06:01Z",
+    "ts": "2026-11-06T09:07:01Z",
     "typical_minutes_by_tier": {
       "critical": 27.0,
       "low": 38.0,
@@ -1469,7 +1599,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.31666666666666665,
+      "idle_minutes": 1.3166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2440,7 +2570,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-06T09:05:55Z",
+      "at": "2026-11-06T09:06:55Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
