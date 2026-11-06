@@ -408,6 +408,24 @@ class CiConfig:
         return re.compile(self.ignore_checks, re.IGNORECASE)
 
 
+DEFAULT_APP_KEY = Path("~/.reviewsys/github-app.pem").expanduser()
+
+
+@dataclass(frozen=True, slots=True)
+class ChecksConfig:
+    """The review's progress as a GitHub check run on each PR's head commit (checks.py): queued,
+    in progress, then completed with the verdict. Check runs can only be written by a GitHub
+    App, so this needs one with Checks: write installed on the repositories; a repository
+    without the installation is skipped."""
+
+    enabled: bool = False
+    app_id: str = ""  # the App's numeric id or its client id (the JWT issuer)
+    private_key: Path = DEFAULT_APP_KEY
+    name: str = "PastaClaw review"  # the check's name; consumers match on it, keep it stable
+    interval_seconds: int = 30
+    exclude_repos: tuple[str, ...] = ()
+
+
 @dataclass(frozen=True, slots=True)
 class ContextConfig:
     """Review context beyond the PR itself, gathered by the context step: sister repositories
@@ -530,6 +548,7 @@ class Config:
     context: ContextConfig = field(default_factory=ContextConfig)
     ci: CiConfig = field(default_factory=CiConfig)
     deferral: DeferralConfig = field(default_factory=DeferralConfig)
+    checks: ChecksConfig = field(default_factory=ChecksConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -761,6 +780,18 @@ watch_hours = 12
 # Unset = the built-in list (config.DEFAULT_CI_IGNORE: PR title, semantic commits, codecov,
 # policy, review bots, ...)
 # ignore_checks = "title|semantic|codecov|policy|coderabbit|pastaclaw|review"
+
+[checks]
+# a "PastaClaw review" check run on each PR's head commit: queued, in progress, then completed
+# with the verdict (success = approved, neutral = commented, failure = changes requested,
+# action_required = the review could not finish). Needs a GitHub App with Checks: write
+# installed on the repositories; repositories without the installation are skipped.
+enabled = false
+app_id = ""
+private_key = "~/.reviewsys/github-app.pem"
+name = "PastaClaw review"
+interval_seconds = 30
+exclude_repos = []
 
 [deferral]
 # a maintainer who defers a finding can ask the bot to file the follow-up's tracking issue;
@@ -1215,6 +1246,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         context=_context(t.get("context") or {}),
         ci=_ci(t.get("ci") or {}),
         deferral=_deferral(t.get("deferral") or {}),
+        checks=_checks(t.get("checks") or {}),
     )
 
 
@@ -1311,6 +1343,21 @@ def _ci(c: dict[str, Any]) -> CiConfig:
         watch_hours=max(1, int(c.get("watch_hours", 12))),
         ignore_checks=pattern,
     )
+
+
+def _checks(c: dict[str, Any]) -> ChecksConfig:
+    d = ChecksConfig()
+    out = ChecksConfig(
+        enabled=bool(c.get("enabled", d.enabled)),
+        app_id=str(c.get("app_id") or "").strip(),
+        private_key=Path(str(c.get("private_key") or d.private_key)).expanduser(),
+        name=str(c.get("name") or d.name).strip(),
+        interval_seconds=max(10, int(c.get("interval_seconds", d.interval_seconds))),
+        exclude_repos=_strings(c.get("exclude_repos")),
+    )
+    if out.enabled and not out.app_id:
+        raise ValueError("[checks] enabled needs app_id")
+    return out
 
 
 def _deferral(d: dict[str, Any]) -> DeferralConfig:

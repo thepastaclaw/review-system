@@ -268,6 +268,23 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             True,
             f"{state}; stand-ins {subs}; phase1 effort cap {dp.phase1_effort_cap or 'none'}",
         )
+    if cfg.checks.enabled:
+        from .checks import app_auth
+
+        pem = cfg.checks.private_key
+        mode = pem.stat().st_mode & 0o777 if pem.exists() else None
+        ok &= _ok(
+            "check runs App key",
+            mode is not None and not mode & 0o077,
+            f"{pem} mode {mode:o}" if mode is not None else f"{pem} missing",
+        )
+        try:
+            app = app_auth(cfg).app()
+            ok &= _ok("check runs App", True, f"{app.get('slug')} (id {app.get('id')})")
+        except Exception as exc:
+            ok &= _ok("check runs App", False, str(exc)[:200])
+    else:
+        _ok("check runs", True, "off ([checks] enabled = false)")
     from .shadow import doctor_line, export_root
 
     shadow = doctor_line(export_root())

@@ -80,8 +80,7 @@ def test_v9_migration_is_additive_on_a_v8_database(tmp_path, monkeypatch):
     old.close()
     monkeypatch.undo()
     new = connect(path)
-    assert new.execute("SELECT version FROM schema_version").fetchone()[0] == 9
-    assert db_mod.SCHEMA_VERSION == 9
+    assert new.execute("SELECT version FROM schema_version").fetchone()[0] == db_mod.SCHEMA_VERSION
     row = new.execute("SELECT hash, title, candidate_id FROM findings").fetchone()
     assert tuple(row) == ("abc", "T", None)
     assert new.execute("SELECT count(*) FROM issues").fetchone()[0] == 0
@@ -96,7 +95,9 @@ def test_v9_migration_is_additive_on_a_v8_database(tmp_path, monkeypatch):
     new.close()
     again = connect(path)
     assert again.execute("SELECT count(*) FROM findings").fetchone()[0] == 2
-    assert [tuple(r) for r in again.execute("SELECT version FROM schema_version")] == [(9,)]
+    assert [tuple(r) for r in again.execute("SELECT version FROM schema_version")] == [
+        (db_mod.SCHEMA_VERSION,)
+    ]
 
 
 def test_a_database_the_unmerged_v12_branch_migrated_still_opens(tmp_path, monkeypatch):

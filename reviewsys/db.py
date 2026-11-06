@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -168,6 +168,14 @@ MIGRATIONS: dict[int, str] = {
     CREATE INDEX IF NOT EXISTS issue_events_issue ON issue_events (repo, number, hash);
     CREATE INDEX IF NOT EXISTS issue_events_run ON issue_events (run_id);
     ALTER TABLE findings ADD COLUMN candidate_id TEXT;
+    """,
+    # the check run (checks.py) last written for a commit: its GitHub id, and what it said
+    10: """
+    CREATE TABLE IF NOT EXISTS check_runs (
+        repo TEXT NOT NULL, number INTEGER NOT NULL, sha TEXT NOT NULL,
+        check_id INTEGER NOT NULL, status TEXT NOT NULL, conclusion TEXT,
+        digest TEXT NOT NULL, updated_at TEXT NOT NULL,
+        PRIMARY KEY (repo, number, sha));
     """,
 }
 

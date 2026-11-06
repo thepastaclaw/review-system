@@ -87,6 +87,7 @@ def skip_label(cfg: Config, labels: tuple[str, ...]) -> str | None:
 
 # a head ingest closed because the PR carries a skip label; re-opened when the label goes
 SKIP_LABEL_REASON = "pr_skip_label"
+DRAFT_REASON = "pr_draft"
 # heads the ingest pass creates on its own; every other trigger is someone asking for a review
 AUTOMATIC_TRIGGERS = frozenset({Trigger.NEW_PR.value, Trigger.NEW_PUSH.value})
 # what a skip label refuses: the heads nobody asked for (a new PR or push, a CI check)
@@ -110,8 +111,18 @@ def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
 REOPENING = frozenset(
     {Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST}
 )
-# ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`)
+# ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`,
+# or its review failed or ended without a verdict)
 ASKING = frozenset({Trigger.MENTION, Trigger.REVIEW_REQUESTED})
+
+
+def _has_review(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1", (repo, number, sha)
+        ).fetchone()
+        is not None
+    )
 
 
 def carried_from(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str | None:
@@ -163,10 +174,12 @@ def enqueue_head(
         "SELECT id, status, priority, queue, trigger, reason FROM heads WHERE repo=? AND number=? AND sha=?",
         (repo, number, sha),
     ).fetchone()
+    # closed only while a skip label or the draft state kept it from review: whatever reaches
+    # it now (ingest once the PR is ready and unlabelled, or someone asking) re-opens it
     skip_closed = (
         existing is not None
         and existing["status"] == HeadStatus.CLOSED
-        and existing["reason"] == SKIP_LABEL_REASON
+        and existing["reason"] in (SKIP_LABEL_REASON, DRAFT_REASON)
     )
     if (
         labelled
@@ -191,7 +204,7 @@ def enqueue_head(
         else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
     )
     if existing and skip_closed:
-        # closed only because of a skip label: the label is gone (ingest) or someone asked
+        # the label is gone or the draft is ready (ingest), or someone asked
         supersede_other_heads(conn, repo, number, sha, ts)
         return _requeue(
             conn,
@@ -243,12 +256,18 @@ def enqueue_head(
             # so review it again with the threads in context and answer on them; the normal
             # box re-opens it at the back of the line, everything else at the front
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts, priority=priority)
-        if (
-            trigger in ASKING
-            and existing["status"] == HeadStatus.DONE
-            and carried_from(conn, repo, number, sha)
+        if trigger in ASKING and (
+            existing["status"] == HeadStatus.FAILED
+            or (
+                existing["status"] == HeadStatus.DONE
+                and (
+                    carried_from(conn, repo, number, sha)
+                    or not _has_review(conn, repo, number, sha)
+                )
+            )
         ):
-            # nothing reviewed this commit itself: someone asking gets a review
+            # nothing reviewed this commit itself (its review is carried, or the review gave
+            # up): someone asking gets a review
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
     supersede_other_heads(conn, repo, number, sha, ts)
@@ -473,7 +492,7 @@ def ingest_repo(
                 # current commit (its gate comment's boxes) runs to the end: closing it here
                 # cancelled it minutes after it started (dashpay/platform#5285, 2026-10-05)
                 if close_pr_heads(
-                    conn, repo, p.number, "pr_draft", ts=ts, keep_requested_sha=p.head_sha
+                    conn, repo, p.number, DRAFT_REASON, ts=ts, keep_requested_sha=p.head_sha
                 ):
                     stats["draft"] += 1
                 continue
