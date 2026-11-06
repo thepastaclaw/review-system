@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-06T19:35:01Z",
-  "generated_at": "2026-11-06T19:35:01Z",
+  "data_as_of": "2026-11-06T19:36:01Z",
+  "generated_at": "2026-11-06T19:36:02Z",
   "history": {
     "daily": [
       {
@@ -339,14 +339,14 @@
         },
         "priority": {
           "duration": {
-            "median_seconds": 1346,
-            "n": 406,
+            "median_seconds": 1345,
+            "n": 405,
             "p90_seconds": 2368
           },
           "slot_wait": {
             "median_seconds": 0,
-            "n": 406,
-            "p90_seconds": 36
+            "n": 405,
+            "p90_seconds": 37
           },
           "wait": {
             "median_seconds": 12,
@@ -359,6 +359,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=300a9056",
+        "kind": "run.spawned",
+        "number": 1682,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 9186,
+        "ts": "2026-11-06T19:35:51Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 1682,
+        "repo": "dashpay/dash-wallet",
+        "run_id": null,
+        "ts": "2026-11-06T19:35:51Z"
+      },
+      {
+        "detail": "300a9056 trigger=review_reply priority=1",
+        "kind": "head.queued",
+        "number": 1682,
+        "repo": "dashpay/dash-wallet",
+        "run_id": null,
+        "ts": "2026-11-06T19:35:51Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -654,30 +678,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-11-06T18:32:03Z"
-      },
-      {
-        "detail": "ok in 876s",
-        "kind": "run.done",
-        "number": 8072,
-        "repo": "dashpay/dash",
-        "run_id": 9181,
-        "ts": "2026-11-06T18:31:57Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 8049,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-06T18:27:25Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 8049,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-06T18:27:25Z"
       }
     ],
     "tokens_by_effort": [
@@ -1271,14 +1271,88 @@
       "findings_posted": 8362,
       "reviews": 8663,
       "reviews_imported": 2245,
-      "runs": 9185,
+      "runs": 9186,
       "tokens_in": 100916804325,
       "tokens_out": 1094565176,
       "tokens_total": 102011369501
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-11-07T01:35:51Z",
+        "deadline_in_seconds": 21590,
+        "degraded": false,
+        "elapsed_seconds": 10,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-11-06T19:35:52Z",
+        "id": 9186,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1682,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1682",
+        "priority": true,
+        "progress": 0.006,
+        "queue": "live",
+        "queued_at": "2026-11-06T19:35:50Z",
+        "remaining_seconds": 1580,
+        "repo": "dashpay/dash-wallet",
+        "sha": "300a905663dc6ebdb36a0d5766c873dad4c566e9",
+        "started_at": "2026-11-06T19:35:51Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-11-06T19:35:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-11-06T19:35:56Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The diff is a small, contained SDK version pin and comment removal in build.gradle, not a direct change to critical application logic.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-11-06T19:35:56Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "low",
+        "title": "chore(sdk): pin Kotlin SDK 5.1.0-int36 (5.1.0-int36-20261106.165805-1)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "context",
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1294,7 +1368,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1312,7 +1386,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-06T19:33:17Z",
+        "at": "2026-11-06T19:35:25Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1333,6 +1407,7 @@
       "done": 8578,
       "failed": 100,
       "queued": 2,
+      "running": 1,
       "superseded": 2978
     },
     "ingest_error_streak": 0,
@@ -1370,19 +1445,19 @@
       }
     ],
     "last_run_done_at": "2026-11-06T19:13:42Z",
-    "last_run_started_at": "2026-11-06T19:07:16Z",
+    "last_run_started_at": "2026-11-06T19:35:51Z",
     "median_run_minutes": 30.5,
-    "notify_last_at": "2026-11-06T19:33:38Z",
+    "notify_last_at": "2026-11-06T19:35:45Z",
     "oldest_queued_at": "2026-11-06T19:10:55Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1446,
+        "age_seconds": 1506,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-11-06T19:40:55Z",
-        "eligible_in_seconds": 354,
+        "eligible_in_seconds": 294,
         "number": 1572,
         "position": 1,
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1572",
@@ -1396,12 +1471,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 133,
+        "age_seconds": 193,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-11-06T20:02:48Z",
-        "eligible_in_seconds": 1667,
+        "eligible_in_seconds": 1607,
         "number": 1548,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1548",
@@ -1422,7 +1497,7 @@
       "reviews": 96,
       "tokens": 1518576767
     },
-    "ts": "2026-11-06T19:35:01Z",
+    "ts": "2026-11-06T19:36:01Z",
     "typical_minutes_by_tier": {
       "critical": 25.9,
       "low": 38.0,
@@ -1431,9 +1506,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 27.75,
+      "idle_minutes": 0.16666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2404,7 +2479,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-06T19:34:53Z",
+      "at": "2026-11-06T19:35:54Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
