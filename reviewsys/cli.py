@@ -13,6 +13,7 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import audit as audit_mod
+from . import checks as checks_mod
 from . import compare as compare_mod
 from . import config as cfg_mod
 from . import db as db_mod
@@ -354,6 +355,21 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     cfg = _cfg(args)
     ok = doctor_mod.run(cfg, probe_models=not args.no_models)
     return 0 if ok else 1
+
+
+def cmd_checks(args: argparse.Namespace) -> int:
+    cfg = _cfg(args)
+    if args.app:
+        auth = checks_mod.app_auth(cfg)
+        app = auth.app()
+        print(f"app {app.get('slug')} (id {app.get('id')})")
+        for repo in cfg.enabled_repos:
+            print(f"{repo}: installation {auth.installation(repo) or 'none'}")
+        return 0
+    conn = db_mod.connect(cfg.db_path)
+    for row in checks_mod.plan(conn, cfg):
+        print(json.dumps(row))
+    return 0
 
 
 def cmd_import_legacy(args: argparse.Namespace) -> int:
@@ -751,6 +767,11 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("doctor", help="check gh, claude, proxy, models")
     s.add_argument("--no-models", action="store_true")
     s.set_defaults(fn=cmd_doctor)
+    s = sub.add_parser("checks", help="show the check run each PR head should carry")
+    s.add_argument(
+        "--app", action="store_true", help="authenticate as the App and list its installations"
+    )
+    s.set_defaults(fn=cmd_checks)
     s = sub.add_parser("import-legacy", help="import done reviews from the old queue.json")
     s.add_argument("queue_json")
     s.set_defaults(fn=cmd_import_legacy)
