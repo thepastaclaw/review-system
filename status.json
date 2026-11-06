@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-06T23:12:01Z",
-  "generated_at": "2026-11-06T23:12:02Z",
+  "data_as_of": "2026-11-06T23:13:02Z",
+  "generated_at": "2026-11-06T23:13:03Z",
   "history": {
     "daily": [
       {
@@ -360,6 +360,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1572,
+        "repo": "dashpay/tenderdash",
+        "run_id": 9195,
+        "ts": "2026-11-06T23:12:20Z"
+      },
+      {
         "detail": "attempt 1 sha=eb28fb51",
         "kind": "run.spawned",
         "number": 1572,
@@ -670,14 +678,6 @@
         "repo": "dashpay/platform",
         "run_id": 9191,
         "ts": "2026-11-06T21:36:02Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 1126,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": null,
-        "ts": "2026-11-06T21:23:21Z"
       }
     ],
     "tokens_by_effort": [
@@ -1283,12 +1283,12 @@
         "attempt": 1,
         "author": "lklimek",
         "deadline_at": "2026-11-07T03:36:02Z",
-        "deadline_in_seconds": 15841,
+        "deadline_in_seconds": 15780,
         "degraded": false,
-        "elapsed_seconds": 5759,
+        "elapsed_seconds": 5820,
         "findings": null,
-        "heartbeat_age_seconds": 9,
-        "heartbeat_at": "2026-11-06T23:11:52Z",
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-11-06T23:12:52Z",
         "id": 9191,
         "lanes": [
           {
@@ -1370,7 +1370,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 5729,
+            "since_seconds": 5790,
             "state": "running"
           }
         ],
@@ -1379,7 +1379,7 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5220",
         "priority": false,
-        "progress": 0.905,
+        "progress": 0.906,
         "queue": "live",
         "queued_at": "2026-11-06T21:05:56Z",
         "remaining_seconds": 607,
@@ -1460,7 +1460,7 @@
             ],
             "lanes_total": 2,
             "name": "phase1",
-            "seconds": 5732,
+            "seconds": 5793,
             "started_at": "2026-11-06T21:36:29Z",
             "status": "running"
           }
@@ -1482,24 +1482,55 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-11-07T05:12:00Z",
-        "deadline_in_seconds": 21599,
+        "deadline_in_seconds": 21538,
         "degraded": false,
-        "elapsed_seconds": 1,
+        "elapsed_seconds": 62,
         "findings": null,
         "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-06T23:12:00Z",
+        "heartbeat_at": "2026-11-06T23:13:01Z",
         "id": 9195,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 42,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 43,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "tenderdash-consensus-security",
+            "since_seconds": 44,
+            "state": "running"
+          }
+        ],
         "number": 1572,
         "overdue": false,
-        "phase": "worktree",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1572",
         "priority": true,
-        "progress": null,
+        "progress": 0.042,
         "queue": "live",
         "queued_at": "2026-11-06T23:11:58Z",
-        "remaining_seconds": null,
+        "remaining_seconds": 1403,
         "repo": "dashpay/tenderdash",
         "sha": "eb28fb517db1bb9d8ab09079163c19597177720a",
         "started_at": "2026-11-06T23:12:00Z",
@@ -1508,17 +1539,85 @@
           {
             "info": {},
             "name": "worktree",
-            "seconds": 0,
+            "seconds": 6,
             "started_at": "2026-11-06T23:12:01Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "tenderdash-consensus-security"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-11-06T23:12:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate change directly modifies consensus round advancement in internal/consensus/proposer_liveness.go and internal/consensus/state_add_round_skip.go, while adding quorum-signed skip certificates and peer-facing protocol messages.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-11-06T23:12:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-11-06T23:12:14Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "tenderdash-consensus-security"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "tenderdash-consensus-security"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 44,
+            "started_at": "2026-11-06T23:12:18Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 44,
+            "started_at": "2026-11-06T23:12:18Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "feat(consensus)!: hand a silent proposer's idle round to the next proposer",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "review_reply",
-        "upcoming": [],
+        "upcoming": [
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
         "wait_seconds": 2
       }
     ],
@@ -1601,13 +1700,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1626,7 +1725,7 @@
       "reviews": 104,
       "tokens": 1627735484
     },
-    "ts": "2026-11-06T23:12:01Z",
+    "ts": "2026-11-06T23:13:02Z",
     "typical_minutes_by_tier": {
       "critical": 25.7,
       "low": 38.0,
@@ -1637,7 +1736,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.016666666666666666,
+      "idle_minutes": 1.0333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2608,7 +2707,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-06T23:11:04Z",
+      "at": "2026-11-06T23:12:05Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
