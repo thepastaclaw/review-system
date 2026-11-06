@@ -176,7 +176,6 @@ MIGRATIONS: dict[int, str] = {
         check_id INTEGER NOT NULL, status TEXT NOT NULL, conclusion TEXT,
         digest TEXT NOT NULL, updated_at TEXT NOT NULL,
         PRIMARY KEY (repo, number, sha));
-    CREATE INDEX IF NOT EXISTS check_runs_status ON check_runs (status);
     """,
 }
 

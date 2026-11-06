@@ -110,8 +110,18 @@ def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
 REOPENING = frozenset(
     {Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST}
 )
-# ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`)
+# ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`,
+# or its review failed or ended without a verdict)
 ASKING = frozenset({Trigger.MENTION, Trigger.REVIEW_REQUESTED})
+
+
+def _has_review(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1", (repo, number, sha)
+        ).fetchone()
+        is not None
+    )
 
 
 def carried_from(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str | None:
@@ -243,12 +253,18 @@ def enqueue_head(
             # so review it again with the threads in context and answer on them; the normal
             # box re-opens it at the back of the line, everything else at the front
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts, priority=priority)
-        if (
-            trigger in ASKING
-            and existing["status"] == HeadStatus.DONE
-            and carried_from(conn, repo, number, sha)
+        if trigger in ASKING and (
+            existing["status"] == HeadStatus.FAILED
+            or (
+                existing["status"] == HeadStatus.DONE
+                and (
+                    carried_from(conn, repo, number, sha)
+                    or not _has_review(conn, repo, number, sha)
+                )
+            )
         ):
-            # nothing reviewed this commit itself: someone asking gets a review
+            # nothing reviewed this commit itself (its review is carried, or the review gave
+            # up): someone asking gets a review
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
     supersede_other_heads(conn, repo, number, sha, ts)

@@ -14,9 +14,9 @@ import pytest
 from reviewsys import checks
 from reviewsys import config as cfg_mod
 from reviewsys.daemon import Daemon
-from reviewsys.db import kv_set, tx
+from reviewsys.db import kv_set, now_dt, tx
 from reviewsys.gh import Gh
-from reviewsys.ghapp import AppAuth
+from reviewsys.ghapp import AppAuth, AppAuthError
 
 REPO = "dashpay/platform"
 SHA = "a" * 40
@@ -47,20 +47,22 @@ class ScriptedGh(Gh):
 
 
 class FakeApp:
-    """Stands in for AppAuth: one installation client per repo, or none."""
+    """Stands in for AppAuth: one installation client for every repo, or none (gh=None)."""
 
-    def __init__(self, gh: Gh | None, installed: bool = True) -> None:
+    def __init__(self, gh: Gh | None) -> None:
         self.gh = gh
-        self.installed = installed
         self.forgotten: list[str] = []
         self.lookups = 0
 
     def gh_for(self, repo: str) -> Gh | None:
         self.lookups += 1
-        return self.gh if self.installed else None
+        return self.gh
 
     def forget(self, repo: str) -> None:
         self.forgotten.append(repo)
+
+    def app(self) -> dict[str, object]:
+        return {"id": 1, "slug": "pastaclaw-review"}
 
 
 class GitHubChecks:
@@ -69,10 +71,26 @@ class GitHubChecks:
     def __init__(self) -> None:
         self.runs: dict[int, dict[str, Any]] = {}
         self.fail: Exception | None = None
+        self.listed: list[str] = []
 
     def __call__(self, method: str, ep: str, body: Any) -> Any:
         if self.fail is not None:
             return self.fail
+        if method == "GET" and "/commits/" in ep:
+            self.listed.append(ep)
+            sha = ep.split("/commits/")[1].split("/")[0]
+            mine = [
+                {"id": cid, **run}
+                for cid, run in sorted(self.runs.items(), reverse=True)
+                if run.get("head_sha") == sha
+            ]
+            return {"check_runs": mine[:1]}
+        if (
+            method == "PATCH"
+            and "/check-runs/" in ep
+            and int(ep.rsplit("/", 1)[1]) not in self.runs
+        ):
+            return RuntimeError("gh: Not Found (HTTP 404)")
         if method == "POST" and ep.endswith("/check-runs"):
             cid = 100 + len(self.runs)
             self.runs[cid] = dict(body)
@@ -249,15 +267,28 @@ def test_service_failure_is_not_a_finding(conn):
     assert "@thepastaclaw review" in w.summary
 
 
-def test_skip_label_and_draft(conn):
+def test_skip_label(conn):
+    from reviewsys.ingest import SKIP_LABEL_REASON
+
     _pr(conn, skip=1)
-    _head(conn, status="closed", reason="skip label")
+    h = _head(conn, status="closed", reason=SKIP_LABEL_REASON)
     assert _want(conn).conclusion == "skipped"
-    _pr(conn, draft=1)
+    # someone asked for a review anyway: the check follows that review, not the label
     with tx(conn):
-        conn.execute("UPDATE heads SET reason='pr_draft'")
-    w = _want(conn)
-    assert (w.status, w.title) == ("queued", "Waiting: the PR is a draft")
+        conn.execute("UPDATE heads SET status='running', trigger='mention' WHERE id=?", (h,))
+    _run(conn, h, "phase1")
+    assert _want(conn).status == "in_progress"
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE id=?", (h,))
+    assert _want(conn).conclusion == "action_required", "a failed requested review is not green"
+
+
+def test_drafts_get_no_check(conn):
+    _pr(conn, draft=1)
+    assert _want(conn) is None
+    _head(conn, status="closed", reason="pr_draft")
+    assert _want(conn) is None
+    assert checks.closed_out(conn, REPO, 1, SHA).title == "Not reviewed: the PR is a draft"
 
 
 def test_no_head_yet_says_nothing(conn):
@@ -347,7 +378,7 @@ def test_untouched_old_commit_gets_no_check(conn, rec, github):
 
 
 def test_repo_without_the_app_is_skipped(conn, cfg, github):
-    app = FakeApp(ScriptedGh(github), installed=False)
+    app = FakeApp(None)
     rec = checks.Reconciler(cfg, app)  # type: ignore[arg-type]
     _pr(conn)
     _head(conn)
@@ -360,11 +391,16 @@ def test_repo_without_the_app_is_skipped(conn, cfg, github):
 def test_transient_failure_is_retried_next_pass(conn, rec, github):
     _pr(conn)
     _head(conn)
+    _pr(conn, number=2)
+    _head(conn, number=2)
     github.fail = RuntimeError("HTTP 502 bad gateway")
-    assert rec.reconcile(conn)["deferred"] == 1
+    stats = rec.reconcile(conn)
+    assert stats["deferred"] == 1, "the pass stops at the first transient failure"
     assert conn.execute("SELECT COUNT(*) FROM check_runs").fetchone()[0] == 0
     github.fail = None
-    assert rec.reconcile(conn)["created"] == 1
+    assert rec.reconcile(conn)["created"] == 0, "backs off before the next try"
+    rec.retry_at = now_dt()
+    assert rec.reconcile(conn)["created"] == 2
 
 
 def test_refused_write_is_recorded_once(conn, rec, github):
@@ -378,11 +414,10 @@ def test_refused_write_is_recorded_once(conn, rec, github):
 
 
 def test_app_auth_failure_stops_the_pass(conn, cfg):
-    from reviewsys.models import FailKind, ReviewError
 
     class Broken(FakeApp):
         def gh_for(self, repo):
-            raise ReviewError(FailKind.FATAL, "cannot sign the App JWT")
+            raise AppAuthError("cannot sign the App JWT")
 
     rec = checks.Reconciler(cfg, Broken(None))  # type: ignore[arg-type]
     _pr(conn)
@@ -398,8 +433,8 @@ def test_app_auth_failure_stops_the_pass(conn, cfg):
 def test_writes_per_pass_are_capped(conn, rec, github, monkeypatch):
     monkeypatch.setattr(checks, "MAX_WRITES_PER_PASS", 2)
     for n in range(1, 4):
-        _pr(conn, number=n)
-        _head(conn, number=n)
+        _pr(conn, str(n) * 40, number=n)
+        _head(conn, str(n) * 40, number=n)
     stats = rec.reconcile(conn)
     assert (stats["created"], stats["deferred"], len(github.runs)) == (2, 1, 2)
     rec.reconcile(conn)
@@ -545,3 +580,186 @@ def test_openssl_signature_verifies(tmp_path):
         capture_output=True,
     )
     assert ok.returncode == 0, ok.stdout + ok.stderr
+
+
+# ---- review findings: transitions through the real ingest / CI code ----
+
+
+def test_a_mention_retries_a_failed_review(conn, cfg):
+    from reviewsys.ingest import enqueue_head
+    from reviewsys.models import Trigger
+
+    _pr(conn)
+    h = _head(conn, status="failed", reason="lane exit 1")
+    assert _want(conn).conclusion == "action_required"
+    with tx(conn):
+        assert enqueue_head(conn, cfg, REPO, 1, SHA, Trigger.MENTION) == "requeued"
+    assert conn.execute("SELECT status FROM heads WHERE id=?", (h,)).fetchone()[0] == "queued"
+    assert _want(conn).status == "queued"
+
+
+def test_a_mention_retries_a_review_that_ended_without_a_verdict(conn, cfg):
+    from reviewsys.ingest import enqueue_head
+    from reviewsys.models import Trigger
+
+    _pr(conn)
+    _head(conn, status="done")
+    with tx(conn):
+        assert enqueue_head(conn, cfg, REPO, 1, SHA, Trigger.MENTION) == "requeued"
+    _review(conn, "APPROVE")
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done'")
+        assert enqueue_head(conn, cfg, REPO, 1, SHA, Trigger.MENTION) == "noop", (
+            "a reviewed commit is not reviewed again on a mention"
+        )
+
+
+def test_preliminary_comment_does_not_claim_blockers(conn):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "COMMENT", phase="preliminary")
+    w = _want(conn)
+    assert w.conclusion == "neutral" and "blocking" not in w.summary
+
+
+def test_converted_to_draft_closes_the_open_check(conn, rec, github):
+    _pr(conn)
+    h = _head(conn)
+    rec.reconcile(conn)
+    _pr(conn, draft=1)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='closed', reason='pr_draft' WHERE id=?", (h,))
+    rec.reconcile(conn)
+    run = github.runs[100]
+    assert (run["status"], run["conclusion"]) == ("completed", "cancelled")
+    assert run["output"]["title"] == "Not reviewed: the PR is a draft"
+
+
+def test_revert_to_a_superseded_commit_does_not_leave_it_running(conn, rec, github):
+    _pr(conn)
+    h = _head(conn, status="running")
+    _run(conn, h, "phase1")
+    rec.reconcile(conn)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='superseded' WHERE id=?", (h,))
+    rec.reconcile(conn)  # GitHub's head is this commit again, but nothing will review it
+    assert github.runs[100]["status"] == "completed"
+
+
+def test_late_review_of_a_cancelled_commit_lands(conn, rec, github):
+    _pr(conn, sha=OLD)
+    _head(conn, sha=OLD, status="running")
+    rec.reconcile(conn)
+    _pr(conn, sha=SHA)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='superseded' WHERE sha=?", (OLD,))
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "cancelled"
+    _review(conn, "APPROVE", sha=OLD, at="2999-01-01T00:00:00Z")  # past verify2, published
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "success"
+
+
+def test_patch_of_a_vanished_check_creates_a_new_one(conn, rec, github):
+    _pr(conn)
+    _head(conn)
+    rec.reconcile(conn)
+    github.runs.clear()  # e.g. a new App: the stored id is not ours to write
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='running'")
+    rec.reconcile(conn)
+    assert list(github.runs) == [100] and github.runs[100]["status"] == "in_progress"
+    assert conn.execute("SELECT check_id FROM check_runs").fetchone()[0] == 100
+
+
+def test_lost_create_response_is_adopted_not_duplicated(conn, rec, github):
+    _pr(conn)
+    _head(conn)
+    github.runs[100] = {"name": "PastaClaw review", "head_sha": SHA, "status": "queued"}
+    rec.reconcile(conn)  # no row: an earlier POST timed out after GitHub created the run
+    assert list(github.runs) == [100]
+    assert "app_id=1" in github.listed[0] and "check_name=PastaClaw%20review" in github.listed[0]
+    assert conn.execute("SELECT check_id FROM check_runs").fetchone()[0] == 100
+
+
+def test_backfilled_verdict_starts_when_it_completed(conn, rec, github):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "APPROVE")
+    rec.reconcile(conn)
+    assert github.runs[100]["started_at"] == github.runs[100]["completed_at"] == T0
+
+
+def test_one_broken_installation_does_not_stop_other_repos(conn, cfg, github):
+    from reviewsys.models import FailKind, ReviewError
+
+    class OneBroken(FakeApp):
+        def gh_for(self, repo):
+            if repo == "dashpay/dash":
+                raise ReviewError(FailKind.CONTRACT, "gh: Not Found (HTTP 404)")
+            return self.gh
+
+    app = OneBroken(ScriptedGh(github))
+    rec = checks.Reconciler(cfg, app)  # type: ignore[arg-type]
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at)"
+            " VALUES ('dashpay/dash', 9, ?, 'mention', 'queued', ?, ?)",
+            (OLD, T0, T0),
+        )
+    _pr(conn)
+    _head(conn)
+    assert rec.reconcile(conn)["created"] == 1
+    assert app.forgotten == ["dashpay/dash"]
+
+
+def test_disabled_repos_are_not_backfilled(conn, cfg, rec, github):
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES"
+            " ('dashpay/grovedb', 3, ?, 'open', ?)",
+            (SHA, T0),
+        )
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at)"
+            " VALUES ('dashpay/grovedb', 3, ?, 'new_pr', 'done', ?, ?)",
+            (SHA, T0, T0),
+        )
+    assert ("dashpay/grovedb", 3, SHA) not in checks._candidates(conn, cfg)
+
+
+def test_step_changes_write_no_events(conn, rec, github):
+    _pr(conn)
+    h = _head(conn, status="running")
+    _run(conn, h, "phase1")
+    rec.reconcile(conn)
+    with tx(conn):
+        conn.execute("UPDATE runs SET phase='phase2'")
+    rec.reconcile(conn)
+    assert github.runs[100]["output"]["title"] == "Reviewing — Phase 2 review"
+    kinds = [r[0] for r in conn.execute("SELECT detail FROM events WHERE kind='check.synced'")]
+    assert len(kinds) == 1
+
+
+def test_ci_watch_ignores_the_review_check_by_name(cfg, monkeypatch):
+    from reviewsys import ci, github
+
+    cfg = _with_checks(cfg, name="Bot verdict")  # matches no ignore pattern on its own
+    monkeypatch.setattr(
+        github,
+        "ci_checks",
+        lambda gh, repo, sha: {
+            "checks": [
+                {"name": "Bot verdict", "status": "in_progress"},
+                {"name": "build", "status": "completed", "conclusion": "success"},
+            ]
+        },
+    )
+    assert ci.read(Gh(), cfg, REPO, SHA).pending == []
+
+
+def test_plan_reads_no_github(conn, cfg):
+    _pr(conn)
+    _head(conn)
+    (row,) = checks.plan(conn, cfg)
+    assert row["status"] == "queued" and row["check_id"] is None and not row["in_sync"]

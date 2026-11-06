@@ -2,16 +2,18 @@
 
 One check, `[checks] name` ("PastaClaw review"), per commit the bot is responsible for:
 
-- `queued` while the review waits (push debounce, its turn in line, a retry backoff, a draft);
+- `queued` while the review waits (push debounce, its turn in line, a retry backoff);
 - `in_progress` while a run reviews it;
 - `completed` once a final verdict stands for the commit (its own, or one carried over a push
   that left the diff unchanged): `success` = APPROVE, `neutral` = COMMENT,
   `failure` = REQUEST_CHANGES;
 - `completed` / `action_required` when the review gave up (failed after its retries, or ended
   without a verdict): someone has to ask again (`@thepastaclaw review`);
-- `completed` / `skipped` when the PR carries a skip label (no automatic review);
-- `completed` / `cancelled` for a commit that stopped being the PR's head, or a PR that closed,
-  before it was reviewed.
+- `completed` / `skipped` when a skip label keeps automatic review off the commit;
+- `completed` / `cancelled` for a commit that stopped being the PR's head, or a PR that closed
+  or went back to draft, before it was reviewed.
+
+Drafts and PRs the bot never reviews (bot authors) get no check.
 
 A final verdict wins over later activity on the same commit: a conversation or CI re-check
 keeps the check completed and replaces the conclusion if the verdict moves, so a check that
@@ -23,6 +25,9 @@ pass derives the wanted check of every open PR's head (and of every commit whose
 open) and writes only what differs from what was last written. Missing an event, a restart or a
 failed write is repaired by the next pass. GitHub only accepts check runs from a GitHub App, so
 the writes go through the App's installation (ghapp.py); a repository without it is skipped.
+
+Check runs belong to a commit, not to a PR: one commit open in two PRs of the same repository
+(rare: the same branch proposed to two bases) shows whichever PR's check was written last.
 """
 
 from __future__ import annotations
@@ -31,14 +36,16 @@ import hashlib
 import json
 import logging
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any
+from urllib.parse import quote
 
 from .config import Config
 from .db import event, kv_get, now, now_dt, parse_ts, tx
 from .gh import Gh
-from .ghapp import AppAuth
-from .ingest import AUTOMATIC_TRIGGERS, reviewed_sha
+from .ghapp import AppAuth, AppAuthError
+from .ingest import AUTOMATIC_TRIGGERS, SKIP_LABEL_REASON, reviewed_sha
 from .models import FailKind, HeadStatus, ReviewError, Trigger
 from .publish import canonical_event
 
@@ -46,6 +53,8 @@ log = logging.getLogger(__name__)
 
 # writes per pass: the first pass after enabling backfills every open PR, spread over passes
 MAX_WRITES_PER_PASS = 20
+# after a transient GitHub failure the pass stops and the next one waits this long
+RETRY_BACKOFF = timedelta(minutes=2)
 STATUS_PAGE = "https://thepastaclaw.github.io/review-system/"
 
 VERDICT_CONCLUSIONS = {
@@ -70,6 +79,10 @@ STEP_LABELS = {
     "ci_check": "checking a CI failure",
     "publish": "publishing",
 }
+RETRY_HINT = (
+    "This is a failure of the review service, not a finding about the change. Comment "
+    "`@thepastaclaw review` to try again (GitHub's Re-run button does nothing for this check)."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,62 +104,8 @@ class Want:
         return hashlib.sha256(json.dumps(shown).encode()).hexdigest()[:16]
 
 
-@dataclass(slots=True)
-class Stats:
-    created: int = 0
-    updated: int = 0
-    unchanged: int = 0
-    skipped_repos: set[str] = field(default_factory=set)
-    deferred: int = 0
-    failed: int = 0
-
-    def as_dict(self) -> dict[str, Any]:
-        return {
-            "created": self.created,
-            "updated": self.updated,
-            "unchanged": self.unchanged,
-            "skipped_repos": len(self.skipped_repos),
-            "deferred": self.deferred,
-            "failed": self.failed,
-        }
-
-
 def _pr_url(repo: str, number: int) -> str:
     return f"https://github.com/{repo}/pull/{number}"
-
-
-def _standing_review(
-    conn: sqlite3.Connection, repo: str, number: int, sha: str, head: sqlite3.Row | None
-) -> sqlite3.Row | None:
-    """The `reviews` row whose verdict stands for `sha` (its own review, or one carried over):
-    the newest final one; with none, the newest preliminary one of a finished head (a Phase 1
-    gate that held Phase 2 back ends the run on that preliminary review)."""
-    target = reviewed_sha(conn, repo, number, sha)
-    final = conn.execute(
-        "SELECT event, phase, posted_at FROM reviews WHERE repo=? AND number=? AND sha=? "
-        "AND phase='final' ORDER BY posted_at DESC, id DESC LIMIT 1",
-        (repo, number, target),
-    ).fetchone()
-    if final is not None or head is None or head["status"] != HeadStatus.DONE:
-        return final  # type: ignore[no-any-return]
-    return conn.execute(  # type: ignore[no-any-return]
-        "SELECT event, phase, posted_at FROM reviews WHERE repo=? AND number=? AND sha=? "
-        "ORDER BY posted_at DESC, id DESC LIMIT 1",
-        (repo, number, target),
-    ).fetchone()
-
-
-def _review_url(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> str | None:
-    """Link to the bot's newest posted review of the standing commit (a verdict recorded
-    without a GitHub review, on a bot-authored PR, has none)."""
-    row = conn.execute(
-        "SELECT github_review_id FROM reviews WHERE repo=? AND number=? AND sha=? "
-        "AND github_review_id IS NOT NULL ORDER BY posted_at DESC, id DESC LIMIT 1",
-        (repo, number, reviewed_sha(conn, repo, number, sha)),
-    ).fetchone()
-    if not row:
-        return None
-    return f"{_pr_url(repo, number)}#pullrequestreview-{row['github_review_id']}"
 
 
 def _gate_url(conn: sqlite3.Connection, repo: str, number: int) -> str:
@@ -155,14 +114,70 @@ def _gate_url(conn: sqlite3.Connection, repo: str, number: int) -> str:
 
 
 def _summary(sha: str, *lines: str) -> str:
-    body = [f"Commit `{sha[:12]}`.", *[line for line in lines if line]]
-    body.append(f"Review queue and history: {STATUS_PAGE}")
-    return "\n\n".join(body)
+    return "\n\n".join(
+        [f"Commit `{sha[:12]}`.", *filter(None, lines), f"Review queue and history: {STATUS_PAGE}"]
+    )
+
+
+def _verdict(
+    conn: sqlite3.Connection,
+    repo: str,
+    number: int,
+    sha: str,
+    head: sqlite3.Row | None,
+    live: bool,
+) -> Want | None:
+    """The completed check of the review that stands for `sha` (its own, or one carried over):
+    the newest final review; with none, the newest review of a finished head (a Phase 1 gate
+    that held Phase 2 back ends the run on its preliminary review). None while no verdict
+    stands."""
+    target = reviewed_sha(conn, repo, number, sha)
+    rows = conn.execute(
+        "SELECT event, phase, posted_at, github_review_id FROM reviews WHERE repo=? AND number=?"
+        " AND sha=? ORDER BY posted_at DESC, id DESC",
+        (repo, number, target),
+    ).fetchall()
+    standing = next((r for r in rows if r["phase"] == "final"), None)
+    if standing is None and rows and head is not None and head["status"] == HeadStatus.DONE:
+        standing = rows[0]
+    if standing is None:
+        return None
+    verdict = canonical_event(str(standing["event"]))
+    conclusion, title = VERDICT_CONCLUSIONS.get(verdict, ("neutral", "Reviewed"))
+    review_id = next((r["github_review_id"] for r in rows if r["github_review_id"]), None)
+    busy = live and head is not None and head["status"] in ("queued", "running")
+    gated = ""
+    if standing["phase"] != "final":
+        gated = (
+            "Phase 1 found blocking issues, so Phase 2 did not run on this commit."
+            if verdict == "REQUEST_CHANGES"
+            else "The Phase 1 gate held Phase 2 back on this commit."
+        )
+    return Want(
+        status="completed",
+        conclusion=conclusion,
+        title=title,
+        summary=_summary(
+            sha,
+            f"The review of `{target[:12]}` stands: this push left the PR's diff unchanged."
+            if target != sha
+            else "",
+            "A follow-up pass on this commit is running; this result is replaced if the "
+            "verdict changes."
+            if busy
+            else "",
+            gated,
+        ),
+        details_url=f"{_pr_url(repo, number)}#pullrequestreview-{review_id}"
+        if review_id
+        else _pr_url(repo, number),
+        completed_at=str(standing["posted_at"]),
+    )
 
 
 def wanted(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want | None:
     """The check `sha` of PR `repo#number` should carry, or None when the bot has nothing to
-    say about it yet (no check is created; an existing one is left as it is)."""
+    say about it (no check is created; an open one is closed out by `closed_out`)."""
     pr = conn.execute(
         "SELECT state, head_sha, is_draft, skip_label FROM prs WHERE repo=? AND number=?",
         (repo, number),
@@ -179,33 +194,9 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want |
             (repo, number),
         ).fetchone()
         live = newest is not None and newest["sha"] == sha
-    final = _standing_review(conn, repo, number, sha, head)
-    if final is not None:
-        conclusion, title = VERDICT_CONCLUSIONS.get(
-            canonical_event(str(final["event"])), ("neutral", "Reviewed")
-        )
-        carried = reviewed_sha(conn, repo, number, sha)
-        busy = live and head is not None and head["status"] in ("queued", "running")
-        return Want(
-            status="completed",
-            conclusion=conclusion,
-            title=title,
-            summary=_summary(
-                sha,
-                f"The review of `{carried[:12]}` stands: this push left the PR's diff unchanged."
-                if carried != sha
-                else "",
-                "A follow-up pass on this commit is running; this result is replaced if the "
-                "verdict changes."
-                if busy
-                else "",
-                "Phase 1 found blocking issues, so Phase 2 did not run on this commit."
-                if final["phase"] != "final"
-                else "",
-            ),
-            details_url=_review_url(conn, repo, number, sha) or _pr_url(repo, number),
-            completed_at=str(final["posted_at"]),
-        )
+    verdict = _verdict(conn, repo, number, sha, head, live)
+    if verdict is not None:
+        return verdict
     if not live:
         closed = pr is not None and pr["state"] != "open"
         return Want(
@@ -217,29 +208,11 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want |
             summary=_summary(sha),
             details_url=_pr_url(repo, number),
         )
-    if pr is not None and pr["skip_label"]:
-        return Want(
-            status="completed",
-            conclusion="skipped",
-            title="Automatic review is off for this PR (skip label)",
-            summary=_summary(
-                sha, "Remove the label, or comment `@thepastaclaw review`, to get a review."
-            ),
-            details_url=_pr_url(repo, number),
-        )
-    draft = pr is not None and bool(pr["is_draft"])
-    if head is None or (head["status"] == HeadStatus.CLOSED and draft):
-        if not draft:
-            return None
-        return Want(
-            status="queued",
-            title="Waiting: the PR is a draft",
-            summary=_summary(sha, "The review starts when the PR is marked ready for review."),
-            details_url=_gate_url(conn, repo, number),
-        )
+    if head is None:
+        return None  # a draft, a bot author, or a push ingest has not seen yet
     status = head["status"]
     if status == HeadStatus.QUEUED:
-        return _queued(conn, head)
+        return _queued(conn, repo, number, sha, head)
     if status == HeadStatus.RUNNING:
         run = conn.execute(
             "SELECT phase, started_at FROM runs WHERE head_id=? ORDER BY id DESC LIMIT 1",
@@ -260,30 +233,29 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want |
             title="The review could not finish"
             if status == HeadStatus.FAILED
             else "The review ended without a verdict",
-            summary=_summary(
-                sha,
-                "This is a failure of the review service, not a finding about the change. "
-                "Comment `@thepastaclaw review` to try again.",
-            ),
+            summary=_summary(sha, RETRY_HINT),
             details_url=_gate_url(conn, repo, number),
-            completed_at=str(head["finished_at"] or "") or None,
+            completed_at=head["finished_at"] or None,
         )
-    if status == HeadStatus.CLOSED:
+    if status == HeadStatus.CLOSED and head["reason"] == SKIP_LABEL_REASON:
         return Want(
             status="completed",
             conclusion="skipped",
-            title="Not reviewed",
-            summary=_summary(sha, f"Reason: {head['reason']}" if head["reason"] else ""),
+            title="Automatic review is off for this PR (skip label)",
+            summary=_summary(
+                sha, "Remove the label, or comment `@thepastaclaw review`, to get a review."
+            ),
             details_url=_pr_url(repo, number),
-            completed_at=str(head["finished_at"] or "") or None,
+            completed_at=head["finished_at"] or None,
         )
-    return None  # superseded, yet GitHub's head again (a revert): ingest decides what follows
+    # closed for a draft (a review starts when it is ready) or by an operator; superseded yet
+    # GitHub's head again (a revert): ingest decides what follows
+    return None
 
 
-def _queued(conn: sqlite3.Connection, head: sqlite3.Row) -> Want:
-    repo, number, sha = str(head["repo"]), int(head["number"]), str(head["sha"])
+def _queued(conn: sqlite3.Connection, repo: str, number: int, sha: str, head: sqlite3.Row) -> Want:
     waiting = parse_ts(str(head["eligible_at"])) > now_dt()
-    if waiting and int(head["attempts"]) > 0:
+    if waiting and head["attempts"]:
         title = "Queued — retrying after a failed attempt"
     elif waiting and head["trigger"] in AUTOMATIC_TRIGGERS:
         title = "Queued — waiting for pushes to settle"
@@ -301,34 +273,80 @@ def _queued(conn: sqlite3.Connection, head: sqlite3.Row) -> Want:
     )
 
 
-def _candidates(conn: sqlite3.Connection) -> list[tuple[str, int, str]]:
-    """Commits to reconcile, those whose check moves first: still-open checks, then commits
-    being reviewed, then every open PR's head (the backfill after enabling)."""
+def closed_out(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want:
+    """What an open check says once the bot has nothing more to say about its commit (the PR
+    went back to draft, an operator closed the head, a revert): it is not left pending."""
+    pr = conn.execute(
+        "SELECT is_draft FROM prs WHERE repo=? AND number=?", (repo, number)
+    ).fetchone()
+    draft = pr is not None and bool(pr["is_draft"])
+    return Want(
+        status="completed",
+        conclusion="cancelled",
+        title="Not reviewed: the PR is a draft" if draft else "Not reviewed",
+        summary=_summary(sha, "A review starts when the PR is ready for review." if draft else ""),
+        details_url=_pr_url(repo, number),
+    )
+
+
+def _candidates(conn: sqlite3.Connection, cfg: Config) -> list[tuple[str, int, str]]:
+    """Commits to reconcile, those whose check moves first: still-open checks, a cancelled
+    check whose commit got a review after all (a superseded run that was past verify2
+    publishes), commits being reviewed, then every open PR's head in a repo the bot reviews
+    (the backfill after enabling). Repos listed in `exclude_repos` are left out."""
     rows = conn.execute(
         "SELECT repo, number, sha FROM check_runs WHERE status<>'completed'"
+        " UNION ALL SELECT c.repo, c.number, c.sha FROM check_runs c"
+        " WHERE c.conclusion='cancelled' AND EXISTS (SELECT 1 FROM reviews r WHERE"
+        " r.repo=c.repo AND r.number=c.number AND r.sha=c.sha AND r.posted_at>=c.updated_at)"
     ).fetchall()
     rows += conn.execute(
         "SELECT repo, number, sha FROM heads WHERE queue='live' AND status IN ('queued','running')"
         " ORDER BY status='running' DESC, id"
     ).fetchall()
-    rows += conn.execute(
-        "SELECT repo, number, head_sha AS sha FROM prs WHERE state='open' ORDER BY updated_at DESC"
-    ).fetchall()
-    seen: dict[tuple[str, int, str], None] = {}
-    for r in rows:
-        seen.setdefault((str(r["repo"]), int(r["number"]), str(r["sha"])), None)
-    return list(seen)
+    enabled = set(cfg.enabled_repos)
+    rows += [
+        r
+        for r in conn.execute(
+            "SELECT repo, number, head_sha AS sha FROM prs WHERE state='open' ORDER BY updated_at DESC"
+        ).fetchall()
+        if r["repo"] in enabled  # a disabled repo's PRs are no longer polled: stale rows
+    ]
+    excluded = {r.lower() for r in cfg.checks.exclude_repos}
+    return list(
+        dict.fromkeys(
+            (str(r["repo"]), int(r["number"]), str(r["sha"]))
+            for r in rows
+            if str(r["repo"]).lower() not in excluded
+        )
+    )
 
 
-def _body(want: Want, *, name: str | None = None, sha: str | None = None) -> dict[str, Any]:
+def _last_written(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> sqlite3.Row | None:
+    return conn.execute(  # type: ignore[no-any-return]
+        "SELECT check_id, status, conclusion, digest FROM check_runs WHERE repo=? AND number=? AND sha=?",
+        (repo, number, sha),
+    ).fetchone()
+
+
+def _target(
+    conn: sqlite3.Connection, repo: str, number: int, sha: str
+) -> tuple[Want | None, sqlite3.Row | None]:
+    """The check to write for a commit (None: nothing to write) and the row last written."""
+    want = wanted(conn, repo, number, sha)
+    row = _last_written(conn, repo, number, sha)
+    if want is None and row is not None and row["status"] != "completed":
+        want = closed_out(conn, repo, number, sha)
+    if row is None and want is not None and want.conclusion == "cancelled":
+        want = None  # never open a check only to say a commit we never touched was skipped
+    return want, row
+
+
+def _body(want: Want) -> dict[str, Any]:
     body: dict[str, Any] = {
         "status": want.status,
         "output": {"title": want.title, "summary": want.summary},
     }
-    if name is not None:
-        body["name"] = name
-    if sha is not None:
-        body["head_sha"] = sha
     if want.details_url:
         body["details_url"] = want.details_url
     if want.started_at:
@@ -348,78 +366,106 @@ class Reconciler:
         # (repo, number, sha) -> digest GitHub refused (a contract error); not retried until
         # the wanted check changes or the daemon restarts
         self.refused: dict[tuple[str, int, str], str] = {}
-        self.auth_error = ""
+        self.retry_at = now_dt()
+        self.reported: set[str] = set()  # errors already recorded as events
 
-    def reconcile(self, conn: sqlite3.Connection, *, dry_run: bool = False) -> dict[str, Any]:
-        stats = Stats()
+    def reconcile(self, conn: sqlite3.Connection) -> dict[str, int]:
+        stats = dict.fromkeys(("created", "updated", "unchanged", "deferred", "failed"), 0)
+        if now_dt() < self.retry_at:
+            return stats
         writes = 0
         clients: dict[str, Gh | None] = {}
-        excluded = {r.lower() for r in self.cfg.checks.exclude_repos}
-        for repo, number, sha in _candidates(conn):
-            if repo.lower() in excluded or repo in stats.skipped_repos:
-                continue
-            want = wanted(conn, repo, number, sha)
+        for key in _candidates(conn, self.cfg):
+            repo, number, sha = key
+            if clients.get(repo, False) is None:
+                continue  # not installed there, this pass
+            want, row = _target(conn, repo, number, sha)
             if want is None:
                 continue
-            row = conn.execute(
-                "SELECT check_id, status, digest FROM check_runs WHERE repo=? AND number=? AND sha=?",
-                (repo, number, sha),
-            ).fetchone()
-            if row is None and want.conclusion == "cancelled":
-                continue  # never open a check only to say a commit we never touched was skipped
             if row is not None and row["digest"] == want.digest:
-                stats.unchanged += 1
+                stats["unchanged"] += 1
                 continue
-            key = (repo, number, sha)
             if self.refused.get(key) == want.digest:
                 continue
             if writes >= MAX_WRITES_PER_PASS:
-                stats.deferred += 1
+                stats["deferred"] += 1
                 continue
-            if dry_run:
-                log.info("check %s#%s@%s -> %s", repo, number, sha[:8], want)
-                writes += 1
-                continue
-            if repo not in clients:
-                try:
-                    clients[repo] = self.app.gh_for(repo)
-                except ReviewError as exc:
-                    # the App itself cannot authenticate (key, id, GitHub down): nothing else
-                    # in this pass can be written either
-                    self._auth_failed(conn, exc)
-                    stats.deferred += 1
-                    break
-            gh = clients[repo]
-            if gh is None:
-                stats.skipped_repos.add(repo)
-                continue
-            writes += 1
             try:
-                created = self._write(gh, repo, sha, want, row)
+                if repo not in clients:
+                    clients[repo] = self._client(conn, repo)
+                gh = clients[repo]
+                if gh is None:
+                    continue
+                writes += 1
+                check_id = self._write(gh, repo, sha, want, row)
+            except AppAuthError as exc:
+                self._report(conn, "check.auth_failed", str(exc))
+                self.retry_at = now_dt() + RETRY_BACKOFF
+                stats["deferred"] += 1
+                break  # nothing else in this pass can authenticate either
             except ReviewError as exc:
                 if exc.kind is FailKind.INFRA:
-                    log.warning("check for %s#%s deferred: %s", repo, number, exc)
-                    stats.deferred += 1
-                    continue
-                stats.failed += 1
+                    log.warning("check runs: GitHub unavailable, pausing: %s", exc)
+                    self.retry_at = now_dt() + RETRY_BACKOFF
+                    stats["deferred"] += 1
+                    break  # a hung GitHub must not hold the tick loop for a whole pass
+                stats["failed"] += 1
                 self.refused[key] = want.digest
-                if "HTTP 403" in exc.message or "HTTP 404" in exc.message:
-                    # installation removed, or this repo dropped from it: look it up again later
+                if any(f"HTTP {c}" in exc.message for c in (401, 403, 404)):
+                    # installation removed, or this repo dropped from it: look it up again
                     self.app.forget(repo)
                     clients.pop(repo, None)
                 log.warning("check for %s#%s refused: %s", repo, number, exc)
                 with tx(conn):
                     event(conn, "check.failed", repo=repo, number=number, detail=str(exc)[:300])
                 continue
+            self._record(conn, repo, number, sha, want, row, check_id)
+            stats["created" if row is None or check_id != row["check_id"] else "updated"] += 1
+        stats["skipped_repos"] = sum(c is None for c in clients.values())
+        return stats
+
+    def _client(self, conn: sqlite3.Connection, repo: str) -> Gh | None:
+        """The installation client for `repo`; None when the App is not installed there or its
+        installation cannot be used (recorded once; looked up again on a later pass)."""
+        try:
+            return self.app.gh_for(repo)
+        except AppAuthError:
+            raise
+        except ReviewError as exc:
+            if exc.kind is FailKind.INFRA:
+                raise
+            self.app.forget(repo)
+            self._report(conn, "check.installation_failed", f"{repo}: {exc}", repo=repo)
+            return None
+
+    def _report(self, conn: sqlite3.Connection, kind: str, detail: str, **kw: Any) -> None:
+        log.warning("check runs: %s %s", kind, detail)
+        if detail not in self.reported:  # once per distinct error, not every pass
+            self.reported.add(detail)
             with tx(conn):
-                conn.execute(
-                    "INSERT INTO check_runs (repo, number, sha, check_id, status, conclusion, digest, updated_at)"
-                    " VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(repo, number, sha) DO UPDATE SET"
-                    " check_id=excluded.check_id, status=excluded.status,"
-                    " conclusion=excluded.conclusion, digest=excluded.digest,"
-                    " updated_at=excluded.updated_at",
-                    (repo, number, sha, created, want.status, want.conclusion, want.digest, now()),
-                )
+                event(conn, kind, detail=detail[:300], **kw)
+
+    def _record(
+        self,
+        conn: sqlite3.Connection,
+        repo: str,
+        number: int,
+        sha: str,
+        want: Want,
+        row: sqlite3.Row | None,
+        check_id: int,
+    ) -> None:
+        with tx(conn):
+            conn.execute(
+                "INSERT INTO check_runs (repo, number, sha, check_id, status, conclusion, digest, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(repo, number, sha) DO UPDATE SET"
+                " check_id=excluded.check_id, status=excluded.status,"
+                " conclusion=excluded.conclusion, digest=excluded.digest,"
+                " updated_at=excluded.updated_at",
+                (repo, number, sha, check_id, want.status, want.conclusion, want.digest, now()),
+            )
+            # a new step title is not worth a row; a new state is
+            if row is None or (row["status"], row["conclusion"]) != (want.status, want.conclusion):
                 event(
                     conn,
                     "check.synced",
@@ -429,48 +475,54 @@ class Reconciler:
                     + (f"/{want.conclusion}" if want.conclusion else "")
                     + f": {want.title}",
                 )
-            if row is None or created != row["check_id"]:
-                stats.created += 1
-            else:
-                stats.updated += 1
-        return stats.as_dict()
-
-    def _auth_failed(self, conn: sqlite3.Connection, exc: ReviewError) -> None:
-        log.warning("check runs: GitHub App authentication failed: %s", exc)
-        if exc.kind is not FailKind.INFRA and str(exc) != self.auth_error:
-            self.auth_error = str(exc)  # recorded once per distinct error, not every pass
-            with tx(conn):
-                event(conn, "check.auth_failed", detail=str(exc)[:300])
 
     def _write(self, gh: Gh, repo: str, sha: str, want: Want, row: sqlite3.Row | None) -> int:
         """Create or update the commit's check; returns its id. A completed check is never
         reopened in place: a commit going back to pending (a retry after a failure, a skip
         label removed) gets a new check run, which GitHub shows instead of the old one."""
-        if row is not None and not (row["status"] == "completed" and want.status != "completed"):
-            gh.api(f"repos/{repo}/check-runs/{row['check_id']}", method="PATCH", body=_body(want))
-            return int(row["check_id"])
-        data = gh.api(
-            f"repos/{repo}/check-runs",
-            method="POST",
-            body=_body(want, name=self.cfg.checks.name, sha=sha),
-        )
+        reopening = row is not None and row["status"] == "completed" and want.status != "completed"
+        if row is not None and not reopening:
+            try:
+                gh.api(
+                    f"repos/{repo}/check-runs/{row['check_id']}", method="PATCH", body=_body(want)
+                )
+                return int(row["check_id"])
+            except ReviewError as exc:
+                if "HTTP 404" not in exc.message:
+                    raise
+                row = None  # gone, or written by another App: adopt or create one
+        if row is None:
+            adopted = self._existing(gh, repo, sha)
+            if adopted and (adopted["status"] != "completed" or want.status == "completed"):
+                gh.api(f"repos/{repo}/check-runs/{adopted['id']}", method="PATCH", body=_body(want))
+                return int(adopted["id"])
+        body = {**_body(want), "name": self.cfg.checks.name, "head_sha": sha}
+        if want.status == "completed" and not want.started_at:
+            body["started_at"] = body["completed_at"]  # a backfilled verdict: not "started now"
+        data = gh.api(f"repos/{repo}/check-runs", method="POST", body=body)
         if not isinstance(data, dict) or not data.get("id"):
             raise ReviewError(FailKind.CONTRACT, "check run response has no id")
         return int(data["id"])
 
+    def _existing(self, gh: Gh, repo: str, sha: str) -> dict[str, Any] | None:
+        """This App's newest check of our name on `sha`, when the database has none: a create
+        whose response was lost (timeout), or a database restored from a backup. Adopting it
+        keeps one check per commit instead of an orphan stuck pending beside a new one."""
+        app_id = self.app.app().get("id")
+        endpoint = (
+            f"repos/{repo}/commits/{sha}/check-runs?check_name={quote(self.cfg.checks.name)}"
+            f"&filter=latest&app_id={app_id}"
+        )
+        data = gh.api(endpoint)
+        runs = data.get("check_runs") if isinstance(data, dict) else None
+        return runs[0] if runs else None
+
 
 def plan(conn: sqlite3.Connection, cfg: Config) -> list[dict[str, Any]]:
     """Every commit's wanted check next to what was last written; reads no GitHub."""
-    excluded = {r.lower() for r in cfg.checks.exclude_repos}
     out = []
-    for repo, number, sha in _candidates(conn):
-        if repo.lower() in excluded:
-            continue
-        want = wanted(conn, repo, number, sha)
-        row = conn.execute(
-            "SELECT check_id, digest FROM check_runs WHERE repo=? AND number=? AND sha=?",
-            (repo, number, sha),
-        ).fetchone()
+    for repo, number, sha in _candidates(conn, cfg):
+        want, row = _target(conn, repo, number, sha)
         if want is None and row is None:
             continue
         out.append(

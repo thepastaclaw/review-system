@@ -107,7 +107,10 @@ def classify(ci: dict[str, Any], ignore: re.Pattern[str]) -> CiState:
 
 
 def read(gh: Gh, cfg: Config, repo: str, sha: str) -> CiState:
-    return classify(github.ci_checks(gh, repo, sha), cfg.ci.ignore_re)
+    checks = github.ci_checks(gh, repo, sha)
+    own = cfg.checks.name  # the review's own check run (checks.py) says nothing about CI
+    checks["checks"] = [c for c in checks.get("checks") or [] if c.get("name") != own]
+    return classify(checks, cfg.ci.ignore_re)
 
 
 def failing_names(ci: dict[str, Any] | None, ignore: re.Pattern[str]) -> list[str]:

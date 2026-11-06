@@ -1292,30 +1292,42 @@ status page. The contract, per commit:
 
 | status | conclusion | meaning |
 |---|---|---|
-| `queued` | | waiting: push debounce, its turn in line, a retry backoff, or a draft |
+| `queued` | | waiting: push debounce, its turn in line, or a retry backoff |
 | `in_progress` | | a run is reviewing it (title names the step) |
 | `completed` | `success` | final verdict APPROVE |
 | `completed` | `neutral` | final verdict COMMENT (no changes requested) |
 | `completed` | `failure` | final verdict REQUEST_CHANGES (also a run a Phase 1 gate stopped) |
-| `completed` | `action_required` | the review service gave up (failed after retries, or ended without a verdict); `@thepastaclaw review` retries |
-| `completed` | `skipped` | automatic review is off (skip label, repo disabled) |
-| `completed` | `cancelled` | the commit stopped being the PR's head, or the PR closed, before it was reviewed |
+| `completed` | `action_required` | the review service gave up (failed after retries, or ended without a verdict); `@thepastaclaw review` retries (GitHub's Re-run button does nothing: there is no webhook) |
+| `completed` | `skipped` | a skip label keeps automatic review off this commit |
+| `completed` | `cancelled` | the commit stopped being the PR's head, or the PR closed or went back to draft, before it was reviewed |
+
+Drafts and PRs the bot never reviews (bot authors, repos it does not review) get no check;
+a draft's check appears when it is marked ready. A review someone asks for on a
+skip-labelled PR is tracked like any other. Check runs belong to a commit, not a PR, so
+one commit open in two PRs of a repository carries one check.
 
 A verdict carried over a push that left the diff unchanged stands for the new commit. A
 final verdict is never reopened by later activity on the same commit (a conversation or
 CI re-check): the check stays completed and its conclusion changes if the verdict does.
 A commit that does go back to pending (a retry after `action_required`, a removed skip
 label) gets a new check run of the same name, which GitHub shows instead of the old one.
-`details_url` is the bot's review once there is one, otherwise the PR's queue comment.
+`details_url` is the bot's review once there is one, otherwise the PR's queue comment. A
+create whose response was lost is adopted on the next pass (this App's newest check of
+that name on the commit) rather than duplicated, and a check GitHub no longer knows is
+recreated.
 
 The `checks` daemon task (every `interval_seconds`, live daemon only) reconciles from the
 database like the verdict labels, but without a cursor: each pass derives the wanted check
-for every open PR's head, every commit being reviewed and every commit whose check is still
-open, and writes only those whose rendered state differs from the last write
-(`check_runs` table, one row per commit). At most 20 writes per pass, so enabling it
-backfills every open PR over a few minutes. `check.synced` events record writes;
-`check.failed` a write GitHub refused (not retried until the wanted state changes or the
-daemon restarts), `check.auth_failed` an App that cannot authenticate.
+for every open PR's head in a reviewed repo, every commit being reviewed and every commit
+whose check is still open (one with nothing left to say is closed as `cancelled`), and
+writes only those whose rendered state differs from the last write (`check_runs` table, one
+row per commit). At most 20 writes per pass, so enabling it backfills every open PR over a
+few minutes; a transient GitHub failure ends the pass and pauses two minutes, and each call
+times out after 30 s, so a hung GitHub cannot hold the tick loop. `check.synced` events
+record a change of state (not every step title); `check.failed` a write GitHub refused
+(not retried until the wanted state changes or the daemon restarts);
+`check.installation_failed` an installation that cannot be used (that repo is skipped,
+others carry on); `check.auth_failed` an App that cannot authenticate at all.
 
 GitHub accepts check runs only from a GitHub App, so this needs one with **Checks: read and
 write** (and the default Metadata: read), no webhook, installed on the repositories. Put its
@@ -1334,9 +1346,9 @@ more repos needs no restart) and writes with an installation token limited to
 `checks: write`, through `gh` like everything else. These calls use the installation's own
 rate limit, not the bot's PAT. `reviewsys checks` prints the planned check of every commit
 without touching GitHub; `reviewsys checks --app` authenticates and lists which enabled
-repos have the installation; `reviewsys doctor` checks the App when enabled. The check is
-informational: make it a required check only once it has run reliably for a while. Its name
-matches `[ci] ignore_checks`, so the CI watch never waits on the bot's own check.
+repos have the installation; `reviewsys doctor` checks the App and that the key is not
+readable by others when enabled. The check is informational: make it a required check only
+once it has run reliably for a while. The CI watch never counts the bot's own check.
 
 ## CI after the verdict
 
