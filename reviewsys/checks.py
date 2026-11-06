@@ -45,7 +45,7 @@ from .config import Config
 from .db import event, kv_get, now, now_dt, parse_ts, tx
 from .gh import Gh
 from .ghapp import AppAuth, AppAuthError
-from .ingest import AUTOMATIC_TRIGGERS, SKIP_LABEL_REASON, reviewed_sha
+from .ingest import AUTOMATIC_TRIGGERS, reviewed_sha
 from .models import FailKind, HeadStatus, ReviewError, Trigger
 from .publish import canonical_event
 
@@ -208,6 +208,20 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want |
             summary=_summary(sha),
             details_url=_pr_url(repo, number),
         )
+    if (
+        pr is not None
+        and pr["skip_label"]
+        and (head is None or head["status"] == HeadStatus.CLOSED)
+    ):
+        return Want(
+            status="completed",
+            conclusion="skipped",
+            title="Automatic review is off for this PR (skip label)",
+            summary=_summary(
+                sha, "Remove the label, or comment `@thepastaclaw review`, to get a review."
+            ),
+            details_url=_pr_url(repo, number),
+        )
     if head is None:
         return None  # a draft, a bot author, or a push ingest has not seen yet
     status = head["status"]
@@ -237,18 +251,7 @@ def wanted(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want |
             details_url=_gate_url(conn, repo, number),
             completed_at=head["finished_at"] or None,
         )
-    if status == HeadStatus.CLOSED and head["reason"] == SKIP_LABEL_REASON:
-        return Want(
-            status="completed",
-            conclusion="skipped",
-            title="Automatic review is off for this PR (skip label)",
-            summary=_summary(
-                sha, "Remove the label, or comment `@thepastaclaw review`, to get a review."
-            ),
-            details_url=_pr_url(repo, number),
-            completed_at=head["finished_at"] or None,
-        )
-    # closed for a draft (a review starts when it is ready) or by an operator; superseded yet
+    # closed for a draft (re-opened when it is ready) or by an operator; superseded yet
     # GitHub's head again (a revert): ingest decides what follows
     return None
 
@@ -284,34 +287,43 @@ def closed_out(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Wa
         status="completed",
         conclusion="cancelled",
         title="Not reviewed: the PR is a draft" if draft else "Not reviewed",
-        summary=_summary(sha, "A review starts when the PR is ready for review." if draft else ""),
+        summary=_summary(
+            sha, "The review starts when the PR is marked ready for review." if draft else ""
+        ),
         details_url=_pr_url(repo, number),
     )
+
+
+def _disabled_repos(conn: sqlite3.Connection, cfg: Config) -> set[str]:
+    """Repos with PRs on record that the bot no longer reviews: ingest stops polling them, so
+    their rows are frozen (ad hoc repos have no `prs` rows and are not in here)."""
+    known = {str(r[0]) for r in conn.execute("SELECT DISTINCT repo FROM prs")}
+    return known - set(cfg.enabled_repos)
 
 
 def _candidates(conn: sqlite3.Connection, cfg: Config) -> list[tuple[str, int, str]]:
     """Commits to reconcile, those whose check moves first: still-open checks, a cancelled
     check whose commit got a review after all (a superseded run that was past verify2
-    publishes), commits being reviewed, then every open PR's head in a repo the bot reviews
-    (the backfill after enabling). Repos listed in `exclude_repos` are left out."""
+    publishes; the overlap covers a review row stamped just before it committed), commits
+    being reviewed, then every open PR's head (the backfill after enabling). Of a repo the bot
+    no longer reviews only open checks are visited, to close them; `exclude_repos` are left
+    out entirely."""
+    disabled = _disabled_repos(conn, cfg)
     rows = conn.execute(
         "SELECT repo, number, sha FROM check_runs WHERE status<>'completed'"
         " UNION ALL SELECT c.repo, c.number, c.sha FROM check_runs c"
         " WHERE c.conclusion='cancelled' AND EXISTS (SELECT 1 FROM reviews r WHERE"
-        " r.repo=c.repo AND r.number=c.number AND r.sha=c.sha AND r.posted_at>=c.updated_at)"
+        " r.repo=c.repo AND r.number=c.number AND r.sha=c.sha"
+        " AND r.posted_at>=strftime('%Y-%m-%dT%H:%M:%SZ', c.updated_at, '-60 seconds'))"
     ).fetchall()
-    rows += conn.execute(
+    fresh = conn.execute(
         "SELECT repo, number, sha FROM heads WHERE queue='live' AND status IN ('queued','running')"
         " ORDER BY status='running' DESC, id"
     ).fetchall()
-    enabled = set(cfg.enabled_repos)
-    rows += [
-        r
-        for r in conn.execute(
-            "SELECT repo, number, head_sha AS sha FROM prs WHERE state='open' ORDER BY updated_at DESC"
-        ).fetchall()
-        if r["repo"] in enabled  # a disabled repo's PRs are no longer polled: stale rows
-    ]
+    fresh += conn.execute(
+        "SELECT repo, number, head_sha AS sha FROM prs WHERE state='open' ORDER BY updated_at DESC"
+    ).fetchall()
+    rows += [r for r in fresh if r["repo"] not in disabled]
     excluded = {r.lower() for r in cfg.checks.exclude_repos}
     return list(
         dict.fromkeys(
@@ -330,10 +342,10 @@ def _last_written(conn: sqlite3.Connection, repo: str, number: int, sha: str) ->
 
 
 def _target(
-    conn: sqlite3.Connection, repo: str, number: int, sha: str
+    conn: sqlite3.Connection, repo: str, number: int, sha: str, disabled: set[str]
 ) -> tuple[Want | None, sqlite3.Row | None]:
     """The check to write for a commit (None: nothing to write) and the row last written."""
-    want = wanted(conn, repo, number, sha)
+    want = None if repo in disabled else wanted(conn, repo, number, sha)
     row = _last_written(conn, repo, number, sha)
     if want is None and row is not None and row["status"] != "completed":
         want = closed_out(conn, repo, number, sha)
@@ -375,11 +387,12 @@ class Reconciler:
             return stats
         writes = 0
         clients: dict[str, Gh | None] = {}
+        disabled = _disabled_repos(conn, self.cfg)
         for key in _candidates(conn, self.cfg):
             repo, number, sha = key
             if clients.get(repo, False) is None:
                 continue  # not installed there, this pass
-            want, row = _target(conn, repo, number, sha)
+            want, row = _target(conn, repo, number, sha, disabled)
             if want is None:
                 continue
             if row is not None and row["digest"] == want.digest:
@@ -521,8 +534,9 @@ class Reconciler:
 def plan(conn: sqlite3.Connection, cfg: Config) -> list[dict[str, Any]]:
     """Every commit's wanted check next to what was last written; reads no GitHub."""
     out = []
+    disabled = _disabled_repos(conn, cfg)
     for repo, number, sha in _candidates(conn, cfg):
-        want, row = _target(conn, repo, number, sha)
+        want, row = _target(conn, repo, number, sha, disabled)
         if want is None and row is None:
             continue
         out.append(

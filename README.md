@@ -1298,11 +1298,12 @@ status page. The contract, per commit:
 | `completed` | `neutral` | final verdict COMMENT (no changes requested) |
 | `completed` | `failure` | final verdict REQUEST_CHANGES (also a run a Phase 1 gate stopped) |
 | `completed` | `action_required` | the review service gave up (failed after retries, or ended without a verdict); `@thepastaclaw review` retries (GitHub's Re-run button does nothing: there is no webhook) |
-| `completed` | `skipped` | a skip label keeps automatic review off this commit |
+| `completed` | `skipped` | the PR carries a skip label and nobody asked for a review of this commit |
 | `completed` | `cancelled` | the commit stopped being the PR's head, or the PR closed or went back to draft, before it was reviewed |
 
 Drafts and PRs the bot never reviews (bot authors, repos it does not review) get no check;
-a draft's check appears when it is marked ready. A review someone asks for on a
+a draft's check appears when it is marked ready (a commit whose review was closed when the
+PR went back to draft is re-queued once it is ready again). A review someone asks for on a
 skip-labelled PR is tracked like any other. Check runs belong to a commit, not a PR, so
 one commit open in two PRs of a repository carries one check.
 
@@ -1348,7 +1349,8 @@ rate limit, not the bot's PAT. `reviewsys checks` prints the planned check of ev
 without touching GitHub; `reviewsys checks --app` authenticates and lists which enabled
 repos have the installation; `reviewsys doctor` checks the App and that the key is not
 readable by others when enabled. The check is informational: make it a required check only
-once it has run reliably for a while. The CI watch never counts the bot's own check.
+once it has run reliably for a while. The CI watch (`ci.py`) does not count the bot's own
+check, whatever it is named.
 
 ## CI after the verdict
 

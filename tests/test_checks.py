@@ -6,6 +6,7 @@ import base64
 import json
 import subprocess
 from collections.abc import Sequence
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +15,7 @@ import pytest
 from reviewsys import checks
 from reviewsys import config as cfg_mod
 from reviewsys.daemon import Daemon
-from reviewsys.db import kv_set, now_dt, tx
+from reviewsys.db import kv_set, now_dt, parse_ts, tx
 from reviewsys.gh import Gh
 from reviewsys.ghapp import AppAuth, AppAuthError
 
@@ -763,3 +764,58 @@ def test_plan_reads_no_github(conn, cfg):
     _head(conn)
     (row,) = checks.plan(conn, cfg)
     assert row["status"] == "queued" and row["check_id"] is None and not row["in_sync"]
+
+
+def test_ready_again_on_the_same_commit_requeues_the_review(conn, cfg):
+    from reviewsys.ingest import DRAFT_REASON, enqueue_head
+    from reviewsys.models import Trigger
+
+    _pr(conn)
+    h = _head(conn, status="closed", reason=DRAFT_REASON)  # it went back to draft
+    with tx(conn):
+        assert enqueue_head(conn, cfg, REPO, 1, SHA, Trigger.NEW_PUSH) == "requeued"
+    assert conn.execute("SELECT status FROM heads WHERE id=?", (h,)).fetchone()[0] == "queued"
+    assert _want(conn).status == "queued"
+
+
+def test_labelled_commit_without_a_head_is_skipped(conn):
+    _pr(conn, skip=1)
+    assert _want(conn).conclusion == "skipped"
+
+
+def test_disabled_repo_open_check_is_closed_and_nothing_new_created(conn, cfg, rec, github):
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO prs (repo, number, head_sha, state, updated_at) VALUES"
+            " ('dashpay/grovedb', 3, ?, 'open', ?), ('dashpay/grovedb', 4, ?, 'open', ?)",
+            (SHA, T0, OLD, T0),
+        )
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, status, queued_at, eligible_at)"
+            " VALUES ('dashpay/grovedb', 3, ?, 'new_pr', 'queued', ?, ?),"
+            " ('dashpay/grovedb', 4, ?, 'new_pr', 'queued', ?, ?)",
+            (SHA, T0, T0, OLD, T0, T0),
+        )
+        conn.execute(
+            "INSERT INTO check_runs VALUES ('dashpay/grovedb', 3, ?, 50, 'queued', NULL, 'x', ?)",
+            (SHA, T0),
+        )
+    github.runs[50] = {"head_sha": SHA, "status": "queued"}
+    rec.reconcile(conn)
+    assert github.runs[50]["conclusion"] == "cancelled"
+    assert list(github.runs) == [50], "no check for the other frozen PR"
+
+
+def test_late_review_stamped_before_the_cancel_still_lands(conn, rec, github):
+    _pr(conn, sha=OLD)
+    _head(conn, sha=OLD, status="running")
+    rec.reconcile(conn)
+    _pr(conn, sha=SHA)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='superseded' WHERE sha=?", (OLD,))
+    rec.reconcile(conn)
+    written = conn.execute("SELECT updated_at FROM check_runs WHERE sha=?", (OLD,)).fetchone()[0]
+    stamped = (parse_ts(written) - timedelta(seconds=30)).isoformat().replace("+00:00", "Z")
+    _review(conn, "APPROVE", sha=OLD, at=stamped)
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "success"

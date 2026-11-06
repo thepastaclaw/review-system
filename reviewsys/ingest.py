@@ -87,6 +87,7 @@ def skip_label(cfg: Config, labels: tuple[str, ...]) -> str | None:
 
 # a head ingest closed because the PR carries a skip label; re-opened when the label goes
 SKIP_LABEL_REASON = "pr_skip_label"
+DRAFT_REASON = "pr_draft"
 # heads the ingest pass creates on its own; every other trigger is someone asking for a review
 AUTOMATIC_TRIGGERS = frozenset({Trigger.NEW_PR.value, Trigger.NEW_PUSH.value})
 # what a skip label refuses: the heads nobody asked for (a new PR or push, a CI check)
@@ -173,10 +174,12 @@ def enqueue_head(
         "SELECT id, status, priority, queue, trigger, reason FROM heads WHERE repo=? AND number=? AND sha=?",
         (repo, number, sha),
     ).fetchone()
+    # closed only while a skip label or the draft state kept it from review: whatever reaches
+    # it now (ingest once the PR is ready and unlabelled, or someone asking) re-opens it
     skip_closed = (
         existing is not None
         and existing["status"] == HeadStatus.CLOSED
-        and existing["reason"] == SKIP_LABEL_REASON
+        and existing["reason"] in (SKIP_LABEL_REASON, DRAFT_REASON)
     )
     if (
         labelled
@@ -201,7 +204,7 @@ def enqueue_head(
         else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
     )
     if existing and skip_closed:
-        # closed only because of a skip label: the label is gone (ingest) or someone asked
+        # the label is gone or the draft is ready (ingest), or someone asked
         supersede_other_heads(conn, repo, number, sha, ts)
         return _requeue(
             conn,
@@ -489,7 +492,7 @@ def ingest_repo(
                 # current commit (its gate comment's boxes) runs to the end: closing it here
                 # cancelled it minutes after it started (dashpay/platform#5285, 2026-10-05)
                 if close_pr_heads(
-                    conn, repo, p.number, "pr_draft", ts=ts, keep_requested_sha=p.head_sha
+                    conn, repo, p.number, DRAFT_REASON, ts=ts, keep_requested_sha=p.head_sha
                 ):
                     stats["draft"] += 1
                 continue
