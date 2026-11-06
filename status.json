@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-06T03:13:01Z",
-  "generated_at": "2026-11-06T03:13:02Z",
+  "data_as_of": "2026-11-06T03:14:01Z",
+  "generated_at": "2026-11-06T03:14:02Z",
   "history": {
     "daily": [
       {
@@ -333,7 +333,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 739,
+            "n": 740,
             "p90_seconds": 1826
           }
         },
@@ -359,6 +359,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=907a5d2b",
+        "kind": "run.spawned",
+        "number": 5780,
+        "repo": "dashpay/platform",
+        "run_id": 9087,
+        "ts": "2026-11-06T03:13:36Z"
+      },
       {
         "detail": "ok in 919s",
         "kind": "run.done",
@@ -670,14 +678,6 @@
         "repo": "dashpay/dash",
         "run_id": 9082,
         "ts": "2026-11-06T00:56:10Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 8065,
-        "repo": "dashpay/dash",
-        "run_id": 9082,
-        "ts": "2026-11-06T00:43:00Z"
       }
     ],
     "tokens_by_effort": [
@@ -1271,7 +1271,7 @@
       "findings_posted": 8283,
       "reviews": 8587,
       "reviews_imported": 2245,
-      "runs": 9086,
+      "runs": 9087,
       "tokens_in": 99374724472,
       "tokens_out": 1080232630,
       "tokens_total": 100454957102
@@ -1283,12 +1283,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-06T09:00:54Z",
-        "deadline_in_seconds": 20873,
+        "deadline_in_seconds": 20813,
         "degraded": false,
-        "elapsed_seconds": 727,
+        "elapsed_seconds": 787,
         "findings": null,
         "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-11-06T03:12:57Z",
+        "heartbeat_at": "2026-11-06T03:13:57Z",
         "id": 9086,
         "lanes": [
           {
@@ -1310,7 +1310,7 @@
             "phase": "phase1",
             "pool": "glm",
             "role": "general",
-            "since_seconds": 704,
+            "since_seconds": 764,
             "state": "running"
           }
         ],
@@ -1319,10 +1319,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/base-sdk/pull/125",
         "priority": false,
-        "progress": 0.259,
+        "progress": 0.28,
         "queue": "live",
         "queued_at": "2026-11-06T02:30:44Z",
-        "remaining_seconds": 2079,
+        "remaining_seconds": 2019,
         "repo": "dashpay/base-sdk",
         "sha": "0fe728073d2f211f8c30fa54bd99b8a4c3928931",
         "started_at": "2026-11-06T03:00:54Z",
@@ -1377,7 +1377,7 @@
             ],
             "lanes_total": 2,
             "name": "phase1",
-            "seconds": 706,
+            "seconds": 766,
             "started_at": "2026-11-06T03:01:15Z",
             "status": "running"
           }
@@ -1395,6 +1395,85 @@
           "publish"
         ],
         "wait_seconds": 1810
+      },
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-06T09:13:36Z",
+        "deadline_in_seconds": 21575,
+        "degraded": false,
+        "elapsed_seconds": 25,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-11-06T03:13:52Z",
+        "id": 9087,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5780,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5780",
+        "priority": false,
+        "progress": 0.012,
+        "queue": "live",
+        "queued_at": "2026-11-06T02:43:35Z",
+        "remaining_seconds": 1997,
+        "repo": "dashpay/platform",
+        "sha": "907a5d2bad73d595d97c680378c286b7905e4828",
+        "started_at": "2026-11-06T03:13:36Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-11-06T03:13:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-11-06T03:13:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The intricate changes to apply_persisted_core_state and its helpers in packages/rs-platform-wallet-storage/src/sqlite/rehydrate.rs alter address derivation and UTXO ownership restoration, directly determining which accounts can select and spend restored coins.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 11,
+            "started_at": "2026-11-06T03:13:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-11-06T03:13:54Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(platform-wallet-storage): restore UTXOs into the account that derives them",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1801
       }
     ],
     "audit": {
@@ -1412,7 +1491,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1430,7 +1509,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-06T03:11:48Z",
+        "at": "2026-11-06T03:13:59Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1450,12 +1529,11 @@
       "closed": 625,
       "done": 8500,
       "failed": 100,
-      "queued": 1,
-      "running": 1,
+      "running": 2,
       "superseded": 2962
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-06T03:09:18Z",
+    "ingest_last_at": "2026-11-06T03:13:31Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1489,32 +1567,12 @@
       }
     ],
     "last_run_done_at": "2026-11-06T03:10:33Z",
-    "last_run_started_at": "2026-11-06T03:00:54Z",
+    "last_run_started_at": "2026-11-06T03:13:36Z",
     "median_run_minutes": 19.783333333333335,
-    "notify_last_at": "2026-11-06T03:10:21Z",
-    "oldest_queued_at": "2026-11-06T02:43:35Z",
+    "notify_last_at": "2026-11-06T03:13:32Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1766,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-11-06T03:13:35Z",
-        "eligible_in_seconds": 34,
-        "number": 5780,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5780",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5780#issuecomment-6659176598",
-        "priority": false,
-        "queued_at": "2026-11-06T02:43:35Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "907a5d2bad73d595d97c680378c286b7905e4828",
-        "title": "fix(platform-wallet-storage): restore UTXOs into the account that derives them",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-11-06",
       "failed": 0,
@@ -1522,7 +1580,7 @@
       "reviews": 8,
       "tokens": 62328047
     },
-    "ts": "2026-11-06T03:13:01Z",
+    "ts": "2026-11-06T03:14:01Z",
     "typical_minutes_by_tier": {
       "critical": 27.0,
       "low": 39.4,
@@ -1531,9 +1589,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 1,
+      "active": 2,
       "eligible": 0,
-      "idle_minutes": 12.116666666666667,
+      "idle_minutes": 0.4166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2504,7 +2562,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-06T03:12:29Z",
+      "at": "2026-11-06T03:13:29Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
