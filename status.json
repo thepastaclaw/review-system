@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-07T18:52:01Z",
-  "generated_at": "2026-11-07T18:52:01Z",
+  "data_as_of": "2026-11-07T18:53:00Z",
+  "generated_at": "2026-11-07T18:53:01Z",
   "history": {
     "daily": [
       {
@@ -338,7 +338,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 650,
+            "n": 651,
             "p90_seconds": 1835
           }
         },
@@ -364,6 +364,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5805,
+        "repo": "dashpay/platform",
+        "run_id": 9258,
+        "ts": "2026-11-07T18:52:44Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5805,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-07T18:52:41Z"
+      },
+      {
+        "detail": "attempt 1 sha=63e31599",
+        "kind": "run.spawned",
+        "number": 5805,
+        "repo": "dashpay/platform",
+        "run_id": 9258,
+        "ts": "2026-11-07T18:52:20Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -659,30 +683,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-11-07T17:37:47Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 8068,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-07T17:37:01Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 8068,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-07T17:37:00Z"
-      },
-      {
-        "detail": "7faade6a trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 8068,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-07T17:36:53Z"
       }
     ],
     "tokens_by_effort": [
@@ -1276,14 +1276,136 @@
       "findings_posted": 8427,
       "reviews": 8728,
       "reviews_imported": 2245,
-      "runs": 9257,
+      "runs": 9258,
       "tokens_in": 102015063795,
       "tokens_out": 1106607480,
       "tokens_total": 103121671275
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-11-08T00:52:20Z",
+        "deadline_in_seconds": 21560,
+        "degraded": false,
+        "elapsed_seconds": 40,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-11-07T18:52:50Z",
+        "id": 9258,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 16,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 15,
+            "state": "running"
+          }
+        ],
+        "number": 5805,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5805",
+        "priority": false,
+        "progress": 0.035,
+        "queue": "live",
+        "queued_at": "2026-11-07T18:22:01Z",
+        "remaining_seconds": 1116,
+        "repo": "dashpay/platform",
+        "sha": "63e31599bde16647143caace3c2231076f5e2f3f",
+        "started_at": "2026-11-07T18:52:20Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-11-07T18:52:20Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-11-07T18:52:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change adds nontrivial encoding-size calculations and client-side contract validation across DPP and SDKs, but does not itself change consensus, cryptography, signing mechanics, or another critical surface.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-07T18:52:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-11-07T18:52:34Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 18,
+            "started_at": "2026-11-07T18:52:42Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(sdk): refuse a private document type too small for its payload",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1819
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1299,7 +1421,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1337,7 +1459,7 @@
       "closed": 630,
       "done": 8644,
       "failed": 100,
-      "queued": 1,
+      "running": 1,
       "superseded": 2980
     },
     "ingest_error_streak": 0,
@@ -1369,38 +1491,18 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-07T18:38:53Z",
-    "last_run_started_at": "2026-11-07T17:45:17Z",
+    "last_run_started_at": "2026-11-07T18:52:20Z",
     "median_run_minutes": 24.95,
     "notify_last_at": "2026-11-07T18:51:14Z",
-    "oldest_queued_at": "2026-11-07T18:22:01Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1800,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": true,
-        "eligible_at": "2026-11-07T18:52:01Z",
-        "eligible_in_seconds": 0,
-        "number": 5805,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5805",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5805#issuecomment-6711123813",
-        "priority": false,
-        "queued_at": "2026-11-07T18:22:01Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "63e31599bde16647143caace3c2231076f5e2f3f",
-        "title": "feat(sdk): refuse a private document type too small for its payload",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-11-07",
       "failed": 0,
@@ -1408,7 +1510,7 @@
       "reviews": 60,
       "tokens": 929803176
     },
-    "ts": "2026-11-07T18:52:01Z",
+    "ts": "2026-11-07T18:53:00Z",
     "typical_minutes_by_tier": {
       "critical": 25.3,
       "low": 38.6,
@@ -1417,11 +1519,11 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 66.73333333333333,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.6833333333333333,
       "ingest_stale": false,
-      "stuck": true
+      "stuck": false
     }
   },
   "schema_version": 1,
@@ -2390,7 +2492,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-07T18:51:04Z",
+      "at": "2026-11-07T18:52:04Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
