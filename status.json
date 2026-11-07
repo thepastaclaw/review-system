@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-07T19:49:01Z",
-  "generated_at": "2026-11-07T19:49:01Z",
+  "data_as_of": "2026-11-07T19:50:01Z",
+  "generated_at": "2026-11-07T19:50:02Z",
   "history": {
     "daily": [
       {
@@ -355,8 +355,8 @@
           },
           "wait": {
             "median_seconds": 13,
-            "n": 431,
-            "p90_seconds": 408
+            "n": 432,
+            "p90_seconds": 403
           }
         }
       },
@@ -364,6 +364,38 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5802,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-07T19:49:56Z"
+      },
+      {
+        "detail": "attempt 1 sha=c94c9ec9",
+        "kind": "run.spawned",
+        "number": 5802,
+        "repo": "dashpay/platform",
+        "run_id": 9259,
+        "ts": "2026-11-07T19:49:36Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5802,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-07T19:49:36Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 5802,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-07T19:49:35Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -651,38 +683,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-11-07T17:53:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.skipped_repo",
-        "number": 1025,
-        "repo": "dashpay/grovedb",
-        "run_id": 9257,
-        "ts": "2026-11-07T17:45:32Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 1025,
-        "repo": "dashpay/grovedb",
-        "run_id": null,
-        "ts": "2026-11-07T17:45:18Z"
-      },
-      {
-        "detail": "attempt 1 sha=b95424fc",
-        "kind": "run.spawned",
-        "number": 1025,
-        "repo": "dashpay/grovedb",
-        "run_id": 9257,
-        "ts": "2026-11-07T17:45:17Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 1025,
-        "repo": "dashpay/grovedb",
-        "run_id": null,
-        "ts": "2026-11-07T17:45:17Z"
       }
     ],
     "tokens_by_effort": [
@@ -1276,14 +1276,98 @@
       "findings_posted": 8430,
       "reviews": 8729,
       "reviews_imported": 2245,
-      "runs": 9258,
+      "runs": 9259,
       "tokens_in": 102024882051,
       "tokens_out": 1106964390,
       "tokens_total": 103131846441
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-08T01:49:36Z",
+        "deadline_in_seconds": 21575,
+        "degraded": false,
+        "elapsed_seconds": 25,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-11-07T19:49:51Z",
+        "id": 9259,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5802,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5802",
+        "priority": true,
+        "progress": 0.021,
+        "queue": "live",
+        "queued_at": "2026-11-07T19:48:00Z",
+        "remaining_seconds": 1150,
+        "repo": "dashpay/platform",
+        "sha": "c94c9ec93b3dc89ba89eb736861c3d1ec1d718d1",
+        "started_at": "2026-11-07T19:49:36Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-11-07T19:49:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-11-07T19:49:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The change filters wallet address discovery and unresolved reporting with extensive tests, but does not itself change funds movement, coin selection, cryptographic key handling, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 10,
+            "started_at": "2026-11-07T19:49:43Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 7,
+            "started_at": "2026-11-07T19:49:54Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(platform-wallet-storage): don't look for or count non-funds used addresses as unresolved",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 96
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1299,7 +1383,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1337,7 +1421,8 @@
       "closed": 630,
       "done": 8645,
       "failed": 100,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2980
     },
     "ingest_error_streak": 0,
@@ -1375,19 +1460,19 @@
       }
     ],
     "last_run_done_at": "2026-11-07T19:44:30Z",
-    "last_run_started_at": "2026-11-07T18:52:20Z",
+    "last_run_started_at": "2026-11-07T19:49:36Z",
     "median_run_minutes": 25.4,
-    "notify_last_at": "2026-11-07T19:46:43Z",
+    "notify_last_at": "2026-11-07T19:49:08Z",
     "oldest_queued_at": "2026-11-07T19:39:40Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 561,
+        "age_seconds": 621,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-07T20:09:40Z",
-        "eligible_in_seconds": 1239,
+        "eligible_in_seconds": 1179,
         "number": 1321,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1321",
@@ -1399,25 +1484,6 @@
         "sha": "6251290267ba83c7ac2dab6adf1e8096277c90cb",
         "title": "fix(ui): word counted phrases by the phone's plural rules and localize bare texts in code",
         "trigger": "new_push"
-      },
-      {
-        "age_seconds": 61,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-11-07T20:18:00Z",
-        "eligible_in_seconds": 1739,
-        "number": 5802,
-        "position": 2,
-        "pr_url": "https://github.com/dashpay/platform/pull/5802",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5802#issuecomment-6706746757",
-        "priority": false,
-        "queued_at": "2026-11-07T19:48:00Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "c94c9ec93b3dc89ba89eb736861c3d1ec1d718d1",
-        "title": "fix(platform-wallet-storage): don't look for or count non-funds used addresses as unresolved",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1427,7 +1493,7 @@
       "reviews": 61,
       "tokens": 939978342
     },
-    "ts": "2026-11-07T19:49:01Z",
+    "ts": "2026-11-07T19:50:01Z",
     "typical_minutes_by_tier": {
       "critical": 25.3,
       "low": 38.6,
@@ -1436,9 +1502,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 56.68333333333333,
+      "idle_minutes": 0.4166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2409,7 +2475,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-07T19:48:33Z",
+      "at": "2026-11-07T19:49:33Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
