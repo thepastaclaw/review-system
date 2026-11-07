@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-07T08:55:02Z",
-  "generated_at": "2026-11-07T08:55:02Z",
+  "data_as_of": "2026-11-07T08:56:01Z",
+  "generated_at": "2026-11-07T08:56:01Z",
   "history": {
     "daily": [
       {
@@ -355,8 +355,8 @@
           },
           "wait": {
             "median_seconds": 13,
-            "n": 441,
-            "p90_seconds": 334
+            "n": 442,
+            "p90_seconds": 333
           }
         }
       },
@@ -364,6 +364,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=3e6f3102",
+        "kind": "run.spawned",
+        "number": 1025,
+        "repo": "dashpay/grovedb",
+        "run_id": 9218,
+        "ts": "2026-11-07T08:55:48Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 1025,
+        "repo": "dashpay/grovedb",
+        "run_id": null,
+        "ts": "2026-11-07T08:55:48Z"
+      },
+      {
+        "detail": "3e6f3102 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 1025,
+        "repo": "dashpay/grovedb",
+        "run_id": null,
+        "ts": "2026-11-07T08:55:39Z"
+      },
       {
         "detail": null,
         "kind": "ci.watch_green",
@@ -659,30 +683,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-11-07T05:22:48Z"
-      },
-      {
-        "detail": "84619453 trigger=new_pr priority=0",
-        "kind": "head.queued",
-        "number": 5796,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-07T05:22:21Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-11-07T04:45:43Z"
-      },
-      {
-        "detail": "ok in 9s",
-        "kind": "run.done",
-        "number": 5794,
-        "repo": "dashpay/platform",
-        "run_id": 9213,
-        "ts": "2026-11-07T03:47:39Z"
       }
     ],
     "tokens_by_effort": [
@@ -1276,14 +1276,96 @@
       "findings_posted": 8396,
       "reviews": 8692,
       "reviews_imported": 2245,
-      "runs": 9217,
+      "runs": 9218,
       "tokens_in": 101292106785,
       "tokens_out": 1100020760,
       "tokens_total": 102392127545
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "shumkov",
+        "deadline_at": "2026-11-07T14:55:48Z",
+        "deadline_in_seconds": 21587,
+        "degraded": false,
+        "elapsed_seconds": 13,
+        "findings": null,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-11-07T08:55:49Z",
+        "id": 9218,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1025,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/grovedb/pull/1025",
+        "priority": true,
+        "progress": 0.008,
+        "queue": "live",
+        "queued_at": "2026-11-07T08:55:39Z",
+        "remaining_seconds": 1615,
+        "repo": "dashpay/grovedb",
+        "sha": "3e6f3102c24b39c57b46a38d4aed789e504f3316",
+        "started_at": "2026-11-07T08:55:48Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-11-07T08:55:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-11-07T08:55:53Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff changes cryptographic proof acceptance in grovedb/src/operations/proof/verify.rs and authenticated count-based skip construction in merk/src/proofs/query/count_offset/emit_local.rs, meeting the critical-surface bar.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-07T08:55:54Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 1,
+            "started_at": "2026-11-07T08:56:00Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(query)!: page count trees by a branch-local offset in merged proofs (GROVE_V5)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "review_reply",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 9
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1299,7 +1381,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1317,7 +1399,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-07T08:52:21Z",
+        "at": "2026-11-07T08:55:16Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1337,10 +1419,11 @@
       "closed": 629,
       "done": 8608,
       "failed": 100,
+      "running": 1,
       "superseded": 2978
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-07T08:51:39Z",
+    "ingest_last_at": "2026-11-07T08:55:42Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1374,9 +1457,9 @@
       }
     ],
     "last_run_done_at": "2026-11-07T08:07:08Z",
-    "last_run_started_at": "2026-11-07T07:59:32Z",
+    "last_run_started_at": "2026-11-07T08:55:48Z",
     "median_run_minutes": 20.883333333333333,
-    "notify_last_at": "2026-11-07T08:52:42Z",
+    "notify_last_at": "2026-11-07T08:55:43Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1387,7 +1470,7 @@
       "reviews": 22,
       "tokens": 220345309
     },
-    "ts": "2026-11-07T08:55:02Z",
+    "ts": "2026-11-07T08:56:01Z",
     "typical_minutes_by_tier": {
       "critical": 25.4,
       "low": 36.7,
@@ -1396,9 +1479,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 55.5,
+      "idle_minutes": 0.21666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2369,7 +2452,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-07T08:54:53Z",
+      "at": "2026-11-07T08:55:54Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
