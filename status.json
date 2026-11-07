@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-07T02:32:01Z",
-  "generated_at": "2026-11-07T02:32:02Z",
+  "data_as_of": "2026-11-07T02:33:02Z",
+  "generated_at": "2026-11-07T02:33:02Z",
   "history": {
     "daily": [
       {
@@ -338,7 +338,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 694,
+            "n": 695,
             "p90_seconds": 1835
           }
         },
@@ -364,6 +364,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 1572,
+        "repo": "dashpay/tenderdash",
+        "run_id": null,
+        "ts": "2026-11-07T02:32:53Z"
+      },
+      {
+        "detail": "attempt 1 sha=0569cc63",
+        "kind": "run.spawned",
+        "number": 1572,
+        "repo": "dashpay/tenderdash",
+        "run_id": 9207,
+        "ts": "2026-11-07T02:32:52Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -667,22 +683,6 @@
         "repo": "dashpay/base-sdk",
         "run_id": 9204,
         "ts": "2026-11-07T00:25:15Z"
-      },
-      {
-        "detail": "tier=critical primary=gpt-6.1-sol second=gpt-6-astra",
-        "kind": "compare.selected",
-        "number": 122,
-        "repo": "dashpay/base-sdk",
-        "run_id": 9203,
-        "ts": "2026-11-07T00:25:14Z"
-      },
-      {
-        "detail": "attempt 1 sha=d07d22a4",
-        "kind": "run.spawned",
-        "number": 121,
-        "repo": "dashpay/base-sdk",
-        "run_id": 9204,
-        "ts": "2026-11-07T00:25:00Z"
       }
     ],
     "tokens_by_effort": [
@@ -1276,14 +1276,88 @@
       "findings_posted": 8384,
       "reviews": 8683,
       "reviews_imported": 2245,
-      "runs": 9206,
+      "runs": 9207,
       "tokens_in": 101197047869,
       "tokens_out": 1098623655,
       "tokens_total": 102295671524
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-11-07T08:32:52Z",
+        "deadline_in_seconds": 21590,
+        "degraded": false,
+        "elapsed_seconds": 10,
+        "findings": null,
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-11-07T02:32:52Z",
+        "id": 9207,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 1572,
+        "overdue": false,
+        "phase": "triage",
+        "pr_url": "https://github.com/dashpay/tenderdash/pull/1572",
+        "priority": false,
+        "progress": 0.005,
+        "queue": "live",
+        "queued_at": "2026-11-07T02:02:40Z",
+        "remaining_seconds": 2167,
+        "repo": "dashpay/tenderdash",
+        "sha": "0569cc637a3ad3eef0e304fdf6d8f1ae6bd932b0",
+        "started_at": "2026-11-07T02:32:52Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-11-07T02:32:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "tenderdash-consensus-security"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-11-07T02:32:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This large, intricate diff changes consensus round advancement in internal/consensus/proposer_liveness.go and internal/consensus/state_add_round_skip.go, and adds quorum-signed skip certificates and their verification in types/round_skip.go.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-11-07T02:32:57Z",
+            "status": "ok"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(consensus)!: hand a silent proposer's idle round to the next proposer",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "context",
+          "phase1",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1812
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1299,7 +1373,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1337,7 +1411,8 @@
       "closed": 629,
       "done": 8598,
       "failed": 100,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 2978
     },
     "ingest_error_streak": 0,
@@ -1375,40 +1450,21 @@
       }
     ],
     "last_run_done_at": "2026-11-07T02:18:29Z",
-    "last_run_started_at": "2026-11-07T01:53:12Z",
+    "last_run_started_at": "2026-11-07T02:32:52Z",
     "median_run_minutes": 25.283333333333335,
     "notify_last_at": "2026-11-07T02:31:24Z",
-    "oldest_queued_at": "2026-11-07T02:02:40Z",
+    "oldest_queued_at": "2026-11-07T02:27:10Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1761,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": false,
-        "eligible_at": "2026-11-07T02:32:40Z",
-        "eligible_in_seconds": 39,
-        "number": 1572,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/tenderdash/pull/1572",
-        "prioritize_url": "https://github.com/dashpay/tenderdash/issues/1572#issuecomment-6449845585",
-        "priority": false,
-        "queued_at": "2026-11-07T02:02:40Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/tenderdash",
-        "sha": "0569cc637a3ad3eef0e304fdf6d8f1ae6bd932b0",
-        "title": "feat(consensus)!: hand a silent proposer's idle round to the next proposer",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 291,
+        "age_seconds": 352,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-07T02:57:10Z",
-        "eligible_in_seconds": 1509,
+        "eligible_in_seconds": 1448,
         "number": 8069,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8069",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8069#issuecomment-6682163033",
         "priority": false,
@@ -1427,7 +1483,7 @@
       "reviews": 11,
       "tokens": 123889288
     },
-    "ts": "2026-11-07T02:32:01Z",
+    "ts": "2026-11-07T02:33:02Z",
     "typical_minutes_by_tier": {
       "critical": 25.8,
       "low": 37.6,
@@ -1436,9 +1492,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 38.81666666666667,
+      "idle_minutes": 0.16666666666666666,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2409,7 +2465,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-07T02:31:20Z",
+      "at": "2026-11-07T02:32:20Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
