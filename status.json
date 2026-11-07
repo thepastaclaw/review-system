@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-07T01:51:01Z",
-  "generated_at": "2026-11-07T01:51:01Z",
+  "data_as_of": "2026-11-07T01:52:01Z",
+  "generated_at": "2026-11-07T01:52:01Z",
   "history": {
     "daily": [
       {
@@ -366,6 +366,14 @@
     "recent_events": [
       {
         "detail": null,
+        "kind": "lane.corrected",
+        "number": 1572,
+        "repo": "dashpay/tenderdash",
+        "run_id": 9205,
+        "ts": "2026-11-07T01:51:55Z"
+      },
+      {
+        "detail": null,
         "kind": "gc.run",
         "number": null,
         "repo": null,
@@ -675,14 +683,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-11-07T00:08:38Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 5794,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-07T00:08:37Z"
       }
     ],
     "tokens_by_effort": [
@@ -700,9 +700,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 27178,
-        "tokens_in": 75647191469,
-        "tokens_out": 861960136
+        "lanes": 27179,
+        "tokens_in": 75651731125,
+        "tokens_out": 862107088
       },
       {
         "effort": "medium",
@@ -725,11 +725,11 @@
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 1975387.0,
-        "lanes": 9096,
+        "avg_tokens_per_lane": 1975685.0,
+        "lanes": 9097,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 17331642478,
-        "tokens_out": 636477310
+        "tokens_in": 17336182134,
+        "tokens_out": 636624262
       },
       {
         "avg_tokens_per_lane": 5138979.0,
@@ -770,8 +770,8 @@
     "tokens_by_run": [
       {
         "run_id": 9205,
-        "tokens_in": 4458441,
-        "tokens_out": 31874
+        "tokens_in": 8998097,
+        "tokens_out": 178826
       },
       {
         "run_id": 9204,
@@ -1270,16 +1270,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14368701,
+      "avg_tokens_per_completed_review": 14369359,
       "completed_reviews": 7118,
       "findings": 54311,
       "findings_posted": 8382,
       "reviews": 8681,
       "reviews_imported": 2245,
       "runs": 9205,
-      "tokens_in": 101178105855,
-      "tokens_out": 1098307718,
-      "tokens_total": 102276413573
+      "tokens_in": 101182645511,
+      "tokens_out": 1098454670,
+      "tokens_total": 102281100181
     }
   },
   "live": {
@@ -1288,12 +1288,12 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-11-07T07:30:08Z",
-        "deadline_in_seconds": 20347,
+        "deadline_in_seconds": 20287,
         "degraded": false,
-        "elapsed_seconds": 1253,
+        "elapsed_seconds": 1313,
         "findings": null,
         "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-11-07T01:50:57Z",
+        "heartbeat_at": "2026-11-07T01:51:57Z",
         "id": 9205,
         "lanes": [
           {
@@ -1315,29 +1315,39 @@
             "status": "completed",
             "tokens_in": 2036934,
             "tokens_out": 16710
+          },
+          {
+            "attempt": 1,
+            "effort": "xhigh",
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "role": "general",
+            "status": "corrected",
+            "tokens_in": 4539656,
+            "tokens_out": 146952
           }
         ],
         "live_lanes": [
           {
-            "effort": "xhigh",
+            "effort": "high",
             "line_position": null,
-            "model": "muse-spark-1.3-contributor",
-            "phase": "phase1",
-            "pool": "muse",
-            "role": "general",
-            "since_seconds": 1233,
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 6,
             "state": "running"
           }
         ],
         "number": 1572,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1572",
         "priority": true,
-        "progress": 0.686,
+        "progress": 0.699,
         "queue": "live",
         "queued_at": "2026-11-07T01:29:20Z",
-        "remaining_seconds": 572,
+        "remaining_seconds": 566,
         "repo": "dashpay/tenderdash",
         "sha": "b8317fef1a7235cdea82c973e937af6b842098fd",
         "started_at": "2026-11-07T01:30:08Z",
@@ -1400,24 +1410,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 1236,
+            "seconds": 1290,
             "started_at": "2026-11-07T01:30:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 6,
+            "started_at": "2026-11-07T01:51:55Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat(consensus)!: hand a silent proposer's idle round to the next proposer",
-        "tokens_in": 4458441,
-        "tokens_out": 31874,
+        "tokens_in": 8998097,
+        "tokens_out": 178826,
         "trigger": "review_reply",
         "upcoming": [
-          "verify2",
           "fresh_phase2",
           "fresh_verify2",
           "publish"
@@ -1504,13 +1518,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 0,
         "slots": 20,
         "waiting": 0
       }
@@ -1529,7 +1543,7 @@
       "reviews": 9,
       "tokens": 100141022
     },
-    "ts": "2026-11-07T01:51:01Z",
+    "ts": "2026-11-07T01:52:01Z",
     "typical_minutes_by_tier": {
       "critical": 25.8,
       "low": 37.6,
@@ -1540,7 +1554,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 20.883333333333333,
+      "idle_minutes": 21.883333333333333,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2511,7 +2525,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-07T01:50:15Z",
+      "at": "2026-11-07T01:51:16Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
