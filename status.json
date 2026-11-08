@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-08T01:29:02Z",
-  "generated_at": "2026-11-08T01:29:02Z",
+  "data_as_of": "2026-11-08T01:30:01Z",
+  "generated_at": "2026-11-08T01:30:01Z",
   "history": {
     "daily": [
       {
@@ -343,7 +343,7 @@
           },
           "wait": {
             "median_seconds": 1808,
-            "n": 627,
+            "n": 628,
             "p90_seconds": 1833
           }
         },
@@ -369,6 +369,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5807,
+        "repo": "dashpay/platform",
+        "run_id": 9276,
+        "ts": "2026-11-08T01:29:54Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5807,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-08T01:29:31Z"
+      },
+      {
+        "detail": "attempt 1 sha=3d16ed66",
+        "kind": "run.spawned",
+        "number": 5807,
+        "repo": "dashpay/platform",
+        "run_id": 9276,
+        "ts": "2026-11-08T01:29:30Z"
+      },
       {
         "detail": "ok in 11s",
         "kind": "run.done",
@@ -664,30 +688,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-11-07T22:59:37Z"
-      },
-      {
-        "detail": "attempt 1 sha=8e2ede2b",
-        "kind": "run.spawned",
-        "number": 5802,
-        "repo": "dashpay/platform",
-        "run_id": 9271,
-        "ts": "2026-11-07T22:59:36Z"
-      },
-      {
-        "detail": "8e2ede2b trigger=normal_request priority=0",
-        "kind": "head.queued",
-        "number": 5802,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-07T22:59:07Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-11-07T22:55:26Z"
       }
     ],
     "tokens_by_effort": [
@@ -1281,14 +1281,137 @@
       "findings_posted": 8446,
       "reviews": 8742,
       "reviews_imported": 2245,
-      "runs": 9275,
+      "runs": 9276,
       "tokens_in": 102144994485,
       "tokens_out": 1108962501,
       "tokens_total": 103253956986
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-11-08T07:29:30Z",
+        "deadline_in_seconds": 21569,
+        "degraded": false,
+        "elapsed_seconds": 31,
+        "findings": null,
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-11-08T01:30:00Z",
+        "id": 9276,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 6,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 7,
+            "state": "running"
+          }
+        ],
+        "number": 5807,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/5807",
+        "priority": false,
+        "progress": 0.023,
+        "queue": "live",
+        "queued_at": "2026-11-08T00:59:11Z",
+        "remaining_seconds": 1327,
+        "repo": "dashpay/platform",
+        "sha": "3d16ed66f3b38ea8c9ceabb38f1dcfae963fce5b",
+        "started_at": "2026-11-08T01:29:30Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 6,
+            "started_at": "2026-11-08T01:29:30Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 7,
+            "started_at": "2026-11-08T01:29:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The recursive property-order check in validate_update/common/mod.rs changes consensus validation but is a contained addition, not a large or intricate change meeting the critical threshold.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 7,
+            "started_at": "2026-11-08T01:29:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-11-08T01:29:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 9,
+            "started_at": "2026-11-08T01:29:52Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "feat(platform)!: a private type's update may only add properties after its existing ones (PV15)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "fresh_phase2",
+          "fresh_verify2",
+          "publish"
+        ],
+        "wait_seconds": 1819
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1304,7 +1427,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1342,7 +1465,7 @@
       "closed": 630,
       "done": 8658,
       "failed": 100,
-      "queued": 1,
+      "running": 1,
       "superseded": 2984
     },
     "ingest_error_streak": 0,
@@ -1374,38 +1497,18 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-08T01:00:14Z",
-    "last_run_started_at": "2026-11-08T01:00:03Z",
+    "last_run_started_at": "2026-11-08T01:29:30Z",
     "median_run_minutes": 21.383333333333333,
     "notify_last_at": "2026-11-08T01:28:24Z",
-    "oldest_queued_at": "2026-11-08T00:59:11Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1791,
-        "attempts": 0,
-        "author": "QuantumExplorer",
-        "eligible": false,
-        "eligible_at": "2026-11-08T01:29:11Z",
-        "eligible_in_seconds": 9,
-        "number": 5807,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5807",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5807#issuecomment-6715382640",
-        "priority": false,
-        "queued_at": "2026-11-08T00:59:11Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "3d16ed66f3b38ea8c9ceabb38f1dcfae963fce5b",
-        "title": "feat(platform)!: a private type's update may only add properties after its existing ones (PV15)",
-        "trigger": "new_pr"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-11-08",
       "failed": 0,
@@ -1413,7 +1516,7 @@
       "reviews": 1,
       "tokens": 0
     },
-    "ts": "2026-11-08T01:29:02Z",
+    "ts": "2026-11-08T01:30:01Z",
     "typical_minutes_by_tier": {
       "critical": 25.7,
       "low": 41.2,
@@ -1422,9 +1525,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 28.983333333333334,
+      "idle_minutes": 0.5166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
