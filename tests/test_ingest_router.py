@@ -965,6 +965,29 @@ def test_first_push_reply_queues_a_new_pr_head(cfg, conn, gh, notifier):
     assert conn.execute("SELECT trigger, priority FROM heads").fetchone()[:] == ("new_pr", 0)
 
 
+def test_reply_on_a_repo_reviewed_only_on_request_still_asks(cfg, conn, gh, notifier):
+    """A repo the bot does not watch (an ad hoc review) reviews no push on its own: a reply
+    there is a request, at priority, as before."""
+    repo = "dashpay/quorum-list-server"
+    assert repo not in cfg.enabled_repos
+    reply = _reply_comment(2, 1, repo=repo)
+    gh.routes[f"repos/{repo}/pulls/comments/2"] = reply
+    gh.routes[f"repos/{repo}/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
+    }
+    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) "
+            "VALUES ('reply:2','review_reply',?,7,'knst',?,?,?)",
+            (repo, reply["url"], reply["created_at"], reply["created_at"]),
+        )
+    assert route_inbox(conn, cfg, gh, notifier)["review_reply"] == 1
+    head = conn.execute("SELECT trigger, priority FROM heads").fetchone()
+    assert tuple(head) == ("review_reply", 1)
+
+
 def test_reply_while_the_push_review_runs_waits_for_it(cfg, conn, gh, notifier):
     """The push's run may have read the threads before the reply: the row waits for the run
     (bounded, as for any running head) and then re-opens the commit like any reviewed one,

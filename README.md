@@ -832,14 +832,16 @@ are still seen; dedupe is by comment id) and puts replies from non-bot users int
 and the replier is a member/collaborator/contributor or in `trusted_reviewers`, what
 happens depends on the PR's live head:
 
-- **A push nothing has reviewed yet** (no head for it, or its `new_pr`/`new_push` head is
-  still queued; typically "Fixed in <sha>" right after the push): no request for a
-  sooner or harder review. The push keeps its automatic head (normal priority, the push
-  debounce intact); a push ingest has not seen yet is queued here as ingest would. The
-  row is done at once (`review_reply_queued`): the push's review reads the threads with
-  the reply and answers it there. It is not carried past the reply: `worker._carry`
-  refuses while a reply under a finding on the PR is newer than the last `context` step
-  of any of its runs (less a minute), so the push gets that review.
+- **A push nothing has reviewed yet** on a watched repo (no head for it, or its
+  `new_pr`/`new_push` head is still queued; typically "Fixed in <sha>" right after the
+  push): no request for a sooner or harder review. The push keeps its automatic head
+  (normal priority, the push debounce intact); a push ingest has not seen yet is queued
+  here as ingest would. The row is done at once (`review_reply_queued`): the push's
+  review reads the threads with the reply and answers it there. It is not carried past
+  the reply: `worker._carry` refuses while a reply under a finding on the PR is newer than
+  the last `context` step of any of its runs that finished (`done`; less a minute), so
+  the push gets that review. On a repo reviewed only on request, a reply after a push
+  still asks for a review, as below.
 - **A reviewed commit** (or one carrying a review): it is re-opened at priority with
   trigger `review_reply` (no debounce, `head.requeued`).
 
@@ -1232,7 +1234,7 @@ event `head.carried`) when all of these hold:
 - the base changed none of the PR's files (content or mode) between that head's merge base
   and this one's (`git diff --name-only`): where it did, the PR's code may now meet new
   code, and the commit is reviewed;
-- no reply under a finding on the PR is newer than the last time a run read the threads
+- no reply under a finding on the PR is newer than the last time a finished run read the threads
   (see the reply routing above);
 - that head has a review, or carries one;
 - the newest review is a **final** review on the primary models: not preliminary (its

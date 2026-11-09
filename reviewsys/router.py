@@ -171,7 +171,8 @@ def _route_row(
                 _handled(conn, row["id"], "ignored", ts)
             return "ignored"
         with tx(conn):
-            res = _reply_after_push(conn, cfg, repo, number, head, ts)
+            # only a watched repo reviews its pushes on its own; elsewhere a reply still asks
+            res = _reply_after_push(conn, cfg, repo, number, head, ts) if watched else None
             if res is None:
                 res = enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REPLY, ts=ts)
             if res == "running" or (res == "noop" and _head_running(conn, repo, number, head)):

@@ -951,14 +951,16 @@ REPLY_READ_LAG = timedelta(minutes=1)
 
 
 def _unread_reply(ctx: RunContext) -> bool:
-    """A reply under one of the bot's findings on this PR that no run has read since: none of
-    the PR's runs gathered its context (`step_context`, which reads the threads) after it was
-    written. Rows the router has not judged yet count; those it ignored (not ours, untrusted,
-    another bot) do not. Caller holds the transaction."""
+    """A reply under one of the bot's findings on this PR that no run has answered since: none
+    of the PR's runs that went on to finish gathered its context (`step_context`, which reads
+    the threads) after it was written. A run that failed, was cancelled or was superseded
+    after reading answered nothing. Rows the router has not judged yet count; those it ignored
+    (not ours, untrusted, another bot) do not. Caller holds the transaction."""
     last = ctx.conn.execute(
         "SELECT MAX(s.started_at) FROM steps s JOIN runs r ON r.id=s.run_id "
-        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND s.name=?",
-        (ctx.repo, ctx.number, StepName.CONTEXT.value),
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND s.name=? "
+        "AND r.status=?",
+        (ctx.repo, ctx.number, StepName.CONTEXT.value, RunStatus.DONE.value),
     ).fetchone()[0]
     since = fmt_ts(parse_ts(str(last)) - REPLY_READ_LAG) if last else ""
     return (

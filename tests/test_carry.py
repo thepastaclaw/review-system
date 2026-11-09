@@ -559,6 +559,24 @@ def test_carry_needs_the_base_to_leave_the_prs_files_alone(
     assert conn.execute("SELECT merge_base FROM heads WHERE sha=?", (B,)).fetchone()[0] == mb1
 
 
+def test_no_carry_from_a_head_without_a_merge_base(cfg, conn, gh, reviewed, prints):
+    prints.update({A: "pid1:p", B: "pid1:p"})
+    _review(cfg, conn, gh, reviewed, A)
+    with tx(conn):
+        conn.execute("UPDATE heads SET merge_base=NULL WHERE sha=?", (A,))
+    rid, _ = _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
+    assert _reviewed_itself(conn, rid)
+
+
+def test_base_check_git_cannot_answer_counts_as_touched(tmp_path):
+    repo = tmp_path / "r"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "main")
+    head = _commit(repo, {"f.txt": b"one\n"}, "base")
+    assert _touched(repo, head, head, head) is False  # the base did not move
+    assert _touched(repo, "0" * 40, "1" * 40, head) is True
+
+
 def _reply_after_review(conn, gh, reviewed_at_offset: str) -> None:
     """A trusted reply under one of the bot's findings, routed (`review_reply_queued`)."""
     with tx(conn):
@@ -574,21 +592,35 @@ def _reply_after_review(conn, gh, reviewed_at_offset: str) -> None:
         )
 
 
-@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize("when", ["before", "after", "read_by_a_failed_run"])
 def test_a_reply_no_run_has_read_stops_the_carry(cfg, conn, gh, reviewed, prints, when):
     """ "Fixed in <sha>" on a push whose diff did not change: carrying would leave the reply
     unanswered, so the push gets its review (which reads the threads and answers it). A reply
-    an earlier run already read does not stop the carry."""
+    an earlier finished run already read does not stop the carry; one only a run that then
+    failed read does (it answered nothing)."""
     prints.update({A: "pid1:p", B: "pid1:p"})
-    _review(cfg, conn, gh, reviewed, A)
+    rid_a, _ = _review(cfg, conn, gh, reviewed, A)
     (ctx_at,) = conn.execute("SELECT started_at FROM steps WHERE name='context'").fetchone()
     at = parse_ts(ctx_at) + (timedelta(hours=-1) if when == "before" else timedelta(minutes=5))
     _reply_after_review(conn, gh, fmt_ts(at))
+    if when == "read_by_a_failed_run":
+        later = fmt_ts(at + timedelta(minutes=10))
+        with tx(conn):
+            (head_id,) = conn.execute("SELECT head_id FROM runs WHERE id=?", (rid_a,)).fetchone()
+            rid = conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
+                "VALUES (?,2,'failed','t',?,?)",
+                (head_id, later, later),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO steps (run_id, name, status, started_at) VALUES (?,'context','ok',?)",
+                (rid, later),
+            )
     rid, _ = _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
-    if when == "after":
-        assert _reviewed_itself(conn, rid) and carried_from(conn, REPO, 1, B) is None
-    else:
+    if when == "before":
         assert carried_from(conn, REPO, 1, B) == A
+    else:
+        assert _reviewed_itself(conn, rid) and carried_from(conn, REPO, 1, B) is None
 
 
 def test_a_reply_the_router_ignored_does_not_stop_the_carry(cfg, conn, gh, reviewed, prints):
