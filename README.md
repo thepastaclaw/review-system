@@ -1295,7 +1295,7 @@ status page. The contract, per commit:
 | `queued` | | waiting: push debounce, its turn in line, or a retry backoff |
 | `in_progress` | | a run is reviewing it (title names the step) |
 | `completed` | `success` | final verdict APPROVE |
-| `completed` | `neutral` | final verdict COMMENT (no changes requested) |
+| `completed` | `neutral` | final verdict COMMENT (no changes requested), or an explicit maintainer dismissal (title and summary distinguish the override from a technical verdict) |
 | `completed` | `failure` | final verdict REQUEST_CHANGES (also a run a Phase 1 gate stopped) |
 | `completed` | `action_required` | the review service gave up (failed after retries, or ended without a verdict); `@thepastaclaw review` retries (GitHub's Re-run button does nothing: there is no webhook) |
 | `completed` | `skipped` | the PR carries a skip label and nobody asked for a review of this commit |
@@ -1317,8 +1317,30 @@ create whose response was lost is adopted on the next pass (this App's newest ch
 that name on the commit) rather than duplicated, and a check GitHub no longer knows is
 recreated.
 
+A maintainer explicitly dismissing the exact bot review behind a check overrides its
+original verdict: the existing check becomes `completed` / `neutral`, titled **Review
+dismissed — maintainer override**. Its summary preserves the actor, reason, review ID,
+reviewed SHA and dismissal time, and explicitly says this is non-blocking by maintainer
+decision, **not** a claim that findings were fixed or technical validation passed. GitHub
+enforces permission to dismiss another user's review; reconciliation requires the matching
+`DISMISSED` bot review and a human `review_dismissed` timeline event, not an approval,
+resolved thread, bot/self dismissal, or automatic stale-review dismissal caused by a push.
+Later inline-only COMMENT reviews cannot hide the substantive review's dismissal. The
+override is bound to that PR, review ID and exact reviewed SHA; it follows an explicitly
+carried unchanged diff, but not a different newly reviewed head. Other checks and verdict
+labels are untouched, and no review is enqueued or posted.
+
+Confirmed evidence is stored in `kv` (`checks.dismissal:<repo>#<number>:<review_id>`) and
+recorded as `check.review_dismissed`; the original `reviews.event` is retained as publication
+history. Persistence precedes the App write so retries, restarts and stale API snapshots
+cannot restore the dismissed verdict. At most 20 backing reviews are checked live per pass,
+least recently checked first, **before** comparing check digests. Timeline reads are
+paginated; both reads use the daemon's normal GitHub client with a 30 s timeout, leaving the
+App's installation permissions limited to Checks. A failed read defers publication rather
+than reasserting the unverified database verdict.
+
 The `checks` daemon task (every `interval_seconds`, live daemon only) reconciles from the
-database like the verdict labels, but without a cursor: each pass derives the wanted check
+database plus these live dismissal observations, without a cursor: each pass derives the wanted check
 for every open PR's head in a reviewed repo, every commit being reviewed and every commit
 whose check is still open (one with nothing left to say is closed as `cancelled`), and
 writes only those whose rendered state differs from the last write (`check_runs` table, one
@@ -1346,7 +1368,8 @@ repo (a repo without one is skipped and looked up again hourly, so installing th
 more repos needs no restart) and writes with an installation token limited to
 `checks: write`, through `gh` like everything else. These calls use the installation's own
 rate limit, not the bot's PAT. `reviewsys checks` prints the planned check of every commit
-without touching GitHub; `reviewsys checks --app` authenticates and lists which enabled
+without touching GitHub (dismissals reflect what the live daemon has already observed;
+this command does not publish or refresh them); `reviewsys checks --app` authenticates and lists which enabled
 repos have the installation; `reviewsys doctor` checks the App and that the key is not
 readable by others when enabled. The check is informational: make it a required check only
 once it has run reliably for a while. The CI watch (`ci.py`) does not count the bot's own
