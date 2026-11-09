@@ -616,3 +616,43 @@ def test_a_withdrawal_after_a_dispute_no_longer_holds_the_approval(cfg, conn, gh
     _run_conversation(cfg, conn, gh, lanes, C, outcomes)
     last = conn.execute("SELECT event FROM reviews ORDER BY id DESC LIMIT 1").fetchone()
     assert last["event"] == "APPROVE"
+
+
+def test_code_that_fixes_a_disputed_blocker_ends_the_dispute(cfg, conn, gh, lanes):
+    """A disputed blocker the author then fixes is FIXED: later heads no longer carry it as
+    DISPUTED, so it can't keep withholding their approval."""
+    h, blocker = _disputed_round_one(cfg, conn, gh, lanes)
+    again = {**KNST, "id": 902, "created_at": "z", "body": "No: #5000 does exactly this."}
+    gh.threads[0]["comments"]["nodes"] += [
+        _gql_comment(_bot(gh.replies[0]["body"])),
+        _gql_comment(again),
+    ]
+    _lanes(lanes, h, blocker, "STILL_VALID", reason="Restated.", disputed=True)
+    _review(cfg, conn, gh, lanes, C)
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"
+    _lanes(lanes, h, blocker, "FIXED", reason="The clamp now runs first.")
+    _review(cfg, conn, gh, lanes, D)
+    assert gh.posted_reviews[-1]["event"] == "APPROVE"
+    _lanes(lanes, h, blocker, "FIXED", reason="Still fixed.")
+    _review(cfg, conn, gh, lanes, "e" * 40)
+    assert '"prior_status": "DISPUTED"' not in _verifier_prompts(lanes)[-1]
+    assert gh.posted_reviews[-1]["event"] == "APPROVE"
+
+
+def test_a_disputed_blocker_holds_an_approval_the_late_gate_would_give():
+    """The verifier kept another blocker (no APPROVE yet), so the dispute withheld nothing;
+    when the late gate then drops that blocker, approving must still respect the dispute."""
+    from types import SimpleNamespace
+
+    ctx = SimpleNamespace(
+        cfg=SimpleNamespace(policy=SimpleNamespace(pipeline=None)),
+        is_audit=False,
+        disputed_blockers=1,
+        approval_withheld=0,
+    )
+    verified = parse_verifier_output(
+        _verifier([]), expected_phase="final", expected_coderabbit_ids=[]
+    )
+    verified.review_action = "COMMENT"
+    worker._approve_when_clear(ctx, verified)
+    assert verified.review_action == "COMMENT" and ctx.approval_withheld == 1

@@ -316,7 +316,9 @@ class RunContext:
     # identities explicitly lifted by the latest adjudication; a later head must not silently
     # turn one back into a blocker, while an explicitly marked reintroduction remains possible
     settled_hashes: set[str] = field(default_factory=set)
-    # blocking findings left DISPUTED that turned the latest verifier's APPROVE into a COMMENT
+    # blocking findings the latest verifier left DISPUTED, and how many of them turned an
+    # approval into a COMMENT (a later step that would approve re-checks the first)
+    disputed_blockers: int = 0
     approval_withheld: int = 0
     prior_sha: str | None = None
     has_prior_review: bool = False
@@ -2973,6 +2975,7 @@ def _settle_discussions(ctx: RunContext, out: VerifierOutput, expected_phase: st
         and (p := ctx.prior_findings.get(h)) is not None
         and p.severity == "blocking"
     )
+    ctx.disputed_blockers = disputed
     approves = out.review_action == "APPROVE" or (_converges(ctx) and not out.blocker_count)
     ctx.approval_withheld = disputed if approves else 0
     if ctx.approval_withheld:
@@ -3637,7 +3640,14 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
     for h, outcome in _reconciliation(ctx, phase, verified).items():
         status = str(outcome.get("status") or "")
         prior = ctx.prior_findings.get(h)
-        if status not in converse.LIFTING_STATUSES or h in kept or prior is None:
+        if h in kept or prior is None:
+            continue
+        # code that fixed a disputed finding ends the dispute: without a newer row the old
+        # DISPUTED settlement would keep withholding approval on every later head
+        ends_dispute = status in {"FIXED", "OUTDATED"} and (
+            _latest_settlement(ctx, h) == converse.DISPUTED
+        )
+        if status not in converse.LIFTING_STATUSES and not ends_dispute:
             continue
         # a deferral keeps the tracking link it was checked against on a second line, as
         # `_record_conceded` does, so `_known_tracking` still finds it on later heads
@@ -5126,12 +5136,11 @@ def _approve_when_clear(ctx: RunContext, verified: VerifierOutput) -> None:
     """Nothing blocks: the verdict is an approval, whatever non-blocking findings come with it
     (they can be fixed forward). `publish.verdict_event` still stops a review that did not run
     at full strength (Phase 2 skipped, degraded mode) at COMMENT."""
-    if (
-        not _converges(ctx)
-        or verified.blocker_count
-        or verified.review_action == "APPROVE"
-        or ctx.approval_withheld
-    ):
+    if not _converges(ctx) or verified.blocker_count or verified.review_action == "APPROVE":
+        return
+    if ctx.disputed_blockers:
+        ctx.approval_withheld = ctx.disputed_blockers
+        verified.review_action = "COMMENT"
         return
     _lane_event(
         ctx,
