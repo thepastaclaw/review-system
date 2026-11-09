@@ -913,119 +913,78 @@ def _route_reply_at(conn, cfg, gh, ts, source_id="reply:2"):
     return _route_row(conn, cfg, gh, row, meta=gh.pr, mention_re=_mention_re("thepastaclaw"), ts=ts)
 
 
-def _context_read(conn, sha, at):
-    """A run of `sha`'s head started and gathered its review context (the threads) at `at`."""
-    with tx(conn):
-        (head_id,) = conn.execute("SELECT id FROM heads WHERE sha=?", (sha,)).fetchone()
-        conn.execute("UPDATE heads SET status='running' WHERE id=?", (head_id,))
-        rid = conn.execute(
-            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
-            "VALUES (?,1,'running','t',?,?)",
-            (head_id, at, at),
-        ).lastrowid
-        conn.execute(
-            "INSERT INTO steps (run_id, name, status, started_at) VALUES (?,'context','ok',?)",
-            (rid, at),
-        )
-
-
-def _comment_fetches(gh):
-    return sum(1 for c in gh.calls if any("pulls/comments/" in a for a in c))
-
-
-def test_reply_after_a_push_leaves_that_push_to_its_own_review(cfg, conn, gh, notifier):
-    """ "Fixed in <sha>" right after a push: the push is reviewed like any other (no priority,
-    the debounce intact, still carryable), and the reply waits until a run of it has read the
-    threads, which is when its review answers it."""
-    old, new = "e" * 40, "f" * 40
-    _reviewed(conn, cfg, 7, old)
-    gh.routes["repos/dashpay/platform/pulls/comments/2"] = _reply_comment(2, 1)
+def _finding_routes(gh, cid=2):
+    gh.routes[f"repos/dashpay/platform/pulls/comments/{cid}"] = _reply_comment(cid, 1)
     gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
         "user": {"login": "thepastaclaw"},
         "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
     }
+
+
+def test_reply_after_a_push_leaves_that_push_to_its_own_review(cfg, conn, gh, notifier):
+    """ "Fixed in <sha>" right after a push: the push is reviewed like any other (no priority,
+    the debounce intact, still carryable) and its review reads and answers the reply; the row
+    is done at once."""
+    old, new = "e" * 40, "f" * 40
+    _reviewed(conn, cfg, 7, old)
+    _finding_routes(gh)
     gh.pr = {**gh.pr, "head": {"sha": new}}
     _reply_row(conn, 2, occurred="2026-09-08T20:17:36Z")
 
     # ingest has not seen the push yet: the reply queues it as ingest would
-    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply_deferred"
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply"
     head = conn.execute(
         "SELECT status, trigger, priority, queued_at, eligible_at FROM heads WHERE sha=?", (new,)
     ).fetchone()
     assert tuple(head)[:3] == ("queued", "new_push", 0)
     assert parse_ts(head["eligible_at"]) - parse_ts(head["queued_at"]) == timedelta(minutes=30)
     row = conn.execute("SELECT handled_at, action FROM inbox").fetchone()
-    assert row["handled_at"] is None and row["action"] == "review_reply_deferred:1"
-
-    # waiting costs no API calls for the comment, and changes nothing about the head
-    fetches = _comment_fetches(gh)
-    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:30:00Z") == "review_reply_deferred"
-    assert _comment_fetches(gh) == fetches
-    # ingest's own pass over the same push is a no-op
+    assert row["handled_at"] and row["action"] == "review_reply_queued"
+    ev = conn.execute("SELECT detail FROM events WHERE kind='head.review_reply'").fetchone()
+    assert "on comment 1 -> queued" in ev["detail"]
+    # ingest's own pass over the same push changes nothing
     with tx(conn):
         assert enqueue_head(conn, cfg, "dashpay/platform", 7, new, Trigger.NEW_PUSH) == "noop"
+
+    # a second reply while the push waits in its debounce leaves it as it is
+    _reply_row(conn, 3, occurred="2026-09-08T20:19:00Z")
+    _finding_routes(gh, 3)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:20:00Z", "reply:3") == "review_reply"
     assert conn.execute(
         "SELECT trigger, priority, eligible_at FROM heads WHERE sha=?", (new,)
     ).fetchone()[:] == ("new_push", 0, head["eligible_at"])
 
-    # a run that read the threads before the reply was written does not count
-    _context_read(conn, new, "2026-09-08T20:17:00Z")
-    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:40:00Z") == "review_reply_deferred"
-    _context_read(conn, new, "2026-09-08T20:50:00Z")
-    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:51:00Z") == "review_reply"
-    row = conn.execute("SELECT handled_at, action FROM inbox").fetchone()
-    assert row["handled_at"] and row["action"] == "review_reply"
-    head = conn.execute("SELECT trigger, priority FROM heads WHERE sha=?", (new,)).fetchone()
-    assert tuple(head) == ("new_push", 0)  # never promoted: its carry stays possible
-    ev = conn.execute("SELECT detail FROM events WHERE kind='head.review_reply'").fetchone()
-    assert "on comment 1 -> read" in ev["detail"]
+
+def test_first_push_reply_queues_a_new_pr_head(cfg, conn, gh, notifier):
+    """No head was ever queued for the PR (a finding of the legacy pipeline): its first head
+    is a new PR, as ingest would make it."""
+    _finding_routes(gh)
+    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
+    _reply_row(conn, 2, occurred="2026-09-08T20:17:36Z")
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply"
+    assert conn.execute("SELECT trigger, priority FROM heads").fetchone()[:] == ("new_pr", 0)
 
 
-def test_reply_on_a_carried_push_reopens_it_once_the_carry_is_done(cfg, conn, gh, notifier):
-    """The push carried an earlier review, so no run read the threads: the deferred reply
-    re-opens the head like a reply on any reviewed commit."""
+def test_reply_while_the_push_review_runs_waits_for_it(cfg, conn, gh, notifier):
+    """The push's run may have read the threads before the reply: the row waits for the run
+    (bounded, as for any running head) and then re-opens the commit like any reviewed one,
+    whose conversation answers whatever the run did not."""
     old, new = "e" * 40, "f" * 40
     _reviewed(conn, cfg, 7, old)
-    gh.routes["repos/dashpay/platform/pulls/comments/2"] = _reply_comment(2, 1)
-    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
-        "user": {"login": "thepastaclaw"},
-        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
-    }
+    _finding_routes(gh)
     gh.pr = {**gh.pr, "head": {"sha": new}}
     with tx(conn):
         enqueue_head(conn, cfg, "dashpay/platform", 7, new, Trigger.NEW_PUSH)
         conn.execute("UPDATE heads SET status='running' WHERE sha=?", (new,))
     _reply_row(conn, 2, occurred="2026-09-08T20:17:36Z")
     assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply_deferred"
-    assert conn.execute("SELECT trigger FROM heads WHERE sha=?", (new,)).fetchone()[0] == (
-        "new_push"
-    )
-    with tx(conn):
-        conn.execute("UPDATE heads SET status='done', carried_from=? WHERE sha=?", (old, new))
+    head = conn.execute("SELECT trigger, priority FROM heads WHERE sha=?", (new,)).fetchone()
+    assert tuple(head) == ("new_push", 0)  # never promoted: its carry stays possible
+    assert conn.execute("SELECT handled_at FROM inbox").fetchone()[0] is None
+    _reviewed(conn, cfg, 7, new)
     assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:40:00Z") == "review_reply"
     head = conn.execute("SELECT status, trigger, priority FROM heads WHERE sha=?", (new,))
     assert tuple(head.fetchone()) == ("queued", "review_reply", 1)
-
-
-def test_deferred_reply_on_a_closed_pr_or_after_six_hours_is_dropped(cfg, conn, gh, notifier):
-    gh.routes["repos/dashpay/platform/pulls/comments/2"] = _reply_comment(2, 1)
-    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
-        "user": {"login": "thepastaclaw"},
-        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
-    }
-    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
-    _reply_row(conn, 2, occurred="2026-09-08T20:17:36Z")
-    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply_deferred"
-    assert _route_reply_at(conn, cfg, gh, "2026-09-09T03:00:00Z") == "ignored"
-    assert conn.execute("SELECT action FROM inbox").fetchone()[0] == "review_reply_expired"
-
-    _reply_row(conn, 3, occurred="2026-09-08T20:17:36Z")
-    gh.routes["repos/dashpay/platform/pulls/comments/3"] = _reply_comment(3, 1)
-    assert (
-        _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z", "reply:3") == "review_reply_deferred"
-    )
-    gh.pr = {**gh.pr, "state": "closed"}
-    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:30:00Z", "reply:3") == "ignored"
 
 
 def test_review_reply_from_another_bot_never_queues_a_run(cfg, conn, gh, notifier):

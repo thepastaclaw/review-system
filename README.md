@@ -833,20 +833,20 @@ and the replier is a member/collaborator/contributor or in `trusted_reviewers`, 
 happens depends on the PR's live head:
 
 - **A push nothing has reviewed yet** (no head for it, or its `new_pr`/`new_push` head is
-  still queued or running; typically "Fixed in <sha>" right after the push): no request
-  for a sooner or harder review. The push keeps its automatic head (normal priority, the
-  push debounce intact, still carryable); a push ingest has not seen yet is queued here
-  as ingest would. Its review reads the threads with the reply and answers it there. The
-  row waits (`review_reply_deferred`) until a run of that head has started its `context`
-  step at least a minute after the reply was written; a run that carries reads no
-  threads, so after it the reply re-opens the commit as below.
+  still queued; typically "Fixed in <sha>" right after the push): no request for a
+  sooner or harder review. The push keeps its automatic head (normal priority, the push
+  debounce intact); a push ingest has not seen yet is queued here as ingest would. The
+  row is done at once (`review_reply_queued`): the push's review reads the threads with
+  the reply and answers it there. It is not carried past the reply: `worker._carry`
+  refuses while a reply under a finding on the PR is newer than the last `context` step
+  of any of its runs (less a minute), so the push gets that review.
 - **A reviewed commit** (or one carrying a review): it is re-opened at priority with
-  trigger `review_reply` (no debounce, `head.requeued`). A reply while that exact head is
-  *running* waits until the run ends.
+  trigger `review_reply` (no debounce, `head.requeued`).
 
-A transient GitHub failure while looking up the thread root leaves the row for the next
-tick. A row that waits on its head keeps the result of its first check (action
-`review_reply_deferred:<thread root id>`) and is not fetched again. Both waits are
+A reply while the live head is mid-review (its automatic review, or a priority run; the
+run's context may predate the reply) waits until the run ends, then is routed as above
+(a carried push included: no run read the reply), and a transient GitHub failure
+while looking up the thread root leaves the row for the next tick. Both waits are
 bounded by `DEFER_MAX` (6 h), after which the row is marked
 `review_reply_expired` / `ignored_unfetchable`. Replies to other people's threads, on
 draft PRs, or on the bot's own PRs are not review triggers (the last go to the own-PR
@@ -1214,18 +1214,26 @@ Measured over 2026-09-03..10-21: 32 of 2,644 back-to-back reviews of a PR read a
 identical to the one before (14 identical trees, 18 base merges or rebases), about 20 h of
 runs.
 
-Every live review run (not a conversation) records `heads.diff_print` after checkout:
-sha256 of `git diff --full-index --no-renames <merge base> <head>` as raw bytes, with no
-user or system git config. Two commits share
-it exactly when every changed file holds the same content and the same patch against its
-merge base, whatever the base or the history underneath. A conflict resolution inside a
-merge commit changes the diff and gets a full review. When git cannot say, there is no
-print, and a missing print never counts as unchanged.
+Every live review run (not a conversation) records after checkout `heads.diff_print`,
+`pid1:` and the `git patch-id --verbatim` of `git diff --full-index --no-renames <merge
+base> <head>` (whitespace counts, hunk line numbers do not, a binary file counts by its
+blob ids; no user or system git config, no gitattributes), and `heads.merge_base`. Two
+commits share the print when they make the same changes to the same files, whatever the
+history underneath. A conflict resolution inside a merge commit changes the diff and gets
+a full review. When git cannot say, there is no print, and a missing print never counts as
+unchanged. Prints from before the `pid1:` version (a bare sha256 of the whole diff, no
+merge base) never match a new one, so the first push after the change on each PR starts
+over.
 
 A run on an automatic head (`new_pr`, `new_push`) stops after checkout (step `carry`,
 event `head.carried`) when all of these hold:
 
 - the **immediately preceding** head on the PR has the same print;
+- the base changed none of the PR's files (content or mode) between that head's merge base
+  and this one's (`git diff --name-only`): where it did, the PR's code may now meet new
+  code, and the commit is reviewed;
+- no reply under a finding on the PR is newer than the last time a run read the threads
+  (see the reply routing above);
 - that head has a review, or carries one;
 - the newest review is a **final** review on the primary models: not preliminary (its
   Phase 2 is still owed, and the hygiene controller only counts final reviews), not
@@ -1255,8 +1263,7 @@ Then:
   run finishes, queues a review for when it ends. A head superseded during checkout
   carries nothing. Once the commit has a review of its own, that
   review takes over from the carried one.
-- A reply under a finding on a carried commit runs a full review, as before (also one
-  that arrived while the push waited and was carried, since no run read it). The
+- A reply under a finding on a carried commit runs a full review, as before. The
   conversation lane answers only on a commit whose own final review stands.
 - A predecessor superseded before any run recorded its print breaks the chain: what
   changed in between is unknown, so the next commit starts over.

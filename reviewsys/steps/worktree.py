@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import os
 import shutil
 import subprocess
 import threading
 from pathlib import Path
+from typing import Any
 
 from ..models import FailKind, ReviewError
 
@@ -278,30 +278,53 @@ def changed_paths(repo_dir: Path, base: str, sha: str) -> list[str]:
     return [p for p in out.splitlines() if p]
 
 
+# what `diff_print` means; a print from before it (the bare sha256 of the whole `--full-index`
+# diff) never equals one with it
+DIFF_PRINT_VERSION = "pid1:"
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+
 def diff_print(repo_dir: Path, base: str, sha: str) -> str | None:
-    """sha256 of the PR's own diff, `base..sha`: equal for two commits exactly when every
-    changed file holds the same content and the same patch against its merge base, whatever
-    the base or the history underneath (an empty commit, a merge of the base, a rebase onto
-    it). `--full-index` pins binary files by blob id; no user or system git config shapes the
-    output. Raw bytes: a diff need not be UTF-8. None when git cannot say."""
-    digest = hashlib.sha256()
-    argv = ["git", "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames"]
-    argv += ["--full-index", base, sha]
-    env = {**_env(), "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
-    with subprocess.Popen(
-        argv, cwd=str(repo_dir), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env
-    ) as proc:
-        out = proc.stdout
-        assert out is not None
-        timer = threading.Timer(300, proc.kill)  # a killed git exits non-zero: no print
+    """The PR's own change, `base..sha`, as a print: the `git patch-id --verbatim` of its diff
+    (whitespace counts, hunk line numbers do not; a binary file counts by its blob ids). Equal
+    for two commits that make the same changes to the same files, whatever the history
+    underneath. It says nothing about the files' surroundings: `worker._carry` also requires
+    that the base changed none of the PR's files in between. No user or system git config and
+    no gitattributes (diff drivers, textconv) shape it. None when git cannot say."""
+    env = {
+        **_env(),
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+        "GIT_ATTR_NOSYSTEM": "1",
+    }
+    git = ["git", "-c", f"core.attributesFile={os.devnull}", f"--attr-source={EMPTY_TREE}"]
+    diff_argv = [*git, "diff", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames"]
+    diff_argv += ["--full-index", base, sha]
+    kw: dict[str, Any] = {"cwd": str(repo_dir), "stderr": subprocess.DEVNULL, "env": env}
+    with (
+        subprocess.Popen(diff_argv, stdout=subprocess.PIPE, **kw) as diff,
+        subprocess.Popen(
+            [*git, "patch-id", "--verbatim"], stdin=diff.stdout, stdout=subprocess.PIPE, **kw
+        ) as pid,
+    ):
+        assert diff.stdout is not None
+        diff.stdout.close()  # patch-id holds the read end; diff sees EPIPE if it goes away
+
+        def kill() -> None:
+            diff.kill()
+            pid.kill()
+
+        timer = threading.Timer(300, kill)
         timer.start()
         try:
-            for chunk in iter(lambda: out.read(1 << 20), b""):  # streamed: a diff can be huge
-                digest.update(chunk)
-            code = proc.wait()
+            out, _ = pid.communicate()  # streamed: the diff itself is never held in memory
+            codes = (diff.wait(), pid.returncode)
         finally:
             timer.cancel()
-    return digest.hexdigest() if code == 0 else None
+    if codes != (0, 0):
+        return None  # a killed git exits non-zero: no print
+    words = out.split()
+    return f"{DIFF_PRINT_VERSION}{words[0].decode() if words else 'empty'}"
 
 
 def first_parent_log(

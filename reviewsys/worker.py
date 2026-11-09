@@ -58,7 +58,7 @@ from .contract import (
     parse_reviewer_output,
     parse_verifier_output,
 )
-from .db import connect_existing, event, fmt_ts, kv_get, kv_set, now, now_dt, tx
+from .db import connect_existing, event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .dedupe import (
     FINDING_MARKER_RE,
     ExistingComment,
@@ -857,7 +857,8 @@ def _record_worktree(ctx: RunContext) -> None:
         )
         if ctx.diff_print:
             ctx.conn.execute(
-                "UPDATE heads SET diff_print=? WHERE id=?", (ctx.diff_print, ctx.head_id)
+                "UPDATE heads SET diff_print=?, merge_base=? WHERE id=?",
+                (ctx.diff_print, ctx.merge_base, ctx.head_id),
             )
 
 
@@ -871,21 +872,26 @@ CARRIED_VERDICTS = {
 
 
 def _carry(ctx: RunContext) -> bool:
-    """A push that left the PR's own diff as it was (an empty commit, a merge of the base, a
-    rebase onto it) changes nothing a reviewer read: the review of the head before it stands
+    """A push that left the PR's own change as it was (an empty commit, a merge of the base, a
+    rebase onto it: the same `worktree.diff_print`) while the base changed none of the PR's
+    files in between changes nothing a reviewer read: the review of the head before it stands
     for this commit and no lane runs. dashpay's PR Hygiene controller applies the same rule
     (`carried_heads`) and already counts that final review for this commit. Only an automatic
     head (a person asking gets a review: ingest.enqueue_head), and only from the head right
     before it, by its diff as its own run found it: a predecessor superseded before a run
-    never recorded one, so the commit after it starts over. True when carried (run done)."""
-    if ctx.trigger not in CARRYABLE or not ctx.diff_print:
+    never recorded one, so the commit after it starts over. Never past a reply under a
+    finding that no run has read (`_unread_reply`): the review of this commit answers it.
+    True when carried (run done)."""
+    if ctx.trigger not in CARRYABLE or not ctx.diff_print or not ctx.merge_base:
         return False
     prev = ctx.conn.execute(
-        "SELECT sha, diff_print FROM heads WHERE repo=? AND number=? AND queue='live' AND id<? "
-        "ORDER BY id DESC LIMIT 1",
+        "SELECT sha, diff_print, merge_base FROM heads WHERE repo=? AND number=? "
+        "AND queue='live' AND id<? ORDER BY id DESC LIMIT 1",
         (ctx.repo, ctx.number, ctx.head_id),
     ).fetchone()
-    if prev is None or prev["diff_print"] != ctx.diff_print:
+    if prev is None or prev["diff_print"] != ctx.diff_print or not prev["merge_base"]:
+        return False
+    if _base_touched_pr(ctx, str(prev["merge_base"])):
         return False
     source = reviewed_sha(ctx.conn, ctx.repo, ctx.number, str(prev["sha"]))
     verdict = _carryable_verdict(ctx, source)
@@ -899,6 +905,8 @@ def _carry(ctx: RunContext) -> bool:
             raise Cancelled()
         if head["trigger"] not in CARRYABLE:  # someone asked for a review during the checkout
             ctx.trigger = str(head["trigger"])
+            return False
+        if _unread_reply(ctx):
             return False
         ctx.conn.execute("UPDATE heads SET carried_from=? WHERE id=?", (source, ctx.head_id))
         event(
@@ -921,6 +929,46 @@ def _carry(ctx: RunContext) -> bool:
         _watch_ci(ctx, known=[])
     _step_end(ctx, StepName.CARRY, "ok", {"carried_from": source, "verdict": verdict})
     return True
+
+
+def _base_touched_pr(ctx: RunContext, prev_base: str) -> bool:
+    """The base moved from `prev_base` (the merge base of the head before) and changed a file
+    the PR changes (content or mode): the PR's code may now meet new code. True when git
+    cannot say."""
+    if prev_base == ctx.merge_base:
+        return False
+    assert ctx.worktree and ctx.merge_base
+    try:
+        moved = set(wt.changed_paths(ctx.worktree, prev_base, ctx.merge_base))
+        ours = set(wt.changed_paths(ctx.worktree, ctx.merge_base, ctx.sha))
+    except ReviewError:
+        return True
+    return bool(moved & ours)
+
+
+# a reply this close before a run's context read may not have been listed to it yet
+REPLY_READ_LAG = timedelta(minutes=1)
+
+
+def _unread_reply(ctx: RunContext) -> bool:
+    """A reply under one of the bot's findings on this PR that no run has read since: none of
+    the PR's runs gathered its context (`step_context`, which reads the threads) after it was
+    written. Rows the router has not judged yet count; those it ignored (not ours, untrusted,
+    another bot) do not. Caller holds the transaction."""
+    last = ctx.conn.execute(
+        "SELECT MAX(s.started_at) FROM steps s JOIN runs r ON r.id=s.run_id "
+        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND s.name=?",
+        (ctx.repo, ctx.number, StepName.CONTEXT.value),
+    ).fetchone()[0]
+    since = fmt_ts(parse_ts(str(last)) - REPLY_READ_LAG) if last else ""
+    return (
+        ctx.conn.execute(
+            "SELECT 1 FROM inbox WHERE kind='review_reply' AND repo=? AND number=? "
+            "AND occurred_at>=? AND (action IS NULL OR action NOT LIKE 'ignored%') LIMIT 1",
+            (ctx.repo, ctx.number, since),
+        ).fetchone()
+        is not None
+    )
 
 
 def _carryable_verdict(ctx: RunContext, sha: str) -> str | None:
