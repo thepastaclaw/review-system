@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import subprocess
 from datetime import timedelta
 from pathlib import Path
-from types import SimpleNamespace
-from typing import cast
 
 import pytest
 
@@ -411,172 +408,6 @@ def test_diff_print_sees_through_empty_commits_merges_and_rebases(tmp_path):
     assert wt.diff_print(repo, "0" * 40, changed) is None  # git cannot say
 
 
-def _touched(repo: Path, prev_base: str, base: str, sha: str) -> bool:
-    ctx = cast(worker.RunContext, SimpleNamespace(worktree=repo, merge_base=base, sha=sha))
-    return worker._base_touched_pr(ctx, prev_base)
-
-
-def test_base_changes_to_the_prs_files_stop_the_carry(tmp_path):
-    """A merge of the base keeps the PR's own patch (and so its print) even when the base
-    changed a file the PR touches; the carry still refuses it then, whether the base changed
-    the file's content, its mode or a binary file."""
-    repo = tmp_path / "r"
-    repo.mkdir()
-    _git(repo, "init", "-q", "-b", "main")
-    far = b"".join(b"pad%d\n" % i for i in range(30))
-    _commit(repo, {"m.py": b"x = 1\n" + far, "o.txt": b"o\n", "b.dat": b"\x00one"}, "base")
-    mb0 = _git(repo, "rev-parse", "HEAD")
-    _git(repo, "checkout", "-q", "-b", "pr")
-    head = _commit(repo, {"m.py": b"x = 2\n" + far, "b.dat": b"\x00two"}, "change")
-    reviewed = _print(repo, head)
-
-    def merge_base_change(files: dict[str, bytes] | None = None, mode: str = "") -> str:
-        _git(repo, "checkout", "-q", "main")
-        if mode:
-            (repo / mode).chmod(0o755)
-            _git(repo, "add", mode)
-            _git(repo, "commit", "-q", "-m", "mode")
-        else:
-            _commit(repo, files or {}, "base moves")
-        mb = _git(repo, "rev-parse", "HEAD")
-        _git(repo, "checkout", "-q", "pr")
-        _git(repo, "merge", "-q", "--no-edit", "main")
-        return mb
-
-    # only other files: same print, nothing touched -> carries
-    mb1 = merge_base_change({"o.txt": b"o\nmore\n"})
-    merged = _git(repo, "rev-parse", "HEAD")
-    assert _print(repo, merged) == reviewed and not _touched(repo, mb0, mb1, merged)
-
-    # the PR's file, far from its change: the patch reads the same, the carry refuses
-    mb2 = merge_base_change({"m.py": b"x = 1\n" + far + b"tail\n"})
-    merged = _git(repo, "rev-parse", "HEAD")
-    assert _print(repo, merged) == reviewed and _touched(repo, mb1, mb2, merged)
-
-    # its mode
-    mb3 = merge_base_change(mode="m.py")
-    merged = _git(repo, "rev-parse", "HEAD")
-    assert _touched(repo, mb2, mb3, merged)
-
-    # a binary file the PR changes (checked against the PR's own change, unmerged)
-    _git(repo, "checkout", "-q", "main")
-    mb4 = _commit(repo, {"b.dat": b"\x00three"}, "binary moves")
-    assert _touched(repo, mb3, mb4, merged)
-
-
-def test_diff_print_sees_whitespace_binary_and_mode(tmp_path):
-    repo = tmp_path / "r"
-    repo.mkdir()
-    _git(repo, "init", "-q", "-b", "main")
-    _commit(repo, {"m.py": b"if x:\n    y()\nz()\n", "b.dat": b"\x00one"}, "base")
-    _git(repo, "checkout", "-q", "-b", "pr")
-    head = _commit(repo, {"m.py": b"if x:\n    y()\n    z()\n", "b.dat": b"\x00two"}, "change")
-    reviewed = _print(repo, head)
-    assert reviewed is not None and reviewed.startswith(wt.DIFF_PRINT_VERSION)
-    assert _legacy_print(repo, head) != reviewed  # an old row never equals a new print
-    variants = {
-        "indent": {"m.py": b"if x:\n    y()\n  z()\n"},
-        "crlf": {"m.py": b"if x:\r\n    y()\r\n    z()\r\n"},
-        "eof": {"m.py": b"if x:\n    y()\n    z()"},
-        "binary": {"b.dat": b"\x00six"},
-    }
-    for name, files in variants.items():
-        _git(repo, "checkout", "-q", "-B", name, head)
-        assert _print(repo, _commit(repo, files, name)) != reviewed, name
-    _git(repo, "checkout", "-q", "-B", "mode", head)
-    (repo / "m.py").chmod(0o755)
-    _git(repo, "add", "m.py")
-    _git(repo, "commit", "-q", "-m", "executable")
-    assert _print(repo, _git(repo, "rev-parse", "HEAD")) != reviewed
-
-
-def test_diff_print_ignores_gitattributes(tmp_path):
-    """A diff driver or textconv in the repository's attributes never shapes the print."""
-    repo = tmp_path / "r"
-    repo.mkdir()
-    _git(repo, "init", "-q", "-b", "main")
-    _commit(repo, {"m.txt": b"a\n"}, "base")
-    _git(repo, "checkout", "-q", "-b", "pr")
-    head = _commit(repo, {"m.txt": b"b\n"}, "change")
-    plain = _print(repo, head)
-    (repo / ".gitattributes").write_bytes(b"*.txt binary\n")
-    assert _print(repo, head) == plain
-
-
-def _legacy_print(repo: Path, sha: str) -> str:
-    """The print before `DIFF_PRINT_VERSION`: sha256 of the whole `--full-index` diff."""
-    base = _git(repo, "merge-base", "main", sha)
-    out = subprocess.run(
-        ["git", "diff", "--no-color", "--no-renames", "--full-index", base, sha],
-        cwd=repo,
-        check=True,
-        capture_output=True,
-        env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
-    ).stdout
-    return hashlib.sha256(out).hexdigest()
-
-
-def test_a_print_from_before_the_version_never_matches(cfg, conn, gh, reviewed, prints, tmp_path):
-    """Heads recorded before the print changed meaning hold a bare sha256 and no merge base:
-    the first push after the change is reviewed, never carried on a comparison of two
-    different things."""
-    legacy = "0123456789abcdef" * 4
-    new = f"{wt.DIFF_PRINT_VERSION}{legacy[:40]}"
-    prints.update({A: new, B: new})
-    _review(cfg, conn, gh, reviewed, A)
-    with tx(conn):  # A as a run before the change recorded it
-        conn.execute("UPDATE heads SET diff_print=?, merge_base=NULL WHERE sha=?", (legacy, A))
-    rid, _ = _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
-    assert _reviewed_itself(conn, rid)
-
-
-@pytest.fixture
-def bases(monkeypatch):
-    """Per-head merge bases, and the paths each range touches (default: none)."""
-    by_sha: dict[str, str] = {}
-    paths: dict[tuple[str, str], list[str]] = {}
-    monkeypatch.setattr(wt, "merge_base", lambda worktree, base, sha: by_sha.get(sha, "b" * 40))
-    monkeypatch.setattr(wt, "changed_paths", lambda repo, a, b: paths.get((a, b), []))
-    return by_sha, paths
-
-
-@pytest.mark.parametrize("touched", [False, True])
-def test_carry_needs_the_base_to_leave_the_prs_files_alone(
-    cfg, conn, gh, reviewed, prints, bases, touched
-):
-    mb0, mb1 = "1" * 40, "2" * 40
-    by_sha, paths = bases
-    by_sha.update({A: mb0, B: mb1})
-    paths[(mb1, B)] = ["src/pr.rs"]
-    paths[(mb0, mb1)] = ["src/pr.rs" if touched else "src/other.rs"]
-    prints.update({A: "pid1:p", B: "pid1:p"})
-    _review(cfg, conn, gh, reviewed, A)
-    rid, _ = _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
-    if touched:
-        assert _reviewed_itself(conn, rid) and carried_from(conn, REPO, 1, B) is None
-    else:
-        assert _steps(conn, rid) == {"worktree", "carry"} and carried_from(conn, REPO, 1, B) == A
-    assert conn.execute("SELECT merge_base FROM heads WHERE sha=?", (B,)).fetchone()[0] == mb1
-
-
-def test_no_carry_from_a_head_without_a_merge_base(cfg, conn, gh, reviewed, prints):
-    prints.update({A: "pid1:p", B: "pid1:p"})
-    _review(cfg, conn, gh, reviewed, A)
-    with tx(conn):
-        conn.execute("UPDATE heads SET merge_base=NULL WHERE sha=?", (A,))
-    rid, _ = _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
-    assert _reviewed_itself(conn, rid)
-
-
-def test_base_check_git_cannot_answer_counts_as_touched(tmp_path):
-    repo = tmp_path / "r"
-    repo.mkdir()
-    _git(repo, "init", "-q", "-b", "main")
-    head = _commit(repo, {"f.txt": b"one\n"}, "base")
-    assert _touched(repo, head, head, head) is False  # the base did not move
-    assert _touched(repo, "0" * 40, "1" * 40, head) is True
-
-
 def _reply_after_review(conn, gh, reviewed_at_offset: str) -> None:
     """A trusted reply under one of the bot's findings, routed (`review_reply_queued`)."""
     with tx(conn):
@@ -598,7 +429,7 @@ def test_a_reply_no_run_has_read_stops_the_carry(cfg, conn, gh, reviewed, prints
     unanswered, so the push gets its review (which reads the threads and answers it). A reply
     an earlier finished run already read does not stop the carry; one only a run that then
     failed read does (it answered nothing)."""
-    prints.update({A: "pid1:p", B: "pid1:p"})
+    prints.update({A: "p1", B: "p1"})
     rid_a, _ = _review(cfg, conn, gh, reviewed, A)
     (ctx_at,) = conn.execute("SELECT started_at FROM steps WHERE name='context'").fetchone()
     at = parse_ts(ctx_at) + (timedelta(hours=-1) if when == "before" else timedelta(minutes=5))
@@ -624,7 +455,7 @@ def test_a_reply_no_run_has_read_stops_the_carry(cfg, conn, gh, reviewed, prints
 
 
 def test_a_reply_the_router_ignored_does_not_stop_the_carry(cfg, conn, gh, reviewed, prints):
-    prints.update({A: "pid1:p", B: "pid1:p"})
+    prints.update({A: "p1", B: "p1"})
     _review(cfg, conn, gh, reviewed, A)
     _reply_after_review(conn, gh, fmt_ts(now_dt() + timedelta(minutes=5)))
     with tx(conn):

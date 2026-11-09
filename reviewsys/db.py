@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 10
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -176,11 +176,6 @@ MIGRATIONS: dict[int, str] = {
         check_id INTEGER NOT NULL, status TEXT NOT NULL, conclusion TEXT,
         digest TEXT NOT NULL, updated_at TEXT NOT NULL,
         PRIMARY KEY (repo, number, sha));
-    """,
-    # the merge base the run's `diff_print` was taken from: a carry needs to know what the
-    # base changed in between (worker._carry)
-    11: """
-    ALTER TABLE heads ADD COLUMN merge_base TEXT;
     """,
 }
 

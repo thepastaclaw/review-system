@@ -1216,26 +1216,20 @@ Measured over 2026-09-03..10-21: 32 of 2,644 back-to-back reviews of a PR read a
 identical to the one before (14 identical trees, 18 base merges or rebases), about 20 h of
 runs.
 
-Every live review run (not a conversation) records after checkout `heads.diff_print`,
-`pid1:` and the `git patch-id --verbatim` of `git diff --full-index --no-renames <merge
-base> <head>` (whitespace counts, hunk line numbers do not, a binary file counts by its
-blob ids; no user or system git config, no gitattributes), and `heads.merge_base`. Two
-commits share the print when they make the same changes to the same files, whatever the
-history underneath. A conflict resolution inside a merge commit changes the diff and gets
-a full review. When git cannot say, there is no print, and a missing print never counts as
-unchanged. Prints from before the `pid1:` version (a bare sha256 of the whole diff, no
-merge base) never match a new one, so the first push after the change on each PR starts
-over.
+Every live review run (not a conversation) records `heads.diff_print` after checkout:
+sha256 of `git diff --full-index --no-renames <merge base> <head>` as raw bytes, with no
+user or system git config. Two commits share
+it exactly when every changed file holds the same content and the same patch against its
+merge base, whatever the base or the history underneath. A conflict resolution inside a
+merge commit changes the diff and gets a full review. When git cannot say, there is no
+print, and a missing print never counts as unchanged.
 
 A run on an automatic head (`new_pr`, `new_push`) stops after checkout (step `carry`,
 event `head.carried`) when all of these hold:
 
 - the **immediately preceding** head on the PR has the same print;
-- the base changed none of the PR's files (content or mode) between that head's merge base
-  and this one's (`git diff --name-only`): where it did, the PR's code may now meet new
-  code, and the commit is reviewed;
-- no reply under a finding on the PR is newer than the last time a finished run read the threads
-  (see the reply routing above);
+- no reply under a finding on the PR is newer than the last time a finished run read the
+  threads (see the reply routing above);
 - that head has a review, or carries one;
 - the newest review is a **final** review on the primary models: not preliminary (its
   Phase 2 is still owed, and the hygiene controller only counts final reviews), not

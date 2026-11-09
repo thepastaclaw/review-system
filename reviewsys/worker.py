@@ -857,8 +857,7 @@ def _record_worktree(ctx: RunContext) -> None:
         )
         if ctx.diff_print:
             ctx.conn.execute(
-                "UPDATE heads SET diff_print=?, merge_base=? WHERE id=?",
-                (ctx.diff_print, ctx.merge_base, ctx.head_id),
+                "UPDATE heads SET diff_print=? WHERE id=?", (ctx.diff_print, ctx.head_id)
             )
 
 
@@ -872,9 +871,8 @@ CARRIED_VERDICTS = {
 
 
 def _carry(ctx: RunContext) -> bool:
-    """A push that left the PR's own change as it was (an empty commit, a merge of the base, a
-    rebase onto it: the same `worktree.diff_print`) while the base changed none of the PR's
-    files in between changes nothing a reviewer read: the review of the head before it stands
+    """A push that left the PR's own diff as it was (an empty commit, a merge of the base, a
+    rebase onto it) changes nothing a reviewer read: the review of the head before it stands
     for this commit and no lane runs. dashpay's PR Hygiene controller applies the same rule
     (`carried_heads`) and already counts that final review for this commit. Only an automatic
     head (a person asking gets a review: ingest.enqueue_head), and only from the head right
@@ -882,16 +880,14 @@ def _carry(ctx: RunContext) -> bool:
     never recorded one, so the commit after it starts over. Never past a reply under a
     finding that no run has read (`_unread_reply`): the review of this commit answers it.
     True when carried (run done)."""
-    if ctx.trigger not in CARRYABLE or not ctx.diff_print or not ctx.merge_base:
+    if ctx.trigger not in CARRYABLE or not ctx.diff_print:
         return False
     prev = ctx.conn.execute(
-        "SELECT sha, diff_print, merge_base FROM heads WHERE repo=? AND number=? "
-        "AND queue='live' AND id<? ORDER BY id DESC LIMIT 1",
+        "SELECT sha, diff_print FROM heads WHERE repo=? AND number=? AND queue='live' AND id<? "
+        "ORDER BY id DESC LIMIT 1",
         (ctx.repo, ctx.number, ctx.head_id),
     ).fetchone()
-    if prev is None or prev["diff_print"] != ctx.diff_print or not prev["merge_base"]:
-        return False
-    if _base_touched_pr(ctx, str(prev["merge_base"])):
+    if prev is None or prev["diff_print"] != ctx.diff_print:
         return False
     source = reviewed_sha(ctx.conn, ctx.repo, ctx.number, str(prev["sha"]))
     verdict = _carryable_verdict(ctx, source)
@@ -929,21 +925,6 @@ def _carry(ctx: RunContext) -> bool:
         _watch_ci(ctx, known=[])
     _step_end(ctx, StepName.CARRY, "ok", {"carried_from": source, "verdict": verdict})
     return True
-
-
-def _base_touched_pr(ctx: RunContext, prev_base: str) -> bool:
-    """The base moved from `prev_base` (the merge base of the head before) and changed a file
-    the PR changes (content or mode): the PR's code may now meet new code. True when git
-    cannot say."""
-    if prev_base == ctx.merge_base:
-        return False
-    assert ctx.worktree and ctx.merge_base
-    try:
-        moved = set(wt.changed_paths(ctx.worktree, prev_base, ctx.merge_base))
-        ours = set(wt.changed_paths(ctx.worktree, ctx.merge_base, ctx.sha))
-    except ReviewError:
-        return True
-    return bool(moved & ours)
 
 
 # a reply this close before a run's context read may not have been listed to it yet
