@@ -810,7 +810,9 @@ pipeline keep the earlier behaviour.
   `verdict.approve_nonblocking` when the verifier had said COMMENT). The body says they are
   optional and can be fixed forward. `verdict_event` still stops a Phase-1-only or degraded
   review at COMMENT, a degraded same-sha re-review still never retracts a standing APPROVED,
-  and own-PR transport and the CI watch are unchanged. A conversation follows the same rule:
+  and own-PR transport and the CI watch are unchanged. A suggestion whose deferral is held
+  for a tracking issue still stands and gets its reply, but no longer holds the approval
+  back. A conversation follows the same rule:
   once no blocker stands and something above a nitpick was lifted, it approves (saying how
   many non-blocking findings still stand).
 - **Batch in round 1.** The first full (final) review of a PR runs every Phase-2 reviewer a
@@ -851,8 +853,10 @@ pipeline keep the earlier behaviour.
   provenance ("Code unchanged since the last final review").
 - **The fresh final gate on later rounds** runs only when the previous final review had
   blockers and no blocker stands now (they may have masked others), never after a clean
-  approval. A new blocker on unchanged code holds it too: it goes to its confirmation, not
-  to a fresh verifier that might drop it unchecked.
+  approval. A new blocker on unchanged code holds it until its confirmation: if that leaves
+  no blocker standing, the gate runs then, and a re-raise of the same blocker in it reuses
+  the run's decision. A stand-in model's confirmation (degraded mode) never demotes a
+  blocker (`late.confirm_skipped`), and its verdicts are never remembered.
 
 Record: the run's final verifier rows (`verified` / `verified-fresh`) are rewritten to what
 stands, with code statuses; gated findings keep their original severity under `late-nit`,

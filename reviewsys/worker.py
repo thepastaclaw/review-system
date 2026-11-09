@@ -4474,23 +4474,42 @@ def _verify2(ctx: RunContext, effort: TierEffort) -> VerifierOutput:
     )
     step, stage = StepName.VERIFY2, "verified"
     if _fresh_final_due(ctx, verified, effort):
-        ctx.fresh_final = True
-        combined = {**ctx.phase2_outputs, **_fresh_reviewers(ctx, effort)}
-        verified = _verify_step(
-            ctx,
-            step=StepName.FRESH_VERIFY2,
-            phase="verify2",
-            lm=ctx.lane_model(pol.phase2_verifier),
-            expected_phase="final",
-            phase2_outputs=combined,
-            fresh_final=True,
-        )
+        verified = _fresh_final(ctx, effort)
         step, stage = StepName.FRESH_VERIFY2, "verified-fresh"
     split = _classify_late(ctx, verified)
     if split is not None:
-        _gate_late(ctx, verified, split, step=step, stage=stage)
+        decided = _gate_late(ctx, verified, split, step=step, stage=stage)
+        if split.candidates and not ctx.fresh_final and _fresh_final_due(ctx, verified, effort):
+            # the new blockers that held the fresh gate back did not stand: it is due after all
+            verified = _fresh_final(ctx, effort)
+            split = _classify_late(ctx, verified)
+            if split is not None:
+                ctx.late_report = None
+                _gate_late(
+                    ctx,
+                    verified,
+                    split,
+                    step=StepName.FRESH_VERIFY2,
+                    stage="verified-fresh",
+                    known=decided,
+                )
     _approve_when_clear(ctx, verified)
     return verified
+
+
+def _fresh_final(ctx: RunContext, effort: TierEffort) -> VerifierOutput:
+    """The fresh final gate: the Phase-2 reviewers once more, unanchored, and a verifier over
+    both passes."""
+    ctx.fresh_final = True
+    return _verify_step(
+        ctx,
+        step=StepName.FRESH_VERIFY2,
+        phase="verify2",
+        lm=ctx.lane_model(ctx.cfg.policy.phase2_verifier),
+        expected_phase="final",
+        phase2_outputs={**ctx.phase2_outputs, **_fresh_reviewers(ctx, effort)},
+        fresh_final=True,
+    )
 
 
 def _converges(ctx: RunContext) -> bool:
@@ -4642,17 +4661,26 @@ def _listed_followups(ctx: RunContext) -> set[str]:
 
 
 def _gate_late(
-    ctx: RunContext, verified: VerifierOutput, split: late.Split, *, step: StepName, stage: str
-) -> None:
+    ctx: RunContext,
+    verified: VerifierOutput,
+    split: late.Split,
+    *,
+    step: StepName,
+    stage: str,
+    known: dict[str, late.Decision] | None = None,
+) -> dict[str, late.Decision]:
     """A later round's new findings on code unchanged since the previous final review: nits
     dropped, suggestions listed once as follow-up candidates (`verified.followups`), blockers
     kept only when the confirmation lane finds a concrete reachable failure (unconfirmed ones
     become follow-up candidates, invalid ones are dropped; a failed lane keeps them as raised).
     The run's final verifier rows (`stage`) are rewritten to what stands, with every finding's
     code status, each gated finding is kept under its `late-*` stage, and the step's counts
-    are updated to match."""
+    are updated to match. `known`: this run's decisions so far, by hash; returns them with
+    this pass's added."""
     raw_findings, raw_blockers = len(verified.findings), verified.blocker_count
-    remembered = _remembered_decisions(ctx, split.candidates)
+    known = known or {}
+    remembered = {id(f): known[f.hash] for f in split.candidates if f.hash in known}
+    remembered |= _remembered_decisions(ctx, [f for f in split.candidates if f.hash not in known])
     ask = [f for f in split.candidates if id(f) not in remembered]
     asked = _confirm_late(ctx, ask) if ask else {}
     unchecked = ask if asked is None else []
@@ -4733,6 +4761,7 @@ def _gate_late(
             indent=1,
         )
     )
+    return known | {f.hash: decisions[id(f)] for f in split.candidates if id(f) in decisions}
 
 
 def _apply_decisions(
@@ -4762,15 +4791,16 @@ def _apply_decisions(
 
 
 def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision]:
-    """Candidates an earlier round's confirmation already judged not blocking (by hash), whose
-    file has not changed since that round: its verdict stands, no lane asks again."""
+    """Candidates an earlier full-strength round's confirmation already judged not blocking (by
+    hash), whose file has not changed since that round: its verdict stands, no lane asks
+    again."""
     if not candidates or ctx.code_history is None:
         return {}
     marks = ",".join("?" * len(late.REMEMBERED))
     rows = ctx.conn.execute(
         "SELECT f.hash, f.stage, h.sha FROM findings f JOIN runs r ON r.id=f.run_id "
         "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND h.queue='live' "
-        f"AND f.run_id<>? AND f.stage IN ({marks}) ORDER BY f.id",
+        f"AND r.degraded=0 AND f.run_id<>? AND f.stage IN ({marks}) ORDER BY f.id",
         (ctx.repo, ctx.number, ctx.run_id, *late.REMEMBERED),
     ).fetchall()
     earlier = {str(r["hash"]): (str(r["stage"]), str(r["sha"])) for r in rows}
@@ -4787,9 +4817,13 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
     verifier's model and effort in a fresh session, shown the claims, the code and the PR
     diff, never the verifier's reasoning. Decisions by `id(finding)`. None when the lane
     failed for good: the blockers then stand as raised, so a failure never costs a real one.
-    Its answer is never rewritten by the context-free repair lane (`repairable`)."""
+    Its answer is never rewritten by the context-free repair lane (`repairable`), and a
+    stand-in model's (degraded mode) never demotes anything: None as well."""
     assert ctx.meta is not None
     ids = late.candidate_ids(len(candidates))
+    if ctx.is_degraded:
+        _lane_event(ctx, "late.confirm_skipped", f"{len(ids)} blocker(s) kept: degraded mode")
+        return None
     _step_start(ctx, StepName.CONFIRM, {"candidates": len(candidates)})
     prompt = confirmation_prompt(
         ctx.cfg,
@@ -4819,6 +4853,10 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
         ctx.check_cancel()
         _step_end(ctx, StepName.CONFIRM, "failed", {"error": exc.message[:1000]})
         _lane_event(ctx, "late.confirm_failed", f"{len(ids)} blocker(s) kept: {exc.message}")
+        return None
+    if ctx.degraded_policy is not None:  # the lane fell onto a stand-in partway
+        _step_end(ctx, StepName.CONFIRM, "failed", {"error": "answered by a stand-in model"})
+        _lane_event(ctx, "late.confirm_skipped", f"{len(ids)} blocker(s) kept: degraded mode")
         return None
     verdicts = [d.verdict for d in decisions.values()]
     _step_end(

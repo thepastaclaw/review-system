@@ -514,3 +514,40 @@ def test_a_verdict_update_lists_the_follow_ups():
     )
     assert "<summary>Follow-up candidates (optional) (1)</summary>" in body
     assert "Name the constant" in body
+
+
+def test_fixed_blockers_and_an_unconfirmed_new_one_still_get_the_fresh_gate(
+    cfg, conn, gh, lanes, statuses
+):
+    """The new blocker that held the fresh gate back is not confirmed: nothing blocks, so the
+    gate the fixed blockers called for runs after all, and its verifier's re-raise of the same
+    blocker reuses this run's decision instead of asking again."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([_blocking()])
+    _run(cfg, conn, gh, lanes)
+    fixed = [
+        {"finding_hash": Finding.from_dict(_blocking()).hash, "status": "FIXED", "reason": "ok"}
+    ]
+    lanes.confirm = {PANIC["title"]: "non_blocking"}
+    rid = _round(cfg, conn, gh, lanes, C, [PANIC], fixed)
+    steps = {
+        r["name"]: r["status"] for r in conn.execute("SELECT * FROM steps WHERE run_id=?", (rid,))
+    }
+    assert steps["fresh_phase2"] == steps["fresh_verify2"] == steps["confirm"] == "ok"
+    assert len([s for s in lanes.calls if s.role == "confirm"]) == 1
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "APPROVE" and PANIC["title"] in review["body"]
+    assert ("late-unconfirmed", PANIC["title"]) in _stages(conn, rid)
+
+
+def test_a_degraded_run_never_demotes_a_blocker(cfg, conn, gh, lanes, statuses, monkeypatch):
+    _first_round(cfg, conn, gh, lanes)
+    lanes.confirm = {PANIC["title"]: "invalid"}
+    monkeypatch.setattr(worker_mod.RunContext, "is_degraded", property(lambda self: True))
+    rid = _round(cfg, conn, gh, lanes, C, [PANIC])
+    assert not [s for s in lanes.calls if s.role == "confirm"]
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert conn.execute(
+        "SELECT 1 FROM events WHERE kind='late.confirm_skipped' AND run_id=?", (rid,)
+    ).fetchone()
