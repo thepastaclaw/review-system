@@ -33,7 +33,15 @@ CATEGORIES = (
     "general",
     "backport-prereq",
 )
-REVALIDATION_STATUSES = ("STILL_VALID", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED", "WITHDRAWN")
+# DISPUTED only restates a settled dispute (`converse.DISPUTED`); the orchestrator decides one
+REVALIDATION_STATUSES = (
+    "STILL_VALID",
+    "FIXED",
+    "OUTDATED",
+    "INTENTIONALLY_DEFERRED",
+    "WITHDRAWN",
+    "DISPUTED",
+)
 # Shortest abbreviation of a commit sha (git's default) or a finding hash that the output
 # normalization below will expand to the one full value it names.
 MIN_SHA_PREFIX = 7
@@ -425,14 +433,24 @@ def _reconciliation_problems(
         problems.append(
             f"STILL_VALID set {sorted(still_valid)} != carried findings {sorted(carried)}"
         )
-    problems.extend(_settled_finding_problems(findings, settled_hashes, still_valid))
+    disputed = {h for h, st in seen.items() if st == "DISPUTED"}
+    problems.extend(_settled_finding_problems(findings, settled_hashes, still_valid, disputed))
     return problems
 
 
 def _settled_finding_problems(
-    findings: list[Finding], settled_hashes: set[str], still_valid: set[str]
+    findings: list[Finding],
+    settled_hashes: set[str],
+    still_valid: set[str],
+    disputed: set[str] | None = None,
 ) -> list[str]:
     problems: list[str] = []
+    unsettled_disputed = (disputed or set()) - settled_hashes
+    if unsettled_disputed:
+        problems.append(
+            "DISPUTED is only for a prior finding already settled as disputed: "
+            + ", ".join(sorted(unsettled_disputed))
+        )
     settled_still_valid = settled_hashes & still_valid
     if settled_still_valid:
         problems.append(
@@ -544,17 +562,15 @@ def parse_verifier_output(
     if not isinstance(findings_raw, list):
         raise ReviewError(FailKind.CONTRACT, "verifier: findings must be a list")
     findings = [Finding.from_dict(f) for f in findings_raw]
-    if settled_hashes:
-        # only the settled identities are checked: the verifier's reconciliation stays
-        # unvalidated otherwise (`worker._reconciliation` fills in what it leaves out)
-        still_valid = {
-            str(r.get("finding_hash"))
-            for r in raw.get("prior_finding_reconciliation") or []
-            if isinstance(r, dict) and r.get("status") == "STILL_VALID"
-        }
-        problems = _settled_finding_problems(findings, settled_hashes, still_valid)
-        if problems:
-            raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
+    # only the settled identities (and DISPUTED, a settled status only) are checked: the
+    # verifier's reconciliation stays unvalidated otherwise (`worker._reconciliation` fills
+    # in what it leaves out)
+    rows = [r for r in raw.get("prior_finding_reconciliation") or [] if isinstance(r, dict)]
+    still_valid = {str(r.get("finding_hash")) for r in rows if r.get("status") == "STILL_VALID"}
+    disputed = {str(r.get("finding_hash")) for r in rows if r.get("status") == "DISPUTED"}
+    problems = _settled_finding_problems(findings, settled_hashes or set(), still_valid, disputed)
+    if problems:
+        raise ReviewError(FailKind.CONTRACT, "; ".join(problems))
     reactions = raw.get("coderabbit_reactions")
     if not isinstance(reactions, list):
         raise ReviewError(FailKind.CONTRACT, "verifier: coderabbit_reactions must be a list")

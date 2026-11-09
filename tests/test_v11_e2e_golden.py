@@ -3,8 +3,10 @@ re-review of a new push that reconciles a human reply, and a same-sha conversati
 (golden/v11-e2e-rounds.json) is compared as copied text: under a v11 policy nothing the bot
 posts may differ from production's. Everything but `ledger` was written by main at v0.28.0
 (4e75920fe) running this scenario; `ledger` (which main does not have) by the v12 branch
-before its review behavior landed (feat/review-quality-v12 @736cab9). The round-1 body was
-updated on purpose when the first full review gained its second Phase-2 pass."""
+before its review behavior landed (feat/review-quality-v12 @736cab9). The review bodies were
+then changed on purpose: the round-1 body when the first full review gained its second Phase-2
+pass, and the carried findings listed compactly with their threads plus guidance for author
+agents in the agent prompt (feat/settle-disputes)."""
 
 from __future__ import annotations
 

@@ -178,15 +178,26 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         "context to independently verify; it is never a verdict, proof of a fix, or permission to "
         "copy classifications.\n"
         "- A prior finding may carry `thread_replies`: the whole exchange posted under that "
-        "finding's inline comment in order, human replies and your own earlier answers "
-        "(`is_bot: true`), with the finding's original `body` for context. Engage with the "
+        "finding's inline comment in order, human replies (with their GitHub `association`) "
+        "and your own earlier answers (author `you (PastaClaw)`), with the finding's original "
+        "`body` for context. Engage with the "
         "argument. If a reply shows the finding was wrong or does not apply, reconcile it "
         "WITHDRAWN. If the code now addresses it, FIXED. If it still holds, STILL_VALID, and "
         "answer the latest reply's points in the carried finding's body with something you have "
         "not already said. Never restate an earlier answer of yours, and never re-raise a "
         "withdrawn finding as a new one.\n"
-        "- A prior entry with `prior_status` WITHDRAWN or INTENTIONALLY_DEFERRED is settled "
-        "on an earlier head. Do not carry it or report the "
+        "- When the newest reply disputes the finding on its merits (argues it is wrong, "
+        "harmless or not worth fixing; not a claim that it is fixed, and not a deferral), set "
+        "`disputed: true` on its row and answer that argument: WITHDRAWN if they are right, "
+        "otherwise STILL_VALID with a `reason` that shows, from the code, why their specific "
+        "argument does not hold. Restating the finding or saying it still applies is not an "
+        "answer. You answer a dispute once: an entry with `dispute_answered: true` already has "
+        "your answer, so unless the new reply persuades you (WITHDRAWN) or the code changed "
+        "(FIXED), keep it STILL_VALID with `disputed: true` and do not argue again; the "
+        "orchestrator then marks it DISPUTED and leaves it to the maintainers.\n"
+        "- A prior entry with `prior_status` WITHDRAWN, INTENTIONALLY_DEFERRED or DISPUTED is "
+        "settled on an earlier head (DISPUTED: you answered a maintainer's or the author's "
+        "dispute once, and it was left to the maintainers). Do not carry it or report the "
         "same identity merely because the code is unchanged; reconcile it with that settled "
         "status. If the current head independently proves the defect has genuinely returned, "
         "report a new finding without `finding_hash`, set `reintroduced_finding_hash` to the "
@@ -207,7 +218,7 @@ def prior_findings_block(prior: list[dict[str, Any]], prior_sha: str | None) -> 
         f"- This PR was previously reviewed at `{prior_sha}`. {len(prior)} prior verified finding(s) must each be revalidated against the current head.\n"
         f"- Emit exactly one `prior_finding_reconciliation` array. Reconcile every supplied `finding_hash` exactly once with exactly one status from {' | '.join(REVALIDATION_STATUSES)}. Do not omit, duplicate, or invent hashes.\n"
         "- A STILL_VALID prior finding MUST appear exactly once in `findings`, even when its lines did not change. Its finding object MUST include the supplied `finding_hash`, and its `title` MUST equal the supplied `original_title` byte-for-byte. Do not append `(carried forward...)`, status text, hash text, or any other suffix or prefix.\n"
-        "- FIXED, OUTDATED, WITHDRAWN, and INTENTIONALLY_DEFERRED reconcile the prior identity without requiring a `findings` entry. Do not also carry one of those identities in `findings`; that contradicts the reconciliation status. A settled prior identity may only appear as a new finding when it has `reintroduced_finding_hash` and the body contains independently verified current-head evidence.\n"
+        "- FIXED, OUTDATED, WITHDRAWN, INTENTIONALLY_DEFERRED, and DISPUTED reconcile the prior identity without requiring a `findings` entry. Do not also carry one of those identities in `findings`; that contradicts the reconciliation status. A settled prior identity may only appear as a new finding when it has `reintroduced_finding_hash` and the body contains independently verified current-head evidence.\n"
         "- INTENTIONALLY_DEFERRED (above a nitpick) also needs the follow-up to be tracked: give the row a `tracking` field with the issue or pull request that tracks it (a URL or `owner/repo#N`), as linked in the finding's thread, the PR description or a PR comment. Without a tracking reference visible on the PR the orchestrator keeps the finding standing and asks for one.\n"
         "- Keep new findings separate: omit `finding_hash` unless the finding is the exact STILL_VALID carry-forward for that supplied prior identity.\n"
         "### Prior findings requiring cumulative adjudication\n\n"
@@ -345,6 +356,12 @@ def verifier_prompt(
         + f"- Exact head: `{head_sha}`.\n"
         + phase1_note
         + prior_findings_block(prior, prior_sha)
+        + (
+            "- Your `summary` covers what is new on this head. The review lists carried prior "
+            "findings compactly, linked to their threads: do not describe them again.\n"
+            if prior
+            else ""
+        )
         + "- Independently verify every supplied reviewer claim against the exact source range and the PR evidence below.\n"
         + STATIC_REVIEW.format(number=number, repo=repo)
         + context_notes(evidence)
@@ -540,6 +557,8 @@ def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
             d["body"] = f.body[:4000]
         if replies:
             d["thread_replies"] = replies
+        if f.extra.get("dispute_answered"):
+            d["dispute_answered"] = True
         out.append(d)
     return out
 

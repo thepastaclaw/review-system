@@ -73,6 +73,8 @@ OUTCOME_STATUS = {
     "WITHDRAWN": "withdrawn",
     "INTENTIONALLY_DEFERRED": "deferred",
     "DEFERRAL_PENDING": "deferral_pending",
+    # settled like a deferral: left to the maintainers, back only if its code changes
+    "DISPUTED": "deferred",
 }
 # an answer whose outcome is on the thread: a reply that failed or was scrubbed changes nothing.
 # `already_answered` means a bot answer with that status is there already: the status is the

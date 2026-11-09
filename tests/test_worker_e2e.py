@@ -3822,14 +3822,17 @@ def test_full_review_keeps_a_deferred_finding_standing_until_it_is_tracked(cfg, 
     assert review["event"] == "REQUEST_CHANGES"  # the blocker stands: Phase 2 deferred
     assert "phase=preliminary" in review["body"]
     assert (
-        f"_⏸️ Needs a tracking issue before it can be deferred (1): {blocker['title']}. "
-        "Link one in the finding's thread, or ask there and PastaClaw files it._"
+        f"⏸️ **Awaiting tracking link** (1): {blocker['title']}. "
+        "Link an issue on its thread, or ask there and PastaClaw files it."
     ) in review["body"]
     (answer,) = gh.replies
     assert (
-        "**Still applies** (re-reviewed at `aaaaaaaa`): Deferring this needs a tracking issue"
-        in answer["body"]
+        "**Needs a tracking issue** (re-reviewed at `aaaaaaaa`): Deferring this needs a "
+        "tracking issue" in answer["body"]
     )
+    assert "ask here and I'll file it" in answer["body"]
+    root = gh.threads[0]["comments"]["nodes"][0]["body"]
+    assert "⏸️ **Needs a tracking issue** (not yet deferred)" in root
     held = conn.execute("SELECT detail FROM events WHERE kind='defer.needs_tracking'").fetchone()
     assert held and bh in held["detail"]
     kept = conn.execute(
@@ -3874,7 +3877,7 @@ def test_a_held_suggestion_stands_but_does_not_hold_the_approval(cfg, conn, gh, 
     assert status == RunStatus.DONE
     review = gh.posted_reviews[-1]
     assert "phase=final" in review["body"] and review["event"] == "APPROVE"
-    assert "Needs a tracking issue before it can be deferred (1)" in review["body"]
+    assert "⏸️ **Awaiting tracking link** (1)" in review["body"]
     assert ci.load(conn, "dashpay/platform", 1, HEAD) is not None
 
 
