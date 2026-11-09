@@ -1476,26 +1476,30 @@ While a run is in progress the worker's heartbeat keeps the comment showing a pr
 ## Review rounds per PR
 
 Average review rounds per PR is a team metric (target: mean <= 4, never above 5).
-`reviewsys rounds [--days N] [--weeks N] [--repo OWNER/NAME] [--json]` prints it for a
+`reviewsys rounds [--days N] [--weeks N] [--repo OWNER/NAME] [--all-repos] [--json]` prints it for a
 stand-up; `export-status` carries the same data as the `rounds` key of `status.json`, and the
 dashboard shows it in "Review rounds per PR".
 
-- A **round** is a distinct head commit of a PR that got its own full final review from the
-  bot: a `reviews` row with `phase='final'` and `imported=0`, counted once per
-  `(repo, number, sha)`. Carried heads have no `reviews` row of their own. A conversation run's
-  follow-up review, a CI update and a verdict-only record all reuse the sha already reviewed,
-  so they add no round.
+- A **round** is a distinct head commit of a PR that got its own review from the bot, including
+  one stopped at the Phase-1 gate (a preliminary REQUEST_CHANGES still makes the author push
+  again): a `reviews` row with `phase` `preliminary` or `final` and `imported=0`, counted once
+  per `(repo, number, sha)`. Carried heads have no `reviews` row of their own. A conversation
+  run's follow-up review, a CI update and a verdict-only record all reuse the sha already
+  reviewed, so they add no round.
 - **Completed PRs** are those with `prs.state != 'open'`, with at least one round. Nothing
   records a merge or close time apart from the poll: when it stops seeing a PR open it sets
   `state='closed'` and `updated_at` to that moment, and a closed PR is not touched again. That
   `updated_at` is the completion time used for the window, the weekly (ISO week) buckets and the
-  rolling 7 and 28 day means. Merged PRs are `closed` too.
+  rolling 7 and 28 day means. Merged and abandoned (closed unmerged) PRs are both `closed`, so
+  both count as completed.
 - Per repo and overall: n, mean, median, p90, max, share with more than 5 rounds, and rounds
   to the first APPROVE (the position of the first round whose sha got an APPROVE, among PRs
-  that got one).
+  that got one). `APPROVE` and the backfilled GitHub state `APPROVED` both count.
 - A repo is flagged "above target" (mean > 4) or "above ceiling" (mean > 5) only at n >= 5; the
   JSON carries `above_target` / `above_ceiling` booleans.
 - The watch list is the open PRs already at 5 or more rounds.
+- Only enabled repos count (everywhere, trend and watch list included); the CLI takes
+  `--all-repos` to include the rest.
 
 ## Status dashboard: priority vs normal timing
 

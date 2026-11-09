@@ -9,6 +9,7 @@ import logging
 import os
 import sqlite3
 import sys
+from collections.abc import Collection
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -404,7 +405,16 @@ def cmd_rounds(args: argparse.Namespace) -> int:
     conn = _conn(args)
     if conn is None:
         return 1
-    data = rounds_mod.compute(conn, days=args.days, weeks=args.weeks, repo=args.repo)
+    repos: Collection[str] | None = None
+    if not args.all_repos:
+        try:
+            repos = _cfg(args).enabled_repos
+        except OSError as exc:
+            print(f"cannot load the config ({exc}); pass --all-repos to skip it", file=sys.stderr)
+            return 1
+    if args.repo:
+        repos = [args.repo] if repos is None or args.repo in repos else []
+    data = rounds_mod.compute(conn, days=args.days, weeks=args.weeks, repos=repos)
     if args.json:
         print(json.dumps(data, indent=1))
     else:
@@ -859,6 +869,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--days", type=int, default=28, help="completion window (default 28)")
     s.add_argument("--weeks", type=int, default=8, help="weeks in the trend (default 8)")
     s.add_argument("--repo", metavar="OWNER/NAME", help="only this repo")
+    s.add_argument("--all-repos", action="store_true", help="include repos that are not enabled")
     s.add_argument("--json", action="store_true")
     s.add_argument("--db", help="database file (default: the configured one)")
     s.set_defaults(fn=cmd_rounds)

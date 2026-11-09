@@ -132,6 +132,7 @@ details.done-lanes .lanegrid{margin-top:6px;overflow-x:auto}
 .ev .d{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .paths td{vertical-align:middle;white-space:nowrap}.paths td:first-child{width:1%}
 .hidden{display:none!important}
+.cards.five{grid-template-columns:repeat(5,1fr)}
 /* shadow: v12 vs production */
 .scards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
 .scards .card{padding:13px;box-shadow:none}.scards .value{font-size:24px}
@@ -142,9 +143,9 @@ tr.dis td{background:color-mix(in srgb,var(--amber) 9%,transparent)}tr.dis td:fi
 .vs{white-space:nowrap}.vs .arrow{color:var(--muted);margin:0 4px}
 @media(max-width:900px){.scards{grid-template-columns:repeat(3,1fr)}.sgrid{grid-template-columns:1fr}}
 @media(max-width:560px){.scards{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}
+@media(max-width:900px){.cards,.cards.five{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}
 @media(max-width:700px){.arun-head{flex-direction:column;align-items:stretch}.arun .elapsed{text-align:left}.live{grid-template-columns:auto minmax(0,1fr) auto}.live .m{display:none}}
-@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:stretch;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
+@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards,.cards.five{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:stretch;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
 </style>
 </head>
 <body>
@@ -350,7 +351,7 @@ function renderRounds(r){
   const cards=[['Mean',f(o.mean),`${o.n} PRs · target ≤ ${r.target}`,tone(o)],['Median',f(o.median),`p90 ${o.p90??'—'} · max ${o.max??'—'}`,''],['Last 7 days',f(r7?.mean),`${r7?.n??0} PRs`,''],['Last 28 days',f(r28?.mean),`${r28?.n??0} PRs`,''],['Rounds to first approve',f(o.to_approve_mean),`median ${f(o.to_approve_median)} · ${o.approved_n} PRs`,'']];
   const colour={good:'var(--green)',warn:'var(--amber)',bad:'var(--red)','':'var(--text)'};
   const trendRows=[{repo:'All repos',weeks}].concat((r.trend?.repos||[]).map(x=>({repo:x.repo,weeks:x.weeks})));
-  $('#rounds-body').innerHTML=`<div class=cards style="grid-template-columns:repeat(5,1fr);margin-bottom:14px">${cards.map(c=>`<div class=card><div class=label>${c[0]}</div><div class=value style="color:${colour[c[3]]}">${c[1]}</div><div class=csub>${esc(c[2])}</div></div>`).join('')}</div>
+  $('#rounds-body').innerHTML=`<div class="cards five" style="margin-bottom:14px">${cards.map(c=>`<div class=card><div class=label>${c[0]}</div><div class=value style="color:${colour[c[3]]}">${c[1]}</div><div class=csub>${esc(c[2])}</div></div>`).join('')}</div>
     <div class=tablewrap><table><thead><tr><th>Repo</th><th class=num>PRs</th><th class=num>Mean</th><th class=num>Median</th><th class=num>p90</th><th class=num>Max</th><th class=num>&gt; 5 rounds</th><th class=num>To first approve</th><th></th></tr></thead><tbody>`
     +(r.repos||[]).map(x=>`<tr><td><b>${esc(x.repo)}</b></td><td class=num>${x.n}</td><td class=num>${f(x.mean)}</td><td class=num>${f(x.median)}</td><td class=num>${x.p90??'—'}</td><td class=num>${x.max??'—'}</td><td class=num>${pct(x.share_over_5)}</td><td class=num>${f(x.to_approve_mean)}</td><td>${flag(x)}</td></tr>`).join('')
     +`</tbody></table></div><h3>Weekly trend <small>mean / median / PRs by completion week · dashed: target (amber), ceiling (red)</small></h3><div style="margin-bottom:8px">${spark}</div><div class=tablewrap><table><thead><tr><th></th>${weeks.map(w=>`<th class=num>${esc(w.week.slice(5))}</th>`).join('')}</tr></thead><tbody>`

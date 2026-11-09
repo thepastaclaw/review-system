@@ -6,6 +6,7 @@ import math
 import sqlite3
 import statistics
 from collections import defaultdict
+from collections.abc import Collection
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -17,13 +18,14 @@ MIN_N = 5
 WATCH_AT = 5
 
 DEFINITION = (
-    "A round is a distinct head commit of a PR that got its own full final review from the bot: "
-    "a `reviews` row with phase 'final' and imported=0, counted once per (repo, number, sha). "
+    "A round is a distinct head commit of a PR that got its own review from the bot, including "
+    "one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and "
+    "imported=0, counted once per (repo, number, sha). "
     "Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. "
-    "Completed PRs are those no longer open, dated by the moment the poll saw them close "
+    "Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close "
     "(prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least "
     "one round count. Rounds to first APPROVE is the position of the first round whose sha "
-    "received an APPROVE verdict, among PRs that got one. "
+    "received an APPROVE verdict, among PRs that got one. Only enabled repos count. "
     f"Target: mean <= {TARGET:g}, ceiling {CEILING:g}; a repo is flagged only at n >= {MIN_N}."
 )
 
@@ -66,20 +68,22 @@ def _brief(prs: list[dict[str, Any]]) -> dict[str, Any]:
     return {"n": len(rounds), "mean": _mean(rounds), "median": _median(rounds)}
 
 
-def _load(conn: sqlite3.Connection, repo: str | None) -> list[dict[str, Any]]:
-    where = "AND r.repo=?" if repo else ""
-    params: tuple[Any, ...] = (repo,) if repo else ()
+def _load(conn: sqlite3.Connection, repos: Collection[str] | None) -> list[dict[str, Any]]:
+    allowed = set(repos) if repos is not None else None
     by_pr: dict[tuple[str, int], list[tuple[str, bool]]] = defaultdict(list)
     for row in conn.execute(
         "SELECT r.repo, r.number, r.sha, MIN(r.posted_at) first_at, "
-        "MAX(r.event='APPROVE') approved FROM reviews r "
-        f"WHERE r.phase='final' AND r.imported=0 {where} "
-        "GROUP BY r.repo, r.number, r.sha ORDER BY first_at, MIN(r.id)",
-        params,
+        "MAX(r.event IN ('APPROVE','APPROVED')) approved FROM reviews r "
+        "WHERE r.phase IN ('preliminary','final') AND r.imported=0 "
+        "GROUP BY r.repo, r.number, r.sha ORDER BY first_at, MIN(r.id)"
     ):
+        if allowed is not None and row["repo"] not in allowed:
+            continue
         by_pr[(row["repo"], row["number"])].append((row["sha"], bool(row["approved"])))
     out = []
     for row in conn.execute("SELECT repo, number, author, state, updated_at FROM prs"):
+        if allowed is not None and row["repo"] not in allowed:
+            continue
         shas = by_pr.get((row["repo"], row["number"]))
         if not shas:
             continue
@@ -117,11 +121,11 @@ def compute(
     *,
     days: int = 28,
     weeks: int = 8,
-    repo: str | None = None,
+    repos: Collection[str] | None = None,
     at: datetime | None = None,
 ) -> dict[str, Any]:
     at = at or now_dt()
-    prs = _load(conn, repo)
+    prs = _load(conn, repos)
     done = [p for p in prs if not p["open"]]
     done_at = {id(p): parse_ts(p["completed_at"]) for p in done}
 
@@ -202,7 +206,7 @@ def _flag(row: dict[str, Any]) -> str:
 
 def render(data: dict[str, Any]) -> str:
     rows = [{"repo": "ALL", **data["overall"]}, *data["repos"]]
-    width = max(len(r["repo"]) for r in rows)
+    width = max(4, *(len(r["repo"]) for r in rows))
     lines = [
         f"Review rounds per PR - PRs completed in the last {data['window_days']}d "
         f"(target mean <= {data['target']:g}, ceiling {data['ceiling']:g})",

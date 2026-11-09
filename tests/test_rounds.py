@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from reviewsys import cli, rounds
+from reviewsys.db import fmt_ts
 from reviewsys.exporter import build_export
 
 AT = datetime(2026, 11, 9, 12, 0, 0, tzinfo=UTC)
@@ -17,12 +18,30 @@ def _pr(conn, number, *, state="closed", closed="2026-11-05T10:00:00Z", repo=REP
     )
 
 
-def _review(conn, number, sha, *, event="REQUEST_CHANGES", phase="final", imported=0, repo=REPO):
+def _cfg_args(tmp_path):
+    return ["--config", str(tmp_path / "config.toml")]
+
+
+def _ts(n):
+    return fmt_ts(datetime(2026, 11, 1, tzinfo=UTC) + timedelta(minutes=n))
+
+
+def _review(
+    conn,
+    number,
+    sha,
+    *,
+    event="REQUEST_CHANGES",
+    phase="final",
+    imported=0,
+    repo=REPO,
+    posted_at=None,
+):
     n = conn.execute("SELECT COUNT(*) FROM reviews").fetchone()[0]
     conn.execute(
         "INSERT INTO reviews (repo, number, sha, phase, event, posted_at, imported) "
         "VALUES (?,?,?,?,?,?,?)",
-        (repo, number, sha, phase, event, f"2026-11-01T00:{n % 60:02d}:00Z", imported),
+        (repo, number, sha, phase, event, posted_at or _ts(n), imported),
     )
 
 
@@ -39,19 +58,20 @@ def _pr_with_rounds(conn, number, count, *, approve_last=True, **kw):
         )
 
 
-def test_round_counts_distinct_final_shas_only(conn):
+def test_round_counts_distinct_reviewed_shas_only(conn):
     _pr(conn, 1)
     _review(conn, 1, "a")
     _review(conn, 1, "a", event="COMMENT")
     _review(conn, 1, "b", phase="preliminary")
+    _review(conn, 1, "b")
     _review(conn, 1, "c", imported=1)
     _review(conn, 1, "d", event="APPROVE")
     _review(conn, 1, "d", event="COMMENT")
     _pr(conn, 2)
     data = rounds.compute(conn, at=AT)
     assert data["overall"]["n"] == 1
-    assert data["overall"]["mean"] == 2
-    assert data["overall"]["to_approve_mean"] == 2
+    assert data["overall"]["mean"] == 3
+    assert data["overall"]["to_approve_mean"] == 3
 
 
 def test_open_prs_and_unreviewed_prs_are_not_completed(conn):
@@ -113,12 +133,12 @@ def test_trend_and_rolling_and_watch(conn):
 def test_repo_filter(conn):
     _pr_with_rounds(conn, 1, 2)
     _pr_with_rounds(conn, 2, 8, repo="o/other")
-    data = rounds.compute(conn, repo="o/other", at=AT)
+    data = rounds.compute(conn, repos=["o/other"], at=AT)
     assert [r["repo"] for r in data["repos"]] == ["o/other"]
     assert data["overall"]["n"] == 1
 
 
-def test_render_and_cli(conn, cfg, capsys):
+def test_render_and_cli(conn, cfg, capsys, tmp_path):
     for i in range(1, 6):
         _pr_with_rounds(conn, i, 6)
     _pr_with_rounds(conn, 7, 5, state="open", author="bob")
@@ -126,7 +146,12 @@ def test_render_and_cli(conn, cfg, capsys):
     assert text.splitlines()[2].startswith("ALL")
     assert "ABOVE CEILING" in text
     assert "dashpay/platform#7  bob  5 rounds" in text
-    assert cli.main(["rounds", "--db", str(cfg.db_path), "--days", "3650", "--json"]) == 0
+    assert (
+        cli.main(
+            [*_cfg_args(tmp_path), "rounds", "--db", str(cfg.db_path), "--days", "3650", "--json"]
+        )
+        == 0
+    )
     out = json.loads(capsys.readouterr().out)
     assert out["overall"]["above_ceiling"] and out["definition"]
 
@@ -134,3 +159,81 @@ def test_render_and_cli(conn, cfg, capsys):
 def test_export_carries_rounds(cfg, conn):
     _pr_with_rounds(conn, 1, 2)
     assert build_export(conn, cfg)["rounds"]["target"] == 4
+
+
+def test_preliminary_only_heads_count_as_rounds(conn):
+    _pr(conn, 1)
+    _review(conn, 1, "a", phase="preliminary")
+    _review(conn, 1, "b", phase="preliminary")
+    _review(conn, 1, "c", event="APPROVE")
+    assert rounds.compute(conn, at=AT)["overall"]["mean"] == 3
+
+
+def test_backfilled_approved_state_counts_as_approval(conn):
+    _pr(conn, 1)
+    _review(conn, 1, "a", event="CHANGES_REQUESTED")
+    _review(conn, 1, "b", event="APPROVED")
+    o = rounds.compute(conn, at=AT)["overall"]
+    assert o["approved_n"] == 1 and o["to_approve_mean"] == 2
+
+
+def test_approval_before_the_last_round(conn):
+    _pr(conn, 1)
+    _review(conn, 1, "a")
+    _review(conn, 1, "b", event="APPROVE")
+    _review(conn, 1, "c")
+    _review(conn, 1, "d", event="APPROVE")
+    o = rounds.compute(conn, at=AT)["overall"]
+    assert o["mean"] == 4 and o["to_approve_mean"] == 2
+
+
+def test_rounds_follow_posted_at_not_insert_order(conn):
+    _pr(conn, 1)
+    _review(conn, 1, "late", event="APPROVE", posted_at=_ts(30))
+    _review(conn, 1, "early", posted_at=_ts(10))
+    _review(conn, 1, "mid", posted_at=_ts(20))
+    o = rounds.compute(conn, at=AT)["overall"]
+    assert o["mean"] == 3 and o["to_approve_mean"] == 3
+
+
+def test_trend_crosses_the_iso_year_boundary(conn):
+    _pr_with_rounds(conn, 1, 2, closed="2026-12-30T10:00:00Z")
+    _pr_with_rounds(conn, 2, 4, closed="2027-01-04T10:00:00Z")
+    at = datetime(2027, 1, 5, 12, tzinfo=UTC)
+    data = rounds.compute(conn, weeks=3, at=at)
+    assert data["trend"]["weeks"] == ["2026-W52", "2026-W53", "2027-W01"]
+    assert [w["n"] for w in data["trend"]["overall"]] == [0, 1, 1]
+
+
+def test_disabled_repos_are_left_out(conn, cfg, capsys, tmp_path):
+    _pr_with_rounds(conn, 1, 2)
+    _pr_with_rounds(conn, 2, 9, repo="dashpay/grovedb")
+    _pr_with_rounds(conn, 3, 9, repo="dashpay/grovedb", state="open")
+    only = rounds.compute(conn, repos=cfg.enabled_repos, at=AT)
+    assert [r["repo"] for r in only["repos"]] == [REPO] and only["watch"] == []
+    assert build_export(conn, cfg)["rounds"]["overall"]["n"] == 1
+    args = [*_cfg_args(tmp_path), "rounds", "--db", str(cfg.db_path), "--days", "3650", "--json"]
+    assert cli.main(args) == 0
+    assert json.loads(capsys.readouterr().out)["overall"]["n"] == 1
+    assert cli.main([*args, "--all-repos"]) == 0
+    assert json.loads(capsys.readouterr().out)["overall"]["n"] == 2
+
+
+def test_cli_repo_filter(conn, cfg, capsys, tmp_path):
+    _pr_with_rounds(conn, 1, 2)
+    _pr_with_rounds(conn, 2, 9, repo="dashpay/grovedb")
+    base = [*_cfg_args(tmp_path), "rounds", "--db", str(cfg.db_path), "--days", "3650", "--json"]
+    assert cli.main([*base, "--repo", REPO]) == 0
+    assert json.loads(capsys.readouterr().out)["overall"]["n"] == 1
+    assert cli.main([*base, "--repo", "dashpay/grovedb"]) == 0
+    assert json.loads(capsys.readouterr().out)["overall"]["n"] == 0
+    assert cli.main([*base, "--all-repos", "--repo", "dashpay/grovedb"]) == 0
+    assert json.loads(capsys.readouterr().out)["overall"]["n"] == 1
+
+
+def test_export_survives_a_rounds_failure(conn, cfg, monkeypatch):
+    def boom(*a, **k):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(rounds, "compute", boom)
+    assert build_export(conn, cfg)["rounds"] is None

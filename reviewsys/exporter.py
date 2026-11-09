@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import statistics
@@ -15,6 +16,8 @@ from .config import Config
 from .db import fmt_ts, now, now_dt, parse_ts
 from .queue_status import queued_order
 from .status import snapshot
+
+log = logging.getLogger(__name__)
 
 
 def _age(ts: str | None, at: datetime) -> int | None:
@@ -736,7 +739,7 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "tokens_by_run": tokens_by_run,
             "path_timing": build_path_timing(conn, cfg, at),
         },
-        "rounds": rounds.compute(conn, at=at),
+        "rounds": build_rounds(conn, cfg, at),
     }
 
 
@@ -772,6 +775,15 @@ def write_export(conn: sqlite3.Connection, cfg: Config, output: Path) -> Path:
         if stale.suffix != ".json" or stale.stem not in days:
             stale.unlink()
     return target
+
+
+def build_rounds(conn: sqlite3.Connection, cfg: Config, at: datetime) -> dict[str, Any] | None:
+    """The rounds block; a failure is logged and leaves it null rather than breaking the export."""
+    try:
+        return rounds.compute(conn, repos=cfg.enabled_repos, at=at)
+    except Exception:
+        log.exception("rounds metric failed")
+        return None
 
 
 def build_shadow(root: Path | None = None) -> dict[str, Any] | None:
