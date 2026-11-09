@@ -6,6 +6,7 @@ Network happens only in `publish()`.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -258,6 +259,9 @@ class ReviewModel:
     rereview: bool = False
     # policy v11: an approval with non-blocking findings says they can be fixed forward
     fix_forward: bool = False
+    # prior findings this review settled as DISPUTED (each with `extra["thread_url"]`): shown
+    # once, on the head where the dispute was settled
+    disputed: list[Finding] = field(default_factory=list)
 
     @property
     def canonical_event(self) -> str:
@@ -272,31 +276,64 @@ def _location(f: Finding) -> str:
     return f"{f.file}:{f.line_start}-{f.line_end}"
 
 
+AI_PROMPT_GUIDANCE = (
+    "These findings are from an automated code review (PastaClaw). How to work through them:",
+    "- Verify each finding against the code; fix only what is real, as narrowly as the finding.",
+    "- If a finding is wrong, decline it on its thread in one or two sentences; the bot answers "
+    "once and stops.",
+    "- To defer one, link a tracking issue on its thread (or reply asking the bot to file one).",
+    "- Suggestions are optional: fix them forward in a later PR rather than pushing another "
+    "round just for them.",
+    "- Address every current finding in one push: self-review the full diff first, and don't "
+    "push piecemeal.",
+    "- Keep the PR's scope; don't grow it to satisfy hardening suggestions.",
+    "- Carried items were raised in an earlier round: read the thread first, and don't re-fix "
+    "what you already fixed, declined or deferred there. Disputed and deferred items are "
+    "already handled and are not listed.",
+)
+_AWAITING_NOTE = (
+    "awaiting a tracking link: link an issue on its thread, or ask there and PastaClaw files "
+    "it; no code change needed"
+)
+
+
+def _awaiting(f: Finding) -> bool:
+    """A prior finding whose deferral is held until a tracking issue is linked."""
+    return bool(f.extra.get("awaiting_tracking"))
+
+
 def _ai_prompt(
     findings: list[Finding], suppressed: list[Suppressed], carried: list[Finding] | None = None
 ) -> str | None:
-    entries: list[tuple[Finding, Suppressed | None]] = [(f, None) for f in findings]
-    entries += [(s.finding, s) for s in suppressed if s.action != "deduped_same_batch_root"]
-    entries += [(f, None) for f in carried or []]
+    """The agent prompt: the guidance, then every finding to act on by file. New findings come
+    with their text; a carried one (folded onto its existing thread, or policy v12's standing
+    issues) is listed with its thread only, so it never reads as new."""
+    # the thread a carried finding is on ("" when unknown); None marks a new finding
+    entries: list[tuple[Finding, str | None]] = [(f, None) for f in findings]
+    entries += [
+        (s.finding, s.html_url or "") for s in suppressed if s.action != "deduped_same_batch_root"
+    ]
+    entries += [(f, str(f.extra.get("thread_url") or "")) for f in carried or []]
     if not entries:
         return None
-    lines = [
-        "These findings are from an automated code review. Verify each finding against the current code and only fix it if needed.",
-        "",
-    ]
-    by_file: dict[str, list[tuple[Finding, Suppressed | None]]] = {}
-    for f, s in entries:
-        by_file.setdefault(f.file or "(no file)", []).append((f, s))
+    lines = [*AI_PROMPT_GUIDANCE, ""]
+    by_file: dict[str, list[tuple[Finding, str | None]]] = {}
+    for f, thread in entries:
+        by_file.setdefault(f.file or "(no file)", []).append((f, thread))
     for path, items in by_file.items():
         lines.append(f"In `{path}`:")
-        for f, s in items:
+        for f, thread in items:
             lines.append(f"- [{f.severity.upper()}] {_location(f)}: {f.title}")
-            if s and s.html_url:
-                lines.append(f"  (existing thread: {s.html_url})")
-            elif f.extra.get("thread_url"):
-                lines.append(f"  (existing thread: {f.extra['thread_url']})")
-            if f.body:
-                lines.append(indent(f.body, "  "))
+            link = f"; thread: {thread}" if thread else ""
+            if _awaiting(f):
+                lines.append(f"  ({_AWAITING_NOTE}{link})")
+            elif thread is not None:
+                lines.append(f"  (carried{link})")
+            else:
+                if f.extra.get("thread_url"):
+                    lines.append(f"  (existing thread: {f.extra['thread_url']})")
+                if f.body:
+                    lines.append(indent(f.body, "  "))
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -501,11 +538,43 @@ _CARRIED_STATUS = {
     "deferral_pending": " (a deferral was proposed; it needs a maintainer's call)",
     "resolved": " (thread resolved by hand; it still counts until withdrawn or fixed)",
 }
+# dedupe folded these onto a thread a human resolved
+_FOLDED_ON_RESOLVED = frozenset(
+    {
+        "deduped_existing_resolved_thread",
+        "replied_to_resolved_thread",
+        "would_reply_to_resolved_thread",
+        "failed_to_reply_to_resolved_thread",
+    }
+)
+# a second finding of this batch on a root another one already speaks for
+_BATCH_ALIASES = frozenset({"deduped_same_batch_root", "deduped_same_batch_existing_thread"})
+
+
+def _folded(s: Suppressed) -> Finding:
+    """A finding dedupe folded onto its earlier thread, as `_carried_line` shows it."""
+    extra = {**s.finding.extra, "thread_url": s.html_url or s.finding.extra.get("thread_url")}
+    if s.action in _FOLDED_ON_RESOLVED:
+        extra["status"] = "resolved"
+    return dataclasses.replace(s.finding, extra=extra)
+
+
+def _awaiting_line(held: list[Finding]) -> str:
+    """The one compact line for prior findings whose deferral waits for a tracking issue."""
+    named = "; ".join(
+        _block_text(f.title)
+        + (f" ([thread]({f.extra['thread_url']}))" if f.extra.get("thread_url") else "")
+        for f in held
+    )
+    return (
+        f"⏸️ **Awaiting tracking link** ({len(held)}): {named}. Link an issue on its thread, "
+        "or ask there and PastaClaw files it."
+    )
 
 
 def _carried_line(f: Finding) -> str:
-    """One standing issue from an earlier round in the body (policy v12): not re-posted, linked
-    to its thread."""
+    """One standing finding from an earlier round in the body: not re-posted or re-described,
+    linked to its thread."""
     icon = SEVERITY_ICONS.get(f.severity, SEVERITY_ICONS["nitpick"])
     url = f.extra.get("thread_url")
     link = f" ([thread]({url}))" if url else ""
@@ -631,13 +700,18 @@ def render(m: ReviewModel) -> str:
             "",
         ]
         parts += [_finding_block(f) for f in m.skipped]
-    if m.suppressed:
-        parts.append(
-            f"\n_{len(m.suppressed)} carried-forward finding(s) already raised on this PR; not re-posting as new inline comments._"
-        )
-    if m.verified.carried:
-        parts += ["", f"### Still open from earlier rounds ({len(m.verified.carried)})", ""]
-        parts += [_carried_line(f) for f in m.verified.carried]
+    folded = [_folded(s) for s in m.suppressed if s.action not in _BATCH_ALIASES]
+    earlier = [*folded, *m.verified.carried]
+    still_open = [f for f in earlier if not _awaiting(f)]
+    if still_open:
+        parts += ["", f"### Still open from earlier rounds ({len(still_open)})", ""]
+        parts += [_carried_line(f) for f in still_open]
+    if m.disputed:
+        parts += ["", f"### Disputed — left to maintainers ({len(m.disputed)})", ""]
+        parts += [_carried_line(f) for f in m.disputed]
+    held = [f for f in [*earlier, *m.kept] if _awaiting(f)]
+    if held:
+        parts += ["", _awaiting_line(held)]
     if m.verified.noted:
         parts += [
             "",
@@ -976,10 +1050,18 @@ _ANSWER_LEAD = {
     "INTENTIONALLY_DEFERRED": "Deferred",
     "STILL_VALID": "Still applies",
 }
+# leads only a full review's answers use (the policy v12 thread lane never states these)
+_REVIEW_ANSWER_LEAD = {
+    "DISPUTED": "Disputed",
+    "DEFERRAL_NEEDS_TRACKING": "Needs a tracking issue",
+}
 _RESOLVING = {"WITHDRAWN", "FIXED", "OUTDATED"}
 # status -> the quiet trailing note render_conversation_answer appends (absent: no note)
 _CONVERSATION_NOTE = {
     "WITHDRAWN": "\n\n_Withdrawing this finding._",
+    "DISPUTED": (
+        "\n\n_Disputed: left to the maintainers; this finding no longer blocks this pull request._"
+    ),
     "FIX_PENDING": (
         "\n\n_The finding stands on this commit until that change is pushed; the push gets a "
         "full review._"
@@ -1008,6 +1090,7 @@ _THREAD_STATUS_LINE = {
     "FIXED": "✅ **Resolved**",
     "OUTDATED": "✅ **No longer applies**",
     "INTENTIONALLY_DEFERRED": "⏭️ **Deferred** (maintainer decision; not blocking)",
+    "DISPUTED": "⚖️ **Disputed** (left to the maintainers; not blocking)",
     # not a lift: the finding stands, but its root says what the deferral is waiting for
     "DEFERRAL_NEEDS_TRACKING": "⏸️ **Needs a tracking issue** (not yet deferred)",
 }
@@ -1070,9 +1153,12 @@ def scrub_reply(text: str, limit: int) -> str:
     return text.replace("@", "@\u200b")
 
 
+def _lead(status: str) -> str:
+    return _ANSWER_LEAD.get(status) or _REVIEW_ANSWER_LEAD.get(status, status)
+
+
 def render_thread_answer(*, marker: str, status: str, head_sha: str, reply: str) -> str:
-    lead = _ANSWER_LEAD.get(status, status)
-    return f"{marker}\n**{lead}** (re-reviewed at `{head_sha[:8]}`): {reply}"
+    return f"{marker}\n**{_lead(status)}** (re-reviewed at `{head_sha[:8]}`): {reply}"
 
 
 def render_conversation_answer(
@@ -1388,6 +1474,9 @@ def _answer_outcome(
     bot retriggers before it reaches GitHub.
     """
     stated = str(row.get("status") or "")
+    if row.get("needs_tracking"):  # a deferral held standing until it is tracked
+        reason = scrub_reply(str(row.get("reason") or "").strip(), _REASON_MAX)
+        return "DEFERRAL_NEEDS_TRACKING", reason or "This deferral needs a tracking issue.", True
     if finding_hash in kept_hashes:
         status, explicit = "STILL_VALID", True
     elif stated and stated != "STILL_VALID":
@@ -1411,12 +1500,14 @@ def _has_answer_for_status(thread: dict[str, Any], status: str) -> bool:
     head-specific for human replies, but an open thread with no newer human reply must not get
     the same status comment on every head merely because GitHub failed to show it as resolved.
     """
-    lead = _ANSWER_LEAD.get(status, status)
+    lead = _lead(status)
+    # a conversation's answer states these two in its note, not a bold lead
+    note = _CONVERSATION_NOTE.get(status, "").strip() if status in _REVIEW_ANSWER_LEAD else ""
     for answer in thread.get("bot_answers") or []:
         body = str(answer.get("body") or "")
         if "<!-- thepastaclaw-thread-answer v1" not in body:
             continue
-        if re.search(rf"\*\*{re.escape(lead)}\*\*", body):
+        if re.search(rf"\*\*{re.escape(lead)}\*\*", body) or (note and note in body):
             return True
     return False
 
@@ -1436,7 +1527,11 @@ def answer_replied_threads(
     reconciliation outcome, and resolve threads whose finding a reviewer explicitly withdrew,
     fixed or marked outdated. Other open bot threads (`open_threads`, nobody replied) get the
     same note and resolution when a reviewer explicitly withdrew their finding, so a dropped
-    finding never lingers as an open comment. Returns what was done."""
+    finding never lingers as an open comment; likewise, once, a finding settled as DISPUTED,
+    a deferral held for want of tracking (`needs_tracking`: the ask to link or have the bot
+    file it) and one the orchestrator settled without a reply to answer (`announce`). A lift
+    that leaves the thread open, or a held deferral, is also shown on the thread's root
+    comment. Returns what was done."""
     # a verifier that echoes the carried finding without its finding_hash must not turn a
     # kept finding into "withdrawn": fall back to the finding's own hash as well
     kept_hashes = {f.prior_hash for f in verified.findings if f.prior_hash} | {
@@ -1446,10 +1541,15 @@ def answer_replied_threads(
     done: list[dict[str, Any]] = []
     todo = dict(threads)
     for h, t in (open_threads or {}).items():
-        if h in todo or h in kept_hashes:
+        row = reconciliation.get(h) or {}
+        if h in todo or (h in kept_hashes and not row.get("needs_tracking")):
             continue
-        stated = str((reconciliation.get(h) or {}).get("status") or "")
-        if stated in {"WITHDRAWN", "FIXED", "OUTDATED"}:
+        stated = str(row.get("status") or "")
+        if (
+            stated in {"WITHDRAWN", "FIXED", "OUTDATED", "DISPUTED"}
+            or row.get("needs_tracking")
+            or row.get("announce")
+        ):
             todo[h] = {**t, "latest_reply_id": None}
     # A malformed/legacy thread index can contain the same GitHub thread under more than
     # one finding identity (for example after a marker migration).  Replies are addressed to
@@ -1490,6 +1590,7 @@ def answer_replied_threads(
             done.append(item)
             continue
         resolve = explicit and status in _RESOLVING
+        marks = resolve or (status in _THREAD_STATUS_LINE and status not in _RESOLVING)
         _deliver_answer(
             gh,
             repo,
@@ -1502,7 +1603,7 @@ def answer_replied_threads(
             resolve=resolve,
             item=item,
             root_body=str(t.get("body") or ""),
-            root_status=status if resolve else None,
+            root_status=status if marks else None,
             head_sha=head_sha,
         )
         done.append(item)
@@ -1539,12 +1640,20 @@ _COUNT_SEGMENT = r"(\S+) (?:~~(\d+)~~ )?(\d+) (blocking|suggestion\(s\)|nitpick\
 _COUNT_SEGMENT_RE = re.compile(_COUNT_SEGMENT)
 _COUNTS_LINE_RE = re.compile(rf"^{_COUNT_SEGMENT}(?: \| {_COUNT_SEGMENT})*$")
 _PROMPT_ITEM_RE = re.compile(r"^- \[([A-Z]+)(?: → [^\]]*)?\] (.*)$")
+# a `_carried_line`, less the settled note `with_lifted_findings` may have added
+_CARRIED_ITEM_RE = re.compile(
+    r"^(- \S+ \*\*\w+\*\*: (.*) — `([^`]*)`.*?)(?: — \*\*settled:\*\* .*)?$"
+)
 # status -> (status-block label, agent-prompt tag)
 _LIFTED_LABEL = {
     "WITHDRAWN": ("✅ Withdrawn", "WITHDRAWN in discussion; do not fix"),
     "INTENTIONALLY_DEFERRED": (
         "⏭️ Deferred (maintainer decision)",
         "DEFERRED by a maintainer; not blocking, do not fix in this PR",
+    ),
+    "DISPUTED": (
+        "⚖️ Disputed (left to the maintainers)",
+        "DISPUTED; left to the maintainers, do not fix",
     ),
 }
 _LIFTED_DEFAULT = ("Settled in discussion", "SETTLED in discussion; do not fix")
@@ -1587,8 +1696,8 @@ def _block_text(title: str) -> str:
 
 def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
     """`body` (the bot's standing review) annotated for the findings the discussion lifted:
-    a status block under the title, the counts struck through, and the agent-prompt entries
-    retagged. Only a finding this review lists in its agent prompt (by file, location and
+    a status block under the title, the counts struck through, its line in the compact list of
+    carried findings marked settled, and the agent-prompt entries retagged. Only a finding this review lists in its agent prompt (by file, location and
     exact title; each entry at most once) is annotated, so a finding the review never counted
     (a legacy thread) moves no number, and a same-titled finding elsewhere keeps its tag.
     With nothing lifted every annotation is removed again."""
@@ -1627,6 +1736,21 @@ def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
     left: int | None = None
     if counts:
         lines[counts[-1]], left = _recount(lines[counts[-1]], matched)
+    for i in range(details):  # the compact list of findings carried from earlier rounds
+        c = _CARRIED_ITEM_RE.match(lines[i])
+        if not c:
+            continue
+        hit = next(
+            (
+                f
+                for f in matched
+                if f.title == c.group(2) and _is_location(c.group(3), f.file or "(no file)")
+            ),
+            None,
+        )
+        lines[i] = c.group(1) + (
+            f" — **settled:** {_LIFTED_LABEL.get(hit.status, _LIFTED_DEFAULT)[0]}" if hit else ""
+        )
     if not matched:
         return "\n".join(lines)
     if left is None:
@@ -1660,16 +1784,6 @@ def _is_location(loc: str, path: str) -> bool:
     """`loc` is what `_location` renders for a finding in `path`."""
     return loc == path or (
         loc.startswith(f"{path}:") and loc[len(path) + 1 :].replace("-", "").isdigit()
-    )
-
-
-def untracked_deferrals_line(titles: list[str]) -> str:
-    """The review-body line for prior findings the discussion would defer but nothing tracks:
-    they stay standing until a tracking issue is linked (or the bot is asked to file one)."""
-    named = "; ".join(_block_text(t) for t in titles)
-    return (
-        f"\n_⏸️ Needs a tracking issue before it can be deferred ({len(titles)}): {named}. "
-        "Link one in the finding's thread, or ask there and PastaClaw files it._"
     )
 
 

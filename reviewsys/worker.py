@@ -316,6 +316,10 @@ class RunContext:
     # identities explicitly lifted by the latest adjudication; a later head must not silently
     # turn one back into a blocker, while an explicitly marked reintroduction remains possible
     settled_hashes: set[str] = field(default_factory=set)
+    # blocking findings the latest verifier left DISPUTED, and how many of them turned an
+    # approval into a COMMENT (a later step that would approve re-checks the first)
+    disputed_blockers: int = 0
+    approval_withheld: int = 0
     prior_sha: str | None = None
     has_prior_review: bool = False
     # the head of the PR's previous final review (a same-sha re-review: this head), whether it
@@ -1193,13 +1197,87 @@ def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
 
 
 def _prior_extra(ctx: RunContext, h: str, thread: dict[str, Any] | None) -> dict[str, Any]:
-    """A prior finding's `extra`: its thread's replies, and the settled status if any."""
-    extra: dict[str, Any] = {"thread_replies": thread["transcript"]} if thread else {}
+    """A prior finding's `extra`: its thread's exchange as the conversation lane reads it, the
+    settled status if any, and whether the bot already answered a dispute on it."""
+    extra: dict[str, Any] = {}
+    if thread:
+        extra["thread_replies"] = converse.exchange(thread["transcript"])
+        if _memo(ctx, DISPUTE_ANSWERED, h):
+            extra["dispute_answered"] = True
     settled = _latest_settlement(ctx, h)
     if settled:
         extra["prior_status"] = settled
         ctx.settled_hashes.add(h)
     return extra
+
+
+# What a finding's thread already got from the bot, kept in kv per finding as
+# {"reply": the human reply id it answered, "standing": that human was a maintainer or the PR
+# author, "sha": the head it answered on}: an answer to a dispute on the merits, and an ask for
+# a deferral's tracking issue. Both are made once; what follows depends on what changed since.
+DISPUTE_ANSWERED = "dispute.answered"
+TRACKING_ASKED = "defer.asked"
+
+
+def _memo_key(ctx: RunContext, kind: str, h: str) -> str:
+    return f"{kind}:{ctx.repo}#{ctx.number}:{h}"
+
+
+def _memo(ctx: RunContext, kind: str, h: str) -> dict[str, Any] | None:
+    try:
+        value = json.loads(kv_get(ctx.conn, _memo_key(ctx, kind, h)) or "null")
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _remember(
+    ctx: RunContext, kind: str, h: str, thread: dict[str, Any], *, overwrite: bool = True
+) -> None:
+    """Record the bot's answer to `thread`'s latest human reply (`overwrite` False: unless one
+    is on record already). Caller holds the write transaction."""
+    if not overwrite and _memo(ctx, kind, h) is not None:
+        return
+    memo = {
+        "reply": str(thread.get("latest_reply_id") or ""),
+        "standing": _latest_has_standing(ctx, thread),
+        "sha": ctx.sha,
+    }
+    kv_set(ctx.conn, _memo_key(ctx, kind, h), json.dumps(memo))
+
+
+def _prior_status(ctx: RunContext, h: str) -> str | None:
+    """How an earlier round settled prior finding `h` (`_prior_extra`), if it did."""
+    prior = ctx.prior_findings.get(h)
+    return prior.extra.get("prior_status") if prior else None
+
+
+def _pr_author(ctx: RunContext) -> str:
+    return ctx.meta.author if ctx.meta else ""
+
+
+def _latest_has_standing(ctx: RunContext, thread: dict[str, Any]) -> bool:
+    """The newest human reply on `thread` is a maintainer's or the PR author's."""
+    return converse.latest_has_standing(thread, _pr_author(ctx))
+
+
+def _quiet_since(thread: dict[str, Any], memo: dict[str, Any]) -> bool:
+    """Nobody replied on `thread` since the answer `memo` records."""
+    return str(thread.get("latest_reply_id") or "") == str(memo.get("reply") or "")
+
+
+def _moved_since(ctx: RunContext, memo: dict[str, Any], f: Finding | None) -> bool:
+    """The code under `f` (as this head reads it) changed since the head `memo` was answered
+    on: new evidence, as much as a new reply is. False when git cannot tell."""
+    sha = str(memo.get("sha") or "")
+    if f is None or not sha:
+        return False
+    return _lines_changed(ctx, ctx.sha, sha, f.file, f.line_start, f.line_end) is True
+
+
+def _thread_url(ctx: RunContext, h: str) -> str:
+    cid = (ctx.open_threads.get(h) or {}).get("comment_id")
+    return f"https://github.com/{ctx.repo}/pull/{ctx.number}#discussion_r{cid}" if cid else ""
 
 
 def step_context(ctx: RunContext) -> None:
@@ -2744,6 +2822,7 @@ def _verifier_lane(
         lane_findings,
     )
     _hold_untracked_deferrals(ctx, out, expected_phase)
+    _settle_discussions(ctx, out, expected_phase)
     _record_findings(ctx, phase, "verified-fresh" if fresh_final else "verified", out.findings)
     return out
 
@@ -2754,8 +2833,9 @@ def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_pha
     when the thread, description or PR comments show it, else a reference in the finding's
     own thread (resolved or not) that its humans point to as tracking
     (`converse.review_deferral_link`), else one already on record for it
-    (`_known_tracking`), unless the deferral predates the rule (`_grandfathered`). Held, the
-    finding is carried again as it
+    (`_known_tracking`), unless the deferral predates the rule (`_grandfathered`), or the
+    finding is not blocking and its tracking was already asked for once (then it is accepted
+    untracked). Held, the finding is carried again as it
     was, and the verifier's row for it becomes STILL_VALID (flagged `needs_tracking`) with a
     reason asking for the issue, which is what its thread is answered with. This overrides
     the verifier on purpose: a deferral nobody tracks is a finding nobody fixes. In place,
@@ -2768,7 +2848,7 @@ def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_pha
     rows = {str(r["finding_hash"]): r for r in out.prior_reconciliation}
     pr_text = _pr_text(ctx)
     said = _finding_thread_texts(ctx)
-    held, kept_old = [], []
+    held, kept_old, accepted = [], [], []
     for h, merged in recon.items():
         # the verifier's own row decides; a reviewer's only where the verifier has none
         row = rows.get(h, merged)
@@ -2778,6 +2858,7 @@ def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_pha
             or prior is None
             or h in kept
             or not converse.needs_tracking(prior.severity)
+            or prior.extra.get("prior_status") == converse.DISPUTED
         ):
             continue
         if converse.review_deferral_link(
@@ -2787,9 +2868,16 @@ def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_pha
         if _grandfathered(ctx, h):
             kept_old.append(h)
             continue
+        if _accepts_untracked(ctx, h, prior):
+            rows[h] = {**row, "announce": True}  # the thread still shows the ask
+            accepted.append(h)
+            continue
         out.findings.append(
             dataclasses.replace(
-                prior, prior_hash=h, source="prior finding (deferral not tracked)", extra={}
+                prior,
+                prior_hash=h,
+                source="prior finding (deferral not tracked)",
+                extra={"awaiting_tracking": True},
             )
         )
         rows[h] = {
@@ -2805,13 +2893,132 @@ def _hold_untracked_deferrals(ctx: RunContext, out: VerifierOutput, expected_pha
             "defer.grandfathered",
             f"{expected_phase}: deferred before {ctx.deferral_cutoff}: {', '.join(kept_old)}",
         )
-    if held:
+    if held or accepted:
         out.prior_reconciliation = list(rows.values())
+    if held:
         # the verifier approved with these lifted; standing again (above a nitpick), they
         # leave nothing to approve, and an APPROVE would also be watched for CI (ci.py)
         if out.review_action == "APPROVE":
             out.review_action = "COMMENT"
         _defer_event(ctx, "defer.needs_tracking", f"{expected_phase}: held {', '.join(held)}")
+
+
+def _accepts_untracked(ctx: RunContext, h: str, prior: Finding) -> bool:
+    """Non-blocking finding `h` may be deferred untracked: the bot already asked for its
+    tracking issue once, about a deferral (or since then a reply) by a maintainer or the PR
+    author."""
+    asked = _memo(ctx, TRACKING_ASKED, h)
+    return (
+        prior.severity != "blocking"
+        and asked is not None
+        and (
+            bool(asked.get("standing")) or _latest_has_standing(ctx, ctx.open_threads.get(h) or {})
+        )
+    )
+
+
+_RETIRED = frozenset({"FIXED", "OUTDATED", "WITHDRAWN", converse.DISPUTED})
+
+
+def _settle_discussions(ctx: RunContext, out: VerifierOutput, expected_phase: str) -> None:
+    """Settle in code what a finding's thread already decided, so a carried finding is not
+    restated round after round (in place, after `_hold_untracked_deferrals`):
+
+    - a finding settled DISPUTED on an earlier head stays DISPUTED unless the code fixed it,
+      the verifier withdrew it, or a finding reintroduces it (`reintroduced_finding_hash`,
+      which also forgets what its old thread settled);
+    - a STILL_VALID finding whose dispute the bot already answered (DISPUTE_ANSWERED) becomes
+      DISPUTED when nothing new came since (no reply, and the code under it did not change), or
+      when a maintainer or the PR author still disputes it (the row's `disputed`); it leaves
+      the findings, so it no longer counts;
+    - a STILL_VALID finding whose deferral the bot asked tracking for (TRACKING_ASKED), with no
+      reply since, is deferred when its thread or the record now has a tracking link or it is
+      not blocking (asked once is enough), and otherwise stays held (`needs_tracking`), not
+      asked again.
+
+    A blocking finding left DISPUTED also withholds an APPROVE: the review has not changed its
+    mind about it, it only stopped arguing."""
+    if ctx.is_audit or not ctx.prior_findings:
+        return
+    recon = _reconciliation(ctx, expected_phase, out)
+    rows = {str(r["finding_hash"]): r for r in out.prior_reconciliation}
+    revived = {str(f.extra.get("reintroduced_finding_hash") or "") for f in out.findings}
+    if not ctx.dry_run and revived & set(ctx.prior_findings):
+        with tx(ctx.conn):
+            for h in revived & set(ctx.prior_findings):
+                for kind in (DISPUTE_ANSWERED, TRACKING_ASKED):
+                    ctx.conn.execute("DELETE FROM kv WHERE key=?", (_memo_key(ctx, kind, h),))
+    changed = []
+    for h, prior in ctx.prior_findings.items():
+        row = rows.get(h, recon.get(h))
+        if row is None or h in revived:
+            continue
+        carried = next((f for f in out.findings if h in (f.prior_hash, f.hash)), None)
+        new = _discussion_outcome(ctx, h, prior, row, carried)
+        if new is None:
+            continue
+        rows[h] = new
+        if new.get("needs_tracking"):
+            if carried is not None:
+                carried.extra["awaiting_tracking"] = True
+        else:
+            out.findings = [f for f in out.findings if h not in (f.prior_hash, f.hash)]
+        changed.append(f"{h} {new['status']}")
+    if changed:
+        out.prior_reconciliation = list(rows.values())
+        _defer_event(ctx, "discussion.settled", f"{expected_phase}: {', '.join(changed)}")
+    disputed = sum(
+        1
+        for h, r in {**recon, **rows}.items()
+        if r.get("status") == converse.DISPUTED
+        and h not in revived
+        and (p := ctx.prior_findings.get(h)) is not None
+        and p.severity == "blocking"
+    )
+    ctx.disputed_blockers = disputed
+    approves = out.review_action == "APPROVE" or (_converges(ctx) and not out.blocker_count)
+    ctx.approval_withheld = disputed if approves else 0
+    if ctx.approval_withheld:
+        out.review_action = "COMMENT"
+
+
+def _discussion_outcome(
+    ctx: RunContext, h: str, prior: Finding, row: dict[str, Any], carried: Finding | None
+) -> dict[str, Any] | None:
+    """The reconciliation row `_settle_discussions` puts in place of `row`, or None to keep it.
+    `carried`: the verifier's finding for `h` on this head, if it kept one."""
+    status = str(row.get("status") or "")
+    settled = prior.extra.get("prior_status")
+    if settled == converse.DISPUTED:
+        return None if status in _RETIRED else {**row, "status": converse.DISPUTED}
+    if status == converse.DISPUTED:  # only a settled dispute may be restated as one
+        return {**row, "status": settled} if settled else None
+    t = ctx.open_threads.get(h)
+    if status != "STILL_VALID" or row.get("needs_tracking") or t is None:
+        return None
+    dispute = _memo(ctx, DISPUTE_ANSWERED, h)
+    if dispute and (
+        (_quiet_since(t, dispute) and not _moved_since(ctx, dispute, carried))
+        or (t.get("awaiting_answer") and row.get("disputed") and _latest_has_standing(ctx, t))
+    ):
+        return {
+            **row,
+            "status": converse.DISPUTED,
+            "reason": converse.DISPUTE_REPLY,
+            "disputed_now": True,
+        }
+    asked = _memo(ctx, TRACKING_ASKED, h)
+    if asked is None or not _quiet_since(t, asked):
+        return None
+    link = converse.cued_link(
+        _finding_thread_texts(ctx).get(h, ""), repo=ctx.repo, number=ctx.number
+    ) or _known_tracking(ctx, h)
+    deferred = {**row, "status": "INTENTIONALLY_DEFERRED", "announce": True}
+    if link:
+        return {**deferred, "tracking": link, "reason": f"Tracked in {link}; deferring this."}
+    if _accepts_untracked(ctx, h, prior):
+        return {**deferred, "reason": converse.UNTRACKED_SUGGESTION_REPLY}
+    return {**row, "needs_tracking": True, "reason": converse.UNTRACKED_DEFERRAL_REASON}
 
 
 def _finding_thread_texts(ctx: RunContext) -> dict[str, str]:
@@ -3433,7 +3640,14 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
     for h, outcome in _reconciliation(ctx, phase, verified).items():
         status = str(outcome.get("status") or "")
         prior = ctx.prior_findings.get(h)
-        if status not in converse.LIFTING_STATUSES or h in kept or prior is None:
+        if h in kept or prior is None:
+            continue
+        # code that fixed a disputed finding ends the dispute: without a newer row the old
+        # DISPUTED settlement would keep withholding approval on every later head
+        ends_dispute = status in {"FIXED", "OUTDATED"} and (
+            _latest_settlement(ctx, h) == converse.DISPUTED
+        )
+        if status not in converse.LIFTING_STATUSES and not ends_dispute:
             continue
         # a deferral keeps the tracking link it was checked against on a second line, as
         # `_record_conceded` does, so `_known_tracking` still finds it on later heads
@@ -3605,6 +3819,7 @@ def _publish_review(
 def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
     if not ctx.open_threads or ctx.dry_run:
         return
+    recon = _reconciliation(ctx, phase, verified)
     answered = publish.answer_replied_threads(
         ctx.gh,
         ctx.repo,
@@ -3612,11 +3827,26 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
         ctx.sha,
         threads=ctx.prior_threads,
         open_threads=ctx.open_threads,
-        reconciliation=_reconciliation(ctx, phase, verified),
+        reconciliation=recon,
         verified=verified,
     )
     with tx(ctx.conn):
         _record_answered_events(ctx, answered)
+        for a in answered:
+            h = str(a.get("finding_hash") or "")
+            t = ctx.open_threads.get(h)
+            if t is None or a.get("action") not in {"replied", "already_answered"}:
+                continue
+            # an answer already on the thread (a retried run, or an earlier head's ask) must
+            # not move what the first one recorded
+            _remember_answer(
+                ctx,
+                h,
+                t,
+                str(a.get("status") or ""),
+                bool((recon.get(h) or {}).get("disputed")),
+                overwrite=a.get("action") == "replied",
+            )
     _ledger_write(
         ctx,
         "answers",
@@ -3630,6 +3860,29 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
             source="verifier",
         ),
     )
+
+
+def _remember_answer(
+    ctx: RunContext,
+    h: str,
+    thread: dict[str, Any],
+    status: str,
+    disputed: bool,
+    *,
+    overwrite: bool = True,
+) -> None:
+    """What an answer on finding `h`'s thread settles for later rounds: an ask for a tracking
+    issue, or an answer to a maintainer's or the PR author's dispute on the merits. Caller
+    holds the write transaction."""
+    if status == converse.DEFERRAL_NEEDS_TRACKING:
+        _remember(ctx, TRACKING_ASKED, h, thread, overwrite=overwrite)
+    elif (
+        status == "STILL_VALID"
+        and disputed
+        and thread.get("awaiting_answer")
+        and _latest_has_standing(ctx, thread)
+    ):
+        _remember(ctx, DISPUTE_ANSWERED, h, thread, overwrite=overwrite)
 
 
 def _record_answered_events(ctx: RunContext, answered: list[dict[str, Any]]) -> None:
@@ -3735,13 +3988,15 @@ def _verdict_update(
         lifted = [
             str(r.get("finding_hash"))
             for r in _reconciliation(ctx, phase, verified).values()
-            if r.get("status") in {"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED"}
+            if r.get("status")
+            in {"WITHDRAWN", "FIXED", "OUTDATED", "INTENTIONALLY_DEFERRED", converse.DISPUTED}
         ]
         titles = [
             t["title"]
             for h, t in ctx.open_threads.items()
             if h in lifted and t.get("title") and t.get("severity") == "blocking"
         ]
+    disputed = [f.title for f in _newly_disputed(ctx, verified)]
     result = publish.publish_verdict_update(
         ctx.gh,
         repo=ctx.repo,
@@ -3753,6 +4008,7 @@ def _verdict_update(
         previous_event=state,
         lifted_blockers=titles,
         bot_login=ctx.cfg.bot_login,
+        note=f"Disputed, left to the maintainers: {'; '.join(disputed)}." if disputed else "",
         dry_run=ctx.dry_run,
     )
     if not result.posted:
@@ -3872,14 +4128,22 @@ def _build_review(
         settled_hashes=ctx.settled_hashes,
     )
     model.fix_forward = ctx.cfg.policy.pipeline is None
-    held = [
-        ctx.prior_findings[str(r["finding_hash"])].title
-        for r in verified.prior_reconciliation
-        if r.get("needs_tracking") and str(r["finding_hash"]) in ctx.prior_findings
-    ]
-    if held:
-        model.extra_lines.append(publish.untracked_deferrals_line(held))
+    model.disputed = _newly_disputed(ctx, verified)
+    if ctx.approval_withheld:
+        model.extra_lines.append(
+            f"\n_Not approved: {ctx.approval_withheld} blocking finding(s) are disputed and "
+            "left to the maintainers._"
+        )
     return model
+
+
+def _newly_disputed(ctx: RunContext, verified: VerifierOutput) -> list[Finding]:
+    """The prior findings this review settled as DISPUTED, each with its `thread_url`."""
+    return [
+        dataclasses.replace(ctx.prior_findings[h], extra={"thread_url": _thread_url(ctx, h)})
+        for r in verified.prior_reconciliation
+        if r.get("disputed_now") and (h := str(r["finding_hash"])) in ctx.prior_findings
+    ]
 
 
 def _fresh_threads(ctx: RunContext) -> Callable[[Finding, Any], bool] | None:
@@ -4874,6 +5138,10 @@ def _approve_when_clear(ctx: RunContext, verified: VerifierOutput) -> None:
     at full strength (Phase 2 skipped, degraded mode) at COMMENT."""
     if not _converges(ctx) or verified.blocker_count or verified.review_action == "APPROVE":
         return
+    if ctx.disputed_blockers:
+        ctx.approval_withheld = ctx.disputed_blockers
+        verified.review_action = "COMMENT"
+        return
     _lane_event(
         ctx,
         "verdict.approve_nonblocking",
@@ -5099,7 +5367,14 @@ def _run_conversation_lane(
 def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     assert ctx.meta and ctx.worktree
     phase = str(standing["phase"])
-    threads = _threads_to_answer(ctx)
+    threads = {
+        h: {
+            **t,
+            "dispute_answered": _memo(ctx, DISPUTE_ANSWERED, h) is not None,
+            "tracking_asked": _memo(ctx, TRACKING_ASKED, h) is not None,
+        }
+        for h, t in _threads_to_answer(ctx).items()
+    }
     reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
     if not threads:
         # the reply came from another bot, landed on a resolved thread, or was already
@@ -5123,6 +5398,12 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         h: "INTENTIONALLY_DEFERRED"
         for h in threads
         if h not in settled and h not in before.findings and _grandfathered(ctx, h)
+    }
+    # a dispute an earlier review left to the maintainers stays settled whatever is said next
+    settled |= {
+        h: converse.DISPUTED
+        for h in threads
+        if h not in settled and _prior_status(ctx, h) == converse.DISPUTED
     }
     out = _run_conversation_lane(
         ctx,
@@ -5157,7 +5438,9 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         repo=ctx.repo,
         number=ctx.number,
         pr_text=_pr_text(ctx),
+        author=ctx.meta.author,
     )
+    out = converse.settle_disputes(out, threads, author=ctx.meta.author, settled=set(settled))
     answered: list[dict[str, Any]] = []
     if not ctx.dry_run:
         out = _file_tracking_issues(ctx, out, threads, settled)
@@ -5184,6 +5467,9 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         _record_answered_events(ctx, answered)
         for h in silent:
             kv_set(ctx.conn, _silent_key(ctx, h), str(threads[h].get("latest_reply_id")))
+        for h in posted_ok:
+            o = out.outcomes[h]
+            _remember_answer(ctx, h, threads[h], o.status, o.disputed)
         _record_conceded(ctx, phase, {h: out.outcomes[h] for h in lifted})
     _ledger_write(
         ctx,
@@ -5397,6 +5683,9 @@ class _Standing:
     lifted_any: bool  # at least one of that set's non-nitpick findings has been lifted
     titles: dict[str, str] = field(default_factory=dict)  # hash -> title, lifted ones too
     lifted: list[publish.LiftedFinding] = field(default_factory=list)
+    # blocking findings left DISPUTED by that run or a later discussion: they no longer
+    # block, but the review never stopped standing by them, so nothing may approve over them
+    disputed_blockers: int = 0
 
     def settled(self, threads: dict[str, dict[str, Any]]) -> dict[str, str]:
         """thread hash -> the outcome that already lifted its finding on this commit, matched
@@ -5437,7 +5726,8 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     rows = ctx.conn.execute(
         "SELECT f.run_id, f.hash, f.severity, f.stage, f.file, f.title, f.body FROM findings f "
         "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
-        "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded')",
+        "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded') "
+        "ORDER BY f.id",
         (ctx.repo, ctx.number, ctx.sha, phase),
     ).fetchall()
     # a full review that carried every finding onto existing threads posts none, so it has
@@ -5516,7 +5806,18 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
         gone[h] = _identity(t.get("path"), t.get("title"))
     gone_ids = {i for i in gone.values() if i[1]}
     lifted_hashes = {h for h, (_, ident) in pub.items() if h in gone or ident in gone_ids}
+    latest: dict[str, sqlite3.Row] = {}
+    for r in rows:
+        if r["stage"] == "conceded" and run_id is not None and int(r["run_id"]) >= run_id:
+            latest[str(r["hash"])] = r
+    disputed = {
+        h
+        for h, r in latest.items()
+        if r["severity"] == "blocking"
+        and str(r["body"] or "").partition("\n")[0] == converse.DISPUTED
+    }
     return _Standing(
+        disputed_blockers=len(disputed),
         findings={h: sev for h, (sev, _) in pub.items() if h not in lifted_hashes},
         run_id=run_id,
         verified=verified,
@@ -5707,8 +6008,9 @@ def _conversation_verdict_update(
     left = sum(1 for sev in standing.findings.values() if sev != "nitpick")
     # policy v11 approves with non-blocking findings standing (`_approve_when_clear`)
     fix_forward = ctx.cfg.policy.pipeline is None
+    disputed = standing.disputed_blockers
     strength = _review_strength(ctx, standing.run_id)
-    clear = standing.verified and standing.lifted_any and (fix_forward or not left)
+    clear = standing.verified and standing.lifted_any and (fix_forward or not left) and not disputed
     # a code check failed after this commit's approval and looked related (ci.py): only a
     # review that sees that failure may approve the commit again, not a discussion
     ci_hold = kv_get(ctx.conn, ci.updated_key(ctx.repo, ctx.number, ctx.sha)) is not None
@@ -5733,6 +6035,11 @@ def _conversation_verdict_update(
         )
     elif left and not fix_forward:
         note = f"Not approved: {left} non-blocking finding(s) from {source} still stand."
+    elif disputed:
+        note = (
+            f"Not approved: {disputed} blocking finding(s) from {source} are disputed and left "
+            "to the maintainers."
+        )
     elif prov.degraded:
         note = "Not approved: this follow-up ran on a stand-in model (degraded mode)."
     elif clear and ci_hold:

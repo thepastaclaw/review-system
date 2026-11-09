@@ -38,6 +38,13 @@ no issue was ever filed. So a deferral (of anything above a nitpick) is accepted
 tracking reference a reader of the PR can see, which code checks (`accept_deferrals`), or an
 issue the worker files at a maintainer's request (`FileRequest`).
 
+A dispute is answered once. On dashpay/platform#5529 an author declined a blocker with
+precedents and got "Still applies" for 24 reviews. A maintainer or the PR author who still
+disputes a finding after the bot answered their argument leaves it DISPUTED
+(`settle_disputes`; `worker._settle_discussions` on a full review): settled like a
+withdrawal, left to the maintainers, not blocking, and raised again only if a later change
+brings the problem back.
+
 Policy v12 grows this lane into the thread lane (`parse_threads`, `accept_deferrals`; the prompt
 is the skills repo's `prompts/v12/thread.md`): one lane that owns every open issue's status, on
 a reply to a reviewed commit as before and beside the finders on every new push, for the issues
@@ -71,10 +78,22 @@ CONVERSATION_STATUSES = (
     "DEFERRAL_NEEDS_TRACKING",
     "NO_REPLY",
 )
+# a finding a maintainer or the PR author kept disputing on its merits after the bot answered
+# the dispute once: left to the maintainers, it no longer counts toward the verdict
+DISPUTED = "DISPUTED"
 # outcomes after which a blocking finding no longer holds up the verdict on this commit; a
 # deferral only counts when a maintainer made the call (`accept_deferrals`)
-LIFTING_STATUSES = frozenset({"WITHDRAWN", "INTENTIONALLY_DEFERRED"})
+LIFTING_STATUSES = frozenset({"WITHDRAWN", "INTENTIONALLY_DEFERRED", DISPUTED})
 MAINTAINER_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+DISPUTE_REPLY = (
+    "We still disagree on this one, and my answer is above, so I'm leaving the call to the "
+    "maintainers. It no longer blocks this pull request, and I won't raise it again unless a "
+    "later change brings the problem back."
+)
+# a non-blocking finding deferred without a link, accepted once the ask for one went unheeded
+UNTRACKED_SUGGESTION_REPLY = (
+    "Deferring this one without a tracking issue: it isn't blocking, so I won't raise it again."
+)
 # posted-only status: the lane chose INTENTIONALLY_DEFERRED but no maintainer made that call
 DEFERRAL_PENDING = "DEFERRAL_PENDING"
 # a deferral that would be accepted but nothing tracks the follow-up: the reply asks for a
@@ -120,6 +139,8 @@ class ThreadOutcome:
     tracking_url: str = ""
     file_request: FileRequest | None = None
     tracking_filed: bool = False  # the worker filed that issue for this outcome just now
+    # the latest human message disputes the finding on its merits (the lane's reading)
+    disputed: bool = False
 
 
 @dataclass(slots=True)
@@ -180,18 +201,31 @@ def tracking_required_since(
     return since
 
 
-def maintainer_reply(thread: dict[str, Any]) -> dict[str, Any] | None:
-    """The newest maintainer comment among the human replies since our last answer."""
+def maintainer_reply(thread: dict[str, Any], *, author: str = "") -> dict[str, Any] | None:
+    """The newest maintainer comment among the human replies since our last answer (`author`:
+    the PR author's own count too)."""
     transcript = list(thread.get("transcript") or [])
     last_bot = max((i for i, c in enumerate(transcript) if c.get("is_bot")), default=-1)
     return next(
-        (
-            c
-            for c in reversed(transcript[last_bot + 1 :])
-            if c.get("association") in MAINTAINER_ASSOCIATIONS
-        ),
+        (c for c in reversed(transcript[last_bot + 1 :]) if has_standing(c, author)),
         None,
     )
+
+
+def has_standing(comment: dict[str, Any] | None, author: str = "") -> bool:
+    """`comment` is by a maintainer, or by the PR's `author`: whose dispute or deferral of a
+    finding is the pull request's own position."""
+    if not comment or comment.get("is_bot"):
+        return False
+    if comment.get("association") in MAINTAINER_ASSOCIATIONS:
+        return True
+    return bool(author) and str(comment.get("author") or "").lower() == author.lower()
+
+
+def latest_has_standing(thread: dict[str, Any], author: str = "") -> bool:
+    """The newest human reply on a finding thread (other bots left out) has standing."""
+    replies = thread.get("replies") or []
+    return bool(replies) and has_standing(replies[-1], author)
 
 
 def _maintainer_spoke_last(thread: dict[str, Any]) -> bool:
@@ -381,6 +415,7 @@ def accept_deferrals(
     number: int = 0,
     pr_text: str = "",
     can_file: bool = True,
+    author: str = "",
 ) -> ConversationOutput:
     """Vet every INTENTIONALLY_DEFERRED outcome in code; the lane's word is not enough.
 
@@ -395,15 +430,26 @@ def accept_deferrals(
     already lifted on this commit by an earlier maintainer call; restating that to whoever
     asks next is not a new deferral to vet, though a maintainer may still have the bot file
     its tracking issue. `can_file` False: the lane cannot ask for one to be filed (see
-    `tracking_ask`)."""
+    `tracking_ask`).
+
+    A non-blocking finding is the PR's `author`'s call as much as a maintainer's, and is asked
+    for tracking once: on a thread where that ask was already made (`tracking_asked`), the
+    deferral is accepted without a link."""
     outcomes: dict[str, ThreadOutcome] = {}
     for h, o in out.outcomes.items():
         t = threads[h]
+        blocking = t.get("severity") == "blocking"
+        asker = maintainer_reply(t, author="" if blocking else author)
+        asked_once = bool(t.get("tracking_asked")) and not blocking and asker is not None
+        if o.status == DEFERRAL_NEEDS_TRACKING and asked_once:
+            outcomes[h] = dataclasses.replace(
+                o, status="INTENTIONALLY_DEFERRED", reply=UNTRACKED_SUGGESTION_REPLY
+            )
+            continue
         if o.status != "INTENTIONALLY_DEFERRED":
             outcomes[h] = o
             continue
         visible = thread_text(t) + "\n" + pr_text
-        asker = maintainer_reply(t)
         link = tracking_link(o.tracking_url, visible=visible, repo=repo, number=number) or (
             cued_link(str(asker.get("body") or ""), repo=repo, number=number) if asker else ""
         )
@@ -413,7 +459,7 @@ def accept_deferrals(
             )
         elif link or (h in settled and not (asker and o.file_request)):
             outcomes[h] = dataclasses.replace(o, tracking_url=link, file_request=None)
-        elif o.file_request or not needs_tracking(t.get("severity")):
+        elif o.file_request or not needs_tracking(t.get("severity")) or asked_once:
             # the worker files it (and downgrades the outcome if it cannot)
             outcomes[h] = dataclasses.replace(o, tracking_url="")
         else:
@@ -428,6 +474,31 @@ def accept_deferrals(
                 ),
                 tracking_url="",
             )
+    return ConversationOutput(outcomes=outcomes)
+
+
+def settle_disputes(
+    out: ConversationOutput,
+    threads: dict[str, dict[str, Any]],
+    *,
+    author: str,
+    settled: frozenset[str] | set[str] = frozenset(),
+) -> ConversationOutput:
+    """A finding whose dispute the bot already answered once (`dispute_answered` on its thread)
+    and that a maintainer or the PR `author` still disputes (the lane's STILL_VALID or NO_REPLY
+    marked `disputed`) is DISPUTED: one closing reply, then it is left to the maintainers
+    instead of being argued again. A thread in `settled` is lifted already."""
+    outcomes = dict(out.outcomes)
+    for h, o in out.outcomes.items():
+        t = threads[h]
+        if (
+            h not in settled
+            and t.get("dispute_answered")
+            and o.disputed
+            and o.status in {"STILL_VALID", "NO_REPLY"}
+            and latest_has_standing(t, author)
+        ):
+            outcomes[h] = dataclasses.replace(o, status=DISPUTED, reply=DISPUTE_REPLY)
     return ConversationOutput(outcomes=outcomes)
 
 
@@ -446,7 +517,7 @@ def exchange(transcript: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _thread_for_prompt(h: str, t: dict[str, Any], settled: dict[str, str]) -> dict[str, Any]:
-    return {
+    item = {
         "finding_hash": h,
         "severity": t.get("severity"),
         "title": t.get("title"),
@@ -458,6 +529,9 @@ def _thread_for_prompt(h: str, t: dict[str, Any], settled: dict[str, str]) -> di
         # an earlier answer of yours already lifted it on this commit (WITHDRAWN/DEFERRED)
         "already_settled_as": settled.get(h),
     }
+    if t.get("dispute_answered"):
+        item["dispute_answered"] = True
+    return item
 
 
 def finding_text(root_body: str) -> str:
@@ -619,6 +693,14 @@ def prompt(
         "- STILL_VALID is only for the case where the finding still holds AND you have "
         "something new and concrete to add. Its `reply` must engage with the latest human "
         "message specifically.\n"
+        '- Set `"disputed": true` when the latest human message argues the finding is wrong, '
+        "harmless or not worth fixing on its merits (not a fix, a proposal or a deferral). "
+        "Answer such a dispute once, on their specific argument: WITHDRAWN if they are right, "
+        "otherwise STILL_VALID with what in the code shows otherwise. A thread marked "
+        "`dispute_answered` already has that answer from you: unless the new message persuades "
+        "you (WITHDRAWN) or proposes a change (FIX_PENDING), answer NO_REPLY with "
+        '`"disputed": true`. The system then marks the finding disputed, which leaves it to '
+        "the maintainers and stops it blocking; do not argue the same point again.\n"
         "- Write `reply` as plain conversational prose addressed to the people in the thread, "
         "as you would in a code review: first person, no headings, no bullet lists unless "
         "listing concrete steps, no status prefix (the system adds one), no sign-off, no "
@@ -634,6 +716,7 @@ def prompt(
         f'"status": "<{" | ".join(CONVERSATION_STATUSES)}>", '
         '"reply": "<prose, empty when NO_REPLY>", '
         '"reasoning": "<one or two private sentences on why, never posted>", '
+        '"disputed": <true when the latest human message disputes the finding; else omit>, '
         '"tracking": <INTENTIONALLY_DEFERRED only: {"url": "..."} or {"file": {...}}>}]}\n'
         "```\n"
         "Include exactly one entry per `finding_hash` listed above. `reply` is required and "
@@ -673,6 +756,7 @@ def parse(raw: dict[str, Any], *, expected: set[str]) -> ConversationOutput:
             reasoning=str(row.get("reasoning") or "")[:1000],
             tracking_url=url,
             file_request=request,
+            disputed=row.get("disputed") is True,
         )
     missing = expected - set(out)
     if missing:

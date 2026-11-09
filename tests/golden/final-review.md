@@ -25,7 +25,14 @@ Source: reviewer 1: `glm-5.3-flash` (agent: `phase1-reviewer`, role: `general`);
 <summary>🤖 Prompt for all review comments with AI agents</summary>
 
 ```
-These findings are from an automated code review. Verify each finding against the current code and only fix it if needed.
+These findings are from an automated code review (PastaClaw). How to work through them:
+- Verify each finding against the code; fix only what is real, as narrowly as the finding.
+- If a finding is wrong, decline it on its thread in one or two sentences; the bot answers once and stops.
+- To defer one, link a tracking issue on its thread (or reply asking the bot to file one).
+- Suggestions are optional: fix them forward in a later PR rather than pushing another round just for them.
+- Address every current finding in one push: self-review the full diff first, and don't push piecemeal.
+- Keep the PR's scope; don't grow it to satisfy hardening suggestions.
+- Carried items were raised in an earlier round: read the thread first, and don't re-fix what you already fixed, declined or deferred there. Disputed and deferred items are already handled and are not listed.
 
 In `f.rs`:
 - [SUGGESTION] f.rs:12: Add a regression test
