@@ -3,8 +3,11 @@
 - `review_requested` on a watched repo  -> priority head at the live PR head
 - `mention` whose comment says `@<bot> review` -> priority head (any repo the bot can
   read: repos without a skills entry get an ad hoc review)
-- `review_reply` from a trusted human under one of the bot's finding threads -> priority
-  head at the live PR head, so the reply is answered on its thread within one review cycle
+- `review_reply` from a trusted human under one of the bot's finding threads: on a reviewed
+  live head, the head re-opens at priority so the reply is answered on its thread (a
+  conversation when a final review stands); after a push nothing has reviewed yet ("fixed in
+  ..."), the push is reviewed like any other (debounced, in line, carried when its diff did
+  not change) and that review reads and answers the reply
 - comments/reviews on the bot's own PRs from trusted humans or CodeRabbit ->
   batched per (repo, pr) and delivered to the OpenClaw agent as one wake event
 
@@ -23,8 +26,8 @@ from .config import Config
 from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .dedupe import FINDING_MARKER_RE
 from .gh import Gh
-from .ingest import enqueue_head
-from .models import Trigger
+from .ingest import AUTOMATIC_TRIGGERS, enqueue_head, push_trigger
+from .models import HeadStatus, StepName, Trigger
 from .notify import Notifier
 
 log = logging.getLogger(__name__)
@@ -35,6 +38,10 @@ BATCH_RETRY = timedelta(minutes=15)
 DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
 ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
+# a validated reply waiting on its head (`_route_reply`); `<action>:<thread root id>`
+REPLY_DEFERRED = "review_reply_deferred"
+# slack between a reply's GitHub timestamp and a context read that surely lists it
+CONTEXT_LAG = timedelta(minutes=1)
 
 
 def _mention_re(bot: str) -> re.Pattern[str]:
@@ -123,6 +130,18 @@ def _route_row(
             _handled(conn, row["id"], "review_requested", ts)
         return "review_requested"
 
+    if kind == "review_reply" and str(row["action"] or "").startswith(f"{REPLY_DEFERRED}:"):
+        # checked when it was deferred (a trusted human under one of our findings): no refetch
+        # of the comment and its thread root every tick while it waits
+        if not (is_open and head and not own_pr):
+            with tx(conn):
+                _handled(conn, row["id"], "ignored", ts)
+            return "ignored"
+        parent = str(row["action"]).split(":", 1)[1]
+        return _route_reply(
+            conn, cfg, row, head=head, actor=str(row["actor"]), parent=parent, ts=ts
+        )
+
     comment = _comment(gh, str(row["body"] or "")) if row["body"] else None
     if row["body"] and comment is None and kind in {"mention", "review_reply"}:
         if _too_old(row, ts):
@@ -167,24 +186,8 @@ def _route_row(
             with tx(conn):
                 _handled(conn, row["id"], "ignored", ts)
             return "ignored"
-        with tx(conn):
-            res = enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REPLY, ts=ts)
-            if res == "noop" and _head_running(conn, repo, number, head):
-                # the same head is mid-review and its context predates this reply: leave the
-                # row unhandled so it re-opens the head once that run finishes (bounded)
-                if _too_old(row, ts):
-                    _handled(conn, row["id"], "review_reply_expired", ts)
-                    return "ignored"
-                return "review_reply_deferred"
-            _handled(conn, row["id"], "review_reply", ts)
-            event(
-                conn,
-                "head.review_reply",
-                repo=repo,
-                number=number,
-                detail=f"{actor} replied on comment {comment.get('in_reply_to_id')} -> {res} {head[:8]}",
-            )
-        return "review_reply"
+        parent = str(comment.get("in_reply_to_id"))
+        return _route_reply(conn, cfg, row, head=head, actor=actor, parent=parent, ts=ts)
 
     if (
         own_pr
@@ -204,6 +207,88 @@ def _route_row(
     with tx(conn):
         _handled(conn, row["id"], "ignored", ts)
     return "ignored"
+
+
+def _route_reply(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    row: sqlite3.Row,
+    *,
+    head: str,
+    actor: str,
+    parent: str,
+    ts: str,
+) -> str:
+    """A trusted human answered under one of our findings (thread root `parent`) on an open
+    PR whose live head is `head`. Returns the stats key."""
+    repo, number = row["repo"], row["number"]
+    with tx(conn):
+        res = _reply_after_push(conn, cfg, row, head, ts)
+        if res is None:
+            res = enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REPLY, ts=ts)
+            if res == "noop" and _head_running(conn, repo, number, head):
+                # the same head is mid-review and its context predates this reply: it re-opens
+                # the head once that run finishes
+                res = "deferred"
+        if res == "deferred":
+            if _too_old(row, ts):
+                _handled(conn, row["id"], "review_reply_expired", ts)
+                return "ignored"
+            conn.execute(
+                "UPDATE inbox SET actor=?, action=? WHERE id=?",
+                (actor, f"{REPLY_DEFERRED}:{parent}", row["id"]),
+            )
+            return "review_reply_deferred"
+        _handled(conn, row["id"], "review_reply", ts)
+        event(
+            conn,
+            "head.review_reply",
+            repo=repo,
+            number=number,
+            detail=f"{actor} replied on comment {parent} -> {res} {head[:8]}",
+        )
+    return "review_reply"
+
+
+def _reply_after_push(
+    conn: sqlite3.Connection, cfg: Config, row: sqlite3.Row, head: str, ts: str
+) -> str | None:
+    """The reply landed on a push nothing has reviewed yet (typically "fixed in <sha>" right
+    after it): no request to review that push sooner or harder. Its automatic review, debounced
+    and in line, reads the threads and answers the reply; only a run whose thread read
+    postdates the reply counts ("read"). Until one does, the reply waits ("deferred"); a run
+    that carries an earlier review reads no threads, so once it ends the reply re-opens the
+    head like any reply on a reviewed commit. A push not yet ingested is queued here as ingest
+    would queue it. None when the live head is not such a push."""
+    repo, number = row["repo"], row["number"]
+    h = conn.execute(
+        "SELECT id, status, trigger, queue FROM heads WHERE repo=? AND number=? AND sha=?",
+        (repo, number, head),
+    ).fetchone()
+    if h is None:
+        res = enqueue_head(conn, cfg, repo, number, head, push_trigger(conn, repo, number), ts=ts)
+        return "deferred" if res == "created" else res  # noop: a skip label holds pushes back
+    if (
+        h["queue"] != "live"
+        or h["status"] not in (HeadStatus.QUEUED, HeadStatus.RUNNING)
+        or h["trigger"] not in AUTOMATIC_TRIGGERS
+    ):
+        return None
+    return "read" if _threads_read_since(conn, h["id"], str(row["occurred_at"])) else "deferred"
+
+
+def _threads_read_since(conn: sqlite3.Connection, head_id: int, occurred_at: str) -> bool:
+    """A run of the head gathered its review context (the finding threads with their replies,
+    `worker.step_context`) after `occurred_at`."""
+    since = parse_ts(occurred_at) + CONTEXT_LAG
+    return any(
+        parse_ts(str(r["started_at"])) >= since
+        for r in conn.execute(
+            "SELECT s.started_at FROM steps s JOIN runs r ON r.id=s.run_id "
+            "WHERE r.head_id=? AND s.name=?",
+            (head_id, StepName.CONTEXT.value),
+        )
+    )
 
 
 def _replies_to_bot_finding(gh: Gh, comment: dict[str, Any], bot_login: str) -> bool | None:

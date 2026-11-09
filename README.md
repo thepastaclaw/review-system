@@ -14,7 +14,7 @@ tested, one daemon, one SQLite file, no lock files.
 |---|---|
 | `daemon.py` | single-threaded tick loop: ingest, notify, route, supersede, reap, schedule, watchdog, gc |
 | `ingest.py` | GitHub GraphQL poll → `prs`/`heads`; notifications and inline-comment replies → `inbox` |
-| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
+| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding on a reviewed commit) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
 | `worker.py` | one run: worktree → (unchanged diff: carry the earlier review, done) → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
@@ -829,12 +829,25 @@ signal the system gets, and notifications do not carry a comment URL for it, so 
 cursor (`replies.cursor:<repo>`, trailing the poll start by 2 min so late-listed comments
 are still seen; dedupe is by comment id) and puts replies from non-bot users into
 `inbox` as `review_reply`. The router fetches the thread root; when it is a bot finding
-and the replier is a member/collaborator/contributor or in `trusted_reviewers`, the PR's
-live head is queued as priority with trigger `review_reply` (no debounce). An
-already-reviewed commit is re-opened for the same reason (`head.requeued`). A reply
-while that exact head is *running* is deferred until the run ends; a transient GitHub
-failure while looking up the thread root leaves the row for the next tick. Both waits
-are bounded by `DEFER_MAX` (6 h), after which the row is marked
+and the replier is a member/collaborator/contributor or in `trusted_reviewers`, what
+happens depends on the PR's live head:
+
+- **A push nothing has reviewed yet** (no head for it, or its `new_pr`/`new_push` head is
+  still queued or running; typically "Fixed in <sha>" right after the push): no request
+  for a sooner or harder review. The push keeps its automatic head (normal priority, the
+  push debounce intact, still carryable); a push ingest has not seen yet is queued here
+  as ingest would. Its review reads the threads with the reply and answers it there. The
+  row waits (`review_reply_deferred`) until a run of that head has started its `context`
+  step at least a minute after the reply was written; a run that carries reads no
+  threads, so after it the reply re-opens the commit as below.
+- **A reviewed commit** (or one carrying a review): it is re-opened at priority with
+  trigger `review_reply` (no debounce, `head.requeued`). A reply while that exact head is
+  *running* waits until the run ends.
+
+A transient GitHub failure while looking up the thread root leaves the row for the next
+tick. A row that waits on its head keeps the result of its first check (action
+`review_reply_deferred:<thread root id>`) and is not fetched again. Both waits are
+bounded by `DEFER_MAX` (6 h), after which the row is marked
 `review_reply_expired` / `ignored_unfetchable`. Replies to other people's threads, on
 draft PRs, or on the bot's own PRs are not review triggers (the last go to the own-PR
 comment batch).
@@ -1242,7 +1255,8 @@ Then:
   run finishes, queues a review for when it ends. A head superseded during checkout
   carries nothing. Once the commit has a review of its own, that
   review takes over from the carried one.
-- A reply under a finding on a carried commit runs a full review, as before. The
+- A reply under a finding on a carried commit runs a full review, as before (also one
+  that arrived while the push waited and was carried, since no run read it). The
   conversation lane answers only on a commit whose own final review stands.
 - A predecessor superseded before any run recorded its print breaks the chain: what
   changed in between is unknown, so the next commit starts over.

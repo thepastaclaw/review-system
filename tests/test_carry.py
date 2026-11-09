@@ -13,6 +13,7 @@ from reviewsys import audit, ci, labels, status, worker
 from reviewsys.db import kv_get, kv_set, now, tx
 from reviewsys.ingest import carried_from, enqueue_head
 from reviewsys.models import RunStatus, Trigger
+from reviewsys.router import route_inbox
 from reviewsys.scheduler import schedule
 from reviewsys.steps import worktree as wt
 
@@ -405,3 +406,40 @@ def test_diff_print_sees_through_empty_commits_merges_and_rebases(tmp_path):
     changed = _commit(repo, {"f.txt": b"one\nthree\n"}, "fixup")
     assert _print(repo, changed) != reviewed
     assert wt.diff_print(repo, "0" * 40, changed) is None  # git cannot say
+
+
+def test_reply_after_a_push_leaves_it_carryable(cfg, conn, gh, reviewed, prints, notifier):
+    """ "Fixed in <sha>" on a push whose diff did not change: the push still carries, and the
+    reply, which no run read, then re-opens that commit as a reply on a reviewed one."""
+    prints.update({A: "p1", B: "p1"})
+    _review(cfg, conn, gh, reviewed, A)
+    _push(conn, cfg, gh, B)
+    gh.routes[f"repos/{REPO}/pulls/comments/2"] = {
+        "id": 2,
+        "in_reply_to_id": 1,
+        "user": {"login": "knst"},
+        "author_association": "COLLABORATOR",
+        "body": "Fixed in the latest push.",
+        "pull_request_url": f"https://api.github.com/repos/{REPO}/pulls/1",
+    }
+    gh.routes[f"repos/{REPO}/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
+    }
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) "
+            "VALUES ('reply:2','review_reply',?,1,'knst',?,?,?)",
+            (REPO, f"https://api.github.com/repos/{REPO}/pulls/comments/2", now(), now()),
+        )
+    assert route_inbox(conn, cfg, gh, notifier)["review_reply_deferred"] == 1
+    head = conn.execute("SELECT trigger, priority FROM heads WHERE sha=?", (B,)).fetchone()
+    assert tuple(head) == ("new_push", 0)
+
+    rid, st = _run(cfg, conn, gh, reviewed, B)
+    assert st == RunStatus.DONE and _steps(conn, rid) == {"worktree", "carry"}
+    assert carried_from(conn, REPO, 1, B) == A
+
+    assert route_inbox(conn, cfg, gh, notifier)["review_reply"] == 1
+    head = conn.execute("SELECT status, trigger FROM heads WHERE sha=?", (B,)).fetchone()
+    assert tuple(head) == ("queued", "review_reply")

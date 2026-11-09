@@ -441,6 +441,14 @@ def skip_pr_heads(conn: sqlite3.Connection, repo: str, number: int, sha: str, *,
     return n
 
 
+def push_trigger(conn: sqlite3.Connection, repo: str, number: int) -> Trigger:
+    """The automatic trigger of the PR's next commit: a new PR, or a push to a known one."""
+    prior = conn.execute(
+        "SELECT 1 FROM heads WHERE repo=? AND number=? LIMIT 1", (repo, number)
+    ).fetchone()
+    return Trigger.NEW_PUSH if prior else Trigger.NEW_PR
+
+
 def ingest_repo(
     conn: sqlite3.Connection, cfg: Config, gh: Gh, repo: str, prs: list[OpenPr]
 ) -> dict[str, int]:
@@ -496,10 +504,7 @@ def ingest_repo(
                 ):
                     stats["draft"] += 1
                 continue
-            prior = conn.execute(
-                "SELECT 1 FROM heads WHERE repo=? AND number=? LIMIT 1", (repo, p.number)
-            ).fetchone()
-            trigger = Trigger.NEW_PUSH if prior else Trigger.NEW_PR
+            trigger = push_trigger(conn, repo, p.number)
             stats[enqueue_head(conn, cfg, repo, p.number, p.head_sha, trigger, ts=ts)] += 1
         # PRs we knew as open that are no longer in the open set
         known = conn.execute(
