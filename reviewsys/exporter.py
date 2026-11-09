@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from . import lanepool, progress
+from . import lanepool, progress, rounds
 from .config import Config
 from .db import fmt_ts, now, now_dt, parse_ts
 from .queue_status import queued_order
@@ -736,6 +736,7 @@ def build_export(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
             "tokens_by_run": tokens_by_run,
             "path_timing": build_path_timing(conn, cfg, at),
         },
+        "rounds": rounds.compute(conn, at=at),
     }
 
 

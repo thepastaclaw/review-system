@@ -1473,6 +1473,30 @@ While a run is in progress the worker's heartbeat keeps the comment showing a pr
   since the early steps were hidden, the comment showed a bare "Review in progress" line
   re-posted two or three times in the first minutes of each run (dashpay/platform#5237).
 
+## Review rounds per PR
+
+Average review rounds per PR is a team metric (target: mean <= 4, never above 5).
+`reviewsys rounds [--days N] [--weeks N] [--repo OWNER/NAME] [--json]` prints it for a
+stand-up; `export-status` carries the same data as the `rounds` key of `status.json`, and the
+dashboard shows it in "Review rounds per PR".
+
+- A **round** is a distinct head commit of a PR that got its own full final review from the
+  bot: a `reviews` row with `phase='final'` and `imported=0`, counted once per
+  `(repo, number, sha)`. Carried heads have no `reviews` row of their own. A conversation run's
+  follow-up review, a CI update and a verdict-only record all reuse the sha already reviewed,
+  so they add no round.
+- **Completed PRs** are those with `prs.state != 'open'`, with at least one round. Nothing
+  records a merge or close time apart from the poll: when it stops seeing a PR open it sets
+  `state='closed'` and `updated_at` to that moment, and a closed PR is not touched again. That
+  `updated_at` is the completion time used for the window, the weekly (ISO week) buckets and the
+  rolling 7 and 28 day means. Merged PRs are `closed` too.
+- Per repo and overall: n, mean, median, p90, max, share with more than 5 rounds, and rounds
+  to the first APPROVE (the position of the first round whose sha got an APPROVE, among PRs
+  that got one).
+- A repo is flagged "above target" (mean > 4) or "above ceiling" (mean > 5) only at n >= 5; the
+  JSON carries `above_target` / `above_ceiling` booleans.
+- The watch list is the open PRs already at 5 or more rounds.
+
 ## Status dashboard: priority vs normal timing
 
 The public status page (`site/`, fed by `reviewsys export-status`, see
