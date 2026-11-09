@@ -571,3 +571,48 @@ def test_the_verifier_is_told_to_leave_carried_findings_out_of_its_summary(cfg, 
     _disputed_round_one(cfg, conn, gh, lanes)
     assert "do not describe them again" in _verifier_prompts(lanes)[0]
     assert not any("do not describe them again" in c.prompt for c in _reviewer_calls(lanes))
+
+
+def test_a_withdrawal_after_a_dispute_no_longer_holds_the_approval(cfg, conn, gh, lanes):
+    """A blocker settled DISPUTED that a later conversation on the same commit withdraws stops
+    counting: only each finding's newest settlement matters."""
+    blocker, sugg = _blocking(), _sugg()
+    bh, sh = _seed_prior(conn, blocker), _seed_prior(conn, sugg)
+    _thread(gh, bh, blocker["title"], [DISPUTE])
+    _second_thread(gh, sh, sugg["title"], 910, [])
+    rows = [
+        {"finding_hash": bh, "status": "STILL_VALID", "reason": ENGAGED, "disputed": True},
+        {"finding_hash": sh, "status": "STILL_VALID", "reason": "Still missing."},
+    ]
+    both = [{**blocker, "finding_hash": bh}, {**sugg, "finding_hash": sh}]
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": both,
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": rows,
+    }
+    lanes.verifier["default"] = {**_verifier(both), "prior_finding_reconciliation": rows}
+    _review(cfg, conn, gh, lanes, HEAD)
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(gh.replies[0]["body"])))
+    _review(cfg, conn, gh, lanes, C)
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"
+    gh.threads[0]["comments"]["nodes"] += [
+        _gql_comment(_bot(gh.replies[-1]["body"], id=951, at="y2")),
+        _gql_comment(
+            {**KNST, "id": 912, "created_at": "z", "body": "Proof the path is unreachable: #5200."}
+        ),
+    ]
+    tracked = "deferring; tracked in https://github.com/dashpay/platform/issues/4321"
+    gh.threads[1]["comments"]["nodes"].append(_gql_comment({**KNST, "id": 911, "body": tracked}))
+    outcomes = [
+        {"finding_hash": bh, "status": "WITHDRAWN", "reply": "You're right; withdrawn."},
+        {
+            "finding_hash": sh,
+            "status": "INTENTIONALLY_DEFERRED",
+            "reply": "Deferring it.",
+            "tracking": {"url": "https://github.com/dashpay/platform/issues/4321"},
+        },
+    ]
+    _run_conversation(cfg, conn, gh, lanes, C, outcomes)
+    last = conn.execute("SELECT event FROM reviews ORDER BY id DESC LIMIT 1").fetchone()
+    assert last["event"] == "APPROVE"

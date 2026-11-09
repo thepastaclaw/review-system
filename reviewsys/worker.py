@@ -5717,7 +5717,8 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     rows = ctx.conn.execute(
         "SELECT f.run_id, f.hash, f.severity, f.stage, f.file, f.title, f.body FROM findings f "
         "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
-        "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded')",
+        "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded') "
+        "ORDER BY f.id",
         (ctx.repo, ctx.number, ctx.sha, phase),
     ).fetchall()
     # a full review that carried every finding onto existing threads posts none, so it has
@@ -5796,13 +5797,14 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
         gone[h] = _identity(t.get("path"), t.get("title"))
     gone_ids = {i for i in gone.values() if i[1]}
     lifted_hashes = {h for h, (_, ident) in pub.items() if h in gone or ident in gone_ids}
+    latest: dict[str, sqlite3.Row] = {}
+    for r in rows:
+        if r["stage"] == "conceded" and run_id is not None and int(r["run_id"]) >= run_id:
+            latest[str(r["hash"])] = r
     disputed = {
-        str(r["hash"])
-        for r in rows
-        if r["stage"] == "conceded"
-        and run_id is not None
-        and int(r["run_id"]) >= run_id
-        and r["severity"] == "blocking"
+        h
+        for h, r in latest.items()
+        if r["severity"] == "blocking"
         and str(r["body"] or "").partition("\n")[0] == converse.DISPUTED
     }
     return _Standing(
