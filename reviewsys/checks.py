@@ -76,6 +76,7 @@ STEP_LABELS = {
     "verify2": "verifying findings",
     "fresh_phase2": "fresh Phase 2 pass",
     "fresh_verify2": "verifying the fresh pass",
+    "confirm": "confirming new blockers independently",
     "ci_check": "checking a CI failure",
     "publish": "publishing",
 }

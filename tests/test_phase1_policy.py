@@ -380,10 +380,16 @@ def test_single_stage_runs_both_phases_side_by_side_without_a_gate(single, conn,
         "out_of_scope_findings": [],
     }
     lanes.verifier["final"] = _verifier(_findings(blocking=1))
-    runner = Overlap(lanes, barrier=6)  # 3 Phase-1 + 3 Phase-2 lanes, all at once
+    overlap = Overlap(lanes, barrier=6)  # 3 Phase-1 + 3 Phase-2 lanes, all at once
+
+    def runner(spec: LaneSpec, art: Path, worktree: Path) -> LaneResult:
+        if "fresh final review" in spec.prompt:  # Phase 2's second pass, after both
+            return lanes(spec, art, worktree)
+        return overlap(spec, art, worktree)
+
     rid, status = _run(single, conn, gh, runner)
     assert status == RunStatus.DONE
-    assert runner.peak == 6
+    assert overlap.peak == 6
     assert {(s.model, s.effort) for s in _reviewers(lanes)} == {
         ("glm-5.3-flash", "max"),
         ("gpt-6-astra", "xhigh"),
@@ -409,7 +415,11 @@ def test_single_stage_drops_a_failed_phase1_and_still_publishes(single, conn, gh
     seen_while_phase2_ran: list[tuple[str, str]] = []
 
     def runner(spec: LaneSpec, art: Path, worktree: Path) -> LaneResult:
-        if spec.role == "general" and spec.model == "gpt-6-astra":
+        if (
+            spec.role == "general"
+            and spec.model == "gpt-6-astra"
+            and "fresh final review" not in spec.prompt
+        ):
             # Phase 2 is still going: the Phase-1 failure must already be on record (the
             # step's error for the status page, and the event), not hours later
             own = sqlite3.connect(str(single.db_path))

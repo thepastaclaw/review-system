@@ -276,7 +276,8 @@ def test_degraded_run_swaps_every_primary_lane_and_discloses_it(
     assert sorted(calls[1:4]) == [(r, "glm-5.3-flash", "high") for r in roles]
     assert calls[4] == ("verifier", MUSE, "high")  # sol gate verifier -> muse
     assert sorted(calls[5:8]) == [(r, MUSE, "high") for r in roles]
-    assert calls[8] == ("verifier", MUSE, "high")
+    assert sorted(calls[8:11]) == [(r, MUSE, "high") for r in roles]  # Phase 2's second pass
+    assert calls[11:] == [("verifier", MUSE, "high")]
     assert {s.model for s in lanes.calls} == {"glm-5.3-flash", MUSE}, "no primary model touched"
     # persisted + evented
     assert conn.execute("SELECT degraded FROM runs WHERE id=?", (rid,)).fetchone()[0] == 1

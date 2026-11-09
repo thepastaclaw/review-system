@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -176,6 +176,11 @@ MIGRATIONS: dict[int, str] = {
         check_id INTEGER NOT NULL, status TEXT NOT NULL, conclusion TEXT,
         digest TEXT NOT NULL, updated_at TEXT NOT NULL,
         PRIMARY KEY (repo, number, sha));
+    """,
+    # where a later round's finding sits relative to the code already reviewed (late.py):
+    # A changed since the previous final review, B/C unchanged, U no anchor or unknown
+    11: """
+    ALTER TABLE findings ADD COLUMN code_status TEXT;
     """,
 }
 

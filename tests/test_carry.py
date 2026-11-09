@@ -109,11 +109,11 @@ def test_push_that_leaves_the_diff_alone_carries_the_review(cfg, conn, gh, revie
     assert len(reviewed.calls) == lanes_before  # no lane ran
     assert len(gh.posted_reviews) == 1  # and nothing new was posted as a review
     assert carried_from(conn, REPO, 1, B) == A
-    assert labels.verdict_for(conn, REPO, 1, B) == "COMMENT"
-    assert labels.wanted(conn, REPO, 1) == labels.VERDICT_LABELS["COMMENT"]
+    assert labels.verdict_for(conn, REPO, 1, B) == "APPROVE"
+    assert labels.wanted(conn, REPO, 1) == labels.VERDICT_LABELS["APPROVE"]
     gate = gh.gate_bodies[-1]
     assert f"No change to this PR's diff since commit {A[:8]}" in gate
-    assert f"(commit {B[:8]})" in gate and "commented" in gate and "@thepastaclaw review" in gate
+    assert f"(commit {B[:8]})" in gate and "approved" in gate and "@thepastaclaw review" in gate
     assert _steps(conn, rid) == {"worktree", "carry"}
     ev = conn.execute("SELECT detail FROM events WHERE kind='head.carried'").fetchone()
     assert ev and A[:8] in ev["detail"]
@@ -205,7 +205,7 @@ def test_carry_restores_the_verdict_label(cfg, conn, gh, reviewed, prints):
     gh.labels = []
     _run(cfg, conn, gh, reviewed, B)
     labels.reconcile(conn, gh, repos={})
-    assert gh.labels == [labels.VERDICT_LABELS["COMMENT"]]
+    assert gh.labels == [labels.VERDICT_LABELS["APPROVE"]]
 
 
 def test_asking_while_the_run_checks_out_is_not_carried(

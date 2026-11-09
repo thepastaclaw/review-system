@@ -322,10 +322,18 @@ def test_primary_failure_stops_running_twins(cfg, conn, gh, lanes):
     assert _events(conn, rid, "compare.lane_dropped") == []
 
 
+def _had_blockers(conn):
+    """The review just published requested changes: the next round's fresh final gate is due
+    once nothing blocks any more."""
+    with tx(conn):
+        conn.execute("UPDATE reviews SET event='REQUEST_CHANGES'")
+
+
 def test_fresh_final_pass_runs_no_twins(cfg, conn, gh, lanes):
     cfg = _with_comparison(cfg)
     _base(lanes)
     _run(cfg, conn, gh, lanes)
+    _had_blockers(conn)
     first = len(lanes.calls)
     with tx(conn):
         assert enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL) == "requeued"
@@ -429,6 +437,7 @@ def test_fresh_pass_findings_are_kept_apart(cfg, conn, gh, lanes):
 
     runner = FreshGateKeeps()
     _run(cfg, conn, gh, runner)
+    _had_blockers(conn)
     with tx(conn):
         enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL)
     (rid,) = schedule(conn, cfg, spawn=False)

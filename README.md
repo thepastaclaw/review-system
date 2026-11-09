@@ -29,6 +29,7 @@ tested, one daemon, one SQLite file, no lock files.
 | `dedupe.py` | within-batch same-root collapse; cross-round matching against existing inline comments |
 | `publish.py` | pure `render(ReviewModel)`; diff position mapping; posting; CodeRabbit reactions |
 | `labels.py` | mirrors the bot's standing verdict onto a `pastaclaw:*` PR label (repos that define them) |
+| `late.py` | later review rounds (policy v11): each finding's code status against the previous final review, and what happens to new findings on unchanged code (see [Converging review rounds](#converging-review-rounds-policy-v11)) |
 | `ledger.py` | the issue ledger: every issue raised on a PR and where it stands, folded from its event history; write-only under policy v11, what policy v12 decides from |
 | `rules.py` | policy v12, pure: the finder candidate contract, verify+match parsing, the code rules over it and the ledger verdict |
 | `quality.py` | `reviewsys quality`: late finds, fate coverage, silent drops, re-raises, contract failures |
@@ -502,7 +503,8 @@ runs):
 - **What runs.** Every Phase-2 reviewer lane (general and each specialist) also runs
   on the comparison model at the same effort, keyed `<role>#2`, on a thread pool of
   its own so the primary lanes keep their `phase_parallelism`. Not on the fresh final
-  pass: it would double an already large verifier prompt. The verifier gets both sets
+  pass: it would double an already large verifier prompt. A comparison run skips the first
+  review's second Phase-2 pass, which its twins already stand in for. The verifier gets both sets
   in the one Phase-2 block under neutral labels (`general/a`, `general/b`; which one
   is the comparison model is drawn per run), and the primary verifier alone decides
   the verdict. Comparison output never answers or resolves a finding thread.
@@ -794,15 +796,89 @@ read-only) or the production mirrors.
   - An accepted deferral counts as a production "false alarm" signal; `outcomes.status` tells
     WITHDRAWN from INTENTIONALLY_DEFERRED.
 
+## Converging review rounds (policy v11)
+
+The team metric is review rounds per PR (mean at most 4, never above 5). Every push
+re-reviews the whole PR, and the verifier is noisy (re-run on the same input it keeps 64 % of
+its blockers), so code nobody touched kept drawing new findings round after round. Four rules
+(`worker._verify2`, `late.py`) move findings into the first round and keep later rounds to
+what changed. They apply to policy v11 live reviews; an audit and a partial policy v12
+pipeline keep the earlier behaviour.
+
+- **Approve when nothing blocks.** A full-strength final review with no blocker is an
+  APPROVE whatever suggestions and nitpicks come with it (`_approve_when_clear`, event
+  `verdict.approve_nonblocking` when the verifier had said COMMENT). The body says they are
+  optional and can be fixed forward. `verdict_event` still stops a Phase-1-only or degraded
+  review at COMMENT, a degraded same-sha re-review still never retracts a standing APPROVED,
+  and own-PR transport and the CI watch are unchanged. A suggestion whose deferral is held
+  for a tracking issue still stands and gets its reply, but no longer holds the approval
+  back. A conversation follows the same rule:
+  once no blocker stands and something above a nitpick was lifted, it approves (saying how
+  many non-blocking findings still stand).
+- **Batch in round 1.** The first full (final) review of a PR runs every Phase-2 reviewer a
+  second, independent time (`fresh_phase2`, keyed `fresh:<role>`), and the one final
+  verifier weighs both sets: no extra verifier lane. Same enablement as Phase 2 (the tier
+  has one and it is enabled); not on a comparison run (its second model already doubles
+  every Phase-2 reviewer), a single-stage tier or a fast tier (`trivial`, `low`). Best
+  effort: if its lanes fail, the review goes on with the first pass alone
+  (`fresh_first.failed`). Disclosed as "Second Phase-2 pass".
+- **Code status per finding.** On a later round every final finding gets a mechanical
+  status by its file, from git in the run's worktree (`late.CodeHistory`, one `git diff
+  --name-status -M -z` per base): `A` the file changed since the previous final-reviewed
+  head, `B` unchanged since then but changed since the PR's first reviewed head, `C`
+  unchanged since the first review, `U` no anchor, a file the head lacks, or git cannot tell
+  (treated as `A`). A rename without edits is unchanged. The previous final-reviewed head is
+  the newest full-strength final review on our record (Phase 2 `ok`, not degraded; not a
+  conversation's or a CI update's row; on a same-sha re-review, the head itself): a review on
+  stand-ins, a Phase-1-only one or one we have no record of is no basis, and the next
+  full-strength review counts as the first. Stored in `findings.code_status` (schema v11)
+  and the finding's `extra`.
+- **New findings on unchanged code (B/C).** Only findings new to the PR (no prior hash, not
+  posted before, not matching an earlier finding the way publish dedupe matches) leave the
+  normal path; a carried STILL_VALID blocker stays blocking. Nitpicks are dropped.
+  Suggestions open no inline thread: they are listed once in a collapsed "Follow-up
+  candidates (optional)" section (in the review, or in a same-sha verdict update) and never
+  restated (what a posted review listed is kept as `followup` rows, matched by hash or dedupe
+  key). Blockers go to **one independent confirmation lane** per run (step `confirm`, role
+  `confirm`): the final verifier's model and effort in a fresh session, shown the claims
+  (`late.candidate_briefs`: location, title, body, suggested fix), the code and the PR diff,
+  never the verifier's reasoning, sources or confidence (`prompts.confirmation_prompt`,
+  self-contained). It answers `blocking` (with a concrete reachable `failure`),
+  `non_blocking` or `invalid` per finding. Confirmed blockers stay blocking, their body
+  saying an independent pass confirmed them; unconfirmed ones become follow-up candidates;
+  invalid ones are dropped. Its answer never goes to the context-free repair lane, and a lane
+  that fails for good keeps every blocker as raised (`late.confirm_failed`). A verdict is
+  remembered by finding hash: a blocker an earlier round judged `non_blocking` or `invalid`
+  is not sent again while its file is unchanged since that round. Disclosed in the
+  provenance ("Code unchanged since the last final review").
+- **The fresh final gate on later rounds** runs only when the previous final review had
+  blockers and no blocker stands now (they may have masked others), never after a clean
+  approval. A new blocker on unchanged code holds it until its confirmation: if that leaves
+  no blocker standing, the gate runs then, and a re-raise of the same blocker in it reuses
+  the run's decision. A stand-in model's confirmation (degraded mode) never demotes a
+  blocker (`late.confirm_skipped`), and its verdicts are never remembered.
+
+Record: the run's final verifier rows (`verified` / `verified-fresh`) are rewritten to what
+stands, with code statuses; gated findings keep their original severity under `late-nit`,
+`late-followup`, `late-repeat`, `late-unconfirmed` and `late-invalid`; the verify step's
+detail gets `raw_findings` / `raw_blockers`; `late.gated` (event) and `late.json` (run dir)
+summarize the round.
+
+Cost: round 1 (normal and critical tiers) adds one reviewer lane per Phase-2 role (no
+verifier lane); a later round adds at most one confirmation lane (only when it has new
+blockers on unchanged code not decided before) and runs the fresh gate less often than
+before (only after fixed blockers, no longer after every clean re-review).
+
 ## Final approval after an iterative review
 
 An incremental review is a reconciliation pass, not by itself a new approval gate. It
 first checks the prior findings, discussion, and replies and stops if any blocker remains.
-When that pass is clear, the worker starts a fresh Phase-2 review of the complete current
-merge-base range. Those reviewer lanes receive the full diff and evidence without the old
-finding checklist, which reduces anchoring on the previous conclusion. The fresh verifier
-receives all PR context—including prior findings, discussion, CodeRabbit evidence, and both
-sets of reviewer outputs—as historical evidence to reconcile before deciding the verdict.
+When that pass is clear and the previous final review had blockers (above), the worker
+starts a fresh Phase-2 review of the complete current merge-base range. Those reviewer
+lanes receive the full diff and evidence without the old finding checklist, which reduces
+anchoring on the previous conclusion. The fresh verifier receives all PR context—including
+prior findings, discussion, CodeRabbit evidence, and both sets of reviewer outputs—as
+historical evidence to reconcile before deciding the verdict.
 
 Approval is tied to the exact reviewed head. The worker checks the live PR head immediately
 before publishing, so a push or base update during review invalidates the run and queues the
@@ -1044,10 +1120,13 @@ verifier lanes):
   earlier heads that run re-adjudicated do not count. Lifted = `conceded` rows after that
   run, matched by hash or by file and title. Once no blocker stands, the follow-up
   **APPROVEs** (from `CHANGES_REQUESTED` or `COMMENTED`; nothing moves unless something
-  above a nitpick of that set was lifted) when nothing above a nitpick is
-  left, something of the verifier set was lifted, and that run is one the pipeline itself
-  would approve on: Phase 2 `ok`, not degraded, and on a later review round (an earlier
-  review of the PR exists) the fresh Phase-2 audit `ok`. A COMMENT never clears a
+  above a nitpick of that set was lifted) when no blocker is left (a policy v12 pipeline:
+  nothing above a nitpick), something of the verifier set was lifted, and that run is one
+  the pipeline itself would approve on: Phase 2 `ok`, not degraded, and on a later review
+  round (an earlier review of the PR exists) the fresh Phase-2 audit `ok` where it was due
+  (that run had blockers, or the final review before it had: `_fresh_was_due`). The
+  standing set of a run whose fresh audit kept nothing is empty, never the first pass's
+  findings. A COMMENT never clears a
   REQUEST_CHANGES on GitHub, so anything less leaves a ready PR showing a blocking review
   (dashpay/dash#7778). If only the fresh audit is missing (it is skipped while blockers
   stand), the follow-up is COMMENT and the commit is re-queued once
