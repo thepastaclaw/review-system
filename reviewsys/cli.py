@@ -9,6 +9,7 @@ import logging
 import os
 import sqlite3
 import sys
+from collections.abc import Collection
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -22,6 +23,7 @@ from . import doctor as doctor_mod
 from . import exporter as exporter_mod
 from . import ledger as ledger_mod
 from . import quality as quality_mod
+from . import rounds as rounds_mod
 from . import slots as slots_mod
 from . import status as status_mod
 from . import worker as worker_mod
@@ -396,6 +398,27 @@ def cmd_export_status(args: argparse.Namespace) -> int:
     conn = db_mod.connect(cfg.db_path)
     path = exporter_mod.write_export(conn, cfg, Path(args.output))
     print(path)
+    return 0
+
+
+def cmd_rounds(args: argparse.Namespace) -> int:
+    conn = _conn(args)
+    if conn is None:
+        return 1
+    repos: Collection[str] | None = None
+    if not args.all_repos:
+        try:
+            repos = _cfg(args).enabled_repos
+        except OSError as exc:
+            print(f"cannot load the config ({exc}); pass --all-repos to skip it", file=sys.stderr)
+            return 1
+    if args.repo:
+        repos = [args.repo] if repos is None or args.repo in repos else []
+    data = rounds_mod.compute(conn, days=args.days, weeks=args.weeks, repos=repos)
+    if args.json:
+        print(json.dumps(data, indent=1))
+    else:
+        print(rounds_mod.render(data), end="")
     return 0
 
 
@@ -837,6 +860,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="OWNER/NAME=PATH: a clone to diff in for that repo (repeatable)",
     )
     s.set_defaults(fn=cmd_quality)
+    s = sub.add_parser(
+        "rounds",
+        help="review rounds per PR: mean, median and trend for completed PRs",
+        description=rounds_mod.DEFINITION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    s.add_argument("--days", type=int, default=28, help="completion window (default 28)")
+    s.add_argument("--weeks", type=int, default=8, help="weeks in the trend (default 8)")
+    s.add_argument("--repo", metavar="OWNER/NAME", help="only this repo")
+    s.add_argument("--all-repos", action="store_true", help="include repos that are not enabled")
+    s.add_argument("--json", action="store_true")
+    s.add_argument("--db", help="database file (default: the configured one)")
+    s.set_defaults(fn=cmd_rounds)
     s = sub.add_parser("init-config")
     s.add_argument("--force", action="store_true")
     s.set_defaults(fn=cmd_init_config)

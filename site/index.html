@@ -132,6 +132,7 @@ details.done-lanes .lanegrid{margin-top:6px;overflow-x:auto}
 .ev .d{color:var(--muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .paths td{vertical-align:middle;white-space:nowrap}.paths td:first-child{width:1%}
 .hidden{display:none!important}
+.cards.five{grid-template-columns:repeat(5,1fr)}
 /* shadow: v12 vs production */
 .scards{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:14px}
 .scards .card{padding:13px;box-shadow:none}.scards .value{font-size:24px}
@@ -142,9 +143,9 @@ tr.dis td{background:color-mix(in srgb,var(--amber) 9%,transparent)}tr.dis td:fi
 .vs{white-space:nowrap}.vs .arrow{color:var(--muted);margin:0 4px}
 @media(max-width:900px){.scards{grid-template-columns:repeat(3,1fr)}.sgrid{grid-template-columns:1fr}}
 @media(max-width:560px){.scards{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:900px){.cards{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}
+@media(max-width:900px){.cards,.cards.five{grid-template-columns:repeat(3,1fr)}.layout{grid-template-columns:1fr}}
 @media(max-width:700px){.arun-head{flex-direction:column;align-items:stretch}.arun .elapsed{text-align:left}.live{grid-template-columns:auto minmax(0,1fr) auto}.live .m{display:none}}
-@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:stretch;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
+@media(max-width:560px){main{padding:25px 14px}.top{display:block}.status{display:inline-block;margin-top:15px}.cards,.cards.five{grid-template-columns:repeat(2,1fr)}h1{font-size:28px}.item{align-items:stretch;flex-direction:column;gap:6px}.time{text-align:left}.toolbar input{min-width:0;flex-basis:100%}.toolbar select{flex:1}}
 </style>
 </head>
 <body>
@@ -169,6 +170,7 @@ tr.dis td{background:color-mix(in srgb,var(--amber) 9%,transparent)}tr.dis td:fi
       <section class="panel"><h2>Token usage</h2><div id="tokens"></div></section>
     </div>
   </div>
+  <section id="rounds" class="panel hidden"><h2>Review rounds per PR <span id="rounds-sub"></span></h2><div id="rounds-body"></div></section>
   <section id="shadow" class="panel hidden"><h2>Shadow: v12 vs production <span id="shadow-sub"></span></h2><div id="shadow-body"></div></section>
 </div>
 
@@ -316,6 +318,7 @@ function renderOverview(d){
   $('#active').innerHTML=(gone?`<div class=gone>${starting?`Run ${focusRun} is starting — it shows up here within a minute or two.`:`Run ${focusRun} is no longer running — its review is in <a href="#day=${esc(publishedDays()[0]||'')}">today's reviews</a>.`}</div>`:'')+rows(active,a=>activeCard(a,l),'No active reviews');
   renderDaily(d.history?.daily||[]);
   renderPaths(d.history?.path_timing);
+  renderRounds(d.rounds);
   renderShadow(d.shadow);
   const pools=l.lane_pools||[];
   $('#pools').innerHTML=rows(pools,p=>{const n=p.slots||0,busy=p.running;return `<div class=pool><b>${esc(p.pool)}</b><div class=bar title="${busy} running of ${n}">${n?`<i style="width:${Math.min(100,busy/n*100)}%"></i>`:''}</div><span><b>${busy}</b> of ${n} running${p.waiting?` · <b style="color:var(--amber)">${p.waiting}</b> waiting`:''}</span></div>`},'No pools configured')
@@ -330,6 +333,32 @@ function renderOverview(d){
     +rows(models,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.model)} <em>${share(n)}</em></span><b>${n.toLocaleString()} · ${Number(x.avg_tokens_per_lane||0).toLocaleString()} avg</b></div><div class=bar><i style="width:${n/maxModel*100}%"></i></div>`})
     +`<h3>Usage by thinking level <small>share · total</small></h3>`
     +rows(efforts,x=>{let n=(x.tokens_in||0)+(x.tokens_out||0);return `<div class=metric><span>${esc(x.effort==='unknown'?'not recorded':x.effort)} <em>${share(n)}</em></span><b>${n.toLocaleString()}</b></div><div class=bar><i style="width:${n/maxEffort*100}%"></i></div>`});
+}
+
+// review rounds per PR (rounds.compute): mean vs target and ceiling, per repo, weekly trend
+function renderRounds(r){
+  const box=$('#rounds');if(!r){box.classList.add('hidden');return}
+  box.classList.remove('hidden');
+  const o=r.overall||{},f=x=>x==null?'—':Number(x).toFixed(1),
+    tone=x=>x.above_ceiling?'bad':x.above_target?'warn':'good',
+    flag=x=>x.above_ceiling?`<span class="pill bad">above ceiling</span>`:x.above_target?`<span class="pill warn">above target</span>`:'',
+    weeks=r.trend?.overall||[],maxMean=Math.max(r.ceiling+1,...weeks.map(w=>w.mean||0)),
+    pts=weeks.map((w,i)=>w.mean==null?null:[weeks.length>1?4+i*(192/(weeks.length-1)):100,36-(w.mean/maxMean)*32]).filter(Boolean),
+    ty=v=>36-v/maxMean*32,
+    spark=`<svg viewBox="0 0 200 40" width=200 height=40 role=img aria-label="weekly mean rounds"><line x1=0 x2=200 y1=${ty(r.target)} y2=${ty(r.target)} stroke="var(--amber)" stroke-dasharray="3 3"/><line x1=0 x2=200 y1=${ty(r.ceiling)} y2=${ty(r.ceiling)} stroke="var(--red)" stroke-dasharray="3 3"/>${pts.length>1?`<polyline fill=none stroke="var(--blue)" stroke-width=2 points="${pts.map(p=>p.join(',')).join(' ')}"/>`:''}${pts.map(p=>`<circle cx=${p[0]} cy=${p[1]} r=2.5 fill="var(--blue)"/>`).join('')}</svg>`,
+    r7=r.rolling?.['7d']?.overall,r28=r.rolling?.['28d']?.overall;
+  $('#rounds-sub').textContent=`completed PRs · last ${r.window_days} days · target ≤ ${r.target} · ceiling ${r.ceiling}`;
+  const cards=[['Mean',f(o.mean),`${o.n} PRs · target ≤ ${r.target}`,tone(o)],['Median',f(o.median),`p90 ${o.p90??'—'} · max ${o.max??'—'}`,''],['Last 7 days',f(r7?.mean),`${r7?.n??0} PRs`,''],['Last 28 days',f(r28?.mean),`${r28?.n??0} PRs`,''],['Rounds to first approve',f(o.to_approve_mean),`median ${f(o.to_approve_median)} · ${o.approved_n} PRs`,'']];
+  const colour={good:'var(--green)',warn:'var(--amber)',bad:'var(--red)','':'var(--text)'};
+  const trendRows=[{repo:'All repos',weeks}].concat((r.trend?.repos||[]).map(x=>({repo:x.repo,weeks:x.weeks})));
+  $('#rounds-body').innerHTML=`<div class="cards five" style="margin-bottom:14px">${cards.map(c=>`<div class=card><div class=label>${c[0]}</div><div class=value style="color:${colour[c[3]]}">${c[1]}</div><div class=csub>${esc(c[2])}</div></div>`).join('')}</div>
+    <div class=tablewrap><table><thead><tr><th>Repo</th><th class=num>PRs</th><th class=num>Mean</th><th class=num>Median</th><th class=num>p90</th><th class=num>Max</th><th class=num>&gt; 5 rounds</th><th class=num>To first approve</th><th></th></tr></thead><tbody>`
+    +(r.repos||[]).map(x=>`<tr><td><b>${esc(x.repo)}</b></td><td class=num>${x.n}</td><td class=num>${f(x.mean)}</td><td class=num>${f(x.median)}</td><td class=num>${x.p90??'—'}</td><td class=num>${x.max??'—'}</td><td class=num>${pct(x.share_over_5)}</td><td class=num>${f(x.to_approve_mean)}</td><td>${flag(x)}</td></tr>`).join('')
+    +`</tbody></table></div><h3>Weekly trend <small>mean / median / PRs by completion week · dashed: target (amber), ceiling (red)</small></h3><div style="margin-bottom:8px">${spark}</div><div class=tablewrap><table><thead><tr><th></th>${weeks.map(w=>`<th class=num>${esc(w.week.slice(5))}</th>`).join('')}</tr></thead><tbody>`
+    +trendRows.map(t=>`<tr><td>${esc(t.repo)}</td>${t.weeks.map(w=>`<td class=num>${w.n?`${f(w.mean)} / ${f(w.median)} / ${w.n}`:'<span class=muted>—</span>'}</td>`).join('')}</tr>`).join('')
+    +`</tbody></table></div>`
+    +(r.watch?.length?`<h3>Open PRs at ≥ 5 rounds</h3>`+r.watch.map(w=>`<div class=metric><span><a href="https://github.com/${esc(w.repo)}/pull/${w.number}">${esc(w.repo)} #${w.number}</a>${w.author?` · ${esc(w.author)}`:''}</span><b>${w.rounds} rounds</b></div>`).join(''):'')
+    +`<div class=foot>${esc(r.definition)}</div>`;
 }
 
 // the live v12 shadow (shadow.public_export): counts, verdicts and links only, never a finding's text
