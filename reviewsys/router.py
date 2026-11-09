@@ -3,8 +3,11 @@
 - `review_requested` on a watched repo  -> priority head at the live PR head
 - `mention` whose comment says `@<bot> review` -> priority head (any repo the bot can
   read: repos without a skills entry get an ad hoc review)
-- `review_reply` from a trusted human under one of the bot's finding threads -> priority
-  head at the live PR head, so the reply is answered on its thread within one review cycle
+- `review_reply` from a trusted human under one of the bot's finding threads: on a reviewed
+  live head, the head re-opens at priority so the reply is answered on its thread (a
+  conversation when a final review stands); after a push nothing has reviewed yet ("fixed in
+  ..."), the push is reviewed like any other (debounced, in line, carried when its diff did
+  not change) and that review reads and answers the reply
 - comments/reviews on the bot's own PRs from trusted humans or CodeRabbit ->
   batched per (repo, pr) and delivered to the OpenClaw agent as one wake event
 
@@ -23,8 +26,8 @@ from .config import Config
 from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .dedupe import FINDING_MARKER_RE
 from .gh import Gh
-from .ingest import enqueue_head
-from .models import Trigger
+from .ingest import AUTOMATIC_TRIGGERS, enqueue_head, push_trigger
+from .models import HeadStatus, Trigger
 from .notify import Notifier
 
 log = logging.getLogger(__name__)
@@ -168,15 +171,19 @@ def _route_row(
                 _handled(conn, row["id"], "ignored", ts)
             return "ignored"
         with tx(conn):
-            res = enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REPLY, ts=ts)
-            if res == "noop" and _head_running(conn, repo, number, head):
-                # the same head is mid-review and its context predates this reply: leave the
+            # only a watched repo reviews its pushes on its own; elsewhere a reply still asks
+            res = _reply_after_push(conn, cfg, repo, number, head, ts) if watched else None
+            if res is None:
+                res = enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REPLY, ts=ts)
+            if res == "running" or (res == "noop" and _head_running(conn, repo, number, head)):
+                # the same head is mid-review and its context may predate this reply: leave the
                 # row unhandled so it re-opens the head once that run finishes (bounded)
                 if _too_old(row, ts):
                     _handled(conn, row["id"], "review_reply_expired", ts)
                     return "ignored"
                 return "review_reply_deferred"
-            _handled(conn, row["id"], "review_reply", ts)
+            action = "review_reply_queued" if res == "queued" else "review_reply"
+            _handled(conn, row["id"], action, ts)
             event(
                 conn,
                 "head.review_reply",
@@ -204,6 +211,29 @@ def _route_row(
     with tx(conn):
         _handled(conn, row["id"], "ignored", ts)
     return "ignored"
+
+
+def _reply_after_push(
+    conn: sqlite3.Connection, cfg: Config, repo: str, number: int, head: str, ts: str
+) -> str | None:
+    """The reply landed on a push nothing has reviewed yet (typically "fixed in <sha>" right
+    after it): no request to review that push sooner or harder. It keeps its automatic head
+    (queued here as ingest would queue it when ingest has not seen it yet), whose review reads
+    the threads and answers the reply; `worker._carry` does not carry over a reply no run has
+    read. "queued", or "running" when that head's run may have read the threads before the
+    reply; None when the live head is not such a push."""
+    h = conn.execute(
+        "SELECT status, trigger, queue FROM heads WHERE repo=? AND number=? AND sha=?",
+        (repo, number, head),
+    ).fetchone()
+    if h is None:
+        res = enqueue_head(conn, cfg, repo, number, head, push_trigger(conn, repo, number), ts=ts)
+        return "queued" if res == "created" else res  # noop: a skip label holds pushes back
+    if h["queue"] != "live" or h["trigger"] not in AUTOMATIC_TRIGGERS:
+        return None
+    if h["status"] == HeadStatus.QUEUED:
+        return "queued"
+    return "running" if h["status"] == HeadStatus.RUNNING else None
 
 
 def _replies_to_bot_finding(gh: Gh, comment: dict[str, Any], bot_login: str) -> bool | None:

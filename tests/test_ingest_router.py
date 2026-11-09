@@ -859,23 +859,155 @@ def test_review_reply_under_bot_finding_queues_priority_head(cfg, conn, gh, noti
     assert per_repo and per_repo > "2026-09-08T00:00:00Z"  # cursor advanced, per repo
     row = conn.execute("SELECT kind, actor, number FROM inbox").fetchone()
     assert (row["kind"], row["actor"], row["number"]) == ("review_reply", "knst", 7)
+    # no push since the review: the live head is the reviewed commit, the discussion moved
+    _reviewed(conn, cfg, 7, "f" * 40)
     gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
     stats = route_inbox(conn, cfg, gh, notifier)
     assert stats["review_reply"] == 1
     head = conn.execute(
-        "SELECT number, sha, trigger, priority, eligible_at, queued_at FROM heads"
+        "SELECT number, sha, status, trigger, priority, eligible_at, queued_at FROM heads"
     ).fetchone()
-    assert (head["number"], head["sha"], head["trigger"], head["priority"]) == (
-        7,
-        "f" * 40,
-        "review_reply",
-        1,
-    )
+    # re-opened at the front of the line; with a final review standing, the worker answers
+    # the threads in conversation mode (worker.run, `_standing_review`)
+    assert tuple(head)[:5] == (7, "f" * 40, "queued", "review_reply", 1)
     assert head["eligible_at"] <= head["queued_at"]  # no debounce
     assert (
         conn.execute("SELECT COUNT(*) FROM events WHERE kind='head.review_reply'").fetchone()[0]
         == 1
     )
+
+
+def _reviewed(conn, cfg, number, sha):
+    """`sha` was reviewed: its head is done and a final review of it stands."""
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", number, sha, Trigger.NEW_PUSH)
+        conn.execute("UPDATE heads SET status='done', finished_at='x' WHERE sha=?", (sha,))
+        conn.execute(
+            "INSERT INTO reviews (repo, number, sha, phase, github_review_id, event, posted_at) "
+            "VALUES ('dashpay/platform',?,?,'final',1,'COMMENTED','2026-09-08T00:00:00Z')",
+            (number, sha),
+        )
+
+
+def _reply_row(conn, cid, *, occurred, seen=None, number=7):
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                f"reply:{cid}",
+                "review_reply",
+                "dashpay/platform",
+                number,
+                "knst",
+                f"https://api.github.com/repos/dashpay/platform/pulls/comments/{cid}",
+                occurred,
+                seen or occurred,
+            ),
+        )
+
+
+def _route_reply_at(conn, cfg, gh, ts, source_id="reply:2"):
+    from reviewsys.router import _mention_re, _route_row
+
+    row = conn.execute("SELECT * FROM inbox WHERE source_id=?", (source_id,)).fetchone()
+    return _route_row(conn, cfg, gh, row, meta=gh.pr, mention_re=_mention_re("thepastaclaw"), ts=ts)
+
+
+def _finding_routes(gh, cid=2):
+    gh.routes[f"repos/dashpay/platform/pulls/comments/{cid}"] = _reply_comment(cid, 1)
+    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
+    }
+
+
+def test_reply_after_a_push_leaves_that_push_to_its_own_review(cfg, conn, gh, notifier):
+    """ "Fixed in <sha>" right after a push: the push is reviewed like any other (no priority,
+    the debounce intact, still carryable) and its review reads and answers the reply; the row
+    is done at once."""
+    old, new = "e" * 40, "f" * 40
+    _reviewed(conn, cfg, 7, old)
+    _finding_routes(gh)
+    gh.pr = {**gh.pr, "head": {"sha": new}}
+    _reply_row(conn, 2, occurred="2026-09-08T20:17:36Z")
+
+    # ingest has not seen the push yet: the reply queues it as ingest would
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply"
+    head = conn.execute(
+        "SELECT status, trigger, priority, queued_at, eligible_at FROM heads WHERE sha=?", (new,)
+    ).fetchone()
+    assert tuple(head)[:3] == ("queued", "new_push", 0)
+    assert parse_ts(head["eligible_at"]) - parse_ts(head["queued_at"]) == timedelta(minutes=30)
+    row = conn.execute("SELECT handled_at, action FROM inbox").fetchone()
+    assert row["handled_at"] and row["action"] == "review_reply_queued"
+    ev = conn.execute("SELECT detail FROM events WHERE kind='head.review_reply'").fetchone()
+    assert "on comment 1 -> queued" in ev["detail"]
+    # ingest's own pass over the same push changes nothing
+    with tx(conn):
+        assert enqueue_head(conn, cfg, "dashpay/platform", 7, new, Trigger.NEW_PUSH) == "noop"
+
+    # a second reply while the push waits in its debounce leaves it as it is
+    _reply_row(conn, 3, occurred="2026-09-08T20:19:00Z")
+    _finding_routes(gh, 3)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:20:00Z", "reply:3") == "review_reply"
+    assert conn.execute(
+        "SELECT trigger, priority, eligible_at FROM heads WHERE sha=?", (new,)
+    ).fetchone()[:] == ("new_push", 0, head["eligible_at"])
+
+
+def test_first_push_reply_queues_a_new_pr_head(cfg, conn, gh, notifier):
+    """No head was ever queued for the PR (a finding of the legacy pipeline): its first head
+    is a new PR, as ingest would make it."""
+    _finding_routes(gh)
+    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
+    _reply_row(conn, 2, occurred="2026-09-08T20:17:36Z")
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply"
+    assert conn.execute("SELECT trigger, priority FROM heads").fetchone()[:] == ("new_pr", 0)
+
+
+def test_reply_on_a_repo_reviewed_only_on_request_still_asks(cfg, conn, gh, notifier):
+    """A repo the bot does not watch (an ad hoc review) reviews no push on its own: a reply
+    there is a request, at priority, as before."""
+    repo = "dashpay/quorum-list-server"
+    assert repo not in cfg.enabled_repos
+    reply = _reply_comment(2, 1, repo=repo)
+    gh.routes[f"repos/{repo}/pulls/comments/2"] = reply
+    gh.routes[f"repos/{repo}/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**T**",
+    }
+    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) "
+            "VALUES ('reply:2','review_reply',?,7,'knst',?,?,?)",
+            (repo, reply["url"], reply["created_at"], reply["created_at"]),
+        )
+    assert route_inbox(conn, cfg, gh, notifier)["review_reply"] == 1
+    head = conn.execute("SELECT trigger, priority FROM heads").fetchone()
+    assert tuple(head) == ("review_reply", 1)
+
+
+def test_reply_while_the_push_review_runs_waits_for_it(cfg, conn, gh, notifier):
+    """The push's run may have read the threads before the reply: the row waits for the run
+    (bounded, as for any running head) and then re-opens the commit like any reviewed one,
+    whose conversation answers whatever the run did not."""
+    old, new = "e" * 40, "f" * 40
+    _reviewed(conn, cfg, 7, old)
+    _finding_routes(gh)
+    gh.pr = {**gh.pr, "head": {"sha": new}}
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 7, new, Trigger.NEW_PUSH)
+        conn.execute("UPDATE heads SET status='running' WHERE sha=?", (new,))
+    _reply_row(conn, 2, occurred="2026-09-08T20:17:36Z")
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:18:00Z") == "review_reply_deferred"
+    head = conn.execute("SELECT trigger, priority FROM heads WHERE sha=?", (new,)).fetchone()
+    assert tuple(head) == ("new_push", 0)  # never promoted: its carry stays possible
+    assert conn.execute("SELECT handled_at FROM inbox").fetchone()[0] is None
+    _reviewed(conn, cfg, 7, new)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T20:40:00Z") == "review_reply"
+    head = conn.execute("SELECT status, trigger, priority FROM heads WHERE sha=?", (new,))
+    assert tuple(head.fetchone()) == ("queued", "review_reply", 1)
 
 
 def test_review_reply_from_another_bot_never_queues_a_run(cfg, conn, gh, notifier):
@@ -1044,6 +1176,7 @@ def test_reply_fetch_failure_is_retried_not_dropped(cfg, conn, gh, notifier):
         )
     gh.routes["repos/dashpay/platform/pulls/comments/2"] = _reply_comment(2, 1)
     gh.pr = {**gh.pr, "head": {"sha": "f" * 40}}
+    _reviewed(conn, cfg, 7, "f" * 40)
     # the thread-root lookup fails transiently: row stays unhandled
     gh.fail_next = ["502 bad gateway"]
     gh.routes["repos/dashpay/platform/pulls/comments/1"] = {

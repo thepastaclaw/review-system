@@ -14,7 +14,7 @@ tested, one daemon, one SQLite file, no lock files.
 |---|---|
 | `daemon.py` | single-threaded tick loop: ingest, notify, route, supersede, reap, schedule, watchdog, gc |
 | `ingest.py` | GitHub GraphQL poll → `prs`/`heads`; notifications and inline-comment replies → `inbox` |
-| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding) or own-PR comment batches → OpenClaw wake |
+| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding on a reviewed commit) or own-PR comment batches → OpenClaw wake |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
 | `worker.py` | one run: worktree → (unchanged diff: carry the earlier review, done) → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
@@ -829,12 +829,27 @@ signal the system gets, and notifications do not carry a comment URL for it, so 
 cursor (`replies.cursor:<repo>`, trailing the poll start by 2 min so late-listed comments
 are still seen; dedupe is by comment id) and puts replies from non-bot users into
 `inbox` as `review_reply`. The router fetches the thread root; when it is a bot finding
-and the replier is a member/collaborator/contributor or in `trusted_reviewers`, the PR's
-live head is queued as priority with trigger `review_reply` (no debounce). An
-already-reviewed commit is re-opened for the same reason (`head.requeued`). A reply
-while that exact head is *running* is deferred until the run ends; a transient GitHub
-failure while looking up the thread root leaves the row for the next tick. Both waits
-are bounded by `DEFER_MAX` (6 h), after which the row is marked
+and the replier is a member/collaborator/contributor or in `trusted_reviewers`, what
+happens depends on the PR's live head:
+
+- **A push nothing has reviewed yet** on a watched repo (no head for it, or its
+  `new_pr`/`new_push` head is still queued; typically "Fixed in <sha>" right after the
+  push): no request for a sooner or harder review. The push keeps its automatic head
+  (normal priority, the push debounce intact); a push ingest has not seen yet is queued
+  here as ingest would. The row is done at once (`review_reply_queued`): the push's
+  review reads the threads with the reply and answers it there. It is not carried past
+  the reply: `worker._carry` refuses while a reply under a finding on the PR is newer than
+  the last `context` step of any of its runs that finished (`done`; less a minute), so
+  the push gets that review. On a repo reviewed only on request, a reply after a push
+  still asks for a review, as below.
+- **A reviewed commit** (or one carrying a review): it is re-opened at priority with
+  trigger `review_reply` (no debounce, `head.requeued`).
+
+A reply while the live head is mid-review (its automatic review, or a priority run; the
+run's context may predate the reply) waits until the run ends, then is routed as above
+(a carried push included: no run read the reply), and a transient GitHub failure
+while looking up the thread root leaves the row for the next tick. Both waits are
+bounded by `DEFER_MAX` (6 h), after which the row is marked
 `review_reply_expired` / `ignored_unfetchable`. Replies to other people's threads, on
 draft PRs, or on the bot's own PRs are not review triggers (the last go to the own-PR
 comment batch).
@@ -1213,6 +1228,8 @@ A run on an automatic head (`new_pr`, `new_push`) stops after checkout (step `ca
 event `head.carried`) when all of these hold:
 
 - the **immediately preceding** head on the PR has the same print;
+- no reply under a finding on the PR is newer than the last time a finished run read the
+  threads (see the reply routing above);
 - that head has a review, or carries one;
 - the newest review is a **final** review on the primary models: not preliminary (its
   Phase 2 is still owed, and the hygiene controller only counts final reviews), not

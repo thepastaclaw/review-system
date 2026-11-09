@@ -5,12 +5,13 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from reviewsys import audit, ci, labels, status, worker
-from reviewsys.db import kv_get, kv_set, now, tx
+from reviewsys.db import fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from reviewsys.ingest import carried_from, enqueue_head
 from reviewsys.models import RunStatus, Trigger
 from reviewsys.scheduler import schedule
@@ -405,3 +406,59 @@ def test_diff_print_sees_through_empty_commits_merges_and_rebases(tmp_path):
     changed = _commit(repo, {"f.txt": b"one\nthree\n"}, "fixup")
     assert _print(repo, changed) != reviewed
     assert wt.diff_print(repo, "0" * 40, changed) is None  # git cannot say
+
+
+def _reply_after_review(conn, gh, reviewed_at_offset: str) -> None:
+    """A trusted reply under one of the bot's findings, routed (`review_reply_queued`)."""
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at,"
+            " handled_at, action) VALUES ('reply:2','review_reply',?,1,'knst',?,?,?,?,"
+            "'review_reply_queued')",
+            (
+                REPO,
+                f"https://api.github.com/repos/{REPO}/pulls/comments/2",
+                *[reviewed_at_offset] * 3,
+            ),
+        )
+
+
+@pytest.mark.parametrize("when", ["before", "after", "read_by_a_failed_run"])
+def test_a_reply_no_run_has_read_stops_the_carry(cfg, conn, gh, reviewed, prints, when):
+    """ "Fixed in <sha>" on a push whose diff did not change: carrying would leave the reply
+    unanswered, so the push gets its review (which reads the threads and answers it). A reply
+    an earlier finished run already read does not stop the carry; one only a run that then
+    failed read does (it answered nothing)."""
+    prints.update({A: "p1", B: "p1"})
+    rid_a, _ = _review(cfg, conn, gh, reviewed, A)
+    (ctx_at,) = conn.execute("SELECT started_at FROM steps WHERE name='context'").fetchone()
+    at = parse_ts(ctx_at) + (timedelta(hours=-1) if when == "before" else timedelta(minutes=5))
+    _reply_after_review(conn, gh, fmt_ts(at))
+    if when == "read_by_a_failed_run":
+        later = fmt_ts(at + timedelta(minutes=10))
+        with tx(conn):
+            (head_id,) = conn.execute("SELECT head_id FROM runs WHERE id=?", (rid_a,)).fetchone()
+            rid = conn.execute(
+                "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
+                "VALUES (?,2,'failed','t',?,?)",
+                (head_id, later, later),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO steps (run_id, name, status, started_at) VALUES (?,'context','ok',?)",
+                (rid, later),
+            )
+    rid, _ = _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
+    if when == "before":
+        assert carried_from(conn, REPO, 1, B) == A
+    else:
+        assert _reviewed_itself(conn, rid) and carried_from(conn, REPO, 1, B) is None
+
+
+def test_a_reply_the_router_ignored_does_not_stop_the_carry(cfg, conn, gh, reviewed, prints):
+    prints.update({A: "p1", B: "p1"})
+    _review(cfg, conn, gh, reviewed, A)
+    _reply_after_review(conn, gh, fmt_ts(now_dt() + timedelta(minutes=5)))
+    with tx(conn):
+        conn.execute("UPDATE inbox SET action='ignored'")
+    _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
+    assert carried_from(conn, REPO, 1, B) == A
