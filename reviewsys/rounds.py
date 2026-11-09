@@ -230,15 +230,18 @@ def render(data: dict[str, Any]) -> str:
     if trend["weeks"]:
         lines.append("")
         lines.append("weekly trend by completion week, cells mean/median/n")
-        cell = 9
+
+        def text(w: dict[str, Any]) -> str:
+            return f"{w['mean']:.1f}/{w['median']:g}/{w['n']}" if w["n"] else "-"
+
+        series = [trend["overall"], *(r["weeks"] for r in trend["repos"])]
+        cell = 1 + max(
+            [len(w[-3:]) for w in trend["weeks"]] + [len(text(w)) for s in series for w in s]
+        )
         lines.append("".ljust(width) + "  " + "".join(w[-3:].rjust(cell) for w in trend["weeks"]))
 
         def row(label: str, weeks: list[dict[str, Any]]) -> str:
-            cells = [
-                (f"{w['mean']:.1f}/{w['median']:g}/{w['n']}" if w["n"] else "-").rjust(cell)
-                for w in weeks
-            ]
-            return label.ljust(width) + "  " + "".join(cells)
+            return label.ljust(width) + "  " + "".join(text(w).rjust(cell) for w in weeks)
 
         lines.append(row("ALL", trend["overall"]))
         lines.extend(row(r["repo"], r["weeks"]) for r in trend["repos"])
