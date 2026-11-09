@@ -88,6 +88,8 @@ class StepName(StrEnum):
     VERIFY2 = "verify2"
     FRESH_PHASE2 = "fresh_phase2"
     FRESH_VERIFY2 = "fresh_verify2"
+    # independent confirmation of a later round's new blockers on unchanged code (late.py)
+    CONFIRM = "confirm"
     PERSISTENCE = "persistence"  # audit: is each blocker still present on the base tip?
     CI_CHECK = "ci_check"  # does a check that failed after an APPROVE relate to the change?
     PUBLISH = "publish"

@@ -432,6 +432,9 @@ class FakeLanes:
         self.triage: Any = {"tier": "normal", "reasoning": "ordinary change"}
         self.conversation: Any = {"threads": []}
         self.ci_check: Any = {"related": "yes", "reason": "the failing test covers f.rs"}
+        # the late confirmation lane: title -> verdict ("blocking" by default), or a callable
+        # (reported briefs) -> answer
+        self.confirm: dict[str, str] | Callable[[list[dict[str, Any]]], Any] = {}
         self.broken_once: set[str] = set()
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
@@ -529,6 +532,24 @@ class FakeLanes:
             out = self.conversation
         elif spec.role == "ci_check":
             out = self.ci_check
+        elif spec.role == "confirm":
+            m = re.search(r"```json reported\n(.*?)\n```", spec.prompt, re.S)
+            reported = json.loads(m.group(1)) if m else []
+            if callable(self.confirm):
+                out = self.confirm(reported)
+            else:
+                verdicts = self.confirm
+                out = {
+                    "decisions": [
+                        {
+                            "id": r["id"],
+                            "verdict": verdicts.get(r["title"], "blocking"),
+                            "failure": "a reachable failure",
+                            "reason": "read the code",
+                        }
+                        for r in reported
+                    ]
+                }
         elif spec.role == "repair":
             # the broken payload is the original JSON with its closing brace removed
             out = json.loads(spec.prompt.split("Do not add fences.\n\n", 1)[1] + "}")

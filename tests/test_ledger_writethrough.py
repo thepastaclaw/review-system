@@ -24,7 +24,7 @@ SCENARIOS = [
     e2e.test_reply_on_legacy_finding_without_db_row_is_adjudicated,
     e2e.test_same_sha_rereview_withdraws_blocker_and_updates_verdict,
     e2e.test_conversation_withdrawing_the_only_finding_approves,
-    e2e.test_conversation_approves_only_once_no_suggestion_is_left,
+    e2e.test_conversation_approves_once_no_blocker_is_left,
     e2e.test_conversation_accepting_a_deferral_lifts_request_changes,
     e2e.test_conversation_concession_is_remembered_across_runs,
 ]

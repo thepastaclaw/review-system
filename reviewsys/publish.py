@@ -232,6 +232,12 @@ class Provenance:
     single_stage: bool = False
     # policy v12: the confirmation pass that ran on this head {roles, new}
     confirmation: dict[str, Any] | None = None
+    # the first full review ran every Phase-2 reviewer a second time, independently
+    fresh_first: bool = False
+    # a later round's new findings on code unchanged since the previous final review
+    # (late.py): {since, nits, followups, repeats, candidates, confirmed, unconfirmed,
+    # invalid, failed}
+    late: dict[str, Any] | None = None
 
 
 @dataclass(slots=True)
@@ -250,6 +256,8 @@ class ReviewModel:
     superseded_note: str | None = None
     extra_lines: list[str] = field(default_factory=list)
     rereview: bool = False
+    # policy v11: an approval with non-blocking findings says they can be fixed forward
+    fix_forward: bool = False
 
     @property
     def canonical_event(self) -> str:
@@ -374,6 +382,45 @@ def _phase1_choice_line(c: dict[str, Any]) -> str:
     return line
 
 
+def _late_line(d: dict[str, Any]) -> str:
+    """What a later round did with new findings on code unchanged since the last final review."""
+    parts: list[str] = []
+    n = d.get("candidates", 0)
+    if n and d.get("failed"):
+        parts.append(
+            f"{n} new blocker(s) stand as raised: the independent confirmation pass failed"
+        )
+    elif n:
+        outcome = ", ".join(
+            f"{d[k]} {label}"
+            for k, label in (
+                ("confirmed", "confirmed"),
+                ("unconfirmed", "not confirmed (now follow-up candidates)"),
+                ("invalid", "judged invalid (dropped)"),
+            )
+            if d.get(k)
+        )
+        earlier = (
+            f" ({d['remembered']} as an earlier confirmation decided, the file unchanged since)"
+            if d.get("remembered")
+            else ""
+        )
+        parts.append(
+            f"{n} new blocker(s) went to an independent confirmation pass (the final "
+            f"verifier's model in a fresh session, without its reasoning): {outcome}{earlier}"
+        )
+    for key, label in (
+        ("nits", "new nitpick(s) dropped"),
+        ("followups", "new suggestion(s) listed as follow-up candidates, not posted inline"),
+        ("repeats", "follow-up candidate(s) already listed by an earlier review, not repeated"),
+    ):
+        if d.get(key):
+            parts.append(f"{d[key]} {label}")
+    return f"- Code unchanged since the last final review (`{d.get('since', '')}`): " + (
+        "; ".join(parts) or "nothing new"
+    )
+
+
 def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     if p.conversation:
         return ([_degraded_line(p.degraded)] if p.degraded else []) + [
@@ -410,10 +457,17 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
             "- Single stage: Phase 1 and Phase 2 reviewed this head side by side, with no "
             "blocker gate between them (triage tier)"
         )
+    if p.fresh_first:
+        lines.append(
+            "- Second Phase-2 pass: on this first full review every Phase-2 reviewer also ran a "
+            "second, independent time, and the verifier weighed both sets"
+        )
     if p.fresh_final:
         lines.append(
             "- Fresh final gate: an independent Phase-2 review ran after iterative findings were reconciled"
         )
+    if p.late:
+        lines.append(_late_line(p.late))
     if p.confirmation:
         roles = ", ".join(f"`{r}`" for r in p.confirmation.get("roles") or [])
         lines.append(
@@ -492,6 +546,24 @@ def _counts_line(
     )
 
 
+def _followups_block(followups: list[Finding]) -> list[str]:
+    """The collapsed "Follow-up candidates (optional)" section, or nothing."""
+    if not followups:
+        return []
+    return [
+        "",
+        "<details>",
+        f"<summary>Follow-up candidates (optional) ({len(followups)})</summary>",
+        "",
+        "New non-blocking observations on code unchanged since the last full review. "
+        "No inline threads are opened for them and later reviews do not repeat them: fix "
+        "forward or track separately if they are worth it.",
+        "",
+        *(_finding_block(f) for f in followups),
+        "</details>",
+    ]
+
+
 def render(m: ReviewModel) -> str:
     if m.phase == "preliminary":
         title = "Preliminary review — Phase 1 blocker gate"
@@ -536,6 +608,16 @@ def render(m: ReviewModel) -> str:
         if not counts_line:
             counts_line = "🔴 0 blocking | 🟡 0 suggestion(s) | 💬 0 nitpick(s)"
         parts.append(counts_line)
+    optional = m.verified.followups or any(
+        f.severity != "blocking" for f in (*m.verified.findings, *m.verified.carried)
+    )
+    if m.fix_forward and optional and m.canonical_event == "APPROVE":
+        parts += [
+            "",
+            "**Approved:** nothing here blocks the merge. The non-blocking findings are "
+            "optional: fix them forward, in this PR or a follow-up, without waiting for "
+            "another review round.",
+        ]
     if m.skipped:
         # findings GitHub cannot take inline still have to reach the developer in full
         why = (
@@ -566,6 +648,7 @@ def render(m: ReviewModel) -> str:
             *(_finding_block(f) for f in m.verified.noted),
             "</details>",
         ]
+    parts += _followups_block(m.verified.followups)
     parts += [
         "",
         "<details>",
@@ -1663,6 +1746,8 @@ def render_verdict_update(
         parts += ["No longer blocking:", *(f"- {t}" for t in lifted_blockers), ""]
     if summary:
         parts += [summary, ""]
+    if verified.followups:
+        parts += [*_followups_block(verified.followups)[1:], ""]
     parts += [
         "_Same commit as the standing review; the inline threads above carry the per-finding "
         "outcome. This follow-up exists only to correct the verdict._",

@@ -11,6 +11,7 @@ import pytest
 
 from reviewsys import labels, publish, worker
 from reviewsys import lane as lane_mod
+from reviewsys.contract import Finding
 from reviewsys.daemon import Daemon
 from reviewsys.db import kv_get, kv_set, tx
 from reviewsys.ingest import enqueue_head
@@ -109,7 +110,8 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
     roles = [(s.role, s.model, s.effort) for s in lanes.calls]
     # prep (selection + triage in one lane, on the triage model), phase1
     # general+always-on+security (GLM @max, in parallel), verifier (Sol), phase2 x3 (astra
-    # @high for the `normal` tier), final verifier (astra, fixed high)
+    # @high for the `normal` tier) and, on this first full review, their second independent
+    # pass (fresh x3), then one final verifier over both sets (astra, fixed high)
     assert roles[0] == ("prep", "gpt-6-astra", "low")
     assert sorted(roles[1:4]) == [
         ("always-on", "glm-5.3-flash", "max"),
@@ -117,15 +119,18 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
         ("security-auditor", "glm-5.3-flash", "max"),
     ]
     assert roles[4] == ("verifier", "gpt-5.6-sol", "high")
-    assert [r[1:] for r in roles[5:8]] == [("gpt-6-astra", "high")] * 3
-    assert roles[8] == ("verifier", "gpt-6-astra", "high")
+    assert [r[1:] for r in roles[5:11]] == [("gpt-6-astra", "high")] * 6
+    assert roles[11:] == [("verifier", "gpt-6-astra", "high")]
+    fresh = [s.prompt for s in lanes.calls[8:11]]
+    assert all("fresh final review" in p for p in fresh)
     assert conn.execute("SELECT tier FROM runs WHERE id=?", (rid,)).fetchone()["tier"] == "normal"
     assert {r["effort"] for r in conn.execute("SELECT effort FROM lanes WHERE phase='phase2'")} == {
         "high"
     }
     assert len(gh.posted_reviews) == 1
     review = gh.posted_reviews[0]
-    assert review["event"] == "COMMENT" and review["commit_id"] == HEAD
+    # nothing blocks: an approval, its suggestion optional
+    assert review["event"] == "APPROVE" and review["commit_id"] == HEAD
     assert len(review["comments"]) == 1 and review["comments"][0]["line"] == 12
     # the inline footer names the lanes that raised the finding, not the verifier's legacy labels
     assert (
@@ -148,12 +153,13 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
         "verify1": "ok",
         "gate": "ok",
         "phase2": "ok",
+        "fresh_phase2": "ok",
         "verify2": "ok",
         "publish": "ok",
     }
     assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "done"
     assert conn.execute("SELECT COUNT(*) FROM posted_findings").fetchone()[0] == 1
-    assert conn.execute("SELECT SUM(tokens_in) FROM lanes").fetchone()[0] == 100 * 8
+    assert conn.execute("SELECT SUM(tokens_in) FROM lanes").fetchone()[0] == 100 * 11
     # gate comment went in_progress -> done
     assert gh.gate_bodies[0].splitlines()[1].startswith("🔍 Review in progress") and gh.gate_bodies[
         -1
@@ -259,50 +265,78 @@ def test_considered_dismissed_reaches_the_verifier_but_is_not_published(cfg, con
     assert "considered_dismissed" not in published and "drainage costs" not in published
 
 
-def test_incremental_review_requires_fresh_final_phase2_gate(cfg, conn, gh, lanes):
-    lanes.reviewer["default"] = {
-        "summary": "ok",
-        "findings": [],
-        "out_of_scope_findings": [],
-    }
-    lanes.verifier["preliminary"] = _verifier([])
-    lanes.verifier["final"] = _verifier([])
-
-    first_rid, first_status = _run(cfg, conn, gh, lanes)
-    assert first_status == RunStatus.DONE
-    first_call_count = len(lanes.calls)
-
-    # Re-open the same reviewed head as a manual/reply-triggered iterative pass.
+def _rerun_same_head(cfg, conn, gh, lanes):
+    """Re-open the reviewed head as a manual/reply-triggered iterative pass and run it."""
     with tx(conn):
         assert enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL) == "requeued"
-    (second_rid,) = schedule(conn, cfg, spawn=False)
-    assert (
-        worker.main(cfg, conn, second_rid, gh=gh, lane_runner=lanes, heartbeat=False)
-        == RunStatus.DONE
-    )
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    return rid
 
-    second_steps = {
+
+def _steps(conn, rid):
+    return {
         row["name"]: row["status"]
-        for row in conn.execute("SELECT name, status FROM steps WHERE run_id=?", (second_rid,))
+        for row in conn.execute("SELECT name, status FROM steps WHERE run_id=?", (rid,))
     }
-    assert second_steps["fresh_phase2"] == "ok"
-    assert second_steps["fresh_verify2"] == "ok"
-    fresh_calls = lanes.calls[first_call_count:]
-    assert sum(1 for call in fresh_calls if call.role == "verifier") == 3
-    fresh_prompts = [
-        call.prompt
-        for call in fresh_calls
-        if call.role == "general" and "fresh final review" in call.prompt
-    ]
-    assert fresh_prompts
-    assert "Prior findings requiring cumulative adjudication" not in fresh_prompts[0]
-    assert any(
-        call.role == "verifier" and "This is the fresh final gate" in call.prompt
-        for call in fresh_calls
-    )
+
+
+def test_the_first_full_review_runs_the_second_phase2_pass_and_a_clean_rereview_none(
+    cfg, conn, gh, lanes
+):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    first_rid, first_status = _run(cfg, conn, gh, lanes)
+    assert first_status == RunStatus.DONE
+    first = _steps(conn, first_rid)
+    # round 1: the fresh reviewers run before the one final verifier, which weighs both sets
+    assert first["fresh_phase2"] == "ok" and "fresh_verify2" not in first
+    assert sum(1 for c in lanes.calls if c.role == "verifier") == 2
+    final_verifier = [c for c in lanes.calls if c.role == "verifier"][-1]
+    assert "fresh:general" in final_verifier.prompt
+    assert "This is the fresh final gate" not in final_verifier.prompt
+    assert "Second Phase-2 pass" in gh.posted_reviews[0]["body"]
+    assert gh.posted_reviews[0]["event"] == "APPROVE"
+    calls = len(lanes.calls)
+
+    # a clean re-review after that approval: no fresh pass
+    second_rid = _rerun_same_head(cfg, conn, gh, lanes)
+    second = _steps(conn, second_rid)
+    assert "fresh_phase2" not in second and "fresh_verify2" not in second
+    assert sum(1 for c in lanes.calls[calls:] if c.role == "verifier") == 2
     assert (
         conn.execute("SELECT COUNT(*) FROM reviews WHERE run_id=?", (first_rid,)).fetchone()[0] == 1
     )
+
+
+def test_a_later_round_after_fixed_blockers_runs_the_fresh_final_gate(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([_blocking()])
+    first_rid, _ = _run(cfg, conn, gh, lanes)
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert _steps(conn, first_rid)["fresh_phase2"] == "ok"
+    calls = len(lanes.calls)
+
+    # the blocker is gone now: what it may have masked gets the unanchored fresh gate
+    fixed = {"finding_hash": Finding.from_dict(_blocking()).hash, "status": "FIXED", "reason": "ok"}
+    lanes.reviewer["default"] = {
+        **lanes.reviewer["default"],
+        "prior_finding_reconciliation": [fixed],
+    }
+    lanes.verifier["final"] = _verifier([])
+    second_rid = _rerun_same_head(cfg, conn, gh, lanes)
+    second = _steps(conn, second_rid)
+    assert second["fresh_phase2"] == second["fresh_verify2"] == "ok"
+    later = lanes.calls[calls:]
+    assert sum(1 for c in later if c.role == "verifier") == 3
+    fresh_prompts = [
+        c.prompt for c in later if c.role == "general" and "fresh final review" in c.prompt
+    ]
+    assert fresh_prompts
+    assert "Prior findings requiring cumulative adjudication" not in fresh_prompts[0]
+    assert any(c.role == "verifier" and "This is the fresh final gate" in c.prompt for c in later)
 
 
 def test_blocker_gate_publishes_preliminary_request_changes(cfg, conn, gh, lanes):
@@ -485,7 +519,11 @@ def test_cross_round_dedupe_posts_visible_summary(cfg, conn, gh, lanes):
 
 def test_already_published_for_sha_posts_rereview_summary(cfg, conn, gh, lanes):
     gh.posted_reviews.append(
-        {"id": 1, "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->"}
+        {
+            "id": 1,
+            "event": "APPROVE",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
     )
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["default"] = _verifier([])
@@ -524,7 +562,7 @@ def test_dry_run_records_what_it_would_have_posted(cfg, conn, gh, lanes):
     lanes.verifier["default"] = _verifier([_sugg()])
     rid, _ = _run(cfg, conn, gh, lanes, dry_run=True)
     pub = json.loads((cfg.runs_dir / f"run-{rid}" / "publication-final.json").read_text())
-    assert pub["event"] == "COMMENT" and "phase=final" in pub["body"]
+    assert pub["event"] == "APPROVE" and "phase=final" in pub["body"]
     assert [(f["title"], f["severity"], f["line_start"]) for f in pub["kept"]] == [
         ("Add a regression test", "suggestion", 12)
     ]
@@ -877,8 +915,17 @@ def test_adhoc_review_of_unlisted_repo(cfg, conn, gh, lanes):
     assert sel.role == "prep" and "security-auditor" in sel.prompt
     assert "always-on" not in sel.prompt, "always-run specialists are repo-specific"
     roles = [s.role for s in _reviewer_calls(lanes)]
-    # each phase runs its two lanes in parallel, in either order
-    assert sorted(roles[:2]) == sorted(roles[2:]) == ["general", "security-auditor"]
+    # each phase (and Phase 2's second pass) runs its two lanes in parallel, in either order
+    assert len(roles) == 6
+    assert (
+        sorted(roles[:2])
+        == sorted(roles[2:4])
+        == sorted(roles[4:])
+        == [
+            "general",
+            "security-auditor",
+        ]
+    )
     general = next(s for s in _reviewer_calls(lanes) if s.role == "general")
     assert "ad hoc review" in general.prompt and "PROJECT SKILL" not in general.prompt
     body = gh.posted_reviews[0]["body"]
@@ -1024,7 +1071,7 @@ def test_withdrawn_finding_stays_settled_on_a_later_full_review_head(cfg, conn, 
     reviewer_prompt = next(c.prompt for c in _reviewer_calls(lanes))
     assert '"prior_status": "WITHDRAWN"' in reviewer_prompt
     review = gh.posted_reviews[-1]
-    assert review["event"] == "COMMENT" and finding["title"] not in review["body"]
+    assert review["event"] == "APPROVE" and finding["title"] not in review["body"]
     assert (
         conn.execute(
             "SELECT stage,body FROM findings WHERE run_id=? AND hash=? ORDER BY id DESC LIMIT 1",
@@ -2139,9 +2186,9 @@ def test_conversation_withdrawing_the_only_finding_approves(cfg, conn, gh, lanes
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
 
 
-def test_conversation_approves_only_once_no_suggestion_is_left(cfg, conn, gh, lanes):
-    """Blocker withdrawn but a suggestion stands: COMMENT, saying why it is not an approval.
-    Withdrawing the suggestion in a later conversation then approves from that COMMENT."""
+def test_conversation_approves_once_no_blocker_is_left(cfg, conn, gh, lanes):
+    """Blocker withdrawn, a suggestion stands: an approval, saying the suggestion is optional.
+    A later conversation withdrawing the suggestion moves nothing (already approved)."""
     blocker, sugg = _blocking(), _sugg()
     bh = _seed_prior(conn, blocker, body="blocker body")
     sh = _seed_prior(conn, sugg)
@@ -2152,15 +2199,17 @@ def test_conversation_approves_only_once_no_suggestion_is_left(cfg, conn, gh, la
     ]
     _standing_final(gh)
     _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}])
-    assert [r["event"] for r in gh.posted_reviews[1:]] == ["COMMENT"]
-    assert "Not approved: 1 non-blocking finding(s)" in gh.posted_reviews[1]["body"]
-    # the blocker thread is resolved now (gone); the suggestion gets a reply and is withdrawn
+    assert [r["event"] for r in gh.posted_reviews[1:]] == ["APPROVE"]
+    assert (
+        "The 1 non-blocking finding(s) still standing are optional"
+        in (gh.posted_reviews[1]["body"])
+    )
+    assert "CHANGES_REQUESTED -> APPROVE" in _updates(conn)[-1]
     gh.threads = [
         _finding_thread(sh, sugg["title"], 810, [{**KNST, "id": 902}], label="🟡 Suggestion")
     ]
     _converse(cfg, conn, gh, lanes, [{"finding_hash": sh, **WITHDRAW}], first=False)
-    assert [r["event"] for r in gh.posted_reviews[1:]] == ["COMMENT", "APPROVE"]
-    assert "COMMENTED -> APPROVE" in _updates(conn)[-1]
+    assert [r["event"] for r in gh.posted_reviews[1:]] == ["APPROVE"]
 
 
 def _carried_publication(conn, gh, blocker, *, earlier_round):
@@ -2609,18 +2658,19 @@ def test_same_sha_rereview_withdraws_blocker_and_updates_verdict(cfg, conn, gh, 
     # follow-up review corrects the verdict without re-posting inline comments
     assert len(gh.posted_reviews) == 2
     upd = gh.posted_reviews[1]
-    assert upd["event"] == "COMMENT" and upd["comments"] == []
+    # nothing blocks any more: the standing suggestion does not hold the approval back
+    assert upd["event"] == "APPROVE" and upd["comments"] == []
     assert "## Re-review after discussion" in upd["body"]
-    assert "Standing review was `CHANGES_REQUESTED`; this re-review is `COMMENT`" in upd["body"]
+    assert "Standing review was `CHANGES_REQUESTED`; this re-review is `APPROVE`" in upd["body"]
     assert f"- {blocker['title']}" in upd["body"]
     assert (
         conn.execute(
-            "SELECT COUNT(*) FROM reviews WHERE event='COMMENT' AND run_id=?", (rid,)
+            "SELECT COUNT(*) FROM reviews WHERE event='APPROVE' AND run_id=?", (rid,)
         ).fetchone()[0]
         == 1
     )
     ev = conn.execute("SELECT detail FROM events WHERE kind='review.verdict_updated'").fetchone()
-    assert ev and "CHANGES_REQUESTED -> COMMENT" in ev["detail"]
+    assert ev and "CHANGES_REQUESTED -> APPROVE" in ev["detail"]
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
 
 
@@ -2638,7 +2688,7 @@ def test_same_sha_rereview_with_unchanged_verdict_posts_no_update(cfg, conn, gh,
     gh.posted_reviews.append(
         {
             "id": 4242,
-            "event": "COMMENT",
+            "event": "APPROVE",
             "html_url": "https://gh/r/4242",
             "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
         }
@@ -3502,7 +3552,7 @@ def test_fatal_phase1_error_still_fails_the_run(cfg, conn, gh, lanes, monkeypatc
     assert step["status"] == "failed"
 
 
-def test_a_later_full_review_voids_older_concessions(conn):
+def test_a_later_full_review_voids_older_concessions(cfg, conn):
     """Conversation run 1 conceded X; full review run 2 of the same sha re-posted X. A later
     concession of Y must not count X as lifted: the full review re-adjudicated it."""
     from types import SimpleNamespace
@@ -3531,7 +3581,9 @@ def test_a_later_full_review_voids_older_concessions(conn):
                 worker._FINDINGS_INSERT,
                 (rid, "final", stage, h, "f.rs", 1, 1, "blocking", None, "general", h, "", None),
             )
-    ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1, sha=HEAD, open_threads={})
+    ctx = SimpleNamespace(
+        cfg=cfg, conn=conn, repo="dashpay/platform", number=1, sha=HEAD, open_threads={}
+    )
     assert worker._open_blockers(ctx, "final", lifted={"yyy"}) == 1  # type: ignore[arg-type]
     # a concession made after that full review counts again
     with tx(conn):
@@ -3577,13 +3629,13 @@ def test_the_same_sha_rereview_writes_its_artifact_before_posting(
     """M10: a failed artifact write after the post can never fail the run (whose retry would
     post the COMMENT again): the body is on disk before the post, a later write error is
     ignored."""
-    # a COMMENT stands for this commit and the re-review finds a suggestion again: the
+    # an APPROVE stands for this commit and the re-review finds a suggestion again: the
     # verdict does not move, so the re-review summary posts as an informational COMMENT
     gh.posted_reviews.append(
         {
             "id": 1,
             "body": f"<!-- thepastaclaw-review v1 phase=final sha={HEAD} -->",
-            "event": "COMMENT",
+            "event": "APPROVE",
         }
     )
     lanes.reviewer["default"] = {
@@ -3789,10 +3841,10 @@ def test_full_review_keeps_a_deferred_finding_standing_until_it_is_tracked(cfg, 
     assert "give the row a `tracking` field" in prompt
 
 
-def test_a_held_suggestion_is_not_approved_over_nor_watched_for_ci(cfg, conn, gh, lanes):
+def test_a_held_suggestion_stands_but_does_not_hold_the_approval(cfg, conn, gh, lanes):
     """The verifier approved with a suggestion lifted as deferred; held for tracking, the
-    suggestion stands again, so the verdict is COMMENT, and no CI watch (ci.py) is kept for
-    an APPROVE that was never published."""
+    suggestion stands again, but a suggestion never holds an approval back: APPROVE, and its
+    CI is watched (ci.py)."""
     from reviewsys import ci
 
     s = _sugg()
@@ -3821,9 +3873,9 @@ def test_a_held_suggestion_is_not_approved_over_nor_watched_for_ci(cfg, conn, gh
     _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
     assert status == RunStatus.DONE
     review = gh.posted_reviews[-1]
-    assert "phase=final" in review["body"] and review["event"] == "COMMENT"
+    assert "phase=final" in review["body"] and review["event"] == "APPROVE"
     assert "Needs a tracking issue before it can be deferred (1)" in review["body"]
-    assert ci.load(conn, "dashpay/platform", 1, HEAD) is None
+    assert ci.load(conn, "dashpay/platform", 1, HEAD) is not None
 
 
 def test_full_review_lifts_a_deferral_tracked_in_its_thread(cfg, conn, gh, lanes):

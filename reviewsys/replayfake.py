@@ -150,6 +150,15 @@ class FakeLanes:
             return {"tier": "normal", "reasoning": "fake"}
         if spec.role in ("conversation", "thread"):
             return {"threads": []}
+        if spec.role == "confirm":
+            m = re.search(r"```json reported\n(.*?)\n```", p, re.S)
+            reported = json.loads(m.group(1)) if m else []
+            return {
+                "decisions": [
+                    {"id": r["id"], "verdict": "blocking", "failure": "fake", "reason": "fake"}
+                    for r in reported
+                ]
+            }
         prior = _prior(p)
         if spec.role == "verifier":
             return {

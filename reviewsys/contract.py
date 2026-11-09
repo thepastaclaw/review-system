@@ -216,6 +216,9 @@ class VerifierOutput:
     carried: list[Finding] = field(default_factory=list)
     # later-round non-blocking findings collapsed into "Also noticed" (`late_nonblocking` note)
     noted: list[Finding] = field(default_factory=list)
+    # policy v11 later rounds (late.py): new non-blocking findings on code unchanged since the
+    # previous final review, listed once in the body as optional follow-ups, never posted inline
+    followups: list[Finding] = field(default_factory=list)
     # the code rules' account of this answer (`rules.Outcome`): matches, corroborations
     rules: Any = None
 

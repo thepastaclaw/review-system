@@ -106,7 +106,8 @@ def test_reviewers_of_a_phase_run_side_by_side(cfg, conn, gh, lanes):
         for r in conn.execute("SELECT phase FROM lanes WHERE run_id=? ORDER BY id", (rid,))
         if r["phase"] in ("phase1", "phase2")
     ]
-    assert phases == ["phase1"] * 3 + ["phase2"] * 3, "a phase waits for all its lanes"
+    # Phase 2 and its second pass (the first full review) are two phases of three lanes
+    assert phases == ["phase1"] * 3 + ["phase2"] * 6, "a phase waits for all its lanes"
 
 
 def test_phase_parallelism_caps_lanes_per_run(cfg, conn, gh, lanes):
@@ -585,5 +586,6 @@ def test_parallel_lanes_on_a_dry_pool_flip_the_run_once(
         "SELECT role, model FROM lanes WHERE run_id=? AND phase='phase2' AND status='completed'",
         (rid,),
     ).fetchall()
-    assert sorted(r["role"] for r in done) == sorted(REVIEWER_ROLES)
+    # Phase 2 and its second pass, every lane of both on the stand-in
+    assert sorted(r["role"] for r in done) == sorted([*REVIEWER_ROLES] * 2)
     assert {r["model"] for r in done} == {td.MUSE}

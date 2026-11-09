@@ -90,7 +90,16 @@ TOKEN_ENV = "REVIEWSYS_REPLAY_GH_TOKEN"
 TOKEN_VARS = (TOKEN_ENV, "GH_TOKEN", "GITHUB_TOKEN")
 LANE_DISALLOWED_TOOLS = ("WebFetch", "WebSearch")
 # findings stages a later run reads from earlier ones (prior findings, standing verdicts)
-SEED_STAGES = ("posted", "conceded", "verified", "verified-fresh")
+SEED_STAGES = (
+    "posted",
+    "conceded",
+    "verified",
+    "verified-fresh",
+    # policy v11 later rounds (late.py): what was listed, and confirmation verdicts it keeps
+    "followup",
+    "late-unconfirmed",
+    "late-invalid",
+)
 # events the worker reads about an earlier run (besides each PR's `thread.answered`): what
 # makes the standing review strong enough to approve over under v12 (`worker._strength_row`)
 RUN_EVENT_KINDS = (
