@@ -524,8 +524,8 @@ def correction_prompt(
             lines.append(
                 "- every STILL_VALID hash is carried by exactly one entry in `findings` whose "
                 "`finding_hash` is that hash and whose `title` equals its `original_title`; no "
-                "other finding carries a prior hash (FIXED, OUTDATED, WITHDRAWN and "
-                "INTENTIONALLY_DEFERRED ones are not repeated in `findings`)"
+                "other finding carries a prior hash (FIXED, OUTDATED, WITHDRAWN, "
+                "INTENTIONALLY_DEFERRED and DISPUTED ones are not repeated in `findings`)"
             )
         lines += ["", "Prior findings:", "```json", json.dumps(hashes, indent=1), "```"]
     lines += [

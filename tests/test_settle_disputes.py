@@ -107,7 +107,7 @@ def test_a_dispute_is_answered_on_its_argument_then_left_to_the_maintainers(cfg,
     assert f"**Still applies** (re-reviewed at `aaaaaaaa`): {ENGAGED}" in answer["body"]
     assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
     memo = json.loads(kv_get(conn, f"dispute.answered:dashpay/platform#1:{h}"))
-    assert memo == {"reply": "901", "standing": True}
+    assert memo == {"reply": "901", "standing": True, "sha": HEAD}
 
     # next push: nobody replied since the answer and the review would carry it again as is
     gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(answer["body"])))
@@ -200,6 +200,108 @@ def test_a_reintroduction_revives_a_disputed_finding(cfg, conn, gh, lanes):
         "SELECT 1 FROM findings WHERE run_id=? AND hash=? AND stage='posted'", (rid, h)
     ).fetchone()
     assert posted
+    # the revived finding's discussion starts over: its old answered dispute is forgotten
+    assert kv_get(conn, f"dispute.answered:dashpay/platform#1:{h}") is None
+
+
+def test_a_push_that_changes_the_disputed_code_is_new_evidence(cfg, conn, gh, lanes, monkeypatch):
+    h, blocker = _disputed_round_one(cfg, conn, gh, lanes)
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(gh.replies[0]["body"])))
+    moved = []
+    monkeypatch.setattr(
+        worker, "_lines_changed", lambda ctx, a, b, file, ls, le: moved.append((a, b)) or True
+    )
+    _lanes(lanes, h, blocker, "STILL_VALID", reason="The partial fix still misses the clamp.")
+    _review(cfg, conn, gh, lanes, C)
+    assert moved and moved[0] == (C, HEAD)  # this head's lines, against the answered head
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
+
+
+def _second_thread(gh, h, title, root_id, replies, *, label="🟡 Suggestion"):
+    gh.threads.append(_finding_thread(h, title, root_id, replies, label=label))
+    gh.inline.append(
+        {
+            **gh.inline[0],
+            "id": root_id,
+            "node_id": f"N{root_id}",
+            "html_url": f"https://github.com/dashpay/platform/pull/1#discussion_r{root_id}",
+            "body": gh.threads[-1]["comments"]["nodes"][0]["body"],
+        }
+    )
+
+
+def _run_conversation(cfg, conn, gh, lanes, sha, threads):
+    from reviewsys.ingest import enqueue_head
+    from reviewsys.models import Trigger
+    from reviewsys.scheduler import schedule
+
+    lanes.conversation = {"threads": threads}
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, sha, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == (
+        RunStatus.DONE
+    )
+
+
+def test_discussion_never_approves_over_a_disputed_blocker(cfg, conn, gh, lanes):
+    """The full review left a blocker DISPUTED; a later deferral of the last suggestion on the
+    same commit lifts everything else, and still does not approve."""
+    blocker, sugg = _blocking(), _sugg()
+    bh, sh = _seed_prior(conn, blocker), _seed_prior(conn, sugg)
+    _thread(gh, bh, blocker["title"], [DISPUTE])
+    _second_thread(gh, sh, sugg["title"], 910, [])
+    rows = [
+        {"finding_hash": bh, "status": "STILL_VALID", "reason": ENGAGED, "disputed": True},
+        {"finding_hash": sh, "status": "STILL_VALID", "reason": "Still missing."},
+    ]
+    both = [{**blocker, "finding_hash": bh}, {**sugg, "finding_hash": sh}]
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": both,
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": rows,
+    }
+    lanes.verifier["default"] = {**_verifier(both), "prior_finding_reconciliation": rows}
+    _review(cfg, conn, gh, lanes, HEAD)
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(gh.replies[0]["body"])))
+    _review(cfg, conn, gh, lanes, C)
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"
+    assert "### Disputed — left to maintainers (1)" in gh.posted_reviews[-1]["body"]
+    tracked = "deferring; tracked in https://github.com/dashpay/platform/issues/4321"
+    gh.threads[1]["comments"]["nodes"].append(_gql_comment({**KNST, "id": 911, "body": tracked}))
+    defer = {
+        "finding_hash": sh,
+        "status": "INTENTIONALLY_DEFERRED",
+        "reply": "Deferring it.",
+        "tracking": {"url": "https://github.com/dashpay/platform/issues/4321"},
+    }
+    _run_conversation(cfg, conn, gh, lanes, C, [defer])
+    assert "Tracked in https://github.com/dashpay/platform/issues/4321" in gh.replies[-1]["body"]
+    assert all(r["event"] != "APPROVE" for r in gh.posted_reviews)
+    last = conn.execute("SELECT event FROM reviews ORDER BY id DESC LIMIT 1").fetchone()
+    assert last["event"] != "APPROVE"
+
+
+def test_a_reply_on_a_disputed_thread_keeps_it_settled(cfg, conn, gh, lanes):
+    h, _blocker = _disputed_round_one(cfg, conn, gh, lanes)
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(gh.replies[0]["body"])))
+    _lanes(lanes, h, _blocker, "STILL_VALID")
+    _review(cfg, conn, gh, lanes, C)
+    closing = gh.replies[-1]["body"]
+    gh.threads[0]["comments"]["nodes"] += [
+        _gql_comment(_bot(closing, id=951, at="y2")),
+        _gql_comment({**KNST, "id": 903, "created_at": "z", "body": "Thanks, we'll decide."}),
+    ]
+    row = {"finding_hash": h, "status": "STILL_VALID", "reply": "Happy to help.", "disputed": True}
+    _run_conversation(cfg, conn, gh, lanes, C, [row])
+    prompt = next(c.prompt for c in lanes.calls if c.role == "conversation")
+    assert '"already_settled_as": "DISPUTED"' in prompt
+    assert "Happy to help." in gh.replies[-1]["body"]
+    assert converse.DISPUTE_REPLY not in gh.replies[-1]["body"]  # not settled a second time
+    root = gh.threads[0]["comments"]["nodes"][0]["body"]
+    assert "⚖️ **Disputed** (left to the maintainers; not blocking)" in root
 
 
 def test_the_contract_keeps_disputed_for_settled_disputes():
@@ -276,19 +378,28 @@ def _deferral_round_one(cfg, conn, gh, lanes, finding, *, label, reply):
     return h
 
 
-def test_a_suggestion_deferred_without_a_link_is_accepted_after_one_ask(cfg, conn, gh, lanes):
+@pytest.mark.parametrize(
+    "restated, says",
+    [
+        ("STILL_VALID", converse.UNTRACKED_SUGGESTION_REPLY),  # the verifier forgot the deferral
+        ("INTENTIONALLY_DEFERRED", "Fine to do later."),  # the verifier deferred it again
+    ],
+)
+def test_a_suggestion_deferred_without_a_link_is_accepted_after_one_ask(
+    cfg, conn, gh, lanes, restated, says
+):
     """platform#5749: a suggestion deferred without a link was restated in ten summaries."""
     sugg = _sugg()
     author = {**KNST, "author": "someone", "association": "CONTRIBUTOR", "body": "later"}
     h = _deferral_round_one(cfg, conn, gh, lanes, sugg, label="🟡 Suggestion", reply=author)
-    _lanes(lanes, h, sugg, "STILL_VALID", reason="Still missing.")
+    _lanes(lanes, h, sugg, restated, reason="Fine to do later.")
     _review(cfg, conn, gh, lanes, C)
     body = gh.posted_reviews[-1]["body"]
     assert sugg["title"] not in body and "Awaiting tracking link" not in body
     deferred = gh.replies[-1]["body"]
-    assert f"**Deferred** (re-reviewed at `cccccccc`): {converse.UNTRACKED_SUGGESTION_REPLY}" in (
-        deferred
-    )
+    assert f"**Deferred** (re-reviewed at `cccccccc`): {says}" in deferred
+    root = gh.threads[0]["comments"]["nodes"][0]["body"]
+    assert "⏭️ **Deferred**" in root and "Needs a tracking issue" not in root
     row = conn.execute(
         "SELECT body FROM findings WHERE stage='conceded' AND hash=? ORDER BY id DESC", (h,)
     ).fetchone()

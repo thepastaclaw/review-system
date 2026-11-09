@@ -222,10 +222,10 @@ def has_standing(comment: dict[str, Any] | None, author: str = "") -> bool:
     return bool(author) and str(comment.get("author") or "").lower() == author.lower()
 
 
-def latest_human(thread: dict[str, Any]) -> dict[str, Any] | None:
-    """The newest human reply on a finding thread (other bots left out), or None."""
+def latest_has_standing(thread: dict[str, Any], author: str = "") -> bool:
+    """The newest human reply on a finding thread (other bots left out) has standing."""
     replies = thread.get("replies") or []
-    return replies[-1] if replies else None
+    return bool(replies) and has_standing(replies[-1], author)
 
 
 def _maintainer_spoke_last(thread: dict[str, Any]) -> bool:
@@ -478,20 +478,25 @@ def accept_deferrals(
 
 
 def settle_disputes(
-    out: ConversationOutput, threads: dict[str, dict[str, Any]], *, author: str
+    out: ConversationOutput,
+    threads: dict[str, dict[str, Any]],
+    *,
+    author: str,
+    settled: frozenset[str] | set[str] = frozenset(),
 ) -> ConversationOutput:
     """A finding whose dispute the bot already answered once (`dispute_answered` on its thread)
     and that a maintainer or the PR `author` still disputes (the lane's STILL_VALID or NO_REPLY
     marked `disputed`) is DISPUTED: one closing reply, then it is left to the maintainers
-    instead of being argued again."""
+    instead of being argued again. A thread in `settled` is lifted already."""
     outcomes = dict(out.outcomes)
     for h, o in out.outcomes.items():
         t = threads[h]
         if (
-            t.get("dispute_answered")
+            h not in settled
+            and t.get("dispute_answered")
             and o.disputed
             and o.status in {"STILL_VALID", "NO_REPLY"}
-            and has_standing(latest_human(t), author)
+            and latest_has_standing(t, author)
         ):
             outcomes[h] = dataclasses.replace(o, status=DISPUTED, reply=DISPUTE_REPLY)
     return ConversationOutput(outcomes=outcomes)

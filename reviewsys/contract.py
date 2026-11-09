@@ -442,10 +442,10 @@ def _settled_finding_problems(
     findings: list[Finding],
     settled_hashes: set[str],
     still_valid: set[str],
-    disputed: set[str] | None = None,
+    disputed: set[str],
 ) -> list[str]:
     problems: list[str] = []
-    unsettled_disputed = (disputed or set()) - settled_hashes
+    unsettled_disputed = disputed - settled_hashes
     if unsettled_disputed:
         problems.append(
             "DISPUTED is only for a prior finding already settled as disputed: "

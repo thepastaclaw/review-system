@@ -308,6 +308,7 @@ def _ai_prompt(
     """The agent prompt: the guidance, then every finding to act on by file. New findings come
     with their text; a carried one (folded onto its existing thread, or policy v12's standing
     issues) is listed with its thread only, so it never reads as new."""
+    # the thread a carried finding is on ("" when unknown); None marks a new finding
     entries: list[tuple[Finding, str | None]] = [(f, None) for f in findings]
     entries += [
         (s.finding, s.html_url or "") for s in suppressed if s.action != "deduped_same_batch_root"
@@ -323,10 +324,11 @@ def _ai_prompt(
         lines.append(f"In `{path}`:")
         for f, thread in items:
             lines.append(f"- [{f.severity.upper()}] {_location(f)}: {f.title}")
+            link = f"; thread: {thread}" if thread else ""
             if _awaiting(f):
-                lines.append(f"  ({_AWAITING_NOTE}{f'; thread: {thread}' if thread else ''})")
+                lines.append(f"  ({_AWAITING_NOTE}{link})")
             elif thread is not None:
-                lines.append(f"  (carried{f'; thread: {thread}' if thread else ''})")
+                lines.append(f"  (carried{link})")
             else:
                 if f.extra.get("thread_url"):
                     lines.append(f"  (existing thread: {f.extra['thread_url']})")
@@ -536,13 +538,15 @@ _CARRIED_STATUS = {
     "deferral_pending": " (a deferral was proposed; it needs a maintainer's call)",
     "resolved": " (thread resolved by hand; it still counts until withdrawn or fixed)",
 }
-# how dedupe folded a finding onto an earlier thread -> its `_CARRIED_STATUS`
-_FOLDED_STATUS = {
-    "deduped_existing_resolved_thread": "resolved",
-    "replied_to_resolved_thread": "resolved",
-    "would_reply_to_resolved_thread": "resolved",
-    "failed_to_reply_to_resolved_thread": "resolved",
-}
+# dedupe folded these onto a thread a human resolved
+_FOLDED_ON_RESOLVED = frozenset(
+    {
+        "deduped_existing_resolved_thread",
+        "replied_to_resolved_thread",
+        "would_reply_to_resolved_thread",
+        "failed_to_reply_to_resolved_thread",
+    }
+)
 # a second finding of this batch on a root another one already speaks for
 _BATCH_ALIASES = frozenset({"deduped_same_batch_root", "deduped_same_batch_existing_thread"})
 
@@ -550,8 +554,8 @@ _BATCH_ALIASES = frozenset({"deduped_same_batch_root", "deduped_same_batch_exist
 def _folded(s: Suppressed) -> Finding:
     """A finding dedupe folded onto its earlier thread, as `_carried_line` shows it."""
     extra = {**s.finding.extra, "thread_url": s.html_url or s.finding.extra.get("thread_url")}
-    if s.action in _FOLDED_STATUS:
-        extra["status"] = _FOLDED_STATUS[s.action]
+    if s.action in _FOLDED_ON_RESOLVED:
+        extra["status"] = "resolved"
     return dataclasses.replace(s.finding, extra=extra)
 
 
