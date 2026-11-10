@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-10T03:18:01Z",
-  "generated_at": "2026-11-10T03:18:01Z",
+  "data_as_of": "2026-11-10T03:19:01Z",
+  "generated_at": "2026-11-10T03:19:02Z",
   "history": {
     "daily": [
       {
@@ -326,7 +326,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 24271,
+        "count": 24274,
         "severity": "blocking"
       },
       {
@@ -334,7 +334,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 30423,
+        "count": 30435,
         "severity": "suggestion"
       }
     ],
@@ -379,6 +379,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "lane.corrected",
+        "number": 5775,
+        "repo": "dashpay/platform",
+        "run_id": 9572,
+        "ts": "2026-11-10T03:18:12Z"
+      },
       {
         "detail": null,
         "kind": "gc.run",
@@ -690,14 +698,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-11-10T01:39:52Z"
-      },
-      {
-        "detail": null,
-        "kind": "run.cancelled",
-        "number": 5815,
-        "repo": "dashpay/platform",
-        "run_id": 9569,
-        "ts": "2026-11-10T01:39:37Z"
       }
     ],
     "tokens_by_effort": [
@@ -715,9 +715,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 29278,
-        "tokens_in": 79939152570,
-        "tokens_out": 907434065
+        "lanes": 29279,
+        "tokens_in": 79948098149,
+        "tokens_out": 907462382
       },
       {
         "effort": "medium",
@@ -775,18 +775,18 @@
         "tokens_out": 49404832
       },
       {
-        "avg_tokens_per_lane": 1858078.0,
-        "lanes": 35819,
+        "avg_tokens_per_lane": 1858277.0,
+        "lanes": 35820,
         "model": "gpt-6.1-sol",
-        "tokens_in": 66249331952,
-        "tokens_out": 305174259
+        "tokens_in": 66258277531,
+        "tokens_out": 305202576
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 9572,
-        "tokens_in": 24111849,
-        "tokens_out": 228170
+        "tokens_in": 33057428,
+        "tokens_out": 256487
       },
       {
         "run_id": 9571,
@@ -1285,16 +1285,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14435914,
+      "avg_tokens_per_completed_review": 14437121,
       "completed_reviews": 7434,
-      "findings": 57471,
+      "findings": 57486,
       "findings_posted": 8766,
       "reviews": 8960,
       "reviews_imported": 2245,
       "runs": 9573,
-      "tokens_in": 106166206888,
-      "tokens_out": 1150375893,
-      "tokens_total": 107316582781
+      "tokens_in": 106175152467,
+      "tokens_out": 1150404210,
+      "tokens_total": 107325556677
     }
   },
   "live": {
@@ -1303,12 +1303,12 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-11-10T08:56:48Z",
-        "deadline_in_seconds": 20327,
+        "deadline_in_seconds": 20267,
         "degraded": false,
-        "elapsed_seconds": 1273,
+        "elapsed_seconds": 1333,
         "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-11-10T03:17:59Z",
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-11-10T03:19:00Z",
         "id": 9572,
         "lanes": [
           {
@@ -1380,29 +1380,39 @@
             "status": "completed",
             "tokens_in": 6146136,
             "tokens_out": 117372
+          },
+          {
+            "attempt": 1,
+            "effort": "xhigh",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "platform-versioning",
+            "status": "corrected",
+            "tokens_in": 8945579,
+            "tokens_out": 28317
           }
         ],
         "live_lanes": [
           {
-            "effort": "xhigh",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "platform-versioning (correction 1)",
-            "since_seconds": 32,
+            "role": "verifier",
+            "since_seconds": 49,
             "state": "running"
           }
         ],
         "number": 5775,
-        "overdue": true,
-        "phase": "phase2",
+        "overdue": false,
+        "phase": "verify2",
         "pr_url": "https://github.com/dashpay/platform/pull/5775",
         "priority": true,
-        "progress": 0.735,
+        "progress": 0.764,
         "queue": "live",
         "queued_at": "2026-11-10T02:55:56Z",
-        "remaining_seconds": 459,
+        "remaining_seconds": 410,
         "repo": "dashpay/platform",
         "sha": "513faddae067768af5d9ebc645f2f772a5c3ca76",
         "started_at": "2026-11-10T02:56:48Z",
@@ -1459,15 +1469,13 @@
                 "tenderdash-consensus-security"
               ]
             },
-            "lanes_done": 5,
-            "lanes_left": [
-              "platform-versioning"
-            ],
+            "lanes_done": 6,
+            "lanes_left": [],
             "lanes_total": 6,
             "name": "phase2",
-            "seconds": 1245,
+            "seconds": 1256,
             "started_at": "2026-11-10T02:57:16Z",
-            "status": "running"
+            "status": "ok"
           },
           {
             "info": {
@@ -1483,15 +1491,21 @@
             "seconds": 1209,
             "started_at": "2026-11-10T02:57:16Z",
             "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 49,
+            "started_at": "2026-11-10T03:18:12Z",
+            "status": "running"
           }
         ],
         "tier": "critical",
         "title": "fix(drive-abci)!: follow operator payout changes and repair operator keys at protocol 15",
-        "tokens_in": 24111849,
-        "tokens_out": 228170,
+        "tokens_in": 33057428,
+        "tokens_out": 256487,
         "trigger": "review_reply",
         "upcoming": [
-          "verify2",
           "fresh_phase2",
           "fresh_verify2",
           "publish"
@@ -1598,12 +1612,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1325,
+        "age_seconds": 1385,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-10T03:25:56Z",
-        "eligible_in_seconds": 475,
+        "eligible_in_seconds": 415,
         "number": 5831,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5831",
@@ -1617,12 +1631,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 800,
+        "age_seconds": 860,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-10T03:34:41Z",
-        "eligible_in_seconds": 1000,
+        "eligible_in_seconds": 940,
         "number": 5832,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5832",
@@ -1643,7 +1657,7 @@
       "reviews": 12,
       "tokens": 187357234
     },
-    "ts": "2026-11-10T03:18:01Z",
+    "ts": "2026-11-10T03:19:01Z",
     "typical_minutes_by_tier": {
       "critical": 25.4,
       "low": 35.1,
@@ -1654,7 +1668,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 19.033333333333335,
+      "idle_minutes": 20.033333333333335,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1662,7 +1676,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-10T03:18:01Z",
+    "generated_at": "2026-11-10T03:19:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4299,7 +4313,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-10T03:17:18Z",
+      "at": "2026-11-10T03:18:18Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
