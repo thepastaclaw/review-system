@@ -578,6 +578,13 @@ def gate_body(
             f"(an empty commit, a merge of the base or a rebase onto it): that review stands"
             f" — {reason or 'see it above'} (commit {s})"
         )
+    if status == "held":  # the last review stepped back and asked for a decision (worker._hold)
+        return (
+            f"{GATE_MARKER}\n⏸️ Automatic re-review is paused: the review of commit "
+            f"{(carried_from or '')[:8]} stepped back and asked for a decision before more "
+            f"rounds, and its request for changes stands — {reason or 'see it above'} "
+            f"(commit {s})"
+        )
     if status == "closed":  # the PR closed or merged before its review finished
         return f"{GATE_MARKER}\n⏹️ Not reviewed — {reason or 'the PR is closed'} (commit {s})"
     if status == "failed":

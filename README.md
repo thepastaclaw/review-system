@@ -869,6 +869,75 @@ verifier lane); a later round adds at most one confirmation lane (only when it h
 blockers on unchanged code not decided before) and runs the fresh gate less often than
 before (only after fixed blockers, no longer after every clean re-review).
 
+## Stepping back from a PR that keeps drawing new blockers
+
+On some PRs every round finds one or two new blockers: the author patches them, the patch
+draws the next ones, and the PR never converges. On 09-08..11-10 a tenth of the PRs produced a
+third of all blockers that way, and on the worst of them most later blockers traced back to a
+few causes that could be named by round 5 (a guarantee the layer below cannot give, state with
+no single owner, a contract nobody wrote down). A maintainer at that point says what the
+findings share and, when that does not help, asks for one decision before another round.
+`stepback.py` does the same under policy v11, in two steps, because neither a rule nor a
+model can tell at that point which PRs will converge on their own: of the PRs the rule below
+fires on, about a fifth draw at most one more blocker, and the lane (on the production
+model) named a cause on three of three such PRs it was tried on.
+
+- **When.** A full review of a new commit asks the step-back lane when the round has at
+  least one new blocker and either an earlier review of the PR already named causes, or this
+  is round `min_round` (4) or later, the round before it also drew a new blocker, the two
+  drew `min_recent` (3) between them, and the PR has drawn `min_blockers` (6) blocking
+  findings in all (`[stepback]` in `config.toml`).
+  Rounds are counted as in "Review rounds per PR"; a finding counts for the round that first
+  posted it.
+- **The lane.** One lane (step `stepback`; the final verifier's model and effort, a fresh
+  session) gets every finding the PR has drawn, this round's new ones included, the count of
+  new blockers per round, the PR description and the code, and groups the findings by
+  underlying cause. Its answer is a `diagnosis` (`foundational_gap`, `patch_cascade`,
+  `unstated_contract`, `scope_too_large` or `converging`), up to four themes (each a cause
+  behind at least two findings, with the tracking issue when there is one) and one decision
+  (`land_prerequisite_first`, `narrow_contract`, `redesign_component`, `split_pr`).
+  `converging` changes nothing.
+- **Step 1, the note.** The first time causes are named, the review body carries "A pattern
+  across this PR's review rounds": the causes, which of this round's findings fall under
+  each, the suggested decision, and a notice of step 2. The prompt for AI agents says to fix
+  the cause, not only the reported case. Nothing else changes: the next push is reviewed as
+  always, and a PR that converges never sees more than this note.
+- **Step 2, the step-back and the pause.** When a later round draws new blockers again, the
+  lane is shown what the earlier review said and whether its decision was made
+  (`decision_made`). If it was not, and the causes named now cover at least half of the
+  round's new blockers, the review leads with "Step back: this PR keeps drawing new
+  blockers" and asks for the decision, the agent prompt says to settle it before patching,
+  and automatic re-review is paused (`hold = true`): a later push is not reviewed on its own.
+  Its run ends after the checkout (step `carry`, event `head.held`), the commit keeps the
+  step-back's REQUEST_CHANGES (label and check run through `carried_from`, as for an
+  unchanged diff) and the gate comment says so.
+- **Ending the pause.** Asking ends it (`stepback.released`): `@thepastaclaw review` or a
+  review request on the paused commit itself resumes automatic re-review with the next push
+  (that commit is reviewed already, so no run starts), and on a held commit it gets that
+  commit reviewed. A review someone asked for ends the pause whatever it finds, unless it
+  steps back and pauses again itself, which a round that draws new blockers from the same
+  causes does. A reply under a finding that no run has read also gets the next push
+  reviewed; such a review, which nobody asked for, ends the pause only when it is a final
+  review whose lane answered and did not pause again. The pause also ends when the
+  step-back review no longer requests changes (a conversation lifted its blockers, a CI
+  update). A maintainer who dismisses the paused review overrules it: the pause ends and
+  later reviews of that PR name causes but never pause (`overruled` in the record). A PR
+  the bot authored is never paused: mentions on its own PRs go to its agent, not to the
+  queue.
+- **What it never does.** Findings are posted inline as always and the verdict is not
+  touched: the lane never re-rates a finding. It does not run in degraded mode, on a
+  same-sha re-review, an audit or a policy v12 pipeline, and only on the primary model: a
+  quota failure there fails the lane and never moves the run onto stand-in models. A failed
+  lane leaves the review as it was (`stepback.failed`).
+- **State.** One kv record per PR (`stepback:<repo>#<n>`): where causes were last named,
+  what was suggested, whether it pauses, and the commits held on it. `reviewsys replay` does
+  not seed it, so a replayed round is judged by the round and blocker counts alone.
+
+Watch it with `sqlite3 ~/.reviewsys/review.db "select ts, kind, repo, number, detail from
+events where kind like 'stepback.%' or kind='head.held' order by id desc limit 40"`; each
+run's `stepback.json` has the full answer. `enabled = false` under `[stepback]` turns it off,
+`hold = false` keeps the notes without ever pausing.
+
 ## Final approval after an iterative review
 
 An incremental review is a reconciliation pass, not by itself a new approval gate. It

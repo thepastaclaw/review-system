@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from textwrap import indent
 from typing import Any
 
-from . import github
+from . import github, stepback
 from .contract import Finding, VerifierOutput
 from .dedupe import (
     FINDING_MARKER_RE,
@@ -262,6 +262,11 @@ class ReviewModel:
     # prior findings this review settled as DISPUTED (each with `extra["thread_url"]`): shown
     # once, on the head where the dispute was settled
     disputed: list[Finding] = field(default_factory=list)
+    # this round stepped back from its findings to their causes (stepback.py): the review
+    # carries them, and its agent prompt says to fix the cause (or, when it pauses
+    # re-review, to settle the decision first)
+    stepback: stepback.Outcome | None = None
+    bot_login: str = ""
 
     @property
     def canonical_event(self) -> str:
@@ -667,6 +672,9 @@ def render(m: ReviewModel) -> str:
         ]
     if m.superseded_note:
         parts += [m.superseded_note, ""]
+    section = stepback.render(m.stepback, m.bot_login) if m.stepback else []
+    if section:
+        parts += [*section, ""]
     counts_line = _counts_line(
         [*m.verified.findings, *m.verified.carried],
         blocker_count=m.verified.blocker_count if m.phase == "preliminary" else None,
@@ -733,6 +741,8 @@ def render(m: ReviewModel) -> str:
         "</details>",
     ]
     prompt = _ai_prompt(m.kept, m.suppressed, m.verified.carried)
+    if prompt and section and m.stepback:
+        prompt = f"{stepback.agent_note(m.stepback)}\n\n{prompt}"
     if m.rereview and not prompt:
         prompt = (
             "These findings are from an automated code review. Verify the current code and "

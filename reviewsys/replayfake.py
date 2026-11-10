@@ -159,6 +159,13 @@ class FakeLanes:
                     for r in reported
                 ]
             }
+        if spec.role == "stepback":
+            return {
+                "diagnosis": "converging",
+                "themes": [],
+                "recommendation": {"kind": "continue_normal", "text": ""},
+                "decision_made": "yes",
+            }
         prior = _prior(p)
         if spec.role == "verifier":
             return {

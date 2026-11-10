@@ -464,6 +464,27 @@ class DeferralConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class StepbackConfig:
+    """Stepping back from a PR that keeps drawing new blockers (stepback.py): on a later round
+    with new blockers again, one lane groups everything the PR has drawn by underlying cause,
+    and the review carries those causes and the one decision it suggests.
+
+    `min_round` / `min_blockers` / `min_recent`: the first time needs at least this round,
+    this many blocking findings on the PR so far, and new blockers in this round and the one
+    before, this many between them (one new blocker after one is what convergence looks
+    like).
+    `hold`: when a later round draws new blockers from named causes again, the review asks
+    for the decision and automatic re-review is paused, so later pushes keep its verdict
+    until someone asks for a review."""
+
+    enabled: bool = True
+    hold: bool = True
+    min_round: int = 4
+    min_blockers: int = 6
+    min_recent: int = 3
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     # paths
     db_path: Path
@@ -549,6 +570,7 @@ class Config:
     ci: CiConfig = field(default_factory=CiConfig)
     deferral: DeferralConfig = field(default_factory=DeferralConfig)
     checks: ChecksConfig = field(default_factory=ChecksConfig)
+    stepback: StepbackConfig = field(default_factory=StepbackConfig)
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -802,6 +824,19 @@ file_repos = []
 # deferrals recorded before this instant were accepted without tracking and keep lifting
 # their finding; unset = when this code first ran (kept in kv deferral.tracking_required_since)
 # tracking_required_since = "2026-10-17T00:00:00Z"
+
+[stepback]
+# a PR that keeps drawing new blockers gets the underlying causes of its findings named in
+# the review, with the one decision that would settle them. The first time needs at least
+# this round and this many blocking findings so far, with new ones in this round and the one
+# before, min_recent between them
+enabled = true
+min_round = 4
+min_blockers = 6
+min_recent = 3
+# when a later round draws new blockers from those causes again, ask for the decision and
+# pause automatic re-review: later pushes keep that verdict until someone asks (`@<bot> review`)
+hold = true
 """
 
 
@@ -1247,6 +1282,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         ci=_ci(t.get("ci") or {}),
         deferral=_deferral(t.get("deferral") or {}),
         checks=_checks(t.get("checks") or {}),
+        stepback=_stepback(t.get("stepback") or {}),
     )
 
 
@@ -1358,6 +1394,17 @@ def _checks(c: dict[str, Any]) -> ChecksConfig:
     if out.enabled and not out.app_id:
         raise ValueError("[checks] enabled needs app_id")
     return out
+
+
+def _stepback(c: dict[str, Any]) -> StepbackConfig:
+    d = StepbackConfig()
+    return StepbackConfig(
+        enabled=bool(c.get("enabled", d.enabled)),
+        hold=bool(c.get("hold", d.hold)),
+        min_round=max(2, int(c.get("min_round", d.min_round))),
+        min_blockers=max(1, int(c.get("min_blockers", d.min_blockers))),
+        min_recent=max(2, int(c.get("min_recent", d.min_recent))),
+    )
 
 
 def _deferral(d: dict[str, Any]) -> DeferralConfig:

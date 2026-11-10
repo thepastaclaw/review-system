@@ -435,6 +435,9 @@ class FakeLanes:
         # the late confirmation lane: title -> verdict ("blocking" by default), or a callable
         # (reported briefs) -> answer
         self.confirm: dict[str, str] | Callable[[list[dict[str, Any]]], Any] = {}
+        # the step-back lane: an answer, or a callable (raised briefs) -> answer; None says
+        # the rounds are converging
+        self.stepback: Any = None
         self.broken_once: set[str] = set()
         self.timeout_roles: set[str] = set()
         self.dead_models: set[str] = set()  # every lane on these models exits 1
@@ -549,6 +552,17 @@ class FakeLanes:
                         }
                         for r in reported
                     ]
+                }
+        elif spec.role == "stepback":
+            m = re.search(r"```json raised\n(.*?)\n```", spec.prompt, re.S)
+            briefs = json.loads(m.group(1)) if m else []
+            out = self.stepback(briefs) if callable(self.stepback) else self.stepback
+            if out is None:
+                out = {
+                    "diagnosis": "converging",
+                    "themes": [],
+                    "recommendation": {"kind": "continue_normal", "text": ""},
+                    "decision_made": "yes",
                 }
         elif spec.role == "repair":
             # the broken payload is the original JSON with its closing brace removed
