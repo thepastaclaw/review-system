@@ -920,13 +920,15 @@ model) named a cause on three of three such PRs it was tried on.
   reviewed; such a review, which nobody asked for, ends the pause only when it is a final
   review whose lane answered and did not pause again. The pause also ends when the
   step-back review no longer requests changes (a conversation lifted its blockers, a CI
-  update). A maintainer who dismisses the paused review overrules it: the pause ends and
-  later reviews of that PR name causes but never pause (`overruled` in the record). A PR
+  update). A maintainer who dismisses the paused review overrules it: the next review of a
+  later commit sees the dismissal, the pause ends, and later reviews of that PR name causes
+  but never pause (`overruled` in the record). A PR
   the bot authored is never paused: mentions on its own PRs go to its agent, not to the
   queue.
 - **What it never does.** Findings are posted inline as always and the verdict is not
   touched: the lane never re-rates a finding. It does not run in degraded mode, on a
-  same-sha re-review, an audit or a policy v12 pipeline, and only on the primary model: a
+  commit that already has a review (a same-sha re-review, a final review after the Phase-1
+  gate stopped a first run), an audit or a policy v12 pipeline, and only on the primary model: a
   quota failure there fails the lane and never moves the run onto stand-in models. A failed
   lane leaves the review as it was (`stepback.failed`).
 - **State.** One kv record per PR (`stepback:<repo>#<n>`): where causes were last named,

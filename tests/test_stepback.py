@@ -99,6 +99,12 @@ def test_an_answer_that_names_causes_is_read_with_its_themes_and_decision():
     assert stepback.parse_analysis(loose, IDS, previous=False).themes[0].tracked_issue == ""
 
 
+def test_words_that_only_look_like_finding_ids_are_text():
+    answer = _answer(recommendation={"kind": "split_pr", "text": "Keep p95 under n0 on p256."})
+    answer["themes"][0]["root_cause"] = "The O(n10) scan over secp256k1 keys is p2p-visible."
+    assert stepback.parse_analysis(answer, IDS, previous=False).text.startswith("Keep p95")
+
+
 def test_converging_carries_no_themes_and_asks_for_nothing():
     a = stepback.parse_analysis(
         {
@@ -142,10 +148,10 @@ def test_converging_carries_no_themes_and_asks_for_nothing():
         (
             {
                 "themes": [
-                    {"name": "n", "root_cause": "p12 and n3 fix it", "finding_ids": ["p1", "p2"]}
+                    {"name": "n", "root_cause": "p3 and n2 fix it", "finding_ids": ["p1", "p2"]}
                 ]
             },
-            r"theme 1 refers to findings by id \(p12, n3\)",
+            r"theme 1 refers to findings by id \(p3, n2\)",
         ),
         (
             {"recommendation": {"kind": "split_pr", "text": "Do what n1 says, over p2p."}},
@@ -708,6 +714,30 @@ def test_asking_on_the_paused_commit_itself_resumes_re_review(cfg, conn, gh, lan
     calls = len(lanes.calls)
     _push(conn, cfg, gh, lanes, E, Trigger.NEW_PUSH)
     assert len(lanes.calls) > calls and carried_from(conn, REPO, 1, E) is None
+
+
+def test_a_retry_of_an_asked_review_keeps_the_pause_it_posted(cfg, conn, gh, lanes):
+    """Asked for on E, the review paused again and its run died before recording it."""
+    _paused(conn, cfg, gh, lanes)
+    _posted_already(gh, E)
+    _push(conn, cfg, gh, lanes, E, Trigger.MENTION, [THIRD])
+    rec = stepback.load(conn, REPO, 1)
+    assert rec is not None and rec.sha == E and rec.hold
+    assert not _events(conn, "stepback.released")
+    calls = len(lanes.calls)
+    _push(conn, cfg, gh, lanes, F, Trigger.NEW_PUSH)
+    assert len(lanes.calls) == calls and carried_from(conn, REPO, 1, F) == E
+
+
+def test_a_dismissal_is_seen_by_a_review_someone_asked_for_too(cfg, conn, gh, lanes):
+    _paused(conn, cfg, gh, lanes)
+    gh.posted_reviews[-1]["state"] = "DISMISSED"
+    gh.posted_reviews[-1]["user"] = {"login": "thepastaclaw"}
+    _push(conn, cfg, gh, lanes, E, Trigger.MENTION, [THIRD])
+    body = gh.posted_reviews[-1]["body"]
+    assert stepback.NOTE_HEADING in body and "pause automatic re-review" not in body
+    rec = stepback.load(conn, REPO, 1)
+    assert rec is not None and rec.sha == E and not rec.hold and rec.overruled
 
 
 def test_a_paused_record_never_holds_the_bots_own_pr(cfg, conn, gh, lanes):

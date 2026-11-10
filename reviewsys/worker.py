@@ -1014,18 +1014,21 @@ def _hold(ctx: RunContext) -> bool:
     no run has read, and only while that review's verdict is still a full-strength
     REQUEST_CHANGES that no maintainer dismissed. True when held (run done)."""
     cfg = ctx.cfg.stepback
-    if not cfg.enabled or not cfg.hold or ctx.trigger not in CARRYABLE or not _converges(ctx):
+    if not cfg.enabled or not cfg.hold or not _converges(ctx):
         return False
     rec = stepback.load(ctx.conn, ctx.repo, ctx.number)
-    if rec is None or not rec.hold or rec.sha == ctx.sha or _own_pr(ctx):
-        return False
-    if _carryable_verdict(ctx, rec.sha) != "REQUEST_CHANGES":
+    if rec is None or not rec.hold or rec.sha == ctx.sha:
         return False
     if _dismissed(ctx, rec.sha):
-        # a maintainer overruled the pause: it ends, and no later review of this PR pauses
+        # a maintainer overruled the pause: it ends, and no later review of this PR pauses.
+        # Looked at before every review of a later commit, asked for or not
         with tx(ctx.conn):
             if stepback.release(ctx.conn, ctx.repo, ctx.number, overruled=True):
                 _released(ctx, rec, f"a maintainer dismissed the review of {rec.sha[:8]}")
+        return False
+    if ctx.trigger not in CARRYABLE or _own_pr(ctx):
+        return False
+    if _carryable_verdict(ctx, rec.sha) != "REQUEST_CHANGES":
         return False
     with tx(ctx.conn):
         head = ctx.conn.execute(
@@ -3768,6 +3771,8 @@ def _backfill_step_back(ctx: RunContext, phase: str, existing: dict[str, Any]) -
         else:
             rec = stepback.Record(ctx.sha, ctx.run_id, 0, "", stepback.CONTINUE, "", hold=hold)
         _save_step_back(ctx, rec)
+        if was is not None and was.hold and not rec.hold:
+            _released(ctx, was, f"the review of {ctx.sha[:8]}")
 
 
 def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
@@ -5303,13 +5308,15 @@ def _step_back(ctx: RunContext, verified: VerifierOutput) -> None:
     this round drew new blockers from them again, it asks for the decision and pauses
     automatic re-review (`stepback.holds`). The verified findings and the verdict are left as
     they are. Best effort: a failed lane leaves the review and any earlier step-back as they
-    were, and it only runs on the primary model (never in degraded mode). Not once a final
-    review of this commit stands (a same-sha re-review), nor on an audit."""
+    were, and it only runs on the primary model (never in degraded mode). Not once a review
+    of this commit is recorded (a same-sha re-review, or a final review after the Phase-1
+    gate stopped a first run: its preliminary findings would count for no round), nor on an
+    audit."""
     cfg = ctx.cfg.stepback
     if not cfg.enabled or not _converges(ctx) or ctx.worktree is None or ctx.meta is None:
         return
     reviewed = ctx.conn.execute(
-        "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? AND phase='final' LIMIT 1",
+        "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1",
         (ctx.repo, ctx.number, ctx.sha),
     ).fetchone()
     if reviewed:
@@ -5471,8 +5478,8 @@ def _record_step_back(ctx: RunContext, phase: str, out: stepback.Outcome | None)
         if was is not None and paused and not rec.hold:
             _released(ctx, was, f"the review of {ctx.sha[:8]}")
         return
-    if was is None or not was.hold:
-        return
+    if was is None or not was.hold or was.run_id == ctx.run_id:
+        return  # (this run's own record: a retry backfilled what its first attempt posted)
     asked = ctx.trigger in ASKED
     if not asked and (not paused or phase != "final" or ctx.stepback_unanswered):
         return

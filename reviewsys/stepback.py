@@ -233,6 +233,11 @@ def _text(value: Any, limit: int) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
 
 
+def _cited(text: str, known: set[str]) -> str:
+    """The supplied finding ids `text` names (`p95` and `n0` are words unless they are ids)."""
+    return ", ".join(dict.fromkeys(t for t in _ID_RE.findall(text) if t in known))
+
+
 def parse_analysis(raw: dict[str, Any], ids: list[str], *, previous: bool) -> Analysis:
     """The step-back lane's answer against its contract: a known diagnosis; `converging` goes
     with `continue_normal` and nothing else does; any other diagnosis names 1 to MAX_THEMES
@@ -258,10 +263,10 @@ def parse_analysis(raw: dict[str, Any], ids: list[str], *, previous: bool) -> An
     if not converging:
         if not text:
             problems.append("recommendation.text must say what to decide")
-        if cited := _ID_RE.findall(text):
+        if cited := _cited(text, set(ids)):
             problems.append(
-                f"recommendation.text refers to findings by id ({', '.join(dict.fromkeys(cited))}): "
-                "its readers never see the ids"
+                f"recommendation.text refers to findings by id ({cited}): its readers never "
+                "see the ids"
             )
         if not isinstance(rows, list) or not 1 <= len(rows) <= MAX_THEMES:
             problems.append(f"themes must list 1 to {MAX_THEMES} underlying causes")
@@ -279,10 +284,10 @@ def parse_analysis(raw: dict[str, Any], ids: list[str], *, previous: bool) -> An
             own = tuple(dict.fromkeys(x for x in listed if x in known))
             if not name or not cause:
                 problems.append(f"theme {i} needs a `name` and a `root_cause`")
-            if cited := _ID_RE.findall(f"{name} {cause}"):
+            if cited := _cited(f"{name} {cause}", known):
                 problems.append(
-                    f"theme {i} refers to findings by id ({', '.join(dict.fromkeys(cited))}): "
-                    "its readers never see the ids, so say what the finding is about"
+                    f"theme {i} refers to findings by id ({cited}): its readers never see "
+                    "the ids, so say what the finding is about"
                 )
             if unknown:
                 problems.append(f"theme {i} names unknown finding ids {', '.join(unknown)}")
