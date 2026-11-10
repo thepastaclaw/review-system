@@ -554,12 +554,12 @@ def test_the_agent_prompt_guides_author_agents():
     guidance = prompt.split("\n\n", 1)[0].splitlines()
     assert guidance == list(publish.AI_PROMPT_GUIDANCE) and len(guidance) <= 10
     text = "\n".join(guidance)
+    assert "piecemeal" not in text and "fix them forward" not in text
     for needle in (
         "fix only what is real, as narrowly as the finding",
         "decline it on its thread in one or two sentences; the bot answers once and stops",
         "link a tracking issue on its thread (or reply asking the bot to file one)",
-        "Suggestions are optional: fix them forward in a later PR",
-        "one push: self-review the full diff first, and don't push piecemeal",
+        "Suggestions don't block the merge, but most are worth fixing in this PR",
         "Keep the PR's scope; don't grow it to satisfy hardening suggestions",
         "Disputed and deferred items are already handled",
     ):

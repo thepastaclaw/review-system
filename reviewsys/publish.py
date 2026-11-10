@@ -282,10 +282,8 @@ AI_PROMPT_GUIDANCE = (
     "- If a finding is wrong, decline it on its thread in one or two sentences; the bot answers "
     "once and stops.",
     "- To defer one, link a tracking issue on its thread (or reply asking the bot to file one).",
-    "- Suggestions are optional: fix them forward in a later PR rather than pushing another "
-    "round just for them.",
-    "- Address every current finding in one push: self-review the full diff first, and don't "
-    "push piecemeal.",
+    "- Suggestions don't block the merge, but most are worth fixing in this PR; judge each on "
+    "its merits.",
     "- Keep the PR's scope; don't grow it to satisfy hardening suggestions.",
     "- Carried items were raised in an earlier round: read the thread first, and don't re-fix "
     "what you already fixed, declined or deferred there. Disputed and deferred items are "
