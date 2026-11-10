@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
 
+from . import stepback
 from .config import Config
 from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
@@ -170,6 +171,14 @@ def enqueue_head(
     labelled = _has_skip_label(conn, repo, number)
     if labelled and trigger in SKIPPABLE_TRIGGERS:
         return "noop"
+    if trigger in ASKING and stepback.asked_on_paused(conn, repo, number, sha):
+        event(
+            conn,
+            "stepback.released",
+            repo=repo,
+            number=number,
+            detail=f"asked for on {sha[:8]}: the next push is reviewed",
+        )
     existing = conn.execute(
         "SELECT id, status, priority, queue, trigger, reason FROM heads WHERE repo=? AND number=? AND sha=?",
         (repo, number, sha),

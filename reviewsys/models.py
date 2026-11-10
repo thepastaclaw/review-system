@@ -90,6 +90,8 @@ class StepName(StrEnum):
     FRESH_VERIFY2 = "fresh_verify2"
     # independent confirmation of a later round's new blockers on unchanged code (late.py)
     CONFIRM = "confirm"
+    # what keeps a PR drawing new blockers, round after round (stepback.py)
+    STEPBACK = "stepback"
     PERSISTENCE = "persistence"  # audit: is each blocker still present on the base tip?
     CI_CHECK = "ci_check"  # does a check that failed after an APPROVE relate to the change?
     PUBLISH = "publish"

@@ -41,6 +41,7 @@ from datetime import timedelta
 from typing import Any
 from urllib.parse import quote
 
+from . import stepback
 from .config import Config
 from .db import event, kv_get, now, now_dt, parse_ts, tx
 from .gh import Gh
@@ -77,6 +78,7 @@ STEP_LABELS = {
     "fresh_phase2": "fresh Phase 2 pass",
     "fresh_verify2": "verifying the fresh pass",
     "confirm": "confirming new blockers independently",
+    "stepback": "working out why new blockers keep coming",
     "ci_check": "checking a CI failure",
     "publish": "publishing",
 }
@@ -160,9 +162,7 @@ def _verdict(
         title=title,
         summary=_summary(
             sha,
-            f"The review of `{target[:12]}` stands: this push left the PR's diff unchanged."
-            if target != sha
-            else "",
+            _stands_note(conn, repo, number, sha, target),
             "A follow-up pass on this commit is running; this result is replaced if the "
             "verdict changes."
             if busy
@@ -174,6 +174,20 @@ def _verdict(
         else _pr_url(repo, number),
         completed_at=str(standing["posted_at"]),
     )
+
+
+def _stands_note(conn: sqlite3.Connection, repo: str, number: int, sha: str, target: str) -> str:
+    """Why another commit's review stands for `sha`: its diff is the same, or that review
+    stepped back and automatic re-review is paused (stepback.py)."""
+    if target == sha:
+        return ""
+    if stepback.is_held(conn, repo, number, sha):
+        return (
+            f"The review of `{target[:12]}` stepped back and asked for a decision before more "
+            "review rounds; its request for changes stands and this commit was not reviewed. "
+            "Comment `@thepastaclaw review` to have it reviewed."
+        )
+    return f"The review of `{target[:12]}` stands: this push left the PR's diff unchanged."
 
 
 def wanted(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> Want | None:

@@ -48,6 +48,7 @@ from . import (
     rules,
     schemas,
     sister,
+    stepback,
 )
 from . import prep as prep_mod
 from . import progress as progress_mod
@@ -99,6 +100,7 @@ from .prompts import (
     repo_guidance,
     reviewer_prompt,
     skill_texts,
+    stepback_prompt,
     thread_prompt,
     verifier_prompt,
     verify_prompt,
@@ -330,6 +332,10 @@ class RunContext:
     code_history: late.CodeHistory | None = None
     # what this later round did with new findings on unchanged code (publish.Provenance.late)
     late_report: dict[str, Any] | None = None
+    # this round stepped back from its findings to their causes (stepback.py); None otherwise
+    stepback: stepback.Outcome | None = None
+    # a step-back was due on this round and its lane gave no answer (failed, degraded mode)
+    stepback_unanswered: bool = False
     fresh_first: bool = False  # the first full review ran its second Phase-2 pass
     fresh_final: bool = False
     # Phase 1 ran beside Phase 2 with no blocker gate between them (a `single_stage` tier)
@@ -913,6 +919,16 @@ def _carry(ctx: RunContext) -> bool:
     if prev is None or prev["diff_print"] != ctx.diff_print:
         return False
     source = reviewed_sha(ctx.conn, ctx.repo, ctx.number, str(prev["sha"]))
+    if source != prev["sha"]:
+        # the head before this one was not reviewed itself. Its review stands for this diff
+        # only when it was of this diff: a head held on a step-back (`_hold`) carries the
+        # review of a different one
+        reviewed = ctx.conn.execute(
+            "SELECT diff_print FROM heads WHERE repo=? AND number=? AND sha=? AND queue='live'",
+            (ctx.repo, ctx.number, source),
+        ).fetchone()
+        if reviewed is None or reviewed["diff_print"] != ctx.diff_print:
+            return False
     verdict = _carryable_verdict(ctx, source)
     if verdict is None:
         return False
@@ -947,6 +963,105 @@ def _carry(ctx: RunContext) -> bool:
     if verdict == "APPROVE":
         _watch_ci(ctx, known=[])
     _step_end(ctx, StepName.CARRY, "ok", {"carried_from": source, "verdict": verdict})
+    return True
+
+
+def _own_pr(ctx: RunContext) -> bool:
+    """The bot authored this PR. The router sends mentions and review requests on its own PRs
+    to its agent, not to the queue, so nothing there could ask for a paused review."""
+    return ctx.meta is not None and ctx.meta.author.lower() == ctx.cfg.bot_login.lower()
+
+
+def _dismissed(ctx: RunContext, sha: str) -> bool:
+    """A maintainer dismissed the bot's final review of `sha` on GitHub (our record of its
+    verdict does not move with that). Unknown counts as not dismissed."""
+    try:
+        reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+    except ReviewError as exc:
+        log.warning("could not read the reviews of %s#%s: %s", ctx.repo, ctx.number, exc)
+        return False
+    marker = f"phase=final sha={sha}"
+    states = {
+        str(r.get("state") or "")
+        for r in reviews
+        if (r.get("user") or {}).get("login") == ctx.cfg.bot_login
+        and marker in str(r.get("body") or "")
+    }
+    # a same-sha summary posted since (a COMMENT) does not bring the dismissed request back
+    return "DISMISSED" in states and "CHANGES_REQUESTED" not in states
+
+
+def _released(ctx: RunContext, rec: stepback.Record, why: str) -> None:
+    """The pause that stood on `rec` has ended (`stepback.released`). Caller holds the
+    transaction."""
+    event(
+        ctx.conn,
+        "stepback.released",
+        repo=ctx.repo,
+        number=ctx.number,
+        run_id=ctx.run_id,
+        detail=f"{why} ends the hold of {rec.sha[:8]}",
+    )
+
+
+def _hold(ctx: RunContext) -> bool:
+    """A push to a PR whose last review stepped back and asked for a decision, after an
+    earlier one had already named the causes (stepback.py, `Record.hold`): reviewing the next
+    patch would only add the next blocker, so that review's request for changes stands for
+    this commit and no lane runs, until someone asks for a review (ingest.enqueue_head
+    re-opens a commit nothing reviewed itself, and ends the pause when asked on the paused
+    commit). Like `_carry`: only an automatic head, never past a reply under a finding that
+    no run has read, and only while that review's verdict is still a full-strength
+    REQUEST_CHANGES that no maintainer dismissed. True when held (run done)."""
+    cfg = ctx.cfg.stepback
+    if not cfg.enabled or not cfg.hold or not _converges(ctx):
+        return False
+    rec = stepback.load(ctx.conn, ctx.repo, ctx.number)
+    if rec is None or not rec.hold or rec.sha == ctx.sha:
+        return False
+    if _dismissed(ctx, rec.sha):
+        # a maintainer overruled the pause: it ends, and no later review of this PR pauses.
+        # Looked at before every review of a later commit, asked for or not
+        with tx(ctx.conn):
+            if stepback.release(ctx.conn, ctx.repo, ctx.number, overruled=True):
+                _released(ctx, rec, f"a maintainer dismissed the review of {rec.sha[:8]}")
+        return False
+    if ctx.trigger not in CARRYABLE or _own_pr(ctx):
+        return False
+    if _carryable_verdict(ctx, rec.sha) != "REQUEST_CHANGES":
+        return False
+    with tx(ctx.conn):
+        head = ctx.conn.execute(
+            "SELECT trigger, status FROM heads WHERE id=?", (ctx.head_id,)
+        ).fetchone()
+        if head["status"] != HeadStatus.RUNNING:  # superseded meanwhile: no word for the newer
+            raise Cancelled()
+        if head["trigger"] not in CARRYABLE:  # someone asked for a review during the checkout
+            ctx.trigger = str(head["trigger"])
+            return False
+        if _unread_reply(ctx):
+            return False
+        rec = stepback.load(ctx.conn, ctx.repo, ctx.number) or rec
+        if ctx.sha not in rec.held:
+            rec.held.append(ctx.sha)
+            stepback.save(ctx.conn, ctx.repo, ctx.number, rec)
+        ctx.conn.execute("UPDATE heads SET carried_from=? WHERE id=?", (rec.sha, ctx.head_id))
+        event(
+            ctx.conn,
+            "head.held",
+            repo=ctx.repo,
+            number=ctx.number,
+            run_id=ctx.run_id,
+            detail=f"{ctx.sha[:8]} keeps the step-back of {rec.sha[:8]} ({rec.diagnosis})",
+        )
+    _step_start(ctx, StepName.CARRY)
+    _gate_comment(
+        ctx,
+        "held",
+        carried_from=rec.sha,
+        reason=f"`@{ctx.cfg.bot_login} review` asks for a review of this commit",
+    )
+    _step_end(ctx, StepName.CARRY, "ok", {"held_on": rec.sha, "verdict": "REQUEST_CHANGES"})
     return True
 
 
@@ -2034,6 +2149,7 @@ def _run_checked_lane[T](
     comparison: bool = False,
     stop_reason: Callable[[], str] | None = None,
     schema: dict[str, Any] | None = None,
+    primary_only: bool = False,
 ) -> T:
     """Run a lane with bounded retries until its answer passes `check`. Returns the output.
 
@@ -2065,7 +2181,8 @@ def _run_checked_lane[T](
     lane raises Cancelled when the run was cancelled, else LaneStopped, its row saying why
     (`stop_reason`). A `comparison` lane (keyed `<role>#2`) gets one attempt, takes its slot in
     the `compare` pool (never a production one), never runs on a stand-in and never flips the
-    run: it fails instead."""
+    run: it fails instead. A `primary_only` lane (one the review can do without) likewise
+    never runs on a stand-in nor flips the run, in its usual pool and with both attempts."""
     assert ctx.worktree
     stop = should_stop or ctx.cancel_flag.is_set
     key = f"{role}{COMPARE_SUFFIX}" if comparison else role
@@ -2080,7 +2197,7 @@ def _run_checked_lane[T](
         if stop():
             ctx.check_cancel()  # a cancelled run is Cancelled, never just a stopped lane
             raise LaneStopped(started=attempt > 1)
-        if comparison and ctx.is_degraded:
+        if (comparison or primary_only) and ctx.is_degraded:
             raise ReviewError(FailKind.INFRA, f"{phase}/{key}: the run went degraded")
         # re-resolved per attempt: a parallel sibling may have flipped the run to degraded
         lm = lm if comparison else ctx.lane_model(lm)
@@ -2223,7 +2340,11 @@ def _run_checked_lane[T](
                 lane_output(failed_turn)
             except ReviewError as turn_exc:
                 quota_exc = turn_exc
-        switched = None if comparison else _degrade_on_quota_failure(ctx, lm, quota_exc, quota_turn)
+        switched = (
+            None
+            if comparison or primary_only
+            else _degrade_on_quota_failure(ctx, lm, quota_exc, quota_turn)
+        )
         if switched is not None:
             lm, budget = switched, attempt + 2
     raise LaneFailed(
@@ -3619,6 +3740,41 @@ def _backfill_posted(
     _ledger_write(ctx, "publication", record)
 
 
+def _backfill_step_back(ctx: RunContext, phase: str, existing: dict[str, Any]) -> None:
+    """A review of this commit is already on GitHub and its step-back is not recorded: an
+    earlier attempt posted it and died first (`_step_back` never runs once a final review of
+    the commit is recorded). The record follows what that review says: its section stands,
+    with the pause when it announced one. Its causes are this attempt's answer when it has
+    one, else what the PR's record already named. The follow-up this attempt may post does
+    not repeat the section."""
+    out, ctx.stepback = ctx.stepback, None
+    body = str(existing.get("body") or "")
+    if ctx.dry_run or (stepback.HEADING not in body and stepback.NOTE_HEADING not in body):
+        return
+    hold = stepback.PAUSED_NOTE in body
+    with tx(ctx.conn):
+        was = stepback.load(ctx.conn, ctx.repo, ctx.number)
+        if was is not None and was.sha == ctx.sha:
+            return
+        if out is not None and out.analysis.stands:
+            rec = stepback.record_of(
+                out.analysis,
+                sha=ctx.sha,
+                run_id=ctx.run_id,
+                round=out.round,
+                hold=hold,
+                at=now(),
+                previous=was,
+            )
+        elif was is not None:
+            rec = dataclasses.replace(was, sha=ctx.sha, run_id=ctx.run_id, hold=hold, at=now())
+        else:
+            rec = stepback.Record(ctx.sha, ctx.run_id, 0, "", stepback.CONTINUE, "", hold=hold)
+        _save_step_back(ctx, rec)
+        if was is not None and was.hold and not rec.hold:
+            _released(ctx, was, f"the review of {ctx.sha[:8]}")
+
+
 def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
     """Persist full-review lifts as tombstones for later PR heads.
 
@@ -3707,6 +3863,7 @@ def step_publish(
         # threads that were replied to, and, if the verdict moved (a blocker withdrawn or a new
         # one found), post a short follow-up review so the standing verdict is not left stale.
         _backfill_posted(ctx, phase, existing, verified)
+        _backfill_step_back(ctx, phase, existing)
         _record_lifted_reconciliations(ctx, phase, verified)
         _answer_threads(ctx, phase, verified)
         update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
@@ -4129,6 +4286,8 @@ def _build_review(
     )
     model.fix_forward = ctx.cfg.policy.pipeline is None
     model.disputed = _newly_disputed(ctx, verified)
+    model.stepback = ctx.stepback
+    model.bot_login = ctx.cfg.bot_login
     if ctx.approval_withheld:
         model.extra_lines.append(
             f"\n_Not approved: {ctx.approval_withheld} blocking finding(s) are disputed and "
@@ -4401,6 +4560,8 @@ def _record_publication(
             )
             _insert_findings(ctx, phase, "posted", model.kept)
             _insert_findings(ctx, phase, late.STAGE_LISTED, verified.followups)
+            if not ctx.dry_run:
+                _record_step_back(ctx, phase, ctx.stepback)
         _set_run_review(
             ctx,
             blocker_count=verified.blocker_count,
@@ -4757,6 +4918,7 @@ def _verify2(ctx: RunContext, effort: TierEffort) -> VerifierOutput:
                     stage="verified-fresh",
                     known=decided,
                 )
+    _step_back(ctx, verified)
     _approve_when_clear(ctx, verified)
     return verified
 
@@ -4858,6 +5020,12 @@ def _classify_late(ctx: RunContext, verified: VerifierOutput) -> late.Split | No
         )
     for f in verified.findings:
         f.extra["code_status"] = ctx.code_history.status(f)
+    return late.split(verified.findings, is_new=_new_test(ctx), listed=_listed_followups(ctx))
+
+
+def _new_test(ctx: RunContext) -> Callable[[Finding], bool]:
+    """Whether a finding of this round is new to the PR: not carried from an earlier round,
+    never posted on it, and no restatement of one that was."""
     records = _raised_records(ctx)
     raised = {
         str(r["hash"])
@@ -4872,7 +5040,7 @@ def _classify_late(ctx: RunContext, verified: VerifierOutput) -> late.Split | No
             return False
         return find_duplicate(f, records)[0] is None
 
-    return late.split(verified.findings, is_new=is_new, listed=_listed_followups(ctx))
+    return is_new
 
 
 def _raised_record(
@@ -5130,6 +5298,193 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
         {"candidates": len(ids), **{v: verdicts.count(v) for v in late.VERDICTS}},
     )
     return {id(f): decisions[cid] for cid, f in zip(ids, candidates, strict=True)}
+
+
+def _step_back(ctx: RunContext, verified: VerifierOutput) -> None:
+    """A later round that again has new blockers, on a PR that keeps drawing them
+    (`stepback.due`): one lane (the final verifier's model, a fresh session) reads everything
+    the PR has drawn and names what the findings share (`ctx.stepback`). The review then
+    carries those causes and the decision it suggests; when an earlier review already did and
+    this round drew new blockers from them again, it asks for the decision and pauses
+    automatic re-review (`stepback.holds`). The verified findings and the verdict are left as
+    they are. Best effort: a failed lane leaves the review and any earlier step-back as they
+    were, and it only runs on the primary model (never in degraded mode). Not once a review
+    of this commit is recorded (a same-sha re-review, or a final review after the Phase-1
+    gate stopped a first run: its preliminary findings would count for no round), nor on an
+    audit."""
+    cfg = ctx.cfg.stepback
+    if not cfg.enabled or not _converges(ctx) or ctx.worktree is None or ctx.meta is None:
+        return
+    reviewed = ctx.conn.execute(
+        "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1",
+        (ctx.repo, ctx.number, ctx.sha),
+    ).fetchone()
+    if reviewed:
+        return
+    earlier = stepback.rounds(ctx.conn, ctx.repo, ctx.number, before=ctx.sha)
+    if not earlier:
+        return
+    is_new = _new_test(ctx)
+    new = [f for f in verified.findings if is_new(f)]
+    blockers = sum(1 for f in new if f.severity == "blocking")
+    previous = stepback.load(ctx.conn, ctx.repo, ctx.number)
+    reason = stepback.due(
+        earlier,
+        blockers,
+        min_round=cfg.min_round,
+        min_blockers=cfg.min_blockers,
+        min_recent=cfg.min_recent,
+        stood=previous is not None,
+    )
+    if reason is None:
+        return
+    if ctx.is_degraded:
+        ctx.stepback_unanswered = True
+        _lane_event(ctx, "stepback.skipped", f"{reason}: degraded mode")
+        return
+    items = stepback.raised(
+        earlier,
+        [
+            {"severity": f.severity, "file": f.file or "", "title": f.title, "body": f.body}
+            for f in new
+        ],
+        set(ctx.open_threads),
+    )
+    ids = [r.id for r in items]
+    round_now = len(earlier) + 1
+    _step_start(ctx, StepName.STEPBACK, {"round": round_now, "findings": len(items)})
+    prompt = stepback_prompt(
+        ctx.cfg,
+        repo=ctx.repo,
+        number=ctx.number,
+        head_sha=ctx.sha,
+        meta=ctx.meta.as_dict(),
+        coverage_from=ctx.coverage_from,
+        first_sha=ctx.first_reviewed_sha,
+        round_now=round_now,
+        raised=[r.brief() for r in items],
+        previous=previous.brief() if previous else None,
+        guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
+    )
+
+    def validate(raw: dict[str, Any]) -> stepback.Analysis:
+        return stepback.parse_analysis(raw, ids, previous=previous is not None)
+
+    try:
+        analysis = _run_checked_lane(
+            ctx,
+            phase="stepback",
+            role="stepback",
+            lm=ctx.lane_model(ctx.cfg.policy.phase2_verifier),
+            prompt=prompt,
+            is_verifier=True,
+            check=OutputCheck(validate=validate, kind="stepback", ids=ids, repairable=False),
+            primary_only=True,
+        )
+    except ReviewError as exc:
+        ctx.check_cancel()
+        ctx.stepback_unanswered = True
+        _step_end(ctx, StepName.STEPBACK, "failed", {"error": exc.message[:1000]})
+        _lane_event(ctx, "stepback.failed", f"{reason}: {exc.message}")
+        return
+    may_hold = cfg.hold and not _own_pr(ctx) and not (previous is not None and previous.overruled)
+    hold = may_hold and stepback.holds(
+        analysis,
+        [r.id for r in items if r.new and r.severity == "blocking"],
+        told=previous is not None,
+    )
+    ctx.stepback = stepback.Outcome(
+        analysis=analysis,
+        raised={r.id: r for r in items},
+        round=round_now,
+        blockers=sum(r.blockers for r in earlier) + blockers,
+        hold=hold,
+        previous=previous,
+        may_hold=may_hold,
+    )
+    detail = {
+        "reason": reason,
+        "diagnosis": analysis.diagnosis,
+        "recommendation": analysis.kind,
+        "themes": len(analysis.themes),
+        "hold": hold,
+        **({"decision_made": analysis.decision_made} if previous else {}),
+    }
+    with contextlib.suppress(OSError):  # evidence only, never the run's problem
+        (ctx.run_dir / "stepback.json").write_text(
+            json.dumps(
+                {
+                    **detail,
+                    "text": analysis.text,
+                    "themes": [dataclasses.asdict(t) for t in analysis.themes],
+                    "raised": [dataclasses.asdict(r) for r in items],
+                },
+                indent=1,
+            )
+        )
+    _step_end(ctx, StepName.STEPBACK, "ok", detail)
+    _lane_event(ctx, "stepback.analysed", json.dumps(detail))
+
+
+# someone asking for a review: a mention, a review request, a gate-comment box, an operator
+ASKED = frozenset(
+    {
+        Trigger.MENTION,
+        Trigger.REVIEW_REQUESTED,
+        Trigger.PRIORITY_REQUEST,
+        Trigger.NORMAL_REQUEST,
+        Trigger.MANUAL,
+    }
+)
+
+
+def _save_step_back(ctx: RunContext, rec: stepback.Record) -> None:
+    """`rec` is what stands on the PR from now (`stepback.posted`). Caller holds the
+    transaction."""
+    stepback.save(ctx.conn, ctx.repo, ctx.number, rec)
+    event(
+        ctx.conn,
+        "stepback.posted",
+        repo=ctx.repo,
+        number=ctx.number,
+        run_id=ctx.run_id,
+        detail=f"{rec.sha[:8]} {rec.diagnosis or 'unknown'} -> {rec.kind}"
+        + (" (automatic re-review paused)" if rec.hold else ""),
+    )
+
+
+def _record_step_back(ctx: RunContext, phase: str, out: stepback.Outcome | None) -> None:
+    """A review of this commit was posted: what stands on the PR from now
+    (`stepback.Record`). A review that names causes (`out`) replaces the earlier record, and
+    a pause that stood ends unless this one pauses too. Otherwise an earlier pause ends when
+    someone asked for this review (they say the decision is made; a later round that draws
+    blockers from the same causes pauses again), or when it is a final review whose lane had
+    its say (the rounds are converging, or no new blocker came). A review nobody asked for
+    that stopped at the Phase-1 gate, or whose step-back lane gave no answer, leaves it.
+    Caller holds the transaction."""
+    was = stepback.load(ctx.conn, ctx.repo, ctx.number)
+    paused = was is not None and was.hold and was.sha != ctx.sha
+    if out is not None and out.analysis.stands:
+        rec = stepback.record_of(
+            out.analysis,
+            sha=ctx.sha,
+            run_id=ctx.run_id,
+            round=out.round,
+            hold=out.hold,
+            at=now(),
+            previous=was,
+        )
+        _save_step_back(ctx, rec)
+        if was is not None and paused and not rec.hold:
+            _released(ctx, was, f"the review of {ctx.sha[:8]}")
+        return
+    if was is None or not was.hold or was.run_id == ctx.run_id:
+        return  # (this run's own record: a retry backfilled what its first attempt posted)
+    asked = ctx.trigger in ASKED
+    if not asked and (not paused or phase != "final" or ctx.stepback_unanswered):
+        return
+    if stepback.release(ctx.conn, ctx.repo, ctx.number):
+        _released(ctx, was, f"the review of {ctx.sha[:8]}")
 
 
 def _approve_when_clear(ctx: RunContext, verified: VerifierOutput) -> None:
@@ -7251,7 +7606,7 @@ def run(ctx: RunContext) -> RunStatus:
     _step_start(ctx, StepName.WORKTREE)
     step_worktree(ctx)
     _step_end(ctx, StepName.WORKTREE, "ok")
-    if not standing and _carry(ctx):
+    if not standing and (_hold(ctx) or _carry(ctx)):
         return RunStatus.DONE
     if not standing:  # a conversation needs no specialist selection or effort triage
         ctx.check_cancel()
