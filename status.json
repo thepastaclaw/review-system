@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-11T07:14:01Z",
-  "generated_at": "2026-11-11T07:14:01Z",
+  "data_as_of": "2026-11-11T07:15:02Z",
+  "generated_at": "2026-11-11T07:15:02Z",
   "history": {
     "daily": [
       {
@@ -385,6 +385,14 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 925,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 9861,
+        "ts": "2026-11-11T07:14:06Z"
+      },
+      {
         "detail": "attempt 1 sha=2c891ea3",
         "kind": "run.spawned",
         "number": 925,
@@ -695,14 +703,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 9856,
         "ts": "2026-11-11T06:34:06Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 925,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-11-11T06:34:05Z"
       }
     ],
     "tokens_by_effort": [
@@ -1308,16 +1308,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-11T12:56:04Z",
-        "deadline_in_seconds": 20523,
+        "deadline_in_seconds": 20462,
         "degraded": false,
-        "elapsed_seconds": 1077,
+        "elapsed_seconds": 1138,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-11-11T07:13:54Z",
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-11-11T07:14:54Z",
         "id": 9859,
         "lanes": [
           {
@@ -1349,7 +1349,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "backport-reviewer",
-            "since_seconds": 171,
+            "since_seconds": 232,
             "state": "running"
           },
           {
@@ -1359,7 +1359,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "dash-core-commit-history",
-            "since_seconds": 158,
+            "since_seconds": 219,
             "state": "running"
           },
           {
@@ -1369,7 +1369,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 172,
+            "since_seconds": 233,
             "state": "running"
           }
         ],
@@ -1378,10 +1378,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/7481",
         "priority": false,
-        "progress": 0.793,
+        "progress": 0.838,
         "queue": "live",
         "queued_at": "2026-11-11T06:47:17Z",
-        "remaining_seconds": 280,
+        "remaining_seconds": 219,
         "repo": "dashpay/dash",
         "sha": "36a513cd6e6f5909569fc123f7ed450e5bbb4933",
         "started_at": "2026-11-11T06:56:04Z",
@@ -1476,7 +1476,7 @@
             ],
             "lanes_total": 3,
             "name": "phase2",
-            "seconds": 172,
+            "seconds": 233,
             "started_at": "2026-11-11T07:11:09Z",
             "status": "running"
           }
@@ -1496,35 +1496,36 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-11T13:13:49Z",
-        "deadline_in_seconds": 21588,
+        "deadline_in_seconds": 21527,
         "degraded": false,
-        "elapsed_seconds": 12,
+        "elapsed_seconds": 73,
         "findings": null,
-        "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-11-11T07:13:49Z",
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-11-11T07:14:49Z",
         "id": 9861,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
-            "line_position": null,
+            "effort": "high",
+            "line_length": 1,
+            "line_position": 1,
             "model": "gpt-6.1-sol",
-            "phase": "triage",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "triage",
-            "since_seconds": 4,
-            "state": "running"
+            "role": "general",
+            "since_seconds": 55,
+            "state": "waiting"
           }
         ],
         "number": 925,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/925",
         "priority": false,
-        "progress": 0.006,
+        "progress": 0.155,
         "queue": "live",
         "queued_at": "2026-11-11T06:43:03Z",
-        "remaining_seconds": 2059,
+        "remaining_seconds": 397,
         "repo": "PastaPastaPasta/yappr",
         "sha": "2c891ea35a723ab38c60e94a5f8b9804966cdf59",
         "started_at": "2026-11-11T07:13:49Z",
@@ -1547,24 +1548,56 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a multi-file build-tooling change with substantial fail-closed configuration and snapshot validation logic, but the diff does not change any qualifying critical surface.",
+              "tier": "normal"
+            },
             "name": "triage",
-            "seconds": 4,
+            "seconds": 5,
             "started_at": "2026-11-11T07:13:57Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-11-11T07:14:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-11-11T07:14:06Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 55,
+            "started_at": "2026-11-11T07:14:07Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "feat(build): add fail-closed mainnet release target",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "verify1",
-          "gate",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1604,7 +1637,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-11T07:13:52Z",
+        "at": "2026-11-11T07:14:13Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1651,9 +1684,9 @@
       },
       {
         "pool": "gpt",
-        "running": 4,
+        "running": 3,
         "slots": 4,
-        "waiting": 0
+        "waiting": 1
       },
       {
         "pool": "muse",
@@ -1665,17 +1698,17 @@
     "last_run_done_at": "2026-11-11T06:59:54Z",
     "last_run_started_at": "2026-11-11T07:13:49Z",
     "median_run_minutes": 20.016666666666666,
-    "notify_last_at": "2026-11-11T07:12:07Z",
+    "notify_last_at": "2026-11-11T07:14:33Z",
     "oldest_queued_at": "2026-11-11T07:00:22Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 819,
+        "age_seconds": 880,
         "attempts": 0,
         "author": "thepastaclaw",
         "eligible": false,
         "eligible_at": "2026-11-11T07:30:22Z",
-        "eligible_in_seconds": 981,
+        "eligible_in_seconds": 920,
         "number": 8105,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8105",
@@ -1689,12 +1722,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 268,
+        "age_seconds": 329,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-11T07:39:33Z",
-        "eligible_in_seconds": 1532,
+        "eligible_in_seconds": 1471,
         "number": 928,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/928",
@@ -1715,7 +1748,7 @@
       "reviews": 50,
       "tokens": 253979053
     },
-    "ts": "2026-11-11T07:14:01Z",
+    "ts": "2026-11-11T07:15:02Z",
     "typical_minutes_by_tier": {
       "critical": 26.6,
       "low": 28.6,
@@ -1726,7 +1759,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.2,
+      "idle_minutes": 1.2166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1734,7 +1767,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-11T07:14:01Z",
+    "generated_at": "2026-11-11T07:15:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4347,7 +4380,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-11T07:13:52Z",
+      "at": "2026-11-11T07:14:52Z",
       "reason": "accounts",
       "running": true,
       "state": "waiting"
