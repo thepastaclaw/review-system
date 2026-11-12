@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-12T07:31:02Z",
-  "generated_at": "2026-11-12T07:31:02Z",
+  "data_as_of": "2026-11-12T07:32:10Z",
+  "generated_at": "2026-11-12T07:32:14Z",
   "history": {
     "daily": [
       {
@@ -390,6 +390,38 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5753,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-12T07:31:33Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5877,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-12T07:31:32Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 140,
+        "repo": "dashpay/bls-signatures",
+        "run_id": null,
+        "ts": "2026-11-12T07:31:32Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 140,
+        "repo": "dashpay/bls-signatures",
+        "run_id": 10187,
+        "ts": "2026-11-12T07:31:22Z"
+      },
+      {
         "detail": "attempt 1 sha=0d13f772",
         "kind": "run.spawned",
         "number": 140,
@@ -676,38 +708,6 @@
         "repo": "dashpay/dash",
         "run_id": 10175,
         "ts": "2026-11-12T06:06:10Z"
-      },
-      {
-        "detail": "ok in 8s",
-        "kind": "run.done",
-        "number": 8131,
-        "repo": "dashpay/dash",
-        "run_id": 10185,
-        "ts": "2026-11-12T05:58:09Z"
-      },
-      {
-        "detail": "attempt 1 sha=773f82be",
-        "kind": "run.spawned",
-        "number": 8131,
-        "repo": "dashpay/dash",
-        "run_id": 10185,
-        "ts": "2026-11-12T05:58:01Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 8131,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-12T05:58:01Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 8131,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-12T05:58:00Z"
       }
     ],
     "tokens_by_effort": [
@@ -1313,40 +1313,99 @@
         "attempt": 1,
         "author": "knst",
         "deadline_at": "2026-11-12T13:30:59Z",
-        "deadline_in_seconds": 21597,
+        "deadline_in_seconds": 21529,
         "degraded": false,
-        "elapsed_seconds": 3,
+        "elapsed_seconds": 71,
         "findings": null,
-        "heartbeat_age_seconds": 3,
-        "heartbeat_at": "2026-11-12T07:30:59Z",
+        "heartbeat_age_seconds": 11,
+        "heartbeat_at": "2026-11-12T07:31:59Z",
         "id": 10187,
         "lanes": [],
-        "live_lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 48,
+            "state": "running"
+          }
+        ],
         "number": 140,
         "overdue": false,
-        "phase": null,
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/bls-signatures/pull/140",
         "priority": true,
-        "progress": 0.002,
+        "progress": 0.067,
         "queue": "live",
         "queued_at": "2026-11-12T07:17:17Z",
-        "remaining_seconds": 1436,
+        "remaining_seconds": 988,
         "repo": "dashpay/bls-signatures",
         "sha": "0d13f77296bc028b054f210c94f2c23254c0fbfa",
         "started_at": "2026-11-12T07:30:59Z",
         "status": "running",
-        "steps": [],
-        "tier": null,
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 3,
+            "started_at": "2026-11-12T07:31:03Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 9,
+            "started_at": "2026-11-12T07:31:06Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a contained removal of an unused vendored dependency with packaging and attribution updates, requiring confirmation that no active build references remain rather than review of cryptographic behavior.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-12T07:31:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 2,
+            "started_at": "2026-11-12T07:31:17Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 51,
+            "started_at": "2026-11-12T07:31:19Z",
+            "status": "running"
+          }
+        ],
+        "tier": "low",
         "title": "refactor: remove relic",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "priority_request",
         "upcoming": [
-          "worktree",
-          "select",
-          "triage",
-          "context",
-          "phase1",
+          "verify1",
+          "gate",
           "phase2",
           "verify2",
           "publish"
@@ -1387,7 +1446,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-12T07:28:31Z",
+        "at": "2026-11-12T07:31:05Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1428,7 +1487,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1448,17 +1507,17 @@
     "last_run_done_at": "2026-11-12T06:42:16Z",
     "last_run_started_at": "2026-11-12T07:30:59Z",
     "median_run_minutes": 21.133333333333333,
-    "notify_last_at": "2026-11-12T07:29:10Z",
+    "notify_last_at": "2026-11-12T07:31:25Z",
     "oldest_queued_at": "2026-11-12T07:04:29Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1593,
+        "age_seconds": 1661,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-12T07:34:29Z",
-        "eligible_in_seconds": 207,
+        "eligible_in_seconds": 139,
         "number": 929,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/929",
@@ -1472,12 +1531,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1073,
+        "age_seconds": 1141,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-11-12T07:43:09Z",
-        "eligible_in_seconds": 727,
+        "eligible_in_seconds": 659,
         "number": 5749,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5749",
@@ -1491,12 +1550,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 826,
+        "age_seconds": 894,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-12T07:47:16Z",
-        "eligible_in_seconds": 974,
+        "eligible_in_seconds": 906,
         "number": 5881,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5881",
@@ -1510,12 +1569,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 823,
+        "age_seconds": 891,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-11-12T07:47:19Z",
-        "eligible_in_seconds": 977,
+        "eligible_in_seconds": 909,
         "number": 931,
         "position": 4,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/931",
@@ -1529,12 +1588,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 562,
+        "age_seconds": 630,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-11-12T07:51:40Z",
-        "eligible_in_seconds": 1238,
+        "eligible_in_seconds": 1170,
         "number": 5750,
         "position": 5,
         "pr_url": "https://github.com/dashpay/platform/pull/5750",
@@ -1548,12 +1607,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 106,
+        "age_seconds": 174,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-11-12T07:59:16Z",
-        "eligible_in_seconds": 1694,
+        "eligible_in_seconds": 1626,
         "number": 5877,
         "position": 6,
         "pr_url": "https://github.com/dashpay/platform/pull/5877",
@@ -1567,12 +1626,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 7,
+        "age_seconds": 75,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-11-12T08:00:55Z",
-        "eligible_in_seconds": 1793,
+        "eligible_in_seconds": 1725,
         "number": 5753,
         "position": 7,
         "pr_url": "https://github.com/dashpay/platform/pull/5753",
@@ -1593,7 +1652,7 @@
       "reviews": 42,
       "tokens": 416788835
     },
-    "ts": "2026-11-12T07:31:02Z",
+    "ts": "2026-11-12T07:32:10Z",
     "typical_minutes_by_tier": {
       "critical": 29.2,
       "low": 38.9,
@@ -1604,7 +1663,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.05,
+      "idle_minutes": 1.2,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1612,7 +1671,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-12T07:31:02Z",
+    "generated_at": "2026-11-12T07:32:10Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
