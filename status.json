@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-13T01:42:07Z",
-  "generated_at": "2026-11-13T01:42:11Z",
+  "data_as_of": "2026-11-13T01:43:13Z",
+  "generated_at": "2026-11-13T01:43:18Z",
   "history": {
     "daily": [
       {
@@ -368,7 +368,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 967,
+            "n": 968,
             "p90_seconds": 1873
           }
         },
@@ -394,6 +394,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5288,
+        "repo": "dashpay/platform",
+        "run_id": 10415,
+        "ts": "2026-11-13T01:43:18Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5288,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-13T01:43:06Z"
+      },
+      {
+        "detail": "attempt 1 sha=ccc4d085",
+        "kind": "run.spawned",
+        "number": 5288,
+        "repo": "dashpay/platform",
+        "run_id": 10415,
+        "ts": "2026-11-13T01:42:37Z"
+      },
       {
         "detail": null,
         "kind": "head.review_reply",
@@ -641,30 +665,6 @@
         "repo": "dashpay/dashwallet-ios",
         "run_id": 10412,
         "ts": "2026-11-13T01:26:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1278,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 10412,
-        "ts": "2026-11-13T01:26:42Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1278,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 10412,
-        "ts": "2026-11-13T01:26:42Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 1278,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 10412,
-        "ts": "2026-11-13T01:26:42Z"
       },
       {
         "detail": null,
@@ -1306,14 +1306,96 @@
       "findings_posted": 9412,
       "reviews": 9628,
       "reviews_imported": 2245,
-      "runs": 10414,
+      "runs": 10415,
       "tokens_in": 113589226397,
       "tokens_out": 1245170411,
       "tokens_total": 114834396808
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-13T07:42:37Z",
+        "deadline_in_seconds": 21564,
+        "degraded": false,
+        "elapsed_seconds": 36,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-11-13T01:43:07Z",
+        "id": 10415,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5288,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5288",
+        "priority": false,
+        "progress": 0.017,
+        "queue": "live",
+        "queued_at": "2026-11-13T01:33:58Z",
+        "remaining_seconds": 2095,
+        "repo": "dashpay/platform",
+        "sha": "ccc4d085e3c3094a094b8abce4ff9ff3b47a94c5",
+        "started_at": "2026-11-13T01:42:37Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 8,
+            "started_at": "2026-11-13T01:42:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 7,
+            "started_at": "2026-11-13T01:42:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "The large, intricate diff changes funds movement and seed-derived account handling in wallet/shielded/tips.rs and rs-platform-wallet-ffi/src/shielded_send.rs, alongside persisted-data migrations in V021__profile_address_encoding.rs and DashDatabase.kt.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 6,
+            "started_at": "2026-11-13T01:42:50Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 15,
+            "started_at": "2026-11-13T01:42:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(platform-wallet): support DashPay shielded tips with dedicated accounts",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "normal_request",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 519
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1329,7 +1411,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1347,7 +1429,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-13T01:40:11Z",
+        "at": "2026-11-13T01:42:41Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1367,11 +1449,12 @@
       "closed": 672,
       "done": 9539,
       "failed": 100,
-      "queued": 7,
+      "queued": 6,
+      "running": 1,
       "superseded": 3297
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-13T01:38:23Z",
+    "ingest_last_at": "2026-11-13T01:42:37Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1395,50 +1478,31 @@
         "pool": "gpt",
         "running": 0,
         "slots": 12,
-        "waiting": 0
+        "waiting": 4
       },
       {
         "pool": "muse",
         "running": 0,
         "slots": 20,
-        "waiting": 0
+        "waiting": 1
       }
     ],
     "last_run_done_at": "2026-11-13T01:30:15Z",
-    "last_run_started_at": "2026-11-13T00:58:26Z",
+    "last_run_started_at": "2026-11-13T01:42:37Z",
     "median_run_minutes": 34.2,
-    "notify_last_at": "2026-11-13T01:40:31Z",
+    "notify_last_at": "2026-11-13T01:42:59Z",
     "oldest_queued_at": "2026-11-13T01:29:41Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 489,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-11-13T01:40:57Z",
-        "eligible_in_seconds": 0,
-        "number": 5288,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5288",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5288#issuecomment-5995927362",
-        "priority": false,
-        "queued_at": "2026-11-13T01:33:58Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "ccc4d085e3c3094a094b8abce4ff9ff3b47a94c5",
-        "title": "feat(platform-wallet): support DashPay shielded tips with dedicated accounts",
-        "trigger": "normal_request"
-      },
-      {
-        "age_seconds": 746,
+        "age_seconds": 812,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-13T01:59:41Z",
-        "eligible_in_seconds": 1054,
+        "eligible_in_seconds": 988,
         "number": 1366,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1366",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1366#issuecomment-6793511454",
         "priority": false,
@@ -1450,14 +1514,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 746,
+        "age_seconds": 812,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-13T01:59:41Z",
-        "eligible_in_seconds": 1054,
+        "eligible_in_seconds": 988,
         "number": 1347,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1347",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1347#issuecomment-6772373241",
         "priority": false,
@@ -1469,14 +1533,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 491,
+        "age_seconds": 557,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-13T02:03:56Z",
-        "eligible_in_seconds": 1309,
+        "eligible_in_seconds": 1243,
         "number": 1289,
-        "position": 4,
+        "position": 3,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1289",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1289#issuecomment-6575305820",
         "priority": false,
@@ -1488,14 +1552,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 491,
+        "age_seconds": 557,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-13T02:03:56Z",
-        "eligible_in_seconds": 1309,
+        "eligible_in_seconds": 1243,
         "number": 1278,
-        "position": 5,
+        "position": 4,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1278",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1278#issuecomment-6549975579",
         "priority": false,
@@ -1507,14 +1571,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 491,
+        "age_seconds": 557,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-13T02:03:56Z",
-        "eligible_in_seconds": 1309,
+        "eligible_in_seconds": 1243,
         "number": 1293,
-        "position": 6,
+        "position": 5,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1293",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1293#issuecomment-6579902749",
         "priority": false,
@@ -1526,14 +1590,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 491,
+        "age_seconds": 557,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-13T02:03:56Z",
-        "eligible_in_seconds": 1309,
+        "eligible_in_seconds": 1243,
         "number": 1399,
-        "position": 7,
+        "position": 6,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1399",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1399#issuecomment-6834434443",
         "priority": false,
@@ -1552,7 +1616,7 @@
       "reviews": 12,
       "tokens": 184352893
     },
-    "ts": "2026-11-13T01:42:07Z",
+    "ts": "2026-11-13T01:43:13Z",
     "typical_minutes_by_tier": {
       "critical": 28.5,
       "low": 36.7,
@@ -1561,17 +1625,17 @@
       "unknown": 0.3
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 43.7,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.6166666666666667,
       "ingest_stale": false,
-      "stuck": true
+      "stuck": false
     }
   },
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-13T01:42:07Z",
+    "generated_at": "2026-11-13T01:43:13Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4211,7 +4275,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-13T01:41:56Z",
+      "at": "2026-11-13T01:42:59Z",
       "reason": "backlog",
       "running": true,
       "state": "waiting"
