@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-13T03:41:02Z",
-  "generated_at": "2026-11-13T03:41:02Z",
+  "data_as_of": "2026-11-13T03:42:03Z",
+  "generated_at": "2026-11-13T03:42:03Z",
   "history": {
     "daily": [
       {
@@ -742,9 +742,9 @@
       },
       {
         "effort": "high",
-        "lanes": 24856,
-        "tokens_in": 25053663389,
-        "tokens_out": 232621509
+        "lanes": 24857,
+        "tokens_in": 25054488600,
+        "tokens_out": 232627629
       },
       {
         "effort": "low",
@@ -790,18 +790,18 @@
         "tokens_out": 50402087
       },
       {
-        "avg_tokens_per_lane": 1817803.0,
-        "lanes": 39497,
+        "avg_tokens_per_lane": 1817778.0,
+        "lanes": 39498,
         "model": "gpt-6.1-sol",
-        "tokens_in": 71464061215,
-        "tokens_out": 333698099
+        "tokens_in": 71464886426,
+        "tokens_out": 333704219
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 10424,
-        "tokens_in": 46966438,
-        "tokens_out": 358063
+        "tokens_in": 47791649,
+        "tokens_out": 364183
       },
       {
         "run_id": 10423,
@@ -1300,16 +1300,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14022662,
+      "avg_tokens_per_completed_review": 14022763,
       "completed_reviews": 8202,
       "findings": 64268,
       "findings_posted": 9417,
       "reviews": 9637,
       "reviews_imported": 2245,
       "runs": 10425,
-      "tokens_in": 113766937083,
-      "tokens_out": 1246934908,
-      "tokens_total": 115013871991
+      "tokens_in": 113767762294,
+      "tokens_out": 1246941028,
+      "tokens_total": 115014703322
     }
   },
   "live": {
@@ -1318,12 +1318,16 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-11-13T09:06:40Z",
-        "deadline_in_seconds": 19538,
+        "deadline_in_seconds": 19477,
         "degraded": false,
-        "elapsed_seconds": 2062,
-        "findings": null,
-        "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-11-13T03:40:49Z",
+        "elapsed_seconds": 2123,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 0
+        },
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-11-13T03:41:49Z",
         "id": 10424,
         "lanes": [
           {
@@ -1395,29 +1399,79 @@
             "status": "completed",
             "tokens_in": 6684485,
             "tokens_out": 117635
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 825211,
+            "tokens_out": 6120
           }
         ],
         "live_lanes": [
           {
-            "effort": "high",
+            "effort": "xhigh",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify2",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 234,
+            "role": "architecture-layering",
+            "since_seconds": 18,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 20,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 17,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 16,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 19,
             "state": "running"
           }
         ],
         "number": 4657,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/4657",
         "priority": false,
-        "progress": 0.925,
+        "progress": 0.764,
         "queue": "live",
         "queued_at": "2026-11-13T02:35:20Z",
-        "remaining_seconds": 168,
+        "remaining_seconds": 657,
         "repo": "dashpay/platform",
         "sha": "84ac1e73775cf985d91bbe87d50dddd71b799e77",
         "started_at": "2026-11-13T03:06:40Z",
@@ -1496,17 +1550,44 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify2",
-            "seconds": 234,
+            "seconds": 275,
             "started_at": "2026-11-13T03:37:08Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 5,
+            "name": "fresh_phase2",
+            "seconds": 20,
+            "started_at": "2026-11-13T03:41:43Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat(platform)!: delete and erase lifecycle for keep-history documents",
-        "tokens_in": 46966438,
-        "tokens_out": 358063,
+        "tokens_in": 47791649,
+        "tokens_out": 364183,
         "trigger": "new_push",
         "upcoming": [
           "publish"
@@ -1593,7 +1674,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 5,
         "slots": 8,
         "waiting": 0
       },
@@ -1618,7 +1699,7 @@
       "reviews": 22,
       "tokens": 316503575
     },
-    "ts": "2026-11-13T03:41:02Z",
+    "ts": "2026-11-13T03:42:03Z",
     "typical_minutes_by_tier": {
       "critical": 28.6,
       "low": 37.1,
@@ -1629,7 +1710,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 31.433333333333334,
+      "idle_minutes": 32.45,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1637,7 +1718,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-13T03:41:02Z",
+    "generated_at": "2026-11-13T03:42:03Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4277,7 +4358,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-13T03:40:42Z",
+      "at": "2026-11-13T03:41:43Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
