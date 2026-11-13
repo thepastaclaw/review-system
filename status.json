@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-13T04:08:02Z",
-  "generated_at": "2026-11-13T04:08:02Z",
+  "data_as_of": "2026-11-13T04:09:00Z",
+  "generated_at": "2026-11-13T04:09:01Z",
   "history": {
     "daily": [
       {
@@ -368,7 +368,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 975,
+            "n": 976,
             "p90_seconds": 1875
           }
         },
@@ -394,6 +394,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=633fe724",
+        "kind": "run.spawned",
+        "number": 5288,
+        "repo": "dashpay/platform",
+        "run_id": 10428,
+        "ts": "2026-11-13T04:08:35Z"
+      },
       {
         "detail": null,
         "kind": "lane.corrected",
@@ -705,14 +713,6 @@
         "repo": "dashpay/platform",
         "run_id": 10422,
         "ts": "2026-11-13T02:51:08Z"
-      },
-      {
-        "detail": null,
-        "kind": "gc.run",
-        "number": null,
-        "repo": null,
-        "run_id": null,
-        "ts": "2026-11-13T02:48:55Z"
       }
     ],
     "tokens_by_effort": [
@@ -1306,7 +1306,7 @@
       "findings_posted": 9417,
       "reviews": 9637,
       "reviews_imported": 2245,
-      "runs": 10427,
+      "runs": 10428,
       "tokens_in": 113790607643,
       "tokens_out": 1246987491,
       "tokens_total": 115037595134
@@ -1318,16 +1318,16 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-11-13T09:06:40Z",
-        "deadline_in_seconds": 17918,
+        "deadline_in_seconds": 17860,
         "degraded": false,
-        "elapsed_seconds": 3682,
+        "elapsed_seconds": 3740,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 8,
-        "heartbeat_at": "2026-11-13T04:07:54Z",
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-11-13T04:08:54Z",
         "id": 10424,
         "lanes": [
           {
@@ -1449,7 +1449,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "platform-versioning",
-            "since_seconds": 1576,
+            "since_seconds": 1634,
             "state": "running"
           },
           {
@@ -1459,7 +1459,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "security-auditor",
-            "since_seconds": 1578,
+            "since_seconds": 1636,
             "state": "running"
           }
         ],
@@ -1576,7 +1576,7 @@
             ],
             "lanes_total": 5,
             "name": "fresh_phase2",
-            "seconds": 1579,
+            "seconds": 1637,
             "started_at": "2026-11-13T03:41:43Z",
             "status": "running"
           }
@@ -1590,6 +1590,86 @@
           "publish"
         ],
         "wait_seconds": 1880
+      },
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-13T10:08:35Z",
+        "deadline_in_seconds": 21575,
+        "degraded": false,
+        "elapsed_seconds": 25,
+        "findings": null,
+        "heartbeat_age_seconds": 9,
+        "heartbeat_at": "2026-11-13T04:08:51Z",
+        "id": 10428,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5288,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5288",
+        "priority": false,
+        "progress": 0.011,
+        "queue": "live",
+        "queued_at": "2026-11-13T04:00:02Z",
+        "remaining_seconds": 2239,
+        "repo": "dashpay/platform",
+        "sha": "633fe72420c54b33cb9c073ed1fdf36a829c1a59",
+        "started_at": "2026-11-13T04:08:35Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 8,
+            "started_at": "2026-11-13T04:08:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 9,
+            "started_at": "2026-11-13T04:08:44Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a large, intricate change that modifies shielded funds movement and coin/account selection, key-derived address handling, concurrent operation fencing, and storage migrations in files such as packages/rs-platform-wallet/src/wallet/shielded/tips.rs and packages/rs-platform-wallet-storage/migrations/V021__profile_address_encoding.rs.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 8,
+            "started_at": "2026-11-13T04:08:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 6,
+            "started_at": "2026-11-13T04:08:54Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(platform-wallet): support DashPay shielded tips with dedicated accounts",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "normal_request",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 513
       }
     ],
     "audit": {
@@ -1607,7 +1687,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1645,12 +1725,12 @@
       "closed": 672,
       "done": 9549,
       "failed": 100,
-      "queued": 3,
-      "running": 1,
+      "queued": 2,
+      "running": 2,
       "superseded": 3297
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-13T04:04:18Z",
+    "ingest_last_at": "2026-11-13T04:08:35Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1684,40 +1764,21 @@
       }
     ],
     "last_run_done_at": "2026-11-13T03:47:13Z",
-    "last_run_started_at": "2026-11-13T03:46:59Z",
+    "last_run_started_at": "2026-11-13T04:08:35Z",
     "median_run_minutes": 32.8,
-    "notify_last_at": "2026-11-13T04:06:33Z",
+    "notify_last_at": "2026-11-13T04:08:56Z",
     "oldest_queued_at": "2026-11-13T03:51:27Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 480,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-11-13T04:07:02Z",
-        "eligible_in_seconds": 0,
-        "number": 5288,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5288",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5288#issuecomment-5995927362",
-        "priority": false,
-        "queued_at": "2026-11-13T04:00:02Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "633fe72420c54b33cb9c073ed1fdf36a829c1a59",
-        "title": "feat(platform-wallet): support DashPay shielded tips with dedicated accounts",
-        "trigger": "normal_request"
-      },
-      {
-        "age_seconds": 995,
+        "age_seconds": 1053,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-11-13T04:21:27Z",
-        "eligible_in_seconds": 805,
+        "eligible_in_seconds": 747,
         "number": 8136,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8136",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8136#issuecomment-6843351197",
         "priority": false,
@@ -1729,14 +1790,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 480,
+        "age_seconds": 538,
         "attempts": 0,
         "author": "QuantumExplorer",
         "eligible": false,
         "eligible_at": "2026-11-13T04:30:02Z",
-        "eligible_in_seconds": 1320,
+        "eligible_in_seconds": 1262,
         "number": 5749,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5749",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5749#issuecomment-6612087246",
         "priority": false,
@@ -1755,7 +1816,7 @@
       "reviews": 24,
       "tokens": 316503575
     },
-    "ts": "2026-11-13T04:08:02Z",
+    "ts": "2026-11-13T04:09:00Z",
     "typical_minutes_by_tier": {
       "critical": 28.6,
       "low": 37.1,
@@ -1764,9 +1825,9 @@
       "unknown": 0.2
     },
     "watchdog": {
-      "active": 1,
-      "eligible": 1,
-      "idle_minutes": 21.05,
+      "active": 2,
+      "eligible": 0,
+      "idle_minutes": 0.4166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1774,7 +1835,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-13T04:08:02Z",
+    "generated_at": "2026-11-13T04:09:00Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4414,7 +4475,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-13T04:07:47Z",
+      "at": "2026-11-13T04:08:48Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
