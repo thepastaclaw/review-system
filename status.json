@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-14T13:14:01Z",
-  "generated_at": "2026-11-14T13:14:02Z",
+  "data_as_of": "2026-11-14T13:15:01Z",
+  "generated_at": "2026-11-14T13:15:01Z",
   "history": {
     "daily": [
       {
@@ -373,7 +373,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 1145,
+            "n": 1146,
             "p90_seconds": 1878
           }
         },
@@ -399,6 +399,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 8124,
+        "repo": "dashpay/dash",
+        "run_id": 10734,
+        "ts": "2026-11-14T13:14:20Z"
+      },
+      {
+        "detail": "attempt 1 sha=86aa4ffc",
+        "kind": "run.spawned",
+        "number": 8124,
+        "repo": "dashpay/dash",
+        "run_id": 10734,
+        "ts": "2026-11-14T13:14:04Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -702,22 +718,6 @@
         "repo": "dashpay/dash",
         "run_id": 10730,
         "ts": "2026-11-14T10:42:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.corrected",
-        "number": 5923,
-        "repo": "dashpay/platform",
-        "run_id": 10728,
-        "ts": "2026-11-14T10:42:41Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 8146,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-14T10:42:28Z"
       }
     ],
     "tokens_by_effort": [
@@ -1311,14 +1311,120 @@
       "findings_posted": 9702,
       "reviews": 9854,
       "reviews_imported": 2245,
-      "runs": 10733,
+      "runs": 10734,
       "tokens_in": 118805344245,
       "tokens_out": 1287615193,
       "tokens_total": 120092959438
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-14T19:14:04Z",
+        "deadline_in_seconds": 21543,
+        "degraded": false,
+        "elapsed_seconds": 57,
+        "findings": null,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-11-14T13:14:49Z",
+        "id": 10734,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 41,
+            "state": "running"
+          }
+        ],
+        "number": 8124,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash/pull/8124",
+        "priority": false,
+        "progress": 0.026,
+        "queue": "live",
+        "queued_at": "2026-11-14T12:43:56Z",
+        "remaining_seconds": 2097,
+        "repo": "dashpay/dash",
+        "sha": "86aa4ffc5c5eb4c3e7a7cfab83ad3b3478c5f2f8",
+        "started_at": "2026-11-14T13:14:04Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-11-14T13:14:04Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 4,
+            "started_at": "2026-11-14T13:14:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a cross-cutting Qt behavior fix spanning wallet migration, fee-source selection, PSBT file handling, UI state, and client feed shutdown, but it does not directly alter a critical surface such as consensus, cryptography, signatures, or storage migrations.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-11-14T13:14:10Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-11-14T13:14:15Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 43,
+            "started_at": "2026-11-14T13:14:18Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(qt): options tabs, wallet migration cancel, PSBT save and shared masternode fee bugs",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1808
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1334,7 +1440,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1372,7 +1478,7 @@
       "closed": 682,
       "done": 9762,
       "failed": 100,
-      "queued": 1,
+      "running": 1,
       "superseded": 3367
     },
     "ingest_error_streak": 0,
@@ -1404,38 +1510,18 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-14T12:51:37Z",
-    "last_run_started_at": "2026-11-14T12:35:05Z",
+    "last_run_started_at": "2026-11-14T13:14:04Z",
     "median_run_minutes": 30.133333333333333,
     "notify_last_at": "2026-11-14T13:13:39Z",
-    "oldest_queued_at": "2026-11-14T12:43:56Z",
+    "oldest_queued_at": null,
     "priority_queued": 0,
-    "queued": [
-      {
-        "age_seconds": 1805,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-11-14T13:13:56Z",
-        "eligible_in_seconds": 0,
-        "number": 8124,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash/pull/8124",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/8124#issuecomment-6804002309",
-        "priority": false,
-        "queued_at": "2026-11-14T12:43:56Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash",
-        "sha": "86aa4ffc5c5eb4c3e7a7cfab83ad3b3478c5f2f8",
-        "title": "fix(qt): options tabs, wallet migration cancel, PSBT save and shared masternode fee bugs",
-        "trigger": "new_push"
-      }
-    ],
+    "queued": [],
     "today": {
       "day": "2026-11-14",
       "failed": 0,
@@ -1443,7 +1529,7 @@
       "reviews": 47,
       "tokens": 763141697
     },
-    "ts": "2026-11-14T13:14:01Z",
+    "ts": "2026-11-14T13:15:01Z",
     "typical_minutes_by_tier": {
       "critical": 31.6,
       "low": 38.9,
@@ -1452,17 +1538,17 @@
       "unknown": 0.3
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 38.93333333333333,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.95,
       "ingest_stale": false,
-      "stuck": true
+      "stuck": false
     }
   },
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-14T13:14:01Z",
+    "generated_at": "2026-11-14T13:15:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4102,7 +4188,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-14T13:13:33Z",
+      "at": "2026-11-14T13:14:34Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
