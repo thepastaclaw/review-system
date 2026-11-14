@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-14T05:44:02Z",
-  "generated_at": "2026-11-14T05:44:02Z",
+  "data_as_of": "2026-11-14T05:45:02Z",
+  "generated_at": "2026-11-14T05:45:02Z",
   "history": {
     "daily": [
       {
@@ -1417,52 +1417,71 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1753,
+        "age_seconds": 1813,
         "attempts": 0,
         "author": "PastaPastaPasta",
-        "eligible": false,
+        "eligible": true,
         "eligible_at": "2026-11-14T05:44:49Z",
-        "eligible_in_seconds": 47,
+        "eligible_in_seconds": 0,
         "number": 7481,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/7481",
         "prioritize_url": "https://github.com/dashpay/dash/issues/7481#issuecomment-5079582083",
         "priority": false,
         "queued_at": "2026-11-14T05:14:49Z",
-        "reason": "debounce (more pushes may follow)",
+        "reason": "waiting for a review slot",
         "repo": "dashpay/dash",
         "sha": "8100520aacd8920ef8e5dc739163067dd2591c81",
         "title": "backport: replace Autotools with CMake (bitcoin#30454, #30664, #31013, #31395)",
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1753,
+        "age_seconds": 1813,
         "attempts": 0,
         "author": "PastaPastaPasta",
-        "eligible": false,
+        "eligible": true,
         "eligible_at": "2026-11-14T05:44:49Z",
-        "eligible_in_seconds": 47,
+        "eligible_in_seconds": 0,
         "number": 8068,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/8068",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8068#issuecomment-6681634938",
         "priority": false,
         "queued_at": "2026-11-14T05:14:49Z",
-        "reason": "debounce (more pushes may follow)",
+        "reason": "waiting for a review slot",
         "repo": "dashpay/dash",
         "sha": "506c3458384811ff64b2a397e55eebaf2643077a",
         "title": "feat(wallet): wallet-owned rescans for DashPay receiving chains",
         "trigger": "new_push"
       },
       {
-        "age_seconds": 716,
+        "age_seconds": 248,
+        "attempts": 0,
+        "author": "PastaPastaPasta",
+        "eligible": true,
+        "eligible_at": "2026-11-14T05:43:47Z",
+        "eligible_in_seconds": 0,
+        "number": 8145,
+        "position": 3,
+        "pr_url": "https://github.com/dashpay/dash/pull/8145",
+        "prioritize_url": "https://github.com/dashpay/dash/issues/8145#issuecomment-6872148342",
+        "priority": false,
+        "queued_at": "2026-11-14T05:40:54Z",
+        "reason": "waiting for a review slot",
+        "repo": "dashpay/dash",
+        "sha": "94d85d2cb98dcf6f974982bce99b1dbdda06245d",
+        "title": "refactor: take the BLS scheme from the data or the block, never from process state",
+        "trigger": "normal_request"
+      },
+      {
+        "age_seconds": 776,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-14T06:02:06Z",
-        "eligible_in_seconds": 1084,
+        "eligible_in_seconds": 1024,
         "number": 8146,
-        "position": 3,
+        "position": 4,
         "pr_url": "https://github.com/dashpay/dash/pull/8146",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8146#issuecomment-6872485170",
         "priority": false,
@@ -1472,25 +1491,6 @@
         "sha": "d2e05bea36b832024c8cdaba2dfc7a8cedbafb6b",
         "title": "build: vendor blst as a subtree so it has a single pin",
         "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 188,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-11-14T06:10:54Z",
-        "eligible_in_seconds": 1612,
-        "number": 8145,
-        "position": 4,
-        "pr_url": "https://github.com/dashpay/dash/pull/8145",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/8145#issuecomment-6872148342",
-        "priority": false,
-        "queued_at": "2026-11-14T05:40:54Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash",
-        "sha": "94d85d2cb98dcf6f974982bce99b1dbdda06245d",
-        "title": "refactor: take the BLS scheme from the data or the block, never from process state",
-        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1500,7 +1500,7 @@
       "reviews": 22,
       "tokens": 380957186
     },
-    "ts": "2026-11-14T05:44:02Z",
+    "ts": "2026-11-14T05:45:02Z",
     "typical_minutes_by_tier": {
       "critical": 30.9,
       "low": 38.9,
@@ -1510,16 +1510,16 @@
     },
     "watchdog": {
       "active": 0,
-      "eligible": 0,
-      "idle_minutes": 55.43333333333333,
+      "eligible": 3,
+      "idle_minutes": 56.43333333333333,
       "ingest_stale": false,
-      "stuck": false
+      "stuck": true
     }
   },
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-14T05:44:02Z",
+    "generated_at": "2026-11-14T05:45:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4153,7 +4153,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-14T05:43:31Z",
+      "at": "2026-11-14T05:44:32Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
