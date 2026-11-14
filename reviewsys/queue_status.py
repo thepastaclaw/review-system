@@ -1,5 +1,5 @@
-"""Queue-position gate comments: every queued PR gets an immediate comment with its position,
-an ETA, and a checkbox that requests a priority review.
+"""Stable queue gate comments: every queued PR gets an immediate comment with a queue link
+and a checkbox that requests a priority review.
 
 Runs as a daemon task. Each pass reads the PR's gate comment back (one GET per queued head;
 the comment id is cached in `kv` so no search is needed after the first write), honours a
@@ -8,9 +8,12 @@ Comparing against the live body, not a cache, means a worker-written "in progres
 body on a requeued head is always replaced.
 
 Each PR gets one body per pass, from one of two renderers: `deferred_body` for a draft and for
-a new head waiting out the push debounce (not started, nothing to rank yet), `queue_body` for
-every other queued head. Both used to render a debounced head, one after the other in the same
-pass, so its comment flipped between the two every pass (dashpay/platform#5237, 2026-10-01).
+a new head waiting out the push debounce (not started), `queue_body` for every other queued head.
+Both used to render a debounced head, one after the other in the same pass, so its comment
+flipped between the two every pass (dashpay/platform#5237, 2026-10-01).
+
+The body holds nothing that moves with the queue (position, ETA, degraded mode): every edit
+wakes whatever watches the PR, so the live queue stays on the dashboard.
 """
 
 from __future__ import annotations
@@ -20,13 +23,11 @@ import re
 import sqlite3
 from typing import Any
 
-from . import degraded as degraded_mod
 from . import github
 from .config import Config
-from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
+from .db import event, kv_get, kv_set, now, tx
 from .gh import Gh
 from .models import HeadStatus, Trigger
-from .status import median_run_minutes
 
 log = logging.getLogger(__name__)
 
@@ -38,51 +39,26 @@ DEFERRED_MARKER = "<!-- thepastaclaw-review-deferred v1 -->"
 PRIORITY_CHECKED_RE = re.compile(
     r"^\s*-\s*\[[xX]\]\s*\*\*Request priority review\*\*", re.MULTILINE
 )
-DEFAULT_RUN_MINUTES = 120
 MAX_WRITES_PER_PASS = 25  # stay well under GitHub's content-creation secondary limit
-
-
-def _fmt_minutes(m: float) -> str:
-    if m < 55:
-        return f"~{max(5, int(round(m / 5) * 5))} min"
-    h = m / 60
-    return f"~{h:.1f} h" if h < 3 else f"~{h:.0f} h"
 
 
 def queue_body(
     sha: str,
     *,
-    position: int,
-    eta_minutes: float,
-    run_minutes: float,
     priority: bool,
-    degraded: bool = False,
 ) -> str:
-    """Rendered queue comment. Deliberately omits the queue total so a PR's body only changes
-    when its own position or ETA changes (or the system enters/leaves degraded mode)."""
-    warn = f"{github.DEGRADED_BADGE} —" if degraded else ""
+    """Rendered queue comment; its text stays stable while the queue moves."""
     if priority:
-        head = f"{warn or '⚡'} Priority review — {_ordinal(position)} in line, starts as soon as a slot frees"
+        head = "⚡ Priority review — starts as soon as a slot frees"
     else:
-        head = f"{warn or '🕓'} Queued for automated review — {_ordinal(position)} in line, estimated start in {_fmt_minutes(eta_minutes)}"
+        head = "🕓 Queued for automated review"
     lines = [
         github.GATE_MARKER,
-        f"{head} (commit {sha[:8]})",
-        f"_Estimated review time once started: {_fmt_minutes(run_minutes)} (two-phase automated review; median of recent runs)._",
+        f"{head} (commit {sha[:8]}) · [queue and estimated start]({github.DASHBOARD_URL})",
     ]
-    if degraded:
-        lines.append(
-            "_The primary review models are currently out of quota; this review will run on "
-            "stand-in models and be marked as degraded._"
-        )
     if not priority:
         lines += ["", PRIORITY_BOX]
     return "\n".join(lines)
-
-
-def _ordinal(n: int) -> str:
-    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
-    return f"{n}{suffix}"
 
 
 def queued_order(conn: sqlite3.Connection, *, ts: str | None = None) -> list[sqlite3.Row]:
@@ -194,10 +170,6 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     """Post or refresh the queue comment on every queued PR and honour ticked priority boxes."""
     stats = {"written": 0, "promoted": 0, "deferred": 0}
     ts = now()
-    run_min = median_run_minutes(conn) or DEFAULT_RUN_MINUTES
-    # runs are bounded only by the `max_runs` safety cap (0 = none): below it an eligible head
-    # starts on the next tick, and the model pools only make runs longer, not later
-    slots = cfg.max_runs
     rows = queued_order(conn, ts=ts)
     comments: dict[int, dict[str, Any] | None] = {}
     for h in rows:
@@ -217,7 +189,7 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     # an explicit request and is converted into a normal or priority queue entry. This pass is
     # the only writer for the heads it selects; the queue pass below leaves them alone. A head
     # waiting out a retry backoff (attempts > 0) or a priority head is not in debounce: it
-    # keeps the queue body, whose ETA counts the wait. A draft whose commit is being or has
+    # keeps the queue body. A draft whose commit is being or has
     # been reviewed keeps the worker's body, but a box ticked on an older draft body still
     # counts; after a failed review the draft body's boxes are the only way to retry.
     deferred = conn.execute(
@@ -256,27 +228,12 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
         except Exception as exc:
             log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
     _note_skip_labels(conn, cfg, gh, stats)
-    # max_runs counts audit runs too
-    active = conn.execute(
-        "SELECT COUNT(*) AS n FROM runs WHERE status IN ('spawned','running')"
-    ).fetchone()["n"]
-    is_degraded = bool(degraded_mod.snapshot(conn, cfg).get("active"))
-    for pos, h in enumerate(rows, 1):
+    for h in rows:
         if h["id"] not in comments or h["id"] in in_debounce:
             continue  # read failed this pass (try again next time), or the deferred body's
-        # with a run cap: runs ahead of this head in its slot, plus the remainder of whatever
-        # occupies the slot now (half a run) when all slots are busy; always: any
-        # debounce/backoff still to elapse
-        ahead = ((pos - 1) // slots) * run_min if slots else 0.0
-        busy = run_min / 2 if slots and active >= slots else 0.0
-        wait = max(0.0, (parse_ts(h["eligible_at"]) - now_dt()).total_seconds() / 60)
         body = queue_body(
             h["sha"],
-            position=pos,
-            eta_minutes=max(ahead + busy, wait),
-            run_minutes=run_min,
             priority=bool(h["priority"]),
-            degraded=is_degraded,
         )
         existing = comments[h["id"]]
         if existing and str(existing.get("body") or "") == body:
