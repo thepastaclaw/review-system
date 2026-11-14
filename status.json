@@ -1,12 +1,12 @@
 {
-  "data_as_of": "2026-11-14T14:16:01Z",
-  "generated_at": "2026-11-14T14:16:02Z",
+  "data_as_of": "2026-11-14T14:17:01Z",
+  "generated_at": "2026-11-14T14:17:02Z",
   "history": {
     "daily": [
       {
-        "avg_seconds": 1412.70833266899,
+        "avg_seconds": 1384.0816317164167,
         "day": "2026-11-14",
-        "reviews": 48
+        "reviews": 49
       },
       {
         "avg_seconds": 2987.141023690884,
@@ -400,6 +400,38 @@
     },
     "recent_events": [
       {
+        "detail": "ok in 10s",
+        "kind": "run.done",
+        "number": 7568,
+        "repo": "dashpay/dash",
+        "run_id": 10735,
+        "ts": "2026-11-14T14:16:36Z"
+      },
+      {
+        "detail": "attempt 1 sha=b3f7788f",
+        "kind": "run.spawned",
+        "number": 7568,
+        "repo": "dashpay/dash",
+        "run_id": 10735,
+        "ts": "2026-11-14T14:16:26Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 7568,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-14T14:16:24Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.requeued",
+        "number": 7568,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-14T14:16:24Z"
+      },
+      {
         "detail": null,
         "kind": "degraded.transition",
         "number": null,
@@ -686,38 +718,6 @@
         "repo": "dashpay/platform",
         "run_id": 10729,
         "ts": "2026-11-14T11:05:15Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 5923,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-14T11:02:02Z"
-      },
-      {
-        "detail": "ok in 2758s",
-        "kind": "run.done",
-        "number": 5923,
-        "repo": "dashpay/platform",
-        "run_id": 10728,
-        "ts": "2026-11-14T11:01:29Z"
-      },
-      {
-        "detail": null,
-        "kind": "verdict.approve_nonblocking",
-        "number": 5923,
-        "repo": "dashpay/platform",
-        "run_id": 10728,
-        "ts": "2026-11-14T11:01:22Z"
-      },
-      {
-        "detail": null,
-        "kind": "late.gated",
-        "number": 5923,
-        "repo": "dashpay/platform",
-        "run_id": 10728,
-        "ts": "2026-11-14T11:01:22Z"
       }
     ],
     "tokens_by_effort": [
@@ -1305,13 +1305,13 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14192404,
-      "completed_reviews": 8462,
+      "avg_tokens_per_completed_review": 14190727,
+      "completed_reviews": 8463,
       "findings": 66675,
       "findings_posted": 9702,
       "reviews": 9855,
       "reviews_imported": 2245,
-      "runs": 10734,
+      "runs": 10735,
       "tokens_in": 118808450088,
       "tokens_out": 1287673982,
       "tokens_total": 120096124070
@@ -1408,10 +1408,10 @@
         "waiting": 0
       }
     ],
-    "last_run_done_at": "2026-11-14T13:30:02Z",
-    "last_run_started_at": "2026-11-14T13:14:04Z",
-    "median_run_minutes": 30.133333333333333,
-    "notify_last_at": "2026-11-14T14:14:01Z",
+    "last_run_done_at": "2026-11-14T14:16:36Z",
+    "last_run_started_at": "2026-11-14T14:16:26Z",
+    "median_run_minutes": 29.2,
+    "notify_last_at": "2026-11-14T14:16:17Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1419,10 +1419,10 @@
       "day": "2026-11-14",
       "failed": 0,
       "findings_posted": 48,
-      "reviews": 48,
+      "reviews": 49,
       "tokens": 766306329
     },
-    "ts": "2026-11-14T14:16:01Z",
+    "ts": "2026-11-14T14:17:01Z",
     "typical_minutes_by_tier": {
       "critical": 31.6,
       "low": 38.8,
@@ -1433,7 +1433,7 @@
     "watchdog": {
       "active": 0,
       "eligible": 0,
-      "idle_minutes": 61.95,
+      "idle_minutes": 0.5833333333333334,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1441,7 +1441,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-14T14:16:01Z",
+    "generated_at": "2026-11-14T14:17:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4081,7 +4081,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-14T14:15:56Z",
+      "at": "2026-11-14T14:16:56Z",
       "reason": null,
       "running": true,
       "state": "idle"
