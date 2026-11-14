@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-14T18:05:02Z",
-  "generated_at": "2026-11-14T18:05:02Z",
+  "data_as_of": "2026-11-14T18:06:02Z",
+  "generated_at": "2026-11-14T18:06:02Z",
   "history": {
     "daily": [
       {
@@ -373,7 +373,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 1142,
+            "n": 1143,
             "p90_seconds": 1878
           }
         },
@@ -399,6 +399,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 1706,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 10752,
+        "ts": "2026-11-14T18:05:47Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 1706,
+        "repo": "dashpay/dash-wallet",
+        "run_id": null,
+        "ts": "2026-11-14T18:05:34Z"
+      },
+      {
+        "detail": "attempt 1 sha=e5fc0832",
+        "kind": "run.spawned",
+        "number": 1706,
+        "repo": "dashpay/dash-wallet",
+        "run_id": 10752,
+        "ts": "2026-11-14T18:05:33Z"
+      },
       {
         "detail": null,
         "kind": "run.cancelled",
@@ -694,30 +718,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-11-14T17:01:28Z"
-      },
-      {
-        "detail": "ok in 29s",
-        "kind": "run.done",
-        "number": 8089,
-        "repo": "dashpay/dash",
-        "run_id": 10748,
-        "ts": "2026-11-14T17:00:30Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 8089,
-        "repo": "dashpay/dash",
-        "run_id": 10748,
-        "ts": "2026-11-14T17:00:28Z"
-      },
-      {
-        "detail": "attempt 1 sha=6e1e7a33",
-        "kind": "run.spawned",
-        "number": 8089,
-        "repo": "dashpay/dash",
-        "run_id": 10748,
-        "ts": "2026-11-14T17:00:00Z"
       }
     ],
     "tokens_by_effort": [
@@ -1311,14 +1311,118 @@
       "findings_posted": 9705,
       "reviews": 9864,
       "reviews_imported": 2245,
-      "runs": 10751,
+      "runs": 10752,
       "tokens_in": 118857471890,
       "tokens_out": 1288664548,
       "tokens_total": 120146136438
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "HashEngineering",
+        "deadline_at": "2026-11-15T00:05:33Z",
+        "deadline_in_seconds": 21571,
+        "degraded": false,
+        "elapsed_seconds": 29,
+        "findings": null,
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-11-14T18:05:48Z",
+        "id": 10752,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "glm-5.3-flash",
+            "phase": "phase1",
+            "pool": "glm",
+            "role": "general",
+            "since_seconds": 15,
+            "state": "running"
+          }
+        ],
+        "number": 1706,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1706",
+        "priority": false,
+        "progress": 0.019,
+        "queue": "live",
+        "queued_at": "2026-11-14T17:35:27Z",
+        "remaining_seconds": 1509,
+        "repo": "dashpay/dash-wallet",
+        "sha": "e5fc083200f44791ea01aa1f513faccd17ad2875",
+        "started_at": "2026-11-14T18:05:33Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-11-14T18:05:33Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 3,
+            "started_at": "2026-11-14T18:05:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a small, self-contained Fastlane build and upload configuration change with straightforward behavior and no critical application logic or key-handling implementation changes.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 3,
+            "started_at": "2026-11-14T18:05:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-11-14T18:05:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 18,
+            "started_at": "2026-11-14T18:05:44Z",
+            "status": "running"
+          }
+        ],
+        "tier": "low",
+        "title": "build: publish to Google Play as an app bundle; separate apk and aab lanes",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1806
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1334,7 +1438,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 4,
       "priority_overflow": 1,
@@ -1372,7 +1476,8 @@
       "closed": 683,
       "done": 9771,
       "failed": 100,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 3373
     },
     "ingest_error_streak": 0,
@@ -1392,7 +1497,7 @@
       },
       {
         "pool": "glm",
-        "running": 0,
+        "running": 1,
         "slots": 6,
         "waiting": 0
       },
@@ -1410,40 +1515,21 @@
       }
     ],
     "last_run_done_at": "2026-11-14T17:39:27Z",
-    "last_run_started_at": "2026-11-14T17:33:59Z",
+    "last_run_started_at": "2026-11-14T18:05:33Z",
     "median_run_minutes": 16.533333333333335,
     "notify_last_at": "2026-11-14T18:04:27Z",
-    "oldest_queued_at": "2026-11-14T17:35:27Z",
+    "oldest_queued_at": "2026-11-14T17:50:34Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1775,
-        "attempts": 0,
-        "author": "HashEngineering",
-        "eligible": false,
-        "eligible_at": "2026-11-14T18:05:27Z",
-        "eligible_in_seconds": 25,
-        "number": 1706,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1706",
-        "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1706#issuecomment-6865897227",
-        "priority": false,
-        "queued_at": "2026-11-14T17:35:27Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash-wallet",
-        "sha": "e5fc083200f44791ea01aa1f513faccd17ad2875",
-        "title": "build: publish to Google Play as an app bundle; separate apk and aab lanes",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 868,
+        "age_seconds": 928,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-11-14T18:20:34Z",
-        "eligible_in_seconds": 932,
+        "eligible_in_seconds": 872,
         "number": 1700,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1700",
         "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1700#issuecomment-6845411301",
         "priority": false,
@@ -1462,18 +1548,18 @@
       "reviews": 63,
       "tokens": 814000921
     },
-    "ts": "2026-11-14T18:05:02Z",
+    "ts": "2026-11-14T18:06:02Z",
     "typical_minutes_by_tier": {
-      "critical": 31.8,
+      "critical": 31.9,
       "low": 38.8,
       "normal": 30.7,
       "trivial": 23.1,
       "unknown": 0.3
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 31.05,
+      "idle_minutes": 0.48333333333333334,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1481,7 +1567,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-14T18:05:02Z",
+    "generated_at": "2026-11-14T18:06:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4132,7 +4218,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-14T18:04:10Z",
+      "at": "2026-11-14T18:05:10Z",
       "reason": "accounts",
       "running": true,
       "state": "waiting"
