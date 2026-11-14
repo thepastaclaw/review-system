@@ -1,6 +1,5 @@
 """How far along a running review is: a per-tier step profile from recent runs, and an
-estimate of the time left for one run against it. Shared by the status export (dashboard
-progress bars) and the worker (the live progress in the PR's gate comment).
+estimate of the time left for one run against it. Shared by the status export and dashboard.
 
 The estimate is deliberately simple. Each step's typical duration is the median over the
 tier's last `PROFILE_RUNS` completed live reviews, weighted by how often the step ran at all
@@ -10,9 +9,8 @@ side by side) + the weighted durations of the steps after the furthest one the r
 
 A conversation (a reply on a reviewed commit) is measured against other conversations, never
 a review profile. Until triage has set its tier, a review is measured against recent reviews
-of every tier (ALL_TIERS) and the estimate says so (`basis`), so the gate comment shows a bar
-from the run's first minute; the tiers differ several-fold, so the figure moves once the tier
-is known. A run queued by a reply is not estimated before triage unless the caller knows it
+of every tier (ALL_TIERS) and the estimate says so (`basis`). A run queued by a reply is not
+estimated before triage unless the caller knows it
 is a review (`conversation=False`): it may still turn out to be a conversation. Nor is an
 audit without a tier (a light audit never records one), nor a CI check (ci.py). A live review is measured against its own path too (`path_of`:
 priority or normal), since a priority run's lanes go ahead of normal ones in every model
@@ -54,26 +52,6 @@ ORDER = (
     "ci_check",
     "carry",
 )
-LABELS = {
-    "worktree": "checkout",
-    "select": "lanes chosen",
-    "triage": "triage",
-    "context": "context",
-    "phase1": "Phase 1",
-    "verify1": "verify 1",
-    "gate": "gate",
-    "phase2": "Phase 2",
-    "verify2": "verify 2",
-    "fresh_phase2": "fresh Phase 2",
-    "fresh_verify2": "fresh verify",
-    "confirm": "confirmation",
-    "stepback": "step back",
-    "publish": "publish",
-    "persistence": "persistence",
-    "converse": "conversation",
-    "ci_check": "CI check",
-    "carry": "carried over",
-}
 PROFILE_RUNS = 40
 MIN_PROFILE_RUNS = 5  # below this a tier borrows the all-tier profile
 UPCOMING_SHARE = 0.5  # a step shown as upcoming runs on at least half of the tier's reviews

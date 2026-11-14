@@ -160,10 +160,12 @@ def test_two_phase_final_review_posts_once(cfg, conn, gh, lanes):
     assert conn.execute("SELECT status FROM heads").fetchone()["status"] == "done"
     assert conn.execute("SELECT COUNT(*) FROM posted_findings").fetchone()[0] == 1
     assert conn.execute("SELECT SUM(tokens_in) FROM lanes").fetchone()[0] == 100 * 11
-    # gate comment went in_progress -> done
-    assert gh.gate_bodies[0].splitlines()[1].startswith("🔍 Review in progress") and gh.gate_bodies[
-        -1
-    ].splitlines()[1].startswith("✅ Final review complete")
+    # one in-progress write, followed by one final-state write
+    in_progress = [b for b in gh.gate_bodies if "🔍 Review in progress" in b]
+    final = [b for b in gh.gate_bodies if "✅ Final review complete" in b]
+    assert len(in_progress) == 1 and len(final) == 1 and len(gh.gate_bodies) == 2
+    assert "%" not in in_progress[0] and "min left" not in in_progress[0]
+    assert f"#run={rid}" in in_progress[0]
     # golden body
     if GOLDEN.exists():
         assert body == GOLDEN.read_text()

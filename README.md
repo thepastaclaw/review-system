@@ -476,8 +476,8 @@ and PRs silently get no review (2026-09-17: 60 failed runs in 8 h). With a
   retracts a standing full-strength approval (`review.verdict_kept`).
 - **Disclosure.** Review title `⚠️ DEGRADED — …`, a warning block under the title
   naming the reason and the stand-ins, `- **Degraded mode**: …` and
-  "`muse…` (standing in for `gpt-6-astra`)" in the provenance, the gate comment and
-  queue comment carry `⚠️ DEGRADED`, `runs.degraded=1`, events `degraded.run` /
+  "`muse…` (standing in for `gpt-6-astra`)" in the provenance and final gate comment,
+  `runs.degraded=1`, events `degraded.run` /
   `degraded.entered_midrun`, and `reviewsys status` prints a `mode:` line.
 - **Operator override.** `reviewsys degraded on|off|auto` (`--probe` re-probes now);
   `doctor` prints the current state and probes every stand-in model.
@@ -1413,8 +1413,8 @@ Then:
   conversation lane answers only on a commit whose own final review stands.
 - A predecessor superseded before any run recorded its print breaks the chain: what
   changed in between is unknown, so the next commit starts over.
-- Carried runs take seconds. They are left out of the run-time median behind the queue
-  ETA, and out of the dashboard's path timing. The label pass picks up a finished carry
+- Carried runs take seconds. They are left out of the run-time median behind queue
+  scheduling, and out of the dashboard's path timing. The label pass picks up a finished carry
   (it writes no `reviews` row) so the verdict label the push cleared comes back.
 
 ## Verdict labels (filtering by the bot's approval)
@@ -1577,7 +1577,7 @@ verdict is handled by `ci.py`:
     never a `failed` head and never pages. A cancel during the lane posts nothing.
 - A CI-check head is not in line for a review: it gets no queue comment, leaves the gate
   comment the review wrote, has no progress estimate, and counts neither toward the backlog
-  rule nor the median run time behind queue ETAs. Whatever re-opens a reviewed commit (a
+  rule nor the median run time used by status. Whatever re-opens a reviewed commit (a
   reply on a finding, the priority box, `enqueue`) while it waits takes the head over, and
   the watch queues the CI check again afterwards if the APPROVE still stands and the check
   still fails (a new review that approves registers a fresh watch instead); a mention or
@@ -1592,53 +1592,27 @@ label and the review timeline carry the move.
 
 ## Queue comment and priority requests
 
-As soon as a PR head is queued the daemon posts (and keeps updated, every
-`queue_comment_interval_seconds`) one gate comment with the PR's place in line, an
-estimated start time (any debounce/backoff still to elapse; with a `max_runs` cap, also a
-slot-pipeline model over the median of recent run durations) and an estimated review
-duration. The comment carries a checkbox, **Request priority review**; ticking it
-promotes the head to the priority lane (front of the queue, its lanes ahead of live
-lanes in every model pool, no debounce),
-records `head.priority_requested` with the editor's login from the comment's edit
-history, and re-renders the comment without the box. GitHub only renders the box as
-clickable to users who can edit the comment, i.e. repository collaborators. The
-same comment is reused by the worker for "in progress" / "done" / "failed" states,
-so a PR never has more than one bot status comment. Writes are capped at 25 per
-pass to respect GitHub's content-creation limits; the rest catch up next pass.
+As soon as a PR head is queued the daemon posts one stable gate comment linking to the queue and
+estimated start on the dashboard. The comment carries a checkbox, **Request priority review**; ticking it
+promotes the head to the priority lane (front of the queue, its lanes ahead of live lanes in every model
+pool, no debounce), records `head.priority_requested` with the editor's login from the comment's edit
+history, and re-renders the comment without the box. GitHub only renders the box as clickable to users
+who can edit the comment, i.e. repository collaborators. Queue position and ETA remain on the dashboard.
+The same comment is reused by the worker for "in progress" / "done" / "failed" states, so a PR never has
+more than one bot status comment. Writes are capped at 25 per pass to respect GitHub's content-creation
+limits; the rest catch up next pass.
 
-A draft PR, and a new head still waiting out the push debounce (not priority, not a retry),
-get the "Review not started yet" body instead, with two boxes: **Request normal review**
-(queue it now) and **Request priority review**. Each PR gets exactly one of the two bodies
-per pass, and a body equal to what GitHub has is never rewritten. A retry waiting out its
-backoff keeps the queue body, whose ETA counts the wait. (Until 2026-10 both renderers ran
-for a debounced head in the same pass, so its comment flipped between the two every ~5 min.)
+A draft PR, and a new head still waiting out the push debounce (not priority, not a retry), get the
+"Review not started yet" body instead, with two boxes: **Request normal review** (queue it now) and
+**Request priority review**. Each PR gets exactly one of the two bodies per pass, and a body equal to
+what GitHub has is never rewritten.
 
-### Live progress in the gate comment
+### Live progress in the dashboard
 
-While a run is in progress the worker's heartbeat keeps the comment showing a progress bar
-(estimated share done, time left, time running), the steps as chips (`✅ triage → ⏳ **Phase
-1** (2/3 lanes) → ▫️ verify 1 → …`) and a link to the run on the dashboard.
-
-- The first "in progress" status is posted once `step_worktree` has confirmed the head is
-  still the PR's live head, with the checkout as the running step. Setup steps (checkout,
-  lane selection, context) show only while they run; the selection and triage of the prep
-  lane show as the one triage chip.
-- Before triage has set the tier, the estimate measures the run against recent reviews of
-  every tier (`progress.ALL_TIERS`, path-aware like the tier profile) and the footer says
-  "Estimated from recent reviews"; from the tier on, "… of this tier"; a conversation is
-  measured against conversations. A run queued by a reply gets no review estimate before
-  triage on the dashboard, which cannot tell yet whether it is a conversation (the worker
-  can). Without any history the comment shows the steps and no bar.
-- Edits: the heartbeat re-renders the body when the run's steps (or a phase's lane count)
-  changed, at most every 30 s (`GATE_PROGRESS_MIN_GAP_SECONDS`), and otherwise every 10 min
-  (`GATE_PROGRESS_EVERY_SECONDS`), and compares it with the one last written. Nothing but
-  the update time moved: no edit at all. The status line, a chip, the estimate's basis or
-  the "taking longer than usual" mark changed: an edit. Only the bar and time left moved:
-  an edit only at the 10-min interval. Status changes the worker posts itself (the tier
-  after triage, Phase 1 dropped) go out at once, unless they render the same as what is
-  shown. Before 2026-10 every step change re-posted the body, and
-  since the early steps were hidden, the comment showed a bare "Review in progress" line
-  re-posted two or three times in the first minutes of each run (dashpay/platform#5237).
+While a run is in progress the gate comment has one static line with the commit and a link to the dashboard
+run (`#run=<id>`). The dashboard carries the moving progress bar, steps and estimates; the `PastaClaw
+review` check run names the current step. The worker writes the in-progress body once, then changes the same
+comment only when the review reaches a final state or a user ticks the priority checkbox.
 
 ## Review rounds per PR
 

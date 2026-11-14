@@ -286,7 +286,7 @@ def _queued(conn: sqlite3.Connection, repo: str, number: int, sha: str, head: sq
     return Want(
         status="queued",
         title=title,
-        summary=_summary(sha, "The PR's queue comment shows its place in line."),
+        summary=_summary(sha, "The PR's queue comment links to the live queue dashboard."),
         details_url=_gate_url(conn, repo, number),
     )
 

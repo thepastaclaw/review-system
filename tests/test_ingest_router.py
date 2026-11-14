@@ -257,43 +257,32 @@ def _queue(conn, cfg, n):
             enqueue_head(conn, cfg, "dashpay/platform", 300 + i, f"{i:040x}", Trigger.NEW_PR)
 
 
-def test_queue_comments_posted_with_position_eta_and_checkbox(cfg, conn, gh):
-    # the ETA's slot model applies under a run cap; unlimited is covered below
-    cfg = dataclasses.replace(cfg, max_runs=2)
+def test_queue_comments_are_static_when_the_order_changes(cfg, conn, gh):
     _queue(conn, cfg, 3)
     with tx(conn):
-        conn.execute("UPDATE heads SET eligible_at=queued_at")  # past debounce
+        conn.execute("UPDATE heads SET eligible_at=queued_at")
     stats = update_queue_comments(conn, cfg, gh)
     assert stats == {"written": 3, "promoted": 0, "deferred": 0}
-    assert len(gh.gate_bodies) == 3
     first = gh.gate_bodies[0]
-    assert "thepastaclaw-gate" in first and "1st in line" in first
-    # idle system (no active runs): the first two heads fit under the cap of two -> start now
-    assert "estimated start in ~5 min" in first
-    assert "3rd in line" in gh.gate_bodies[2] and "estimated start in ~2.0 h" in gh.gate_bodies[2]
+    assert "thepastaclaw-gate" in first
+    assert "Queued for automated review (commit 00000000)" in first
+    assert "[queue and estimated start](" in first
     assert PRIORITY_BOX in first
-    assert "of 3" not in first  # total omitted so bodies stay stable
-    assert (
-        conn.execute("SELECT COUNT(*) FROM kv WHERE key LIKE 'queue.comment_id:%'").fetchone()[0]
-        == 3
-    )
-    # unchanged queue -> re-read (by cached id) but no writes
-    gh.issue_comments = [{"id": 77, "user": {"login": "thepastaclaw"}, "body": gh.gate_bodies[-1]}]
-    gh.routes["repos/dashpay/platform/issues/comments/77"] = gh.issue_comments[0]
-    # PRs 300/301 differ from the shared body, so only those two are rewritten
-    assert update_queue_comments(conn, cfg, gh)["written"] == 2
+    assert "in line" not in first and "estimated review time" not in first
+    written = len(gh.gate_bodies)
+    with tx(conn):
+        conn.execute("UPDATE heads SET queued_at='z' WHERE number=302")
+    assert update_queue_comments(conn, cfg, gh)["written"] == 0
+    assert len(gh.gate_bodies) == written
 
 
-def test_without_a_run_cap_every_ready_head_is_due_to_start_now(cfg, conn, gh):
-    """No run count bounds reviews (models do): a ready head starts on the next tick however
-    far down the queue it is, and only debounce/backoff push its estimate out."""
+def test_queue_body_does_not_depend_on_run_cap(cfg, conn, gh):
     cfg = dataclasses.replace(cfg, max_runs=0)
     _queue(conn, cfg, 5)
     with tx(conn):
         conn.execute("UPDATE heads SET eligible_at=queued_at")
     update_queue_comments(conn, cfg, gh)
-    assert "5th in line" in gh.gate_bodies[4]
-    assert all("estimated start in ~5 min" in b for b in gh.gate_bodies)
+    assert all("in line" not in b and "estimated review time" not in b for b in gh.gate_bodies)
 
 
 def test_ticked_checkbox_promotes_head_to_front(cfg, conn, gh):
@@ -337,7 +326,9 @@ def test_ticked_checkbox_promotes_head_to_front(cfg, conn, gh):
     ]
     assert "QuantumExplorer" in ev
     assert queued_order(conn)[0]["number"] == 302
-    latest_302 = [b for b in gh.gate_bodies if "⚡ Priority review — 1st in line" in b]
+    latest_302 = [
+        b for b in gh.gate_bodies if "⚡ Priority review — starts as soon as a slot frees" in b
+    ]
     assert latest_302 and "- [ ]" not in latest_302[-1]
     # second pass: box already consumed, nothing promoted again
     assert update_queue_comments(conn, cfg, gh)["promoted"] == 0
@@ -408,7 +399,11 @@ def test_debounced_head_boxes_still_work(cfg, conn, gh):
     assert update_queue_comments(conn, cfg, gh)["promoted"] == 1
     head = conn.execute("SELECT priority, trigger FROM heads WHERE number=401").fetchone()
     assert tuple(head) == (1, "priority_request")
-    assert gh.routes[ep]["body"].splitlines()[1].startswith("⚡ Priority review — 1st in line")
+    assert (
+        gh.routes[ep]["body"]
+        .splitlines()[1]
+        .startswith("⚡ Priority review — starts as soon as a slot frees")
+    )
     # the normal box: an explicit request, eligible at once but behind the priority head
     # (it used to be queued as a priority review: dashpay/dash-platform-website#249)
     ep = _debounced(conn, cfg, gh, 402)
@@ -422,7 +417,9 @@ def test_debounced_head_boxes_still_work(cfg, conn, gh):
     ).fetchone()
     assert tuple(head) == (0, "normal_request", 1)
     update_queue_comments(conn, cfg, gh)
-    assert gh.routes[ep]["body"].splitlines()[1].startswith("🕓 Queued for automated review — 2nd")
+    assert (
+        gh.routes[ep]["body"].splitlines()[1].startswith("🕓 Queued for automated review (commit")
+    )
     assert "- [ ] **Request priority review**" in gh.routes[ep]["body"]
 
 
@@ -801,7 +798,7 @@ def test_skip_labels_config(tmp_path, skills_dir):
 
 
 def test_head_in_retry_backoff_keeps_the_queue_body(cfg, conn, gh):
-    """A retry backoff is not the push debounce: the queue body's ETA counts the wait."""
+    """A retry backoff keeps the stable queue body while the head waits."""
     ep = _debounced(conn, cfg, gh, 403, attempts=1)
     update_queue_comments(conn, cfg, gh)
     update_queue_comments(conn, cfg, gh)

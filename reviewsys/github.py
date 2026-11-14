@@ -11,7 +11,6 @@ from .db import now
 from .dedupe import FINDING_MARKER_RE
 from .gh import Gh
 from .models import FailKind, ReviewError
-from .progress import LABELS as STEP_LABELS
 
 GATE_MARKER = "<!-- thepastaclaw-gate v1 -->"
 REVIEW_MARKER = "<!-- thepastaclaw-review v1 -->"
@@ -404,6 +403,8 @@ def upsert_gate_comment(gh: Gh, repo: str, number: int, bot_login: str, body: st
     """Write the gate comment; returns its id (None if GitHub did not say)."""
     existing = find_gate_comment(gh, repo, number, bot_login)
     if existing:
+        if str(existing.get("body") or "") == body:
+            return int(existing["id"])
         gh.api(
             f"repos/{repo}/issues/comments/{existing['id']}", method="PATCH", body={"body": body}
         )
@@ -413,96 +414,6 @@ def upsert_gate_comment(gh: Gh, repo: str, number: int, bot_login: str, body: st
 
 
 DASHBOARD_URL = "https://thepastaclaw.github.io/review-system/"
-# setup steps say little a PR author cares about once done: they show only while running (so
-# the comment says where the run is from its first minute), the rest are the review's milestones
-_SETUP_STEPS = frozenset({"worktree", "select", "context"})
-_ESTIMATED_FROM = {
-    "tier": "Estimated from recent reviews of this tier",
-    "reviews": "Estimated from recent reviews",
-    "conversation": "Estimated from recent conversations",
-}
-_STEP_MARKS = {
-    "ok": "✅",
-    "running": "⏳",
-    "failed": "❌",
-    "skipped": "⏭️",
-    "cancelled": "⏹️",
-    "upcoming": "▫️",
-}
-
-
-def _fmt_span(seconds: int) -> str:
-    m = seconds // 60
-    return f"{m} min" if m < 60 else f"{m // 60} h {m % 60} min"
-
-
-def _fmt_left(seconds: int) -> str:
-    """Rounded, since it is an estimate: to 5 minutes, or 10 above an hour."""
-    m = seconds / 60
-    if m < 3:
-        return "finishing up"
-    if m < 60:
-        return f"about {max(5, round(m / 5) * 5)} min left"
-    m = round(m / 10) * 10
-    return f"about {m // 60} h {m % 60} min left" if m % 60 else f"about {m // 60} h left"
-
-
-def progress_lines(progress: dict[str, Any]) -> list[str]:
-    """The live progress under an in-progress gate line: a bar with the estimated share done
-    and time left, the review's steps (done, running, upcoming) and a link to the dashboard."""
-    lines = []
-    fraction = progress.get("fraction")
-    if fraction is not None:
-        filled = round(fraction * 20)
-        left = progress.get("remaining_seconds")
-        bits = [f"`{'█' * filled}{'░' * (20 - filled)}` **{int(fraction * 100)}%**"]
-        if progress.get("overdue"):
-            bits.append("taking longer than usual")
-        elif left is not None:
-            bits.append(_fmt_left(int(left)))
-        bits.append(f"running for {_fmt_span(int(progress.get('elapsed_seconds', 0)))}")
-        lines.append(" · ".join(bits))
-    chips = []
-    steps = progress.get("steps", [])
-    # one prep lane chooses the lanes and rates the tier: its triage chip stands for both
-    prep = any(st[0] == "triage" for st in steps)
-    for name, status, *note in steps:
-        if (name in _SETUP_STEPS and status != "running") or (name == "select" and prep):
-            continue
-        label = STEP_LABELS.get(name, name)
-        label = f"**{label}**" if status == "running" else label
-        if note and note[0]:
-            label += f" ({note[0]})"
-        chips.append(f"{_STEP_MARKS.get(status, '▫️')} {label}")
-    if chips:
-        lines.append(" → ".join(chips))
-    basis = _ESTIMATED_FROM.get(progress.get("basis") or "tier") if fraction is not None else None
-    footer = [
-        *([basis] if basis else []),
-        f"updated {progress.get('updated_at', '')} UTC",
-        f"[live progress]({DASHBOARD_URL}#run={progress.get('run_id')})",
-    ]
-    lines.append(f"<sub>{' · '.join(footer)}</sub>")
-    return lines
-
-
-# the parts of an in-progress body that move by themselves: the bar line (share, time left,
-# time running) and the update time; "taking longer than usual" still counts as a change
-_UPDATED = r"updated \d\d:\d\d UTC"
-_MOVING = re.compile(rf"^`[█░]+`.*$|{_UPDATED}", re.MULTILINE)
-
-
-def gate_digest(body: str) -> str:
-    """`body` without what moves on its own, i.e. what a reader would notice changing: the
-    status line, the step chips, the estimate's basis and whether it is overdue. The worker
-    edits a live gate comment when this changes, else at most every few minutes."""
-    return _MOVING.sub(lambda m: "overdue" if "longer than usual" in m.group(0) else "", body)
-
-
-def without_update_time(body: str) -> str:
-    return re.sub(_UPDATED, "", body)
-
-
 # why a run reviewed with Phase 2 alone (RunContext.phase1_skipped starts with one of these)
 PHASE1_BACKLOG = "skipped for throughput:"
 PHASE1_FAILED = "failed on every model; its output was dropped"
@@ -526,7 +437,6 @@ def gate_body(
     *,
     phase: str | None = None,
     blocker_count: int | None = None,
-    queue_ahead: int | None = None,
     reason: str | None = None,
     tier: str | None = None,
     phase2_skipped: str | None = None,
@@ -535,7 +445,7 @@ def gate_body(
     degraded: bool = False,
     points: int | None = None,
     block_above: int | None = None,
-    progress: dict[str, Any] | None = None,
+    run_id: int | None = None,
     carried_from: str | None = None,
 ) -> str:
     s = sha[:8]
@@ -548,12 +458,9 @@ def gate_body(
         t += " · stand-in models (primary models out of quota)"
     # the degraded badge replaces the status icon so the line reads as one warning
     warn = f"{DEGRADED_BADGE} —" if degraded else ""
-    if status == "queued":
-        q = "next in queue" if not queue_ahead else f"{queue_ahead} ahead in queue"
-        return f"{GATE_MARKER}\n{warn or '🕓'} Ready for review — {q} (commit {s})"
     if status == "in_progress":
-        line = f"{GATE_MARKER}\n{warn or '🔍'} Review in progress — actively reviewing now (commit {s}){t}"
-        return "\n".join([line, *progress_lines(progress)]) if progress else line
+        link = f" · [live progress]({DASHBOARD_URL}#run={run_id})" if run_id is not None else ""
+        return f"{GATE_MARKER}\n🔍 Review in progress (commit {s}){link}"
     if status == "done":
         if phase == "preliminary":
             # the score is only passed when the points gate deferred Phase 2

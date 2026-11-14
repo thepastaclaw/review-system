@@ -634,18 +634,14 @@ def test_status_snapshot_and_cli_show_the_mode(conn, gh, skills_dir, tmp_path, c
 
 
 def test_comment_renderers_carry_the_tag():
-    assert "DEGRADED" not in gate_body("in_progress", HEAD)
-    assert "\n⚠️ DEGRADED — Review in progress" in gate_body("in_progress", HEAD, degraded=True)
-    assert "🔍" not in gate_body("in_progress", HEAD, degraded=True), "one icon, not two"
+    plain = gate_body("in_progress", HEAD, run_id=42)
+    tagged = gate_body("in_progress", HEAD, run_id=42, degraded=True)
+    assert tagged == plain and "#run=42" in tagged
+    assert "DEGRADED" not in tagged
     assert "\n⚠️ DEGRADED — Automated review could not complete" in gate_body(
         "failed", HEAD, degraded=True, reason="x"
     )
-    plain = queue_body(HEAD, position=1, eta_minutes=10, run_minutes=30, priority=False)
-    tagged = queue_body(
-        HEAD, position=1, eta_minutes=10, run_minutes=30, priority=False, degraded=True
-    )
-    assert "DEGRADED" not in plain and "\n⚠️ DEGRADED — Queued" in tagged and "🕓" not in tagged
-    assert "stand-in models and be marked as degraded" in tagged
+    assert "[queue and estimated start]" in queue_body(HEAD, priority=False)
 
 
 # ---- review-round findings ----
