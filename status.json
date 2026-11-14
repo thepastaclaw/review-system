@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-14T14:07:02Z",
-  "generated_at": "2026-11-14T14:07:02Z",
+  "data_as_of": "2026-11-14T14:08:01Z",
+  "generated_at": "2026-11-14T14:08:02Z",
   "history": {
     "daily": [
       {
@@ -401,6 +401,14 @@
     "recent_events": [
       {
         "detail": null,
+        "kind": "degraded.transition",
+        "number": null,
+        "repo": null,
+        "run_id": null,
+        "ts": "2026-11-14T14:07:11Z"
+      },
+      {
+        "detail": null,
         "kind": "check.synced",
         "number": 8124,
         "repo": "dashpay/dash",
@@ -710,14 +718,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-11-14T10:59:43Z"
-      },
-      {
-        "detail": null,
-        "kind": "label.synced",
-        "number": 8146,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-14T10:59:42Z"
       }
     ],
     "tokens_by_effort": [
@@ -1348,17 +1348,17 @@
       "watching": 0
     },
     "degraded": {
-      "active": false,
+      "active": true,
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-14T14:05:02Z",
-        "quota_exhausted": false,
-        "reason": "gpt-6.1-sol answered"
+        "at": "2026-11-14T14:07:11Z",
+        "quota_exhausted": true,
+        "reason": "`gpt-6.1-sol` unavailable: {\"detail\":\"Rate limit exceeded\"}"
       },
       "phase1_effort_cap": "high",
       "sentinel": "gpt-6.1-sol",
-      "since": null,
+      "since": "2026-11-14T14:07:11Z",
       "substitutes": {
         "gpt-5.6-luna": "muse-spark-1.3-contributor",
         "gpt-5.6-sol": "muse-spark-1.3-contributor",
@@ -1422,7 +1422,7 @@
       "reviews": 48,
       "tokens": 766306329
     },
-    "ts": "2026-11-14T14:07:02Z",
+    "ts": "2026-11-14T14:08:01Z",
     "typical_minutes_by_tier": {
       "critical": 31.6,
       "low": 38.8,
@@ -1433,7 +1433,7 @@
     "watchdog": {
       "active": 0,
       "eligible": 0,
-      "idle_minutes": 52.96666666666667,
+      "idle_minutes": 53.95,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1441,7 +1441,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-14T14:07:02Z",
+    "generated_at": "2026-11-14T14:08:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -3136,7 +3136,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "86aa4ffc5c5eb4c3e7a7cfab83ad3b3478c5f2f8",
         "shadow": {
@@ -3148,7 +3148,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10734,
-        "status": "waiting",
+        "status": "skipped",
         "title": "fix(qt): options tabs, wallet migration cancel, PSBT save and shared masternode fee bugs"
       },
       {
@@ -3168,7 +3168,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/base-sdk",
         "sha": "cd3d05fbe8bcf577d03159ec3ebe58bdcfb2321a",
         "shadow": {
@@ -3180,7 +3180,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10733,
-        "status": "waiting",
+        "status": "skipped",
         "title": "primitives%feat!: add payload sign hashes, read signatures of any length"
       },
       {
@@ -3200,7 +3200,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "238be7c7d77c5945eef97a37901cc8324f875051",
         "shadow": {
@@ -3212,7 +3212,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10731,
-        "status": "waiting",
+        "status": "skipped",
         "title": "backport: bitcoin#24914"
       },
       {
@@ -3232,7 +3232,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/platform",
         "sha": "563ed1b989d3520b9dcff293396673e66a6a3bb6",
         "shadow": {
@@ -3244,7 +3244,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10729,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat(platform-wallet): a dedicated shielded account for each identity, proved with the seed"
       },
       {
@@ -3264,7 +3264,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/platform",
         "sha": "c76073b1c724ae54945bf9b09949689db94f12aa",
         "shadow": {
@@ -3276,7 +3276,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10728,
-        "status": "waiting",
+        "status": "skipped",
         "title": "fix(platform-wallet): trust a stored record only when no other flush dropped it"
       },
       {
@@ -3296,7 +3296,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "1e192dfd2a83f6be567d984c22ed47d22e03bfa1",
         "shadow": {
@@ -3308,7 +3308,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10730,
-        "status": "waiting",
+        "status": "skipped",
         "title": "build: vendor blst as a subtree so it has a single pin"
       },
       {
@@ -3328,7 +3328,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/platform",
         "sha": "76c5630e5f7b869ec10a3db1b0795d0ddf385fc3",
         "shadow": {
@@ -3340,7 +3340,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10726,
-        "status": "waiting",
+        "status": "skipped",
         "title": "fix(platform-wallet): keep contact request holds consistent after an unconfirmed send"
       },
       {
@@ -3360,7 +3360,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "537d8a7adfd3889d6c9adffbdeab5bd26e453f1c",
         "shadow": {
@@ -3372,7 +3372,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10725,
-        "status": "waiting",
+        "status": "skipped",
         "title": "refactor: take the BLS scheme from the data or the block, never from process state"
       },
       {
@@ -3392,7 +3392,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "29c54ebac42bff4822d22b50567056ad5db3c6e6",
         "shadow": {
@@ -3404,7 +3404,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10724,
-        "status": "waiting",
+        "status": "skipped",
         "title": "backport: bitcoin#29205, bitcoin#28721, bitcoin#29184, bitcoin#28952"
       },
       {
@@ -3424,7 +3424,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/platform",
         "sha": "3b30b1e4b06658c4bba1996dea8cd247b64474e6",
         "shadow": {
@@ -3436,7 +3436,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10722,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat(platform-wallet): top up someone else's identity from the Core balance"
       },
       {
@@ -3456,7 +3456,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "accounts",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "81e0bc5bda9669fc87c8af5978cf55a3aeb3b538",
         "shadow": {
@@ -3468,7 +3468,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10718,
-        "status": "waiting",
+        "status": "skipped",
         "title": "build: follow-ups to the blst migration"
       },
       {
@@ -3488,7 +3488,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "superseded",
         "repo": "dashpay/dash",
         "sha": "eb4c21bfbcf7ae53dfd4cda3d2e49aa9b1eaf85d",
         "shadow": {
@@ -3500,7 +3500,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10719,
-        "status": "waiting",
+        "status": "skipped",
         "title": "refactor: take the BLS scheme from the data or the block, never from process state"
       },
       {
@@ -3520,7 +3520,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "superseded",
         "repo": "dashpay/platform",
         "sha": "88b8cba500f78b6ac5bd5742360535d6ff99d52f",
         "shadow": {
@@ -3532,7 +3532,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10715,
-        "status": "waiting",
+        "status": "skipped",
         "title": "fix(platform-wallet): trust a stored record only when no other flush dropped it"
       },
       {
@@ -3552,7 +3552,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "superseded",
         "repo": "dashpay/dash",
         "sha": "7aaf053952a523ab8ce80a9c0ef8df3c9575a6e5",
         "shadow": {
@@ -3564,7 +3564,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10716,
-        "status": "waiting",
+        "status": "skipped",
         "title": "build: vendor blst as a subtree so it has a single pin"
       },
       {
@@ -3648,7 +3648,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "506c3458384811ff64b2a397e55eebaf2643077a",
         "shadow": {
@@ -3660,7 +3660,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10711,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat(wallet): wallet-owned rescans for DashPay receiving chains"
       },
       {
@@ -3680,7 +3680,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dash",
         "sha": "8100520aacd8920ef8e5dc739163067dd2591c81",
         "shadow": {
@@ -3692,7 +3692,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10708,
-        "status": "waiting",
+        "status": "skipped",
         "title": "backport: replace Autotools with CMake (bitcoin#30454, #30664, #31013, #31395)"
       },
       {
@@ -3712,7 +3712,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/base-sdk",
         "sha": "1193b7e3aa9b2893d9bf21a796ebc0accba58767",
         "shadow": {
@@ -3724,7 +3724,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10707,
-        "status": "waiting",
+        "status": "skipped",
         "title": "primitives%fix!: check operator keys under the payload's BLS scheme"
       },
       {
@@ -3744,7 +3744,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "superseded",
         "repo": "dashpay/platform",
         "sha": "9aa9a1bf2ad842300cd259388b4b6ed1e3c26e33",
         "shadow": {
@@ -3756,7 +3756,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10704,
-        "status": "waiting",
+        "status": "skipped",
         "title": "fix(platform-wallet): keep contact request holds consistent after an unconfirmed send"
       },
       {
@@ -3776,7 +3776,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dashwallet-ios",
         "sha": "e90873c8e921866ab0ea22e10b43ceae118f8330",
         "shadow": {
@@ -3788,7 +3788,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10701,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat(wallet): offer to finish a send whose asset lock is held"
       },
       {
@@ -3808,7 +3808,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dashwallet-ios",
         "sha": "52634ca993ff8c00fb6fe8fc81e9d8e6337724c5",
         "shadow": {
@@ -3820,7 +3820,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10702,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat(dashpay): redesign the approve sheet with funding limit and expiry pickers"
       },
       {
@@ -3840,7 +3840,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dashwallet-ios",
         "sha": "889241b4d2a1e608fbc62faeeb30dbb5a306e73d",
         "shadow": {
@@ -3852,7 +3852,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10697,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat(wallet): send services, asset-lock recovery and payment-request checks"
       },
       {
@@ -3872,7 +3872,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dashwallet-ios",
         "sha": "593f7d96829e538cc9f5282067402d00737bd99d",
         "shadow": {
@@ -3884,7 +3884,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10693,
-        "status": "waiting",
+        "status": "skipped",
         "title": "test(voting): whole voting stack on develop, integration check (do not merge)"
       },
       {
@@ -3904,7 +3904,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "superseded",
         "repo": "dashpay/base-sdk",
         "sha": "cb1c4922dd1ee577578c8e99356550985416708b",
         "shadow": {
@@ -3916,7 +3916,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10700,
-        "status": "waiting",
+        "status": "skipped",
         "title": "primitives%fix!: check operator keys under the payload's BLS scheme"
       },
       {
@@ -3936,7 +3936,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "accounts",
+        "reason": "superseded",
         "repo": "dashpay/base-sdk",
         "sha": "4e3004ea27ad6321aadac05c08e41a14ba867655",
         "shadow": {
@@ -3948,7 +3948,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10699,
-        "status": "waiting",
+        "status": "skipped",
         "title": "primitives%feat: add payload sign hashes, read signatures of any length"
       },
       {
@@ -3968,7 +3968,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": null,
+        "reason": "degraded",
         "repo": "dashpay/dashwallet-ios",
         "sha": "292b084f3ca66b7de6b8676a678c12ec9614d5c6",
         "shadow": {
@@ -3980,7 +3980,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10696,
-        "status": "queued",
+        "status": "skipped",
         "title": "feat(wallet): new Send screens and entry points"
       },
       {
@@ -4000,7 +4000,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/base-sdk",
         "sha": "8b25917b97e8fcf9a1f954c1ae9e7ff659cb92eb",
         "shadow": {
@@ -4012,7 +4012,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10703,
-        "status": "waiting",
+        "status": "skipped",
         "title": "primitives%fix!: correct the names of revocation reasons 1 to 3"
       },
       {
@@ -4032,7 +4032,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dashwallet-ios",
         "sha": "aefcae0ac30b1a1b9c9b8d7c8924e0e8b81cc966",
         "shadow": {
@@ -4044,7 +4044,7 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10698,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat(dashpay): open DashConnect on mainnet, gated by protocol 14"
       },
       {
@@ -4064,7 +4064,7 @@
         "prod_only": null,
         "prod_verdict": null,
         "prod_wall_s": null,
-        "reason": "quota guard",
+        "reason": "degraded",
         "repo": "dashpay/dashwallet-ios",
         "sha": "8d6900d16d2b2b0a9eb95744a459a677fb2608a6",
         "shadow": {
@@ -4076,15 +4076,15 @@
         "shadow_verdict": null,
         "shadow_wall_s": null,
         "source_run": 10692,
-        "status": "waiting",
+        "status": "skipped",
         "title": "feat: explain balances in the internal transfer picker"
       }
     ],
     "runner": {
-      "at": "2026-11-14T14:06:53Z",
-      "reason": "quota guard",
+      "at": "2026-11-14T14:07:54Z",
+      "reason": null,
       "running": true,
-      "state": "waiting"
+      "state": "idle"
     },
     "summary": {
       "confusion": {
@@ -4127,9 +4127,7 @@
       "heads": {
         "by_status": {
           "done": 91,
-          "queued": 46,
-          "skipped": 1105,
-          "waiting": 67
+          "skipped": 1218
         },
         "discovered": 1309,
         "failed_by_reason": {},
@@ -4139,15 +4137,11 @@
         "shadowed_total": 91,
         "skipped_by_reason": {
           "aged out": 837,
-          "degraded": 85,
+          "degraded": 145,
           "head already shadowed": 9,
-          "superseded": 174
+          "superseded": 227
         },
-        "waiting_by_reason": {
-          "accounts": 9,
-          "backlog": 14,
-          "quota guard": 44
-        }
+        "waiting_by_reason": {}
       },
       "latency": {
         "active_ratio": 2.074,
