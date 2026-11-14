@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-14T16:37:02Z",
-  "generated_at": "2026-11-14T16:37:02Z",
+  "data_as_of": "2026-11-14T16:38:01Z",
+  "generated_at": "2026-11-14T16:38:02Z",
   "history": {
     "daily": [
       {
@@ -741,9 +741,9 @@
       },
       {
         "effort": "medium",
-        "lanes": 6258,
-        "tokens_in": 915728148,
-        "tokens_out": 10127027
+        "lanes": 6259,
+        "tokens_in": 915860066,
+        "tokens_out": 10128676
       },
       {
         "effort": "high",
@@ -795,11 +795,11 @@
         "tokens_out": 50402087
       },
       {
-        "avg_tokens_per_lane": 1864619.0,
-        "lanes": 40885,
+        "avg_tokens_per_lane": 1864577.0,
+        "lanes": 40886,
         "model": "gpt-6.1-sol",
-        "tokens_in": 75881702905,
-        "tokens_out": 353251185
+        "tokens_in": 75881834823,
+        "tokens_out": 353252834
       }
     ],
     "tokens_by_run": [
@@ -810,8 +810,8 @@
       },
       {
         "run_id": 10746,
-        "tokens_in": 582641,
-        "tokens_out": 61064
+        "tokens_in": 714559,
+        "tokens_out": 62713
       },
       {
         "run_id": 10745,
@@ -1305,16 +1305,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14178333,
+      "avg_tokens_per_completed_review": 14178348,
       "completed_reviews": 8473,
       "findings": 66696,
       "findings_posted": 9705,
       "reviews": 9861,
       "reviews_imported": 2245,
       "runs": 10747,
-      "tokens_in": 118844520428,
-      "tokens_out": 1288490983,
-      "tokens_total": 120133011411
+      "tokens_in": 118844652346,
+      "tokens_out": 1288492632,
+      "tokens_total": 120133144978
     }
   },
   "live": {
@@ -1323,12 +1323,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-14T22:23:30Z",
-        "deadline_in_seconds": 20788,
+        "deadline_in_seconds": 20729,
         "degraded": false,
-        "elapsed_seconds": 812,
-        "findings": null,
-        "heartbeat_age_seconds": 15,
-        "heartbeat_at": "2026-11-14T16:36:47Z",
+        "elapsed_seconds": 871,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 0
+        },
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-11-14T16:37:49Z",
         "id": 10746,
         "lanes": [
           {
@@ -1340,29 +1344,49 @@
             "status": "completed",
             "tokens_in": 582641,
             "tokens_out": 61064
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 131918,
+            "tokens_out": 1649
           }
         ],
         "live_lanes": [
           {
-            "effort": "medium",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify1",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 23,
+            "role": "dash-core-commit-history",
+            "since_seconds": 39,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 40,
             "state": "running"
           }
         ],
         "number": 7994,
         "overdue": false,
-        "phase": "verify1",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/7994",
         "priority": false,
-        "progress": 0.444,
+        "progress": 0.477,
         "queue": "live",
         "queued_at": "2026-11-14T15:53:14Z",
-        "remaining_seconds": 1014,
+        "remaining_seconds": 956,
         "repo": "dashpay/dash",
         "sha": "bba8a4f52a6d4f8a74965f2d6e0df99eb392292a",
         "started_at": "2026-11-14T16:23:30Z",
@@ -1419,21 +1443,52 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify1",
-            "seconds": 23,
+            "seconds": 42,
             "started_at": "2026-11-14T16:36:39Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "admit_phase2": true,
+              "blockers": 0,
+              "phase2_effort": "high",
+              "tier": "normal"
+            },
+            "name": "gate",
+            "seconds": 0,
+            "started_at": "2026-11-14T16:37:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "dash-core-commit-history"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "dash-core-commit-history"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 40,
+            "started_at": "2026-11-14T16:37:21Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "fix: re-request an LLMQ sig share dropped because the pending queue was full",
-        "tokens_in": 582641,
-        "tokens_out": 61064,
+        "tokens_in": 714559,
+        "tokens_out": 62713,
         "trigger": "new_push",
         "upcoming": [
-          "gate",
-          "phase2",
           "verify2",
           "fresh_phase2",
           "publish"
@@ -1474,7 +1529,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-14T16:35:03Z",
+        "at": "2026-11-14T16:37:17Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1520,7 +1575,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 4,
         "waiting": 0
       },
@@ -1534,7 +1589,7 @@
     "last_run_done_at": "2026-11-14T16:31:50Z",
     "last_run_started_at": "2026-11-14T16:31:07Z",
     "median_run_minutes": 23.466666666666665,
-    "notify_last_at": "2026-11-14T16:35:24Z",
+    "notify_last_at": "2026-11-14T16:37:37Z",
     "oldest_queued_at": null,
     "priority_queued": 0,
     "queued": [],
@@ -1545,7 +1600,7 @@
       "reviews": 59,
       "tokens": 801460583
     },
-    "ts": "2026-11-14T16:37:02Z",
+    "ts": "2026-11-14T16:38:01Z",
     "typical_minutes_by_tier": {
       "critical": 31.8,
       "low": 38.8,
@@ -1556,7 +1611,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 5.916666666666667,
+      "idle_minutes": 6.916666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1564,7 +1619,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-14T16:37:02Z",
+    "generated_at": "2026-11-14T16:38:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4215,7 +4270,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-14T16:36:46Z",
+      "at": "2026-11-14T16:37:46Z",
       "reason": "accounts",
       "running": true,
       "state": "waiting"
