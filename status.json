@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-14T05:07:02Z",
-  "generated_at": "2026-11-14T05:07:03Z",
+  "data_as_of": "2026-11-14T05:08:02Z",
+  "generated_at": "2026-11-14T05:08:03Z",
   "history": {
     "daily": [
       {
@@ -400,6 +400,22 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 129,
+        "repo": "dashpay/base-sdk",
+        "run_id": null,
+        "ts": "2026-11-14T05:07:06Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 121,
+        "repo": "dashpay/base-sdk",
+        "run_id": null,
+        "ts": "2026-11-14T05:07:05Z"
+      },
+      {
         "detail": "ok in 6147s",
         "kind": "run.done",
         "number": 121,
@@ -702,22 +718,6 @@
         "repo": "dashpay/base-sdk",
         "run_id": null,
         "ts": "2026-11-14T02:53:42Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 121,
-        "repo": "dashpay/base-sdk",
-        "run_id": null,
-        "ts": "2026-11-14T02:53:42Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 1278,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": null,
-        "ts": "2026-11-14T02:53:41Z"
       }
     ],
     "tokens_by_effort": [
@@ -1336,12 +1336,12 @@
     "capacity": {
       "live_in_flight": 0,
       "max_runs": 30,
-      "maximum": 8,
-      "priority_overflow": 2,
-      "reason": "2 of 4 OpenAI accounts usable",
-      "scale": 2,
-      "typical": 6,
-      "usable_accounts": 2
+      "maximum": 4,
+      "priority_overflow": 1,
+      "reason": "0 of 4 OpenAI accounts usable",
+      "scale": 1,
+      "typical": 3,
+      "usable_accounts": 0
     },
     "ci_watches": {
       "queued": 0,
@@ -1352,9 +1352,9 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-14T05:04:29Z",
+        "at": "2026-11-14T05:07:21Z",
         "quota_exhausted": false,
-        "reason": "gpt-6.1-sol answered"
+        "reason": "gpt-6.1-sol: probe failed (timed out); not treated as exhausted"
       },
       "phase1_effort_cap": "high",
       "sentinel": "gpt-6.1-sol",
@@ -1398,7 +1398,7 @@
       {
         "pool": "gpt",
         "running": 0,
-        "slots": 8,
+        "slots": 4,
         "waiting": 0
       },
       {
@@ -1422,7 +1422,7 @@
       "reviews": 22,
       "tokens": 380957186
     },
-    "ts": "2026-11-14T05:07:02Z",
+    "ts": "2026-11-14T05:08:02Z",
     "typical_minutes_by_tier": {
       "critical": 30.9,
       "low": 38.9,
@@ -1433,7 +1433,7 @@
     "watchdog": {
       "active": 0,
       "eligible": 0,
-      "idle_minutes": 18.433333333333334,
+      "idle_minutes": 19.433333333333334,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1441,7 +1441,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-14T05:07:02Z",
+    "generated_at": "2026-11-14T05:08:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -3121,6 +3121,38 @@
     "recent": [
       {
         "caught_earlier": null,
+        "commit_url": "https://github.com/dashpay/base-sdk/pull/129/commits/1193b7e3aa9b2893d9bf21a796ebc0accba58767",
+        "disagree": false,
+        "finished_at": "2026-11-14T05:06:18Z",
+        "matched": null,
+        "number": 129,
+        "pr_url": "https://github.com/dashpay/base-sdk/pull/129",
+        "prod": {
+          "blocking": null,
+          "nitpick": null,
+          "suggestion": null
+        },
+        "prod_false_alarms": null,
+        "prod_only": null,
+        "prod_verdict": null,
+        "prod_wall_s": null,
+        "reason": "accounts",
+        "repo": "dashpay/base-sdk",
+        "sha": "1193b7e3aa9b2893d9bf21a796ebc0accba58767",
+        "shadow": {
+          "blocking": null,
+          "nitpick": null,
+          "suggestion": null
+        },
+        "shadow_only": null,
+        "shadow_verdict": null,
+        "shadow_wall_s": null,
+        "source_run": 10707,
+        "status": "waiting",
+        "title": "primitives%fix!: check operator keys under the payload's BLS scheme"
+      },
+      {
+        "caught_earlier": null,
         "commit_url": "https://github.com/dashpay/platform/pull/5908/commits/9aa9a1bf2ad842300cd259388b4b6ed1e3c26e33",
         "disagree": false,
         "finished_at": "2026-11-14T03:50:07Z",
@@ -4046,43 +4078,11 @@
         "source_run": 10669,
         "status": "waiting",
         "title": "feat(wallet): new Send screens and entry points"
-      },
-      {
-        "caught_earlier": null,
-        "commit_url": "https://github.com/dashpay/dash-wallet/pull/1705/commits/b916b8a2a8ef74719950ec89b33ddb2b59d822e9",
-        "disagree": false,
-        "finished_at": "2026-11-13T21:41:30Z",
-        "matched": null,
-        "number": 1705,
-        "pr_url": "https://github.com/dashpay/dash-wallet/pull/1705",
-        "prod": {
-          "blocking": null,
-          "nitpick": null,
-          "suggestion": null
-        },
-        "prod_false_alarms": null,
-        "prod_only": null,
-        "prod_verdict": null,
-        "prod_wall_s": null,
-        "reason": "backlog",
-        "repo": "dashpay/dash-wallet",
-        "sha": "b916b8a2a8ef74719950ec89b33ddb2b59d822e9",
-        "shadow": {
-          "blocking": null,
-          "nitpick": null,
-          "suggestion": null
-        },
-        "shadow_only": null,
-        "shadow_verdict": null,
-        "shadow_wall_s": null,
-        "source_run": 10668,
-        "status": "waiting",
-        "title": "chore(i18n): add missing de, fr, it, pl, ru, pt and es translations for 12.0.2"
       }
     ],
     "runner": {
-      "at": "2026-11-14T05:06:15Z",
-      "reason": "quota guard",
+      "at": "2026-11-14T05:07:16Z",
+      "reason": "accounts",
       "running": true,
       "state": "waiting"
     },
@@ -4129,9 +4129,9 @@
           "done": 91,
           "queued": 46,
           "skipped": 1103,
-          "waiting": 50
+          "waiting": 51
         },
-        "discovered": 1290,
+        "discovered": 1291,
         "failed_by_reason": {},
         "scoring_degraded": 0,
         "shadowed_24h": 2,
@@ -4144,7 +4144,7 @@
           "superseded": 172
         },
         "waiting_by_reason": {
-          "accounts": 8,
+          "accounts": 9,
           "backlog": 14,
           "quota guard": 28
         }
