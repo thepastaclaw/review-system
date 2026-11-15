@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-15T06:29:02Z",
-  "generated_at": "2026-11-15T06:29:03Z",
+  "data_as_of": "2026-11-15T06:30:01Z",
+  "generated_at": "2026-11-15T06:30:03Z",
   "history": {
     "daily": [
       {
@@ -355,11 +355,11 @@
         "severity": "blocking"
       },
       {
-        "count": 3205,
+        "count": 3206,
         "severity": "nitpick"
       },
       {
-        "count": 35012,
+        "count": 35014,
         "severity": "suggestion"
       }
     ],
@@ -746,15 +746,15 @@
       },
       {
         "effort": "medium",
-        "lanes": 6279,
-        "tokens_in": 917989316,
-        "tokens_out": 10169646
+        "lanes": 6280,
+        "tokens_in": 918130138,
+        "tokens_out": 10172409
       },
       {
         "effort": "high",
-        "lanes": 25670,
-        "tokens_in": 25925316435,
-        "tokens_out": 241245145
+        "lanes": 25671,
+        "tokens_in": 25925341727,
+        "tokens_out": 241245795
       },
       {
         "effort": "low",
@@ -800,18 +800,18 @@
         "tokens_out": 50402087
       },
       {
-        "avg_tokens_per_lane": 1864663.0,
-        "lanes": 41018,
+        "avg_tokens_per_lane": 1864576.0,
+        "lanes": 41020,
         "model": "gpt-6.1-sol",
-        "tokens_in": 76130228480,
-        "tokens_out": 354513682
+        "tokens_in": 76130394594,
+        "tokens_out": 354517095
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 10780,
-        "tokens_in": 2891305,
-        "tokens_out": 136567
+        "tokens_in": 3057419,
+        "tokens_out": 139980
       },
       {
         "run_id": 10779,
@@ -1310,16 +1310,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14167684,
+      "avg_tokens_per_completed_review": 14167704,
       "completed_reviews": 8503,
-      "findings": 66891,
+      "findings": 66894,
       "findings_posted": 9728,
       "reviews": 9889,
       "reviews_imported": 2245,
       "runs": 10780,
-      "tokens_in": 119175087041,
-      "tokens_out": 1292730390,
-      "tokens_total": 120467817431
+      "tokens_in": 119175253155,
+      "tokens_out": 1292733803,
+      "tokens_total": 120467986958
     }
   },
   "live": {
@@ -1328,12 +1328,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-15T12:00:53Z",
-        "deadline_in_seconds": 19911,
+        "deadline_in_seconds": 19852,
         "degraded": false,
-        "elapsed_seconds": 1710,
-        "findings": null,
-        "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-11-15T06:28:48Z",
+        "elapsed_seconds": 1769,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 1,
+          "suggestion": 2
+        },
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-11-15T06:29:48Z",
         "id": 10780,
         "lanes": [
           {
@@ -1345,29 +1349,49 @@
             "status": "completed",
             "tokens_in": 2891305,
             "tokens_out": 136567
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 140822,
+            "tokens_out": 2763
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "role": "dash-core-commit-history",
+            "status": "completed",
+            "tokens_in": 25292,
+            "tokens_out": 650
           }
         ],
         "live_lanes": [
           {
-            "effort": "medium",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify1",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 63,
+            "role": "general",
+            "since_seconds": 56,
             "state": "running"
           }
         ],
         "number": 8157,
         "overdue": false,
-        "phase": "verify1",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dash/pull/8157",
         "priority": false,
-        "progress": 0.72,
+        "progress": 0.741,
         "queue": "live",
         "queued_at": "2026-11-15T05:51:23Z",
-        "remaining_seconds": 664,
+        "remaining_seconds": 617,
         "repo": "dashpay/dash",
         "sha": "d787bd3091aa614f028264bcb64a0a6af90068f6",
         "started_at": "2026-11-15T06:00:32Z",
@@ -1424,21 +1448,51 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 3
+            },
             "name": "verify1",
-            "seconds": 63,
+            "seconds": 66,
             "started_at": "2026-11-15T06:27:59Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "admit_phase2": true,
+              "blockers": 0,
+              "phase2_effort": "high",
+              "tier": "normal"
+            },
+            "name": "gate",
+            "seconds": 0,
+            "started_at": "2026-11-15T06:29:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "dash-core-commit-history"
+              ]
+            },
+            "lanes_done": 1,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 56,
+            "started_at": "2026-11-15T06:29:05Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "test: drop Dash unit tests that repeat a covered branch",
-        "tokens_in": 2891305,
-        "tokens_out": 136567,
+        "tokens_in": 3057419,
+        "tokens_out": 139980,
         "trigger": "normal_request",
         "upcoming": [
-          "gate",
-          "phase2",
           "verify2",
           "fresh_phase2",
           "publish"
@@ -1545,14 +1599,33 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 638,
+        "age_seconds": 507,
+        "attempts": 0,
+        "author": "PastaPastaPasta",
+        "eligible": true,
+        "eligible_at": "2026-11-15T06:28:50Z",
+        "eligible_in_seconds": 0,
+        "number": 8156,
+        "position": 1,
+        "pr_url": "https://github.com/dashpay/dash/pull/8156",
+        "prioritize_url": "https://github.com/dashpay/dash/issues/8156#issuecomment-6889803189",
+        "priority": false,
+        "queued_at": "2026-11-15T06:21:34Z",
+        "reason": "waiting for a review slot",
+        "repo": "dashpay/dash",
+        "sha": "bcc3f13f36951225d85757d9cff44ffd46e84e85",
+        "title": "test: shorten the default functional suite",
+        "trigger": "normal_request"
+      },
+      {
+        "age_seconds": 697,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-15T06:48:24Z",
-        "eligible_in_seconds": 1162,
+        "eligible_in_seconds": 1103,
         "number": 1117,
-        "position": 1,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1117",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1117#issuecomment-5681667328",
         "priority": false,
@@ -1561,25 +1634,6 @@
         "repo": "dashpay/dashwallet-ios",
         "sha": "2bcd3a0cf903ba36d483eb257299dc34c142b17c",
         "title": "feat(dashpay): pay contacts from any address balance",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 448,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": false,
-        "eligible_at": "2026-11-15T06:51:34Z",
-        "eligible_in_seconds": 1352,
-        "number": 8156,
-        "position": 2,
-        "pr_url": "https://github.com/dashpay/dash/pull/8156",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/8156#issuecomment-6889803189",
-        "priority": false,
-        "queued_at": "2026-11-15T06:21:34Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/dash",
-        "sha": "bcc3f13f36951225d85757d9cff44ffd46e84e85",
-        "title": "test: shorten the default functional suite",
         "trigger": "new_push"
       }
     ],
@@ -1590,7 +1644,7 @@
       "reviews": 16,
       "tokens": 207485988
     },
-    "ts": "2026-11-15T06:29:02Z",
+    "ts": "2026-11-15T06:30:01Z",
     "typical_minutes_by_tier": {
       "critical": 32.0,
       "low": 39.1,
@@ -1600,8 +1654,8 @@
     },
     "watchdog": {
       "active": 1,
-      "eligible": 0,
-      "idle_minutes": 28.5,
+      "eligible": 1,
+      "idle_minutes": 29.5,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1609,7 +1663,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-15T06:29:02Z",
+    "generated_at": "2026-11-15T06:30:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4278,7 +4332,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-15T06:28:50Z",
+      "at": "2026-11-15T06:29:50Z",
       "reason": "accounts",
       "running": true,
       "state": "waiting"
