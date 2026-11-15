@@ -143,19 +143,20 @@ def _http_error(code, body):
 
 def test_probe_only_treats_quota_errors_as_exhausted(monkeypatch):
     monkeypatch.setattr(degraded, "client_key", lambda: "k")
+    monkeypatch.setattr(degraded.time, "sleep", lambda s: None)
     calls = {}
 
     def urlopen(req, timeout):
         calls["model"] = json.loads(req.data)["model"]
         err = calls.get("raise")
         if err:
-            raise err
+            raise err() if callable(err) else err
         return _Resp()
 
     monkeypatch.setattr(degraded.urllib.request, "urlopen", urlopen)
     assert degraded.probe("gpt-6-astra") == (False, "gpt-6-astra answered")
     assert calls["model"] == "gpt-6-astra"
-    calls["raise"] = _http_error(
+    calls["raise"] = lambda: _http_error(
         429,
         json.dumps(
             {"error": {"message": "All credentials for model gpt-6-astra are cooling down"}}
@@ -178,6 +179,41 @@ def test_probe_only_treats_quota_errors_as_exhausted(monkeypatch):
     assert not exhausted and "not treated as exhausted" in reason
     monkeypatch.setattr(degraded, "client_key", lambda: None)
     assert degraded.probe("gpt-6-astra") == (False, "no proxy client key to probe with")
+
+
+def test_probe_retries_a_short_rate_limit(monkeypatch):
+    """A plain 429 (OpenAI's per-account "Rate limit exceeded", or every credential in a
+    cooldown of seconds) is retried; only a refusal on every attempt counts as exhausted."""
+    monkeypatch.setattr(degraded, "client_key", lambda: "k")
+    slept: list[float] = []
+    replies: list[Exception | None] = []
+
+    def urlopen(req, timeout):
+        err = replies.pop(0)
+        if err:
+            raise err
+        return _Resp()
+
+    monkeypatch.setattr(degraded.urllib.request, "urlopen", urlopen)
+
+    def limited():
+        return _http_error(429, json.dumps({"detail": "Rate limit exceeded"}))
+
+    replies[:] = [limited(), None]
+    assert degraded.probe("gpt-6.1-sol", sleep=slept.append) == (False, "gpt-6.1-sol answered")
+    assert slept == [degraded.PROBE_RETRY_DELAYS_S[0]]
+
+    slept.clear()
+    replies[:] = [limited() for _ in range(len(degraded.PROBE_RETRY_DELAYS_S) + 1)]
+    exhausted, reason = degraded.probe("gpt-6.1-sol", sleep=slept.append)
+    assert exhausted and reason == "`gpt-6.1-sol` unavailable: Rate limit exceeded"
+    assert slept == list(degraded.PROBE_RETRY_DELAYS_S) and not replies
+
+    # a spent quota does not come back in seconds: no retry
+    slept.clear()
+    replies[:] = [_http_error(429, "The usage limit has been reached")]
+    assert degraded.probe("gpt-6.1-sol", sleep=slept.append)[0]
+    assert slept == [] and not replies
 
 
 def test_quota_failure_classifier():
