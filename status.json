@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-15T06:27:01Z",
-  "generated_at": "2026-11-15T06:27:03Z",
+  "data_as_of": "2026-11-15T06:28:01Z",
+  "generated_at": "2026-11-15T06:28:03Z",
   "history": {
     "daily": [
       {
@@ -355,11 +355,11 @@
         "severity": "blocking"
       },
       {
-        "count": 3204,
+        "count": 3205,
         "severity": "nitpick"
       },
       {
-        "count": 35009,
+        "count": 35012,
         "severity": "suggestion"
       }
     ],
@@ -740,9 +740,9 @@
       },
       {
         "effort": "xhigh",
-        "lanes": 32513,
-        "tokens_in": 90375715758,
-        "tokens_out": 1021225676
+        "lanes": 32514,
+        "tokens_in": 90378607063,
+        "tokens_out": 1021362243
       },
       {
         "effort": "medium",
@@ -765,11 +765,11 @@
     ],
     "tokens_by_model": [
       {
-        "avg_tokens_per_lane": 2040344.0,
-        "lanes": 10581,
+        "avg_tokens_per_lane": 2040437.0,
+        "lanes": 10582,
         "model": "muse-spark-1.3-contributor",
-        "tokens_in": 20842047515,
-        "tokens_out": 746829775
+        "tokens_in": 20844938820,
+        "tokens_out": 746966342
       },
       {
         "avg_tokens_per_lane": 4944855.0,
@@ -808,6 +808,11 @@
       }
     ],
     "tokens_by_run": [
+      {
+        "run_id": 10780,
+        "tokens_in": 2891305,
+        "tokens_out": 136567
+      },
       {
         "run_id": 10779,
         "tokens_in": 5471730,
@@ -1302,24 +1307,19 @@
         "run_id": 10666,
         "tokens_in": 45945170,
         "tokens_out": 305326
-      },
-      {
-        "run_id": 10665,
-        "tokens_in": 6699063,
-        "tokens_out": 76186
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14167328,
+      "avg_tokens_per_completed_review": 14167684,
       "completed_reviews": 8503,
-      "findings": 66887,
+      "findings": 66891,
       "findings_posted": 9728,
       "reviews": 9889,
       "reviews_imported": 2245,
       "runs": 10780,
-      "tokens_in": 119172195736,
-      "tokens_out": 1292593823,
-      "tokens_total": 120464789559
+      "tokens_in": 119175087041,
+      "tokens_out": 1292730390,
+      "tokens_total": 120467817431
     }
   },
   "live": {
@@ -1328,35 +1328,46 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-15T12:00:53Z",
-        "deadline_in_seconds": 20032,
+        "deadline_in_seconds": 19972,
         "degraded": false,
-        "elapsed_seconds": 1589,
+        "elapsed_seconds": 1649,
         "findings": null,
         "heartbeat_age_seconds": 13,
-        "heartbeat_at": "2026-11-15T06:26:48Z",
+        "heartbeat_at": "2026-11-15T06:27:48Z",
         "id": 10780,
-        "lanes": [],
-        "live_lanes": [
+        "lanes": [
           {
+            "attempt": 1,
             "effort": "xhigh",
-            "line_position": null,
             "model": "muse-spark-1.3-contributor",
             "phase": "phase1",
-            "pool": "muse",
             "role": "general",
-            "since_seconds": 1543,
+            "status": "completed",
+            "tokens_in": 2891305,
+            "tokens_out": 136567
+          }
+        ],
+        "live_lanes": [
+          {
+            "effort": "medium",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "pool": "gpt",
+            "role": "verifier",
+            "since_seconds": 2,
             "state": "running"
           }
         ],
         "number": 8157,
-        "overdue": true,
-        "phase": "phase1",
+        "overdue": false,
+        "phase": "verify1",
         "pr_url": "https://github.com/dashpay/dash/pull/8157",
         "priority": false,
-        "progress": 0.692,
+        "progress": 0.7,
         "queue": "live",
         "queued_at": "2026-11-15T05:51:23Z",
-        "remaining_seconds": 708,
+        "remaining_seconds": 706,
         "repo": "dashpay/dash",
         "sha": "d787bd3091aa614f028264bcb64a0a6af90068f6",
         "started_at": "2026-11-15T06:00:32Z",
@@ -1404,24 +1415,28 @@
                 "general"
               ]
             },
-            "lanes_done": 0,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 1,
+            "lanes_left": [],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 1544,
+            "seconds": 1602,
             "started_at": "2026-11-15T06:01:17Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify1",
+            "seconds": 2,
+            "started_at": "2026-11-15T06:27:59Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "test: drop Dash unit tests that repeat a covered branch",
-        "tokens_in": 0,
-        "tokens_out": 0,
+        "tokens_in": 2891305,
+        "tokens_out": 136567,
         "trigger": "normal_request",
         "upcoming": [
-          "verify1",
           "gate",
           "phase2",
           "verify2",
@@ -1511,13 +1526,13 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 1,
         "slots": 4,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 1,
+        "running": 0,
         "slots": 20,
         "waiting": 0
       }
@@ -1530,12 +1545,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 517,
+        "age_seconds": 577,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-15T06:48:24Z",
-        "eligible_in_seconds": 1283,
+        "eligible_in_seconds": 1223,
         "number": 1117,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1117",
@@ -1549,12 +1564,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 327,
+        "age_seconds": 387,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-15T06:51:34Z",
-        "eligible_in_seconds": 1473,
+        "eligible_in_seconds": 1413,
         "number": 8156,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/8156",
@@ -1575,7 +1590,7 @@
       "reviews": 16,
       "tokens": 207485988
     },
-    "ts": "2026-11-15T06:27:01Z",
+    "ts": "2026-11-15T06:28:01Z",
     "typical_minutes_by_tier": {
       "critical": 32.0,
       "low": 39.1,
@@ -1586,7 +1601,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 26.5,
+      "idle_minutes": 27.5,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1594,7 +1609,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-15T06:27:01Z",
+    "generated_at": "2026-11-15T06:28:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4263,7 +4278,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-15T06:26:49Z",
+      "at": "2026-11-15T06:27:50Z",
       "reason": "accounts",
       "running": true,
       "state": "waiting"
@@ -4316,7 +4331,7 @@
         "failed_by_reason": {},
         "scoring_degraded": 0,
         "shadowed_24h": 0,
-        "shadowed_7d": 43,
+        "shadowed_7d": 42,
         "shadowed_total": 91,
         "skipped_by_reason": {
           "aged out": 837,
