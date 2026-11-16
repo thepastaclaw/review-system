@@ -344,6 +344,14 @@ def _seed_rounds(conn, rounds=EARLIER):
                 )
 
 
+@pytest.fixture
+def cfg(cfg):
+    """The pause is opt-in (`hold = true`), and most tests here are about it."""
+    return cfg_mod.dataclasses.replace(
+        cfg, stepback=cfg_mod.dataclasses.replace(cfg.stepback, hold=True)
+    )
+
+
 def _push(conn, cfg, gh, lanes, sha, trigger, final=(), *, gate=(), runner=None, **kw):
     """The PR's head moves to `sha`, a head is queued for it by `trigger`, and its run goes
     through with `final` as the final verifier's findings (`gate`: the Phase-1 verifier's)."""
@@ -410,6 +418,26 @@ def _paused(conn, cfg, gh, lanes):
     """... and round 5 at D, which draws a blocker from them again: the step-back, paused."""
     _told(conn, cfg, gh, lanes)
     return _push(conn, cfg, gh, lanes, D, Trigger.NEW_PUSH, [AGAIN])[0]
+
+
+def test_by_default_a_later_naming_notes_the_causes_again_and_never_pauses(cfg, conn, gh, lanes):
+    default = cfg_mod.dataclasses.replace(
+        cfg, stepback=cfg_mod.dataclasses.replace(cfg.stepback, hold=cfg_mod.StepbackConfig().hold)
+    )
+    assert not default.stepback.hold
+    _told(conn, default, gh, lanes)
+    body = gh.posted_reviews[-1]["body"]
+    assert stepback.NOTE_HEADING in body and "pause automatic re-review" not in body
+    _push(conn, default, gh, lanes, D, Trigger.NEW_PUSH, [AGAIN])
+    body = gh.posted_reviews[-1]["body"]
+    assert stepback.NOTE_HEADING in body and stepback.HEADING not in body
+    assert stepback.PAUSED_NOTE not in body and "pause automatic re-review" not in body
+    rec = stepback.load(conn, REPO, 1)
+    assert rec is not None and rec.sha == D and not rec.hold
+    calls = len(lanes.calls)
+    _push(conn, default, gh, lanes, E, Trigger.NEW_PUSH)
+    assert len(lanes.calls) > calls and carried_from(conn, REPO, 1, E) is None
+    assert not _events(conn, "head.held")
 
 
 def test_the_first_round_that_names_causes_notes_them_and_changes_nothing_else(

@@ -899,15 +899,18 @@ model) named a cause on three of three such PRs it was tried on.
   `converging` changes nothing.
 - **Step 1, the note.** The first time causes are named, the review body carries "A pattern
   across this PR's review rounds": the causes, which of this round's findings fall under
-  each, the suggested decision, and a notice of step 2. The prompt for AI agents says to fix
-  the cause, not only the reported case. Nothing else changes: the next push is reviewed as
-  always, and a PR that converges never sees more than this note.
-- **Step 2, the step-back and the pause.** When a later round draws new blockers again, the
-  lane is shown what the earlier review said and whether its decision was made
-  (`decision_made`). If it was not, and the causes named now cover at least half of the
-  round's new blockers, the review leads with "Step back: this PR keeps drawing new
-  blockers" and asks for the decision, the agent prompt says to settle it before patching,
-  and automatic re-review is paused (`hold = true`): a later push is not reviewed on its own.
+  each, the suggested decision, and, with `hold = true`, a notice of step 2. The prompt for
+  AI agents says to fix the cause, not only the reported case. Nothing else changes: the
+  next push is reviewed as always, and a PR that converges never sees more than this note.
+- **Step 2, the step-back and the pause (`hold = true`, off by default).** Without it, a later
+  round that names causes again carries the note again and nothing pauses: authors cleared
+  the pause by asking for a review right away, and the next round paused again. With it, when
+  a later round draws new blockers again, the lane is shown what the earlier review said and
+  whether its decision was made (`decision_made`). If it was not, and the causes named now
+  cover at least half of the round's new blockers, the review leads with "Step back: this
+  PR keeps drawing new blockers" and asks for the decision, the agent prompt says to settle
+  it before patching, and automatic re-review is paused: a later push is not reviewed on its
+  own.
   Its run ends after the checkout (step `carry`, event `head.held`), the commit keeps the
   step-back's REQUEST_CHANGES (label and check run through `carried_from`, as for an
   unchanged diff) and the gate comment says so.
@@ -937,8 +940,8 @@ model) named a cause on three of three such PRs it was tried on.
 
 Watch it with `sqlite3 ~/.reviewsys/review.db "select ts, kind, repo, number, detail from
 events where kind like 'stepback.%' or kind='head.held' order by id desc limit 40"`; each
-run's `stepback.json` has the full answer. `enabled = false` under `[stepback]` turns it off,
-`hold = false` keeps the notes without ever pausing.
+run's `stepback.json` has the full answer. `enabled = false` under `[stepback]` turns it off;
+`hold = false` (the default) keeps the notes without ever pausing.
 
 ## Final approval after an iterative review
 
