@@ -353,9 +353,11 @@ function renderRounds(r){
     ty=v=>36-v/maxMean*32,
     spark=`<svg viewBox="0 0 200 40" width=200 height=40 role=img aria-label="weekly mean rounds"><line x1=0 x2=200 y1=${ty(r.target)} y2=${ty(r.target)} stroke="var(--amber)" stroke-dasharray="3 3"/><line x1=0 x2=200 y1=${ty(r.ceiling)} y2=${ty(r.ceiling)} stroke="var(--red)" stroke-dasharray="3 3"/>${pts.length>1?`<polyline fill=none stroke="var(--blue)" stroke-width=2 points="${pts.map(p=>p.join(',')).join(' ')}"/>`:''}${pts.map(p=>`<circle cx=${p[0]} cy=${p[1]} r=2.5 fill="var(--blue)"/>`).join('')}</svg>`,
     r7=r.rolling?.['7d']?.overall,r28=r.rolling?.['28d']?.overall;
+  const refocus=document.activeElement?.id==='rounds-days';
   $('#rounds-sub').innerHTML=spans.length
     ?`completed PRs · last <select id="rounds-days" aria-label="Window in days">${spans.map(d=>`<option value="${d}"${d===days?' selected':''}>${d}</option>`).join('')}</select> days · target ≤ ${r.target} · ceiling ${r.ceiling}`
     :esc(`completed PRs · last ${r.window_days} days · target ≤ ${r.target} · ceiling ${r.ceiling}`);
+  if(refocus)$('#rounds-days')?.focus();
   const cards=[['Mean',f(o.mean),`${o.n} PRs · target ≤ ${r.target}`,tone(o)],['Median',f(o.median),`p90 ${o.p90??'—'} · max ${o.max??'—'}`,''],['Last 7 days',f(r7?.mean),`${r7?.n??0} PRs`,''],['Last 28 days',f(r28?.mean),`${r28?.n??0} PRs`,''],['Rounds to first approve',f(o.to_approve_mean),`median ${f(o.to_approve_median)} · ${o.approved_n} PRs`,'']];
   const colour={good:'var(--green)',warn:'var(--amber)',bad:'var(--red)','':'var(--text)'};
   const trendRows=[{repo:'All repos',weeks}].concat((r.trend?.repos||[]).map(x=>({repo:x.repo,weeks:x.weeks})));
