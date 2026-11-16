@@ -344,7 +344,8 @@ class RunContext:
     phase2_follows: bool = True
     # finding_hash -> {comment_id, thread_id, replies} for prior findings with human replies
     prior_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
-    # finding_hash -> thread facts for every unresolved bot finding thread on the PR
+    # finding_hash -> thread facts for every unresolved bot finding thread on the PR, and before
+    # policy v12 the resolved ones too (`resolved`; `github.finding_threads`)
     open_threads: dict[str, dict[str, Any]] = field(default_factory=dict)
     coverage_from: str = ""
     phase1_outputs: dict[str, ReviewerOutput] = field(default_factory=dict)
@@ -1268,7 +1269,12 @@ def step_context(ctx: RunContext) -> None:
     _review_history(ctx, ours)
     # prior findings: last posted set for this PR from our DB, plus any human replies on
     # their inline threads (the reviewer must engage with pushback, not re-raise past it)
-    ctx.open_threads = github.finding_threads(threads, ctx.cfg.bot_login)
+    # policy v12 counts a hand-resolved issue as resolved (`ledger.sync_threads`); before it,
+    # a hand-resolved finding still counts, so its thread is still read: a reply there is
+    # answered and what the thread settled (an answered dispute, a tracked deferral) holds
+    ctx.open_threads = github.finding_threads(
+        threads, ctx.cfg.bot_login, with_resolved=not ctx.cfg.policy.thread_lane
+    )
     _ledger_write(
         ctx,
         "threads",
@@ -1308,7 +1314,7 @@ def step_context(ctx: RunContext) -> None:
             )
         )
     for h, t in replied.items():
-        if h in seen or not t.get("title"):
+        if h in seen or not t.get("title") or t.get("resolved"):
             continue
         # a finding this database never recorded (posted by the legacy pipeline) that a human
         # replied to: reconstruct it from the comment so the reply still gets adjudicated
@@ -5194,7 +5200,7 @@ def _step_back(ctx: RunContext, verified: VerifierOutput) -> None:
             {"severity": f.severity, "file": f.file or "", "title": f.title, "body": f.body}
             for f in new
         ],
-        set(ctx.open_threads),
+        {h for h, t in ctx.open_threads.items() if not t.get("resolved")},
     )
     ids = [r.id for r in items]
     round_now = len(earlier) + 1
@@ -5577,8 +5583,8 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     }
     reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
     if not threads:
-        # the reply came from another bot, landed on a resolved thread, or was already
-        # considered: nothing to say, restore the gate comment we overwrote at run start
+        # the reply came from another bot or was already considered: nothing to say,
+        # restore the gate comment we overwrote at run start
         kept = _standing_findings(ctx, phase)
         _gate_comment(ctx, "done", phase=phase, blocker_count=kept.blockers)
         return {
@@ -5984,7 +5990,7 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
         )
     } | {str(r["hash"]) for r in rows}
     for h, t in ctx.open_threads.items():
-        if h not in pub and h not in ever_posted:
+        if h not in pub and h not in ever_posted and not t.get("resolved"):
             pub[h] = (str(t.get("severity") or "nitpick"), _identity(t.get("path"), t.get("title")))
             titles[h] = str(t.get("title") or "")
     # a later full review of this sha re-adjudicated everything: older concessions are void.
@@ -6722,7 +6728,7 @@ def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
         return
     for h, f in outcome.upgrades.items():
         t = ctx.open_threads.get(h)
-        if t and t.get("comment_id"):
+        if t and t.get("comment_id") and not t.get("resolved"):
             note = publish.scrub_reply(
                 f"Raising this to **blocking** at `{ctx.sha[:8]}`: {f.extra.get('evidence') or f.body}",
                 2500,

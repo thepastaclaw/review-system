@@ -251,16 +251,22 @@ def ci_checks(gh: Gh, repo: str, sha: str) -> dict[str, Any]:
     }
 
 
-def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, dict[str, Any]]:
-    """finding_hash -> thread facts for every unresolved bot finding thread.
+def finding_threads(
+    threads: list[dict[str, Any]], bot_login: str, *, with_resolved: bool = False
+) -> dict[str, dict[str, Any]]:
+    """finding_hash -> thread facts for every unresolved bot finding thread, and with
+    `with_resolved` for the resolved ones too (`resolved`; an open thread of the same finding
+    wins).
 
     `awaiting_answer` is True when the newest human reply is newer than the bot's newest
-    answer in that thread (someone is waiting on us). Resolved threads are left out entirely:
-    a maintainer who closed the discussion does not want it reopened by a bot comment."""
+    answer in that thread (someone is waiting on us). A resolved thread gets no comment of
+    its own from the bot unless it awaits an answer: replying and then resolving is how
+    authors hand a thread back (the bot cannot resolve on every repo), and resolving must not
+    lose what the thread settled."""
     out: dict[str, dict[str, Any]] = {}
     for t in threads:
         cs = t.get("comments") or []
-        if not cs or t.get("is_resolved"):
+        if not cs:
             continue
         root = cs[0]
         if not _is_bot(root, bot_login):
@@ -293,11 +299,15 @@ def finding_threads(threads: list[dict[str, Any]], bot_login: str) -> dict[str, 
             default="",
         )
         awaiting = bool(replies) and str(replies[-1].get("created_at") or "") > last_bot
+        resolved = bool(t.get("is_resolved"))
+        if resolved and (not with_resolved or m.group(1) in out):
+            continue
         severity, title = _finding_title(body)
         out[m.group(1)] = {
             "comment_id": root.get("id"),
             "thread_id": t.get("thread_id"),
             "awaiting_answer": awaiting,
+            "resolved": resolved,
             "latest_reply_id": replies[-1].get("id") if replies else None,
             # Keep the bot's own answers so publishing can make open-thread reconciliation
             # idempotent across new heads.  A thread can remain open when the resolve mutation

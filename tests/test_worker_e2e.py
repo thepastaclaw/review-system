@@ -1284,6 +1284,75 @@ def test_still_valid_reply_is_answered_without_resolving(cfg, conn, gh, lanes):
     assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
 
 
+def _resolved(thread):
+    return {**thread, "isResolved": True}
+
+
+def test_a_reply_on_a_thread_the_author_resolved_is_still_answered(cfg, conn, gh, lanes):
+    """dashpay/platform#5905: the author replies under a blocker ("deferred, please file a
+    tracking issue") and resolves the thread straight away. The next review still keeps the
+    blocker, so the reply must reach the reviewers and get the answer on its thread; the
+    thread is not reopened or resolved again."""
+    b = _blocking()
+    fh = _seed_prior(conn, b)
+    reply = {
+        "id": 901,
+        "author": "QuantumExplorer",
+        "body": "Not from this change and Rust cannot close it alone. Deferred. Please file a tracking issue for it.",
+        "created_at": "2026-09-08T20:00:00Z",
+        "association": "MEMBER",
+    }
+    gh.threads = [_resolved(_prior_thread(fh, replies=[reply]))]
+    carried = {**b, "finding_hash": fh}
+    reason = "The host still deletes its rows after Clear returns, so a bind can restore them."
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [carried],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "STILL_VALID", "reason": reason}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([carried])
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    prompt = next(c.prompt for c in _reviewer_calls(lanes))
+    assert "thread_replies" in prompt and "Please file a tracking issue" in prompt
+    answers = [r for r in gh.replies if r["body"].startswith("<!-- thepastaclaw-thread-answer")]
+    assert len(answers) == 1 and reason in answers[0]["body"]
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔")  # the blocker still counts
+    ev = conn.execute("SELECT detail FROM events WHERE kind='thread.answered'").fetchone()
+    assert ev is not None and '"action": "replied"' in ev["detail"]
+
+
+def test_a_fixed_finding_on_a_resolved_thread_is_answered_without_resolving(cfg, conn, gh, lanes):
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    reply = {
+        "id": 901,
+        "author": "QuantumExplorer",
+        "body": "Fixed in 563ed1b989.",
+        "created_at": "2026-09-08T20:00:00Z",
+        "association": "MEMBER",
+    }
+    gh.threads = [_resolved(_prior_thread(fh, replies=[reply]))]
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": fh, "status": "FIXED", "reason": "563ed1b989 drops the accounts."}
+        ],
+    }
+    lanes.verifier["default"] = _verifier([])
+    _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
+    assert status == RunStatus.DONE
+    answers = [r for r in gh.replies if r["body"].startswith("<!-- thepastaclaw-thread-answer")]
+    assert len(answers) == 1 and "**Resolved**" in answers[0]["body"]
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+
+
 def test_verifier_overruling_a_reviewer_posts_the_verifier_reason(cfg, conn, gh, lanes):
     """The general lane keeps insisting STILL_VALID; the verifier, having read the author's
     'fixed in <sha>' reply against the code, says FIXED with a reason. The thread must get the
@@ -1525,6 +1594,21 @@ def test_resolved_and_already_answered_threads_are_left_alone(cfg, conn, gh, lan
         }
 
     assert finding_threads([parsed([root, human], resolved=True)], "thepastaclaw") == {}
+    # asked for, resolved threads are kept and flagged; a reply there still awaits an answer
+    kept = finding_threads(
+        [parsed([root, human], resolved=True)], "thepastaclaw", with_resolved=True
+    )
+    assert kept["abc"]["resolved"] is True and kept["abc"]["awaiting_answer"] is True
+    answered = parsed([root, human, bot_answer], resolved=True)
+    quiet_resolved = finding_threads([answered], "thepastaclaw", with_resolved=True)
+    assert quiet_resolved["abc"]["awaiting_answer"] is False
+    # the same finding on an open thread too: the open one is the thread
+    both = finding_threads(
+        [parsed([root, human], resolved=True), {**parsed([root, human]), "thread_id": "u"}],
+        "thepastaclaw",
+        with_resolved=True,
+    )
+    assert both["abc"]["thread_id"] == "u" and both["abc"]["resolved"] is False
     quiet = finding_threads([parsed([root, human, bot_answer])], "thepastaclaw")
     assert quiet["abc"]["awaiting_answer"] is False  # known open thread, nobody waiting
     again = {**human, "id": 903, "created_at": "2026-09-08T22:00:00Z"}
@@ -1626,6 +1710,48 @@ def test_reply_on_reviewed_commit_runs_conversation_lane_not_a_review(cfg, conn,
     assert steps == ["worktree", "context", "converse"]
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete")
     assert (Path(cfg.runs_dir) / f"run-{rid}" / "conversation.json").exists()
+
+
+def test_a_reply_on_a_resolved_thread_of_a_reviewed_commit_gets_the_conversation(
+    cfg, conn, gh, lanes
+):
+    """The reply-then-resolve case on a commit already reviewed: the conversation lane still
+    answers it (before, the run ended with "no thread awaiting an answer")."""
+    s = _sugg()
+    fh = _seed_prior(conn, s)
+    reply = {
+        "id": 901,
+        "author": "QuantumExplorer",
+        "body": "Deferred. Please file a tracking issue for it.",
+        "created_at": "2026-09-08T20:00:00Z",
+        "association": "MEMBER",
+    }
+    gh.threads = [_resolved(_prior_thread(fh, replies=[reply]))]
+    gh.posted_reviews.append(
+        {
+            "id": 4242,
+            "html_url": "https://gh/r/4242",
+            "body": f"<!-- thepastaclaw-review-phase v1 phase=final sha={HEAD} policy=x -->",
+        }
+    )
+    lanes.conversation = {
+        "threads": [
+            {
+                "finding_hash": fh,
+                "status": "STILL_VALID",
+                "reply": "This still applies at this commit: the host wipe runs after Clear returns.",
+            }
+        ]
+    }
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert [c.role for c in lanes.calls] == ["conversation"]
+    assert "Please file a tracking issue" in lanes.calls[0].prompt
+    assert len(gh.replies) == 1 and "the host wipe runs after Clear" in gh.replies[0]["body"]
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
 
 
 def test_conversation_stays_silent_when_it_has_nothing_to_add(cfg, conn, gh, lanes):

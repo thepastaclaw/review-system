@@ -101,6 +101,45 @@ def test_dedupe_against_github_reuses_one_existing_root_per_head(monkeypatch):
     ]
 
 
+def test_no_reuse_note_on_a_resolved_thread_whose_human_reply_awaits_an_answer(monkeypatch):
+    """The reply is answered on its own; a reuse note would be a second comment and, posted
+    after a reply the run never read, would bury it under a newer bot comment."""
+    from reviewsys import publish as pub
+
+    existing = {
+        "id": 100,
+        "node_id": "PRRC_root",
+        "path": "src/a.rs",
+        "line": 12,
+        "html_url": "https://github.example/comment/100",
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=old dedupe=old -->\n**🟡 Suggestion: Fee estimation omits drainage costs**\n\nold body",
+    }
+    nodes = [
+        {"body": existing["body"], "author": {"login": "thepastaclaw"}},
+        {"body": "Deferred. Please file a tracking issue.", "author": {"login": "QuantumExplorer"}},
+    ]
+    replies = []
+    monkeypatch.setattr(pub.github, "inline_comments", lambda *args: [existing])
+    monkeypatch.setattr(
+        pub.github,
+        "thread_for_comment",
+        lambda *args: {"isResolved": True, "comments": {"nodes": nodes}},
+    )
+    monkeypatch.setattr(pub.github, "post_reply", lambda *args: replies.append(args[-1]))
+    kept, suppressed = pub.dedupe_against_github(
+        None,
+        "dashpay/platform",
+        1,
+        "a" * 40,
+        [f("Fee estimation omits drainage costs")],
+        "thepastaclaw",
+        dry_run=False,
+    )
+    assert not kept and not replies
+    assert [s.action for s in suppressed] == ["deduped_existing_resolved_thread"]
+
+
 def test_reintroduction_bypasses_the_withdrawn_root_only_until_it_has_its_own(monkeypatch):
     """A reworded reintroduction of settled `old` skips fuzzy dedupe onto the withdrawn root,
     but once its own comment is up (an earlier head) it carries onto that one."""

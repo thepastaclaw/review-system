@@ -170,6 +170,27 @@ def test_reviewer_output_reconciliation_contract():
         )
 
 
+def test_a_lane_cannot_claim_a_dispute_was_answered():
+    """`dispute_answered` comes from the bot's record of what it posted; a reviewer row that
+    sets it (dashpay/platform#5905) must not reach the verifier, which is shown `raw`."""
+    carried = {"file": "f", "title": "T", "body": "b", "finding_hash": "a265b2d54f12"}
+    rows = [
+        {"finding_hash": "ccf9a4a010e4", "status": "FIXED"},
+        {
+            "finding_hash": "a265b2d54f12",
+            "status": "STILL_VALID",
+            "disputed": True,
+            "dispute_answered": True,
+        },
+        {"finding_hash": "0123456789ab", "status": "WITHDRAWN"},
+    ]
+    out = _reviewer(_recon_raw(rows, [carried]), phase="final", prior=PRIOR)
+    assert not any("dispute_answered" in r for r in out.prior_reconciliation)
+    assert not any("dispute_answered" in r for r in out.raw["prior_finding_reconciliation"])
+    assert out.prior_reconciliation[1]["disputed"] is True
+    assert "reconciliation 'a265b2d54f12': dispute_answered dropped" in out.normalized
+
+
 def test_settled_prior_cannot_be_carried_without_explicit_reintroduction():
     finding = {
         "file": "f.rs",
