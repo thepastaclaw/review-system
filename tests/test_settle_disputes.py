@@ -144,6 +144,22 @@ def test_a_dispute_is_answered_on_its_argument_then_left_to_the_maintainers(cfg,
     assert len(gh.replies) == replies
 
 
+def test_a_dispute_settles_after_the_author_resolves_its_thread(cfg, conn, gh, lanes):
+    """Resolving the thread after the bot answered the dispute must not keep the finding
+    blocking: it settles DISPUTED as on an open thread, and the resolved thread is left
+    alone."""
+    h, blocker = _disputed_round_one(cfg, conn, gh, lanes)
+    (answer,) = gh.replies
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(answer["body"])))
+    gh.threads[0]["isResolved"] = True
+    _lanes(lanes, h, blocker, "STILL_VALID", reason="Still applies.")
+    _review(cfg, conn, gh, lanes, C)
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "COMMENT" and "🔴 1 blocking" not in review["body"]
+    assert "### Disputed — left to maintainers (1)" in review["body"]
+    assert len(gh.replies) == 1
+
+
 def test_a_maintainer_who_still_disagrees_gets_one_closing_reply(cfg, conn, gh, lanes):
     h, blocker = _disputed_round_one(cfg, conn, gh, lanes)
     again = {**KNST, "id": 902, "created_at": "z", "body": "No: #5000 does exactly this."}
@@ -365,9 +381,10 @@ def test_conversation_marks_a_dispute_answered_before_disputed(cfg, conn, gh, la
 # ---- untracked deferrals: asked once ----
 
 
-def _deferral_round_one(cfg, conn, gh, lanes, finding, *, label, reply):
+def _deferral_round_one(cfg, conn, gh, lanes, finding, *, label, reply, resolved=False):
     h = _seed_prior(conn, finding)
     _thread(gh, h, finding["title"], [reply], label=label)
+    gh.threads[0]["isResolved"] = resolved
     _lanes(lanes, h, finding, "INTENTIONALLY_DEFERRED", reason="Fine to do later.")
     _review(cfg, conn, gh, lanes, HEAD)
     (ask,) = gh.replies
@@ -453,6 +470,26 @@ def test_a_blocker_whose_tracking_turns_up_later_is_deferred(cfg, conn, gh, lane
     _review(cfg, conn, gh, lanes, C)
     assert gh.posted_reviews[-1]["event"] != "REQUEST_CHANGES"
     assert "Tracked in https://x/issues/77; deferring this." in gh.replies[-1]["body"]
+
+
+def test_a_deferral_on_a_thread_the_author_resolved_is_asked_for_then_lifts(cfg, conn, gh, lanes):
+    """dashpay/platform#5905: "Deferred. Please file a tracking issue", then the author
+    resolved the thread. The ask is still made there, and once the tracking turns up the
+    blocker lifts; the resolved thread gets nothing more."""
+    blocker = _blocking()
+    reply = {**KNST, "body": "Deferred. Please file a tracking issue for it."}
+    h = _deferral_round_one(
+        cfg, conn, gh, lanes, blocker, label="🔴 Blocking", reply=reply, resolved=True
+    )
+    assert not any("resolveReviewThread" in " ".join(c) for c in gh.calls)
+    gh.pr["body"] = "Follow-up tracked in https://github.com/dashpay/platform/issues/77"
+    with tx(conn):
+        kv_set(conn, f"defer.issue:dashpay/platform#1:{h}", "https://x/issues/77")
+    replies = len(gh.replies)
+    _lanes(lanes, h, blocker, "STILL_VALID")
+    _review(cfg, conn, gh, lanes, C)
+    assert gh.posted_reviews[-1]["event"] != "REQUEST_CHANGES"
+    assert len(gh.replies) == replies
 
 
 def test_conversation_accepts_a_suggestion_deferral_after_one_ask(cfg, conn, gh, lanes):

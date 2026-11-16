@@ -885,7 +885,13 @@ def dedupe_against_github(
                 and head_sha[:8] in (c.get("body") or "")
                 for c in (thread.get("comments") or {}).get("nodes") or []
             )
-            if already or _thread_has_marker(thread, marker):
+            if (
+                already
+                or _thread_has_marker(thread, marker)
+                or _human_spoke_last(thread, bot_login)
+            ):
+                # a reply there is answered on its own (`answer_replied_threads`); a reuse note
+                # on top would be a second comment and would read as our answer to it
                 base.action = "deduped_existing_resolved_thread"
             elif dry_run:
                 base.action = "would_reply_to_resolved_thread"
@@ -903,6 +909,15 @@ def dedupe_against_github(
                     base.action = "failed_to_reply_to_resolved_thread"
         sup.append(base)
     return kept, sup
+
+
+def _human_spoke_last(thread: dict[str, Any], bot_login: str) -> bool:
+    """The newest comment on `thread` (`github.thread_for_comment`) is a human's reply."""
+    nodes = (thread.get("comments") or {}).get("nodes") or []
+    if len(nodes) < 2:
+        return False
+    last = {"author": (nodes[-1].get("author") or {}).get("login")}
+    return not github._is_bot(last, bot_login) and not github._is_other_bot(last)
 
 
 def build(
@@ -1186,6 +1201,11 @@ def render_conversation_answer(
     return f"{marker}\n{reply}{note}"
 
 
+def _thread_to_resolve(t: dict[str, Any]) -> Any:
+    """The thread id an answer may resolve: none for a thread a human already resolved."""
+    return None if t.get("resolved") else t.get("thread_id")
+
+
 def _deliver_answer(
     gh: Gh,
     repo: str,
@@ -1308,7 +1328,7 @@ def answer_conversation(
                 tracking_url=o.tracking_url,
                 filed=o.tracking_filed,
             ),
-            thread_id=t.get("thread_id"),
+            thread_id=_thread_to_resolve(t),
             resolve=o.status in _RESOLVING,
             item=item,
             root_body="" if h in (settled or {}) and not relift else str(t.get("body") or ""),
@@ -1435,7 +1455,7 @@ def answer_thread_lane(
                 same_sha=same_sha,
                 tracking_url=o.tracking_url,
             ),
-            thread_id=t.get("thread_id"),
+            thread_id=_thread_to_resolve(t),
             resolve=o.status in _RESOLVING,
             item=item,
             root_body="" if keep_root else str(t.get("body") or ""),
@@ -1550,7 +1570,7 @@ def answer_replied_threads(
     todo = dict(threads)
     for h, t in (open_threads or {}).items():
         row = reconciliation.get(h) or {}
-        if h in todo or (h in kept_hashes and not row.get("needs_tracking")):
+        if h in todo or t.get("resolved") or (h in kept_hashes and not row.get("needs_tracking")):
             continue
         stated = str(row.get("status") or "")
         if (
@@ -1607,7 +1627,7 @@ def answer_replied_threads(
             body=render_thread_answer(
                 marker=marker, status=status, head_sha=head_sha, reply=reason
             ),
-            thread_id=t.get("thread_id"),
+            thread_id=_thread_to_resolve(t),
             resolve=resolve,
             item=item,
             root_body=str(t.get("body") or ""),
@@ -1619,7 +1639,12 @@ def answer_replied_threads(
     # head just because nobody replied on its thread this time
     for h, t in (open_threads or {}).items():
         body = str(t.get("body") or "")
-        if h in kept_hashes and h not in todo and THREAD_STATUS_MARKER in body:
+        if (
+            h in kept_hashes
+            and h not in todo
+            and not t.get("resolved")
+            and THREAD_STATUS_MARKER in body
+        ):
             item = {"finding_hash": h, "status": "STILL_VALID", "comment_id": t.get("comment_id")}
             item["action"] = "status_cleared"
             item["marked"] = _set_thread_status(

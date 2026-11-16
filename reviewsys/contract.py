@@ -352,11 +352,18 @@ def _full_hash(item: Any, prior: set[str], notes: list[str], label: str) -> Any:
 
 def _normalize_prior_hashes(out: dict[str, Any], prior: set[str], notes: list[str]) -> None:
     """Reconciliation rows and carried findings whose `finding_hash` names exactly one prior
-    hash get that hash; reconciliation statuses get their canonical spelling."""
+    hash get that hash; reconciliation statuses get their canonical spelling. A row's
+    `dispute_answered` is dropped: it is an input fact from the bot's own record of what it
+    posted, and a lane that echoes or invents it would tell the verifier, which is shown the
+    reviewers' rows, that a dispute was answered when it never was."""
     recon = out.get("prior_finding_reconciliation")
     if isinstance(recon, list):
         rows = [_full_hash(row, prior, notes, "reconciliation") for row in recon]
         for row in rows:
+            if isinstance(row, dict) and row.pop("dispute_answered", None) is not None:
+                notes.append(
+                    f"reconciliation {row.get('finding_hash')!r}: dispute_answered dropped"
+                )
             st = row.get("status") if isinstance(row, dict) else None
             if isinstance(st, str) and (canon := _status_spelling(st)) != st:
                 notes.append(f"reconciliation status {st!r} -> {canon!r}")
