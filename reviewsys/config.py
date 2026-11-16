@@ -475,10 +475,11 @@ class StepbackConfig:
     like).
     `hold`: when a later round draws new blockers from named causes again, the review asks
     for the decision and automatic re-review is paused, so later pushes keep its verdict
-    until someone asks for a review."""
+    until someone asks for a review. Off by default: authors cleared the pause by asking
+    right away, and the next round paused again."""
 
     enabled: bool = True
-    hold: bool = True
+    hold: bool = False
     min_round: int = 4
     min_blockers: int = 6
     min_recent: int = 3
@@ -843,7 +844,7 @@ min_blockers = 6
 min_recent = 3
 # when a later round draws new blockers from those causes again, ask for the decision and
 # pause automatic re-review: later pushes keep that verdict until someone asks (`@<bot> review`)
-hold = true
+hold = false
 """
 
 
