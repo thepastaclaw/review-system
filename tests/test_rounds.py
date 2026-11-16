@@ -94,6 +94,19 @@ def test_stats_and_window(conn):
     assert rounds.compute(conn, days=90, at=AT)["overall"]["n"] == 6
 
 
+def test_windows_cover_presets_and_the_requested_span(conn):
+    for i, r in enumerate([1, 2, 3, 4, 10], 1):
+        _pr_with_rounds(conn, i, r)
+    _pr_with_rounds(conn, 9, 7, closed="2026-09-01T00:00:00Z")
+    data = rounds.compute(conn, days=40, at=AT)
+    w = data["windows"]
+    assert set(w) == {str(d) for d in (*rounds.WINDOWS, 40)}
+    assert w["40"]["overall"] == data["overall"]
+    assert w["40"]["repos"] == data["repos"]
+    assert (w["7"]["overall"]["n"], w["90"]["overall"]["n"]) == (5, 6)
+    assert w["90"]["repos"][0]["max"] == 10
+
+
 def test_flags_need_five_prs(conn):
     for i in range(1, 5):
         _pr_with_rounds(conn, i, 7, repo="o/few")

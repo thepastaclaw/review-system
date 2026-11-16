@@ -28,6 +28,7 @@ h1{font-size:34px;line-height:1.1;margin:7px 0}
 .panel{padding:20px;margin-bottom:16px}
 .panel h2{font-size:17px;margin:0 0 15px}
 .panel h2 span{font-size:12px;color:var(--muted);font-weight:500;margin-left:8px}
+.panel h2 select{font:inherit;font-size:12px;font-weight:500;color:var(--text);background:var(--item);border:1px solid var(--item-line);border-radius:6px;padding:1px 4px;margin:0 2px}
 .panel h3{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:18px 0 7px}
 .panel h3 small{font-size:10px;color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0}
 .queue{display:grid;grid-template-columns:minmax(0,1fr);gap:9px}
@@ -336,10 +337,15 @@ function renderOverview(d){
 }
 
 // review rounds per PR (rounds.compute): mean vs target and ceiling, per repo, weekly trend
+let roundsData=null,roundsDays=null;
+try{roundsDays=localStorage.getItem('roundsDays')}catch{}
 function renderRounds(r){
+  roundsData=r;
   const box=$('#rounds');if(!r){box.classList.add('hidden');return}
   box.classList.remove('hidden');
-  const o=r.overall||{},f=x=>x==null?'—':Number(x).toFixed(1),
+  const spans=Object.keys(r.windows||{}).sort((a,b)=>a-b),days=spans.includes(roundsDays)?roundsDays:String(r.window_days),
+    win=r.windows?.[days]||r;
+  const o=win.overall||{},f=x=>x==null?'—':Number(x).toFixed(1),
     tone=x=>x.above_ceiling?'bad':x.above_target?'warn':'good',
     flag=x=>x.above_ceiling?`<span class="pill bad">above ceiling</span>`:x.above_target?`<span class="pill warn">above target</span>`:'',
     weeks=r.trend?.overall||[],maxMean=Math.max(r.ceiling+1,...weeks.map(w=>w.mean||0)),
@@ -347,19 +353,27 @@ function renderRounds(r){
     ty=v=>36-v/maxMean*32,
     spark=`<svg viewBox="0 0 200 40" width=200 height=40 role=img aria-label="weekly mean rounds"><line x1=0 x2=200 y1=${ty(r.target)} y2=${ty(r.target)} stroke="var(--amber)" stroke-dasharray="3 3"/><line x1=0 x2=200 y1=${ty(r.ceiling)} y2=${ty(r.ceiling)} stroke="var(--red)" stroke-dasharray="3 3"/>${pts.length>1?`<polyline fill=none stroke="var(--blue)" stroke-width=2 points="${pts.map(p=>p.join(',')).join(' ')}"/>`:''}${pts.map(p=>`<circle cx=${p[0]} cy=${p[1]} r=2.5 fill="var(--blue)"/>`).join('')}</svg>`,
     r7=r.rolling?.['7d']?.overall,r28=r.rolling?.['28d']?.overall;
-  $('#rounds-sub').textContent=`completed PRs · last ${r.window_days} days · target ≤ ${r.target} · ceiling ${r.ceiling}`;
+  $('#rounds-sub').innerHTML=spans.length
+    ?`completed PRs · last <select id="rounds-days" aria-label="Window in days">${spans.map(d=>`<option value="${d}"${d===days?' selected':''}>${d}</option>`).join('')}</select> days · target ≤ ${r.target} · ceiling ${r.ceiling}`
+    :esc(`completed PRs · last ${r.window_days} days · target ≤ ${r.target} · ceiling ${r.ceiling}`);
   const cards=[['Mean',f(o.mean),`${o.n} PRs · target ≤ ${r.target}`,tone(o)],['Median',f(o.median),`p90 ${o.p90??'—'} · max ${o.max??'—'}`,''],['Last 7 days',f(r7?.mean),`${r7?.n??0} PRs`,''],['Last 28 days',f(r28?.mean),`${r28?.n??0} PRs`,''],['Rounds to first approve',f(o.to_approve_mean),`median ${f(o.to_approve_median)} · ${o.approved_n} PRs`,'']];
   const colour={good:'var(--green)',warn:'var(--amber)',bad:'var(--red)','':'var(--text)'};
   const trendRows=[{repo:'All repos',weeks}].concat((r.trend?.repos||[]).map(x=>({repo:x.repo,weeks:x.weeks})));
   $('#rounds-body').innerHTML=`<div class="cards five" style="margin-bottom:14px">${cards.map(c=>`<div class=card><div class=label>${c[0]}</div><div class=value style="color:${colour[c[3]]}">${c[1]}</div><div class=csub>${esc(c[2])}</div></div>`).join('')}</div>
     <div class=tablewrap><table><thead><tr><th>Repo</th><th class=num>PRs</th><th class=num>Mean</th><th class=num>Median</th><th class=num>p90</th><th class=num>Max</th><th class=num>&gt; 5 rounds</th><th class=num>To first approve</th><th></th></tr></thead><tbody>`
-    +(r.repos||[]).map(x=>`<tr><td><b>${esc(x.repo)}</b></td><td class=num>${x.n}</td><td class=num>${f(x.mean)}</td><td class=num>${f(x.median)}</td><td class=num>${x.p90??'—'}</td><td class=num>${x.max??'—'}</td><td class=num>${pct(x.share_over_5)}</td><td class=num>${f(x.to_approve_mean)}</td><td>${flag(x)}</td></tr>`).join('')
+    +(win.repos||[]).map(x=>`<tr><td><b>${esc(x.repo)}</b></td><td class=num>${x.n}</td><td class=num>${f(x.mean)}</td><td class=num>${f(x.median)}</td><td class=num>${x.p90??'—'}</td><td class=num>${x.max??'—'}</td><td class=num>${pct(x.share_over_5)}</td><td class=num>${f(x.to_approve_mean)}</td><td>${flag(x)}</td></tr>`).join('')
     +`</tbody></table></div><h3>Weekly trend <small>mean / median / PRs by completion week · dashed: target (amber), ceiling (red)</small></h3><div style="margin-bottom:8px">${spark}</div><div class=tablewrap><table><thead><tr><th></th>${weeks.map(w=>`<th class=num>${esc(w.week.slice(5))}</th>`).join('')}</tr></thead><tbody>`
     +trendRows.map(t=>`<tr><td>${esc(t.repo)}</td>${t.weeks.map(w=>`<td class=num>${w.n?`${f(w.mean)} / ${f(w.median)} / ${w.n}`:'<span class=muted>—</span>'}</td>`).join('')}</tr>`).join('')
     +`</tbody></table></div>`
     +(r.watch?.length?`<h3>Open PRs at ≥ 5 rounds</h3>`+r.watch.map(w=>`<div class=metric><span><a href="https://github.com/${esc(w.repo)}/pull/${w.number}">${esc(w.repo)} #${w.number}</a>${w.author?` · ${esc(w.author)}`:''}</span><b>${w.rounds} rounds</b></div>`).join(''):'')
     +`<div class=foot>${esc(r.definition)}</div>`;
 }
+
+$('#rounds-sub').addEventListener('change',e=>{
+  if(e.target.id!=='rounds-days')return;
+  roundsDays=e.target.value;try{localStorage.setItem('roundsDays',roundsDays)}catch{}
+  renderRounds(roundsData);
+});
 
 // the live v12 shadow (shadow.public_export): counts, verdicts and links only, never a finding's text
 const VERDICT_SHORT={APPROVE:['approve','good'],REQUEST_CHANGES:['changes','bad'],COMMENT:['comment','']};

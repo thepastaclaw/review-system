@@ -1638,6 +1638,9 @@ dashboard shows it in "Review rounds per PR".
   that got one). `APPROVE` and the backfilled GitHub state `APPROVED` both count.
 - A repo is flagged "above target" (mean > 4) or "above ceiling" (mean > 5) only at n >= 5; the
   JSON carries `above_target` / `above_ceiling` booleans.
+- `windows` holds the same per-repo and overall stats for PRs completed in the last 7, 14, 28,
+  56, 90, 180 and 365 days (plus `--days` if it is none of those), keyed by the day count; the
+  dashboard's "last N days" picker switches between them and remembers the choice per browser.
 - The watch list is the open PRs already at 5 or more rounds.
 - Only enabled repos count (everywhere, trend and watch list included); the CLI takes
   `--all-repos` to include the rest.
