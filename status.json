@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-16T01:02:01Z",
-  "generated_at": "2026-11-16T01:02:02Z",
+  "data_as_of": "2026-11-16T01:03:02Z",
+  "generated_at": "2026-11-16T01:03:02Z",
   "history": {
     "daily": [
       {
@@ -364,7 +364,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 35720,
+        "count": 35721,
         "severity": "suggestion"
       }
     ],
@@ -751,9 +751,9 @@
       },
       {
         "effort": "medium",
-        "lanes": 6374,
-        "tokens_in": 928056519,
-        "tokens_out": 10357243
+        "lanes": 6375,
+        "tokens_in": 928122064,
+        "tokens_out": 10358478
       },
       {
         "effort": "high",
@@ -805,18 +805,18 @@
         "tokens_out": 50402087
       },
       {
-        "avg_tokens_per_lane": 1887685.0,
-        "lanes": 41660,
+        "avg_tokens_per_lane": 1887641.0,
+        "lanes": 41661,
         "model": "gpt-6.1-sol",
-        "tokens_in": 78277928642,
-        "tokens_out": 363022373
+        "tokens_in": 78277994187,
+        "tokens_out": 363023608
       }
     ],
     "tokens_by_run": [
       {
         "run_id": 10932,
-        "tokens_in": 1398682,
-        "tokens_out": 72605
+        "tokens_in": 1464227,
+        "tokens_out": 73840
       },
       {
         "run_id": 10930,
@@ -1315,16 +1315,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14238968,
+      "avg_tokens_per_completed_review": 14238975,
       "completed_reviews": 8637,
-      "findings": 68230,
+      "findings": 68231,
       "findings_posted": 9901,
       "reviews": 9998,
       "reviews_imported": 2245,
       "runs": 10934,
-      "tokens_in": 121667804100,
-      "tokens_out": 1314160050,
-      "tokens_total": 122981964150
+      "tokens_in": 121667869645,
+      "tokens_out": 1314161285,
+      "tokens_total": 122982030930
     }
   },
   "live": {
@@ -1333,12 +1333,16 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-11-16T06:50:11Z",
-        "deadline_in_seconds": 20890,
+        "deadline_in_seconds": 20829,
         "degraded": false,
-        "elapsed_seconds": 710,
-        "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-11-16T01:01:57Z",
+        "elapsed_seconds": 771,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 1
+        },
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-11-16T01:02:57Z",
         "id": 10932,
         "lanes": [
           {
@@ -1350,29 +1354,49 @@
             "status": "completed",
             "tokens_in": 1398682,
             "tokens_out": 72605
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.1-sol",
+            "phase": "verify1",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 65545,
+            "tokens_out": 1235
           }
         ],
         "live_lanes": [
           {
-            "effort": "medium",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.1-sol",
-            "phase": "verify1",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 23,
+            "role": "general",
+            "since_seconds": 53,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.1-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 52,
             "state": "running"
           }
         ],
         "number": 1423,
         "overdue": false,
-        "phase": "verify1",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1423",
         "priority": false,
-        "progress": 0.134,
+        "progress": 0.143,
         "queue": "live",
         "queued_at": "2026-11-16T00:18:57Z",
-        "remaining_seconds": 4599,
+        "remaining_seconds": 4617,
         "repo": "dashpay/dashwallet-ios",
         "sha": "462ca1aedd315778691ac30a9d61658150e2a79d",
         "started_at": "2026-11-16T00:50:11Z",
@@ -1429,21 +1453,52 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 1
+            },
             "name": "verify1",
-            "seconds": 23,
+            "seconds": 31,
             "started_at": "2026-11-16T01:01:38Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "admit_phase2": true,
+              "blockers": 0,
+              "phase2_effort": "high",
+              "tier": "normal"
+            },
+            "name": "gate",
+            "seconds": 0,
+            "started_at": "2026-11-16T01:02:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "security-auditor"
+            ],
+            "lanes_total": 2,
+            "name": "phase2",
+            "seconds": 53,
+            "started_at": "2026-11-16T01:02:09Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "feat(wallet): offer to finish a send whose asset lock is held",
-        "tokens_in": 1398682,
-        "tokens_out": 72605,
+        "tokens_in": 1464227,
+        "tokens_out": 73840,
         "trigger": "new_push",
         "upcoming": [
-          "gate",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1453,12 +1508,12 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-11-16T06:50:11Z",
-        "deadline_in_seconds": 20890,
+        "deadline_in_seconds": 20829,
         "degraded": false,
-        "elapsed_seconds": 710,
+        "elapsed_seconds": 771,
         "findings": null,
-        "heartbeat_age_seconds": 4,
-        "heartbeat_at": "2026-11-16T01:01:57Z",
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-11-16T01:02:57Z",
         "id": 10934,
         "lanes": [],
         "live_lanes": [
@@ -1469,7 +1524,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 694,
+            "since_seconds": 755,
             "state": "running"
           }
         ],
@@ -1478,10 +1533,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1406",
         "priority": false,
-        "progress": 0.132,
+        "progress": 0.143,
         "queue": "live",
         "queued_at": "2026-11-16T00:18:57Z",
-        "remaining_seconds": 4657,
+        "remaining_seconds": 4622,
         "repo": "dashpay/dashwallet-ios",
         "sha": "3d7d56acbdb58c9c166847038d48b1860719721d",
         "started_at": "2026-11-16T00:50:11Z",
@@ -1535,7 +1590,7 @@
             ],
             "lanes_total": 1,
             "name": "phase1",
-            "seconds": 696,
+            "seconds": 757,
             "started_at": "2026-11-16T00:50:25Z",
             "status": "running"
           }
@@ -1588,7 +1643,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-16T00:59:06Z",
+        "at": "2026-11-16T01:02:18Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1613,7 +1668,7 @@
       "superseded": 3409
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-16T00:58:37Z",
+    "ingest_last_at": "2026-11-16T01:02:48Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1635,7 +1690,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 2,
         "slots": 8,
         "waiting": 0
       },
@@ -1654,12 +1709,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 718,
+        "age_seconds": 779,
         "attempts": 0,
         "author": "DCG-Claude",
         "eligible": false,
         "eligible_at": "2026-11-16T01:20:03Z",
-        "eligible_in_seconds": 1082,
+        "eligible_in_seconds": 1021,
         "number": 8162,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8162",
@@ -1680,7 +1735,7 @@
       "reviews": 10,
       "tokens": 356750540
     },
-    "ts": "2026-11-16T01:02:01Z",
+    "ts": "2026-11-16T01:03:02Z",
     "typical_minutes_by_tier": {
       "critical": 34.0,
       "low": 39.1,
@@ -1691,7 +1746,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 11.833333333333334,
+      "idle_minutes": 12.85,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1699,7 +1754,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-16T01:02:01Z",
+    "generated_at": "2026-11-16T01:03:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -4463,7 +4518,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-16T01:01:02Z",
+      "at": "2026-11-16T01:02:03Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
