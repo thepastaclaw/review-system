@@ -115,6 +115,18 @@ REOPENING = frozenset(
 # ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`,
 # or its review failed or ended without a verdict)
 ASKING = frozenset({Trigger.MENTION, Trigger.REVIEW_REQUESTED})
+# what a priority author's PR (`[scheduling] priority_authors`) promotes to priority: the
+# automatic heads and the normal box
+PRIORITY_AUTHOR_TRIGGERS = AUTOMATIC_TRIGGERS | {Trigger.NORMAL_REQUEST.value}
+
+
+def _by_priority_author(conn: sqlite3.Connection, cfg: Config, repo: str, number: int) -> bool:
+    if not cfg.priority_authors:
+        return False
+    row = conn.execute(
+        "SELECT author FROM prs WHERE repo=? AND number=?", (repo, number)
+    ).fetchone()
+    return bool(row) and str(row["author"]).lower() in cfg.priority_authors
 
 
 def _has_review(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> bool:
@@ -205,7 +217,13 @@ def enqueue_head(
         if existing is None or existing["status"] != HeadStatus.DONE:
             return "noop"
         return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
-    priority = 1 if trigger.priority else 0
+    # a priority author's own commits are wanted as soon as they land, not after the debounce
+    by_priority_author = (
+        not trigger.priority
+        and trigger in PRIORITY_AUTHOR_TRIGGERS
+        and _by_priority_author(conn, cfg, repo, number)
+    )
+    priority = 1 if trigger.priority or by_priority_author else 0
     # the push debounce waits for pushes to settle; someone asking says they have
     eligible = (
         ts
@@ -235,6 +253,8 @@ def enqueue_head(
             existing["status"] in (HeadStatus.QUEUED, HeadStatus.RUNNING)
             and priority
             and not existing["priority"]
+            # a running head is already reviewed: the author alone asks for nothing more
+            and not (by_priority_author and existing["status"] == HeadStatus.RUNNING)
         ):
             conn.execute(
                 "UPDATE heads SET priority=1, trigger=?, eligible_at=? WHERE id=?",

@@ -522,6 +522,8 @@ class Config:
     backlog_skip_phase1_above: int  # queued heads above this -> runs skip Phase 1 (0 disables)
     # PR labels (case-insensitive) that turn automatic reviews off for that PR, see ingest.py
     skip_labels: tuple[str, ...]
+    # PR authors (lower-cased) whose PRs are always priority: no push debounce, front of line
+    priority_authors: tuple[str, ...]
     # reviewer lanes one phase of one run runs at once (1 = sequential, the pre-v0.19 flow;
     # 0 = every lane of the phase at once). Model pools (lanepool.py) still bound the machine.
     phase_parallelism: int
@@ -664,6 +666,8 @@ DEFAULT_LANE_DENY_EXEC = (
     "~/.local/bin/sccache",
 )
 
+# [scheduling] priority_authors when a box config.toml predates the knob
+DEFAULT_PRIORITY_AUTHORS = ("QuantumExplorer",)
 # [scheduling] skip_labels when a box config.toml predates the knob
 DEFAULT_SKIP_LABELS = ("tag:skip-review",)
 
@@ -721,6 +725,9 @@ backlog_skip_phase1_above = 10
 # a PR carrying one of these labels gets no automatic review (new PR, push, post-merge audit)
 # until the label is removed; an explicit request (@mention, review request) still runs
 skip_labels = ["tag:skip-review"]
+# every new PR and push by one of these authors is a priority review: no push debounce,
+# at the front of the line
+priority_authors = ["QuantumExplorer"]
 # the general reviewer and the specialists of one phase run side by side, at most this
 # many at once per run (1 = one after another, 0 = all of them); the model pools below
 # still bound the machine
@@ -1244,6 +1251,9 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         comment_budget=int(s.get("comment_budget", settings.get("comment_budget", 10))),
         backlog_skip_phase1_above=int(s.get("backlog_skip_phase1_above", 10)),
         skip_labels=_skip_labels(s.get("skip_labels", DEFAULT_SKIP_LABELS)),
+        priority_authors=tuple(
+            str(a).lower() for a in s.get("priority_authors", DEFAULT_PRIORITY_AUTHORS)
+        ),
         phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
         lane_pools={
             str(k): max(1, int(v))

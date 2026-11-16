@@ -1263,3 +1263,35 @@ def test_mention_on_disabled_repo_stays_blocked_even_for_trusted_user(cfg, conn,
     stats = route_inbox(conn, cfg, gh, notifier)
     assert stats["mention"] == 0 and stats["ignored"] == 1
     assert conn.execute("SELECT COUNT(*) FROM heads").fetchone()[0] == 0
+
+
+def test_priority_author_prs_are_priority_without_debounce(cfg, conn, gh):
+    gh.open_prs["dashpay/platform"] = [
+        pr(60, "a" * 40, author={"login": "quantumexplorer"}),
+        pr(61, "b" * 40),
+    ]
+    ingest_prs(conn, cfg, gh)
+    rows = {r["number"]: r for r in conn.execute("SELECT * FROM heads")}
+    assert rows[60]["priority"] == 1 and rows[60]["eligible_at"] == rows[60]["queued_at"]
+    assert rows[61]["priority"] == 0 and rows[61]["eligible_at"] > rows[61]["queued_at"]
+    # every later push is priority too
+    gh.open_prs["dashpay/platform"] = [pr(60, "c" * 40, author={"login": "QuantumExplorer"})]
+    ingest_prs(conn, cfg, gh)
+    head = conn.execute("SELECT * FROM heads WHERE sha=?", ("c" * 40,)).fetchone()
+    assert head["trigger"] == "new_push" and head["priority"] == 1
+    assert head["eligible_at"] == head["queued_at"]
+
+
+def test_priority_author_promotes_head_queued_before_the_knob(cfg, conn, gh):
+    gh.open_prs["dashpay/platform"] = [pr(62, "a" * 40, author={"login": "QuantumExplorer"})]
+    ingest_prs(conn, dataclasses.replace(cfg, priority_authors=()), gh)
+    assert conn.execute("SELECT priority FROM heads").fetchone()["priority"] == 0
+    stats = ingest_prs(conn, cfg, gh)["dashpay/platform"]
+    assert stats["promoted"] == 1
+    head = conn.execute("SELECT * FROM heads").fetchone()
+    assert head["priority"] == 1 and parse_ts(head["eligible_at"]) <= parse_ts(now())
+    # a running head is left alone
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='running', priority=0")
+    assert ingest_prs(conn, cfg, gh)["dashpay/platform"]["noop"] == 1
+    assert conn.execute("SELECT priority FROM heads").fetchone()["priority"] == 0
