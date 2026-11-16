@@ -16,6 +16,7 @@ TARGET = 4.0
 CEILING = 5.0
 MIN_N = 5
 WATCH_AT = 5
+WINDOWS = (7, 14, 28, 56, 90, 180, 365)
 
 DEFINITION = (
     "A round is a distinct head commit of a PR that got its own review from the bot, including "
@@ -133,6 +134,11 @@ def compute(
         return [p for p in done if since <= done_at[id(p)] <= at]
 
     window = completed_since(at - timedelta(days=days))
+    windows = {
+        str(span): {"overall": _stats(sel), "repos": _repo_stats(sel)}
+        for span in sorted({*WINDOWS, days})
+        for sel in [window if span == days else completed_since(at - timedelta(days=span))]
+    }
 
     monday = (at - timedelta(days=at.weekday())).replace(hour=0, minute=0, second=0)
     starts = [monday - timedelta(weeks=i) for i in range(weeks - 1, -1, -1)]
@@ -186,6 +192,7 @@ def compute(
         "window_days": days,
         "overall": _stats(window),
         "repos": _repo_stats(window),
+        "windows": windows,
         "trend": trend,
         "rolling": rolling,
         "watch": watch,
