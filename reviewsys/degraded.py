@@ -28,6 +28,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable
@@ -53,6 +54,19 @@ SNAPSHOT_MAX_AGE = timedelta(minutes=15)
 # a lane that died on quota is stronger evidence than a 1-token probe succeeding (the proxy
 # may admit a tiny request while every real lane is refused), so hold the mode this long
 LANE_HOLD = timedelta(minutes=20)
+# a 429 that does not say the quota is spent (OpenAI's per-account "Rate limit exceeded", or
+# every credential in a cooldown of a few seconds) usually clears within seconds; the probe
+# asks again after these pauses and only reports exhaustion when every attempt is refused
+PROBE_RETRY_DELAYS_S = (5, 10)
+SPENT_PATTERNS = tuple(
+    re.compile(p, re.IGNORECASE)
+    for p in (
+        r"usage limit has been reached",
+        r"usage_limit",
+        r"insufficient_quota",
+        r"quota[ _]exceeded",
+    )
+)
 KV_FORCE = "degraded.force"  # on | off | absent (auto)
 KV_PROBE = "degraded.probe"  # last probe: {"at", "quota_exhausted", "reason"}
 KV_STATE = "degraded.state"  # last state the daemon alerted on: {"active", "reason", "since"}
@@ -134,10 +148,18 @@ def client_key() -> str | None:
 Prober = Callable[[str], tuple[bool, str]]  # a `probe`-shaped callable (tests inject one)
 
 
-def probe(model: str, *, key: str | None = None, base_url: str = PROXY_URL) -> tuple[bool, str]:
+def probe(
+    model: str,
+    *,
+    key: str | None = None,
+    base_url: str = PROXY_URL,
+    sleep: Callable[[float], None] | None = None,
+) -> tuple[bool, str]:
     """(quota_exhausted, reason). One 1-token request through the proxy's Claude-protocol
     endpoint, exactly what a lane sends. Only a quota-shaped failure counts as exhausted: a
-    dead proxy, a timeout or a 5xx is not a reason to swap models (nothing would work)."""
+    dead proxy, a timeout or a 5xx is not a reason to swap models (nothing would work). A
+    quota-shaped failure that does not say the quota is spent is a short rate limit until
+    it survives the retries in `PROBE_RETRY_DELAYS_S`."""
     key = key or client_key()
     if not key:
         return False, "no proxy client key to probe with"
@@ -151,24 +173,31 @@ def probe(model: str, *, key: str | None = None, base_url: str = PROXY_URL) -> t
             "content-type": "application/json",
         },
     )
-    try:
-        with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT_S):
-            return False, f"{model} answered"
-    except urllib.error.HTTPError as exc:
-        body = exc.read()[:400].decode("utf-8", "replace")
-        text = f"HTTP {exc.code}: {body}"
-        if exc.code == 429 or looks_like_quota_failure(text):
-            return True, _publishable(model, exc.code, body)
-        return False, f"{model}: {text[:160]} (not a quota failure)"
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
-        return False, f"{model}: probe failed ({str(exc)[:120]}); not treated as exhausted"
+    delays = iter(PROBE_RETRY_DELAYS_S)
+    while True:
+        try:
+            with urllib.request.urlopen(req, timeout=PROBE_TIMEOUT_S):
+                return False, f"{model} answered"
+        except urllib.error.HTTPError as exc:
+            body = exc.read()[:400].decode("utf-8", "replace")
+            text = f"HTTP {exc.code}: {body}"
+            if exc.code != 429 and not looks_like_quota_failure(text):
+                return False, f"{model}: {text[:160]} (not a quota failure)"
+            delay = None if any(p.search(text) for p in SPENT_PATTERNS) else next(delays, None)
+            if delay is None:
+                return True, _publishable(model, exc.code, body)
+            log.info("probe of %s rate-limited (%s); asking again in %ss", model, text[:160], delay)
+            (sleep or time.sleep)(delay)
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            return False, f"{model}: probe failed ({str(exc)[:120]}); not treated as exhausted"
 
 
 def _publishable(model: str, code: int, body: str) -> str:
     """A reason safe for a public review body: the upstream's message, sanitised."""
     try:
         obj = json.loads(body)
-        msg = str((obj.get("error") or {}).get("message") or obj.get("message") or "")
+        err = obj.get("error") or {}
+        msg = str(err.get("message") or obj.get("message") or obj.get("detail") or "")
     except (json.JSONDecodeError, AttributeError):
         msg = ""
     return publishable_reason(model, msg.strip() or f"HTTP {code}")
