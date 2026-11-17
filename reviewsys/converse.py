@@ -696,7 +696,11 @@ def prompt(
         '- Set `"disputed": true` when the latest human message argues the finding is wrong, '
         "harmless or not worth fixing on its merits (not a fix, a proposal or a deferral). "
         "Answer such a dispute once, on their specific argument: WITHDRAWN if they are right, "
-        "otherwise STILL_VALID with what in the code shows otherwise. A thread marked "
+        "otherwise STILL_VALID with what in the code shows otherwise. A fact they state that "
+        "holds, where the finding needs it to be false, makes the finding WITHDRAWN. So does "
+        "a disagreement only about how to read the project's own rules, when the finding "
+        "names no concrete failure and the reply is a maintainer's: they own those rules; say "
+        "which rule they read differently. A thread marked "
         "`dispute_answered` already has that answer from you: unless the new message persuades "
         "you (WITHDRAWN) or proposes a change (FIX_PENDING), answer NO_REPLY with "
         '`"disputed": true`. The system then marks the finding disputed, which leaves it to '
