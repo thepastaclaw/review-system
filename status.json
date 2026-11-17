@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-17T03:52:01Z",
-  "generated_at": "2026-11-17T03:52:02Z",
+  "data_as_of": "2026-11-17T03:53:01Z",
+  "generated_at": "2026-11-17T03:53:01Z",
   "history": {
     "daily": [
       {
@@ -377,14 +377,14 @@
       "paths": {
         "normal": {
           "duration": {
-            "median_seconds": 2194,
-            "n": 1048,
-            "p90_seconds": 6139
+            "median_seconds": 2195,
+            "n": 1047,
+            "p90_seconds": 6140
           },
           "slot_wait": {
             "median_seconds": 10,
-            "n": 1048,
-            "p90_seconds": 4022
+            "n": 1047,
+            "p90_seconds": 4024
           },
           "wait": {
             "median_seconds": 1813,
@@ -414,6 +414,30 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 8185,
+        "repo": "dashpay/dash",
+        "run_id": 11129,
+        "ts": "2026-11-17T03:52:46Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 8185,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-17T03:52:19Z"
+      },
+      {
+        "detail": "attempt 1 sha=0c4dcc9b",
+        "kind": "run.spawned",
+        "number": 8185,
+        "repo": "dashpay/dash",
+        "run_id": 11129,
+        "ts": "2026-11-17T03:52:18Z"
+      },
       {
         "detail": null,
         "kind": "label.synced",
@@ -709,30 +733,6 @@
         "repo": "dashpay/dash",
         "run_id": 11117,
         "ts": "2026-11-17T01:44:29Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.output_normalized",
-        "number": 8184,
-        "repo": "dashpay/dash",
-        "run_id": 11126,
-        "ts": "2026-11-17T01:44:22Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch_green",
-        "number": 8168,
-        "repo": "dashpay/dash",
-        "run_id": 11116,
-        "ts": "2026-11-17T01:35:49Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 8185,
-        "repo": "dashpay/dash",
-        "run_id": null,
-        "ts": "2026-11-17T01:31:29Z"
       }
     ],
     "tokens_by_effort": [
@@ -1326,14 +1326,121 @@
       "findings_posted": 10023,
       "reviews": 10137,
       "reviews_imported": 2245,
-      "runs": 11128,
+      "runs": 11129,
       "tokens_in": 123768021025,
       "tokens_out": 1333854603,
       "tokens_total": 125101875628
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "DCG-Claude",
+        "deadline_at": "2026-11-17T09:52:18Z",
+        "deadline_in_seconds": 21557,
+        "degraded": false,
+        "elapsed_seconds": 43,
+        "findings": null,
+        "heartbeat_age_seconds": 12,
+        "heartbeat_at": "2026-11-17T03:52:49Z",
+        "id": 11129,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 15,
+            "state": "running"
+          }
+        ],
+        "number": 8185,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash/pull/8185",
+        "priority": false,
+        "progress": 0.016,
+        "queue": "live",
+        "queued_at": "2026-11-17T03:21:00Z",
+        "remaining_seconds": 2590,
+        "repo": "dashpay/dash",
+        "sha": "0c4dcc9be76be75909b5a81ab838fc2d0a46a2ff",
+        "started_at": "2026-11-17T03:52:18Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-11-17T03:52:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "backport-reviewer",
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 11,
+            "started_at": "2026-11-17T03:52:30Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a broad backport spanning peer-facing networking logic and numerous functional test/framework changes, but it does not itself alter consensus, funds movement, cryptography, key handling, or storage migration surfaces.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 11,
+            "started_at": "2026-11-17T03:52:30Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-11-17T03:52:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 17,
+            "started_at": "2026-11-17T03:52:44Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "backport: bitcoin#29699, bitcoin#29736, bitcoin#29575, bitcoin#29279, bitcoin#29704, bitcoin#29898, bitcoin#30362, bitcoin#30374",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1878
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1349,7 +1456,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1367,7 +1474,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-17T03:49:59Z",
+        "at": "2026-11-17T03:52:26Z",
         "quota_exhausted": false,
         "reason": "gpt-6.1-sol answered"
       },
@@ -1387,11 +1494,12 @@
       "closed": 694,
       "done": 10048,
       "failed": 100,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 3451
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-17T03:48:00Z",
+    "ingest_last_at": "2026-11-17T03:52:18Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1419,46 +1527,27 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-17T03:11:28Z",
-    "last_run_started_at": "2026-11-17T03:09:15Z",
+    "last_run_started_at": "2026-11-17T03:52:18Z",
     "median_run_minutes": 54.28333333333333,
-    "notify_last_at": "2026-11-17T03:50:40Z",
-    "oldest_queued_at": "2026-11-17T03:21:00Z",
+    "notify_last_at": "2026-11-17T03:52:47Z",
+    "oldest_queued_at": "2026-11-17T03:37:32Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1861,
-        "attempts": 0,
-        "author": "DCG-Claude",
-        "eligible": true,
-        "eligible_at": "2026-11-17T03:51:00Z",
-        "eligible_in_seconds": 0,
-        "number": 8185,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash/pull/8185",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/8185#issuecomment-6932037933",
-        "priority": false,
-        "queued_at": "2026-11-17T03:21:00Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash",
-        "sha": "0c4dcc9be76be75909b5a81ab838fc2d0a46a2ff",
-        "title": "backport: bitcoin#29699, bitcoin#29736, bitcoin#29575, bitcoin#29279, bitcoin#29704, bitcoin#29898, bitcoin#30362, bitcoin#30374",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 869,
+        "age_seconds": 929,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-17T04:07:32Z",
-        "eligible_in_seconds": 931,
+        "eligible_in_seconds": 871,
         "number": 8179,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8179",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8179#issuecomment-6909773405",
         "priority": false,
@@ -1477,7 +1566,7 @@
       "reviews": 27,
       "tokens": 421427158
     },
-    "ts": "2026-11-17T03:52:01Z",
+    "ts": "2026-11-17T03:53:01Z",
     "typical_minutes_by_tier": {
       "critical": 36.8,
       "low": 43.3,
@@ -1486,17 +1575,17 @@
       "unknown": 0.3
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 42.766666666666666,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.7166666666666667,
       "ingest_stale": false,
-      "stuck": true
+      "stuck": false
     }
   },
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-17T03:52:01Z",
+    "generated_at": "2026-11-17T03:53:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -5724,7 +5813,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-17T03:51:47Z",
+      "at": "2026-11-17T03:52:47Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
