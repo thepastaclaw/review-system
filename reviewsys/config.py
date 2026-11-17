@@ -70,11 +70,15 @@ class TierEffort:
     `single_stage`: no blocker gate between the phases. The Phase-1 reviewers (on their
     ladder model) run beside the Phase-2 reviewers and the final verifier weighs both, for
     changes whose authors are expected to have reviewed them closely already, where the
-    gate only adds latency. Needs a Phase 2 (`phase2` set)."""
+    gate only adds latency. Needs a Phase 2 (`phase2` set).
+
+    `phase2_model`: the model this tier's Phase-2 reviewers run on instead of the policy's
+    Phase-2 reviewer model. The verifiers keep their own models."""
 
     phase1: str
     phase2: str | None
     single_stage: bool = False
+    phase2_model: str | None = None
 
 
 # severity -> points; nitpicks never count toward the gate
@@ -331,6 +335,13 @@ class ModelPolicy:
         """The lane that judges a CI failure after an APPROVE (ci.py): the cheap side-lane
         model triage and prep run on, or without triage the selector model at low effort."""
         return self.triage or LaneModel(agent="ci-check", model=self.selector_model, effort="low")
+
+    def phase2_lane(self, effort: TierEffort) -> LaneModel:
+        """The Phase-2 reviewer lane for a tier: its model (if it names one) at its effort."""
+        lm = self.phase2_reviewer
+        if effort.phase2_model:
+            lm = dataclasses.replace(lm, model=effort.phase2_model)
+        return dataclasses.replace(lm, effort=effort.phase2) if effort.phase2 else lm
 
     def tier_effort(self, tier: str) -> TierEffort:
         default = TierEffort(phase1=self.phase1_reviewer.effort, phase2=self.phase2_reviewer.effort)
@@ -964,6 +975,9 @@ def _comparison(
     unknown = [t for t in names if t not in tiers]
     if unknown:
         raise ValueError(f"comparison.tiers {unknown!r} are not configured tiers")
+    same = [t for t in names if tiers[t].phase2_model == model]
+    if same:
+        raise ValueError(f"comparison.tiers {same!r} already run Phase 2 on {model!r}")
     return ComparisonPolicy(model=model, tiers=names, fraction=fraction)
 
 
@@ -1137,6 +1151,12 @@ def load_skills_config(
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
+    if policy.degraded is not None:
+        for tier, te in policy.tiers.items():
+            if te.phase2_model and te.phase2_model not in policy.degraded.substitutes:
+                raise ValueError(
+                    f"tier {tier!r}: phase2_model {te.phase2_model!r} has no degraded substitute"
+                )
     if policy.pipeline is not None and policy.fingerprint != policy_fingerprint(pol):
         # v12 runs must never carry a v11 fingerprint: it names the policy in every phase
         # marker and provenance record, and the replay eval tells its two arms apart by it
@@ -1198,7 +1218,16 @@ def _tiers(node: dict[str, Any], p1_default: str, p2_default: str) -> dict[str, 
             raise ValueError(f"tier {tier!r}: single_stage must be true or false")
         if single and p2 is None:
             raise ValueError(f"tier {tier!r}: single_stage needs a phase2 effort")
-        out[str(tier).lower()] = TierEffort(phase1=p1, phase2=p2, single_stage=single)
+        model = spec.get("phase2_model")
+        if model is not None:
+            if not isinstance(model, str) or not model.strip():
+                raise ValueError(f"tier {tier!r}: phase2_model must be a model name")
+            if p2 is None:
+                raise ValueError(f"tier {tier!r}: phase2_model needs a phase2 effort")
+            model = model.strip()
+        out[str(tier).lower()] = TierEffort(
+            phase1=p1, phase2=p2, single_stage=single, phase2_model=model
+        )
     return out
 
 

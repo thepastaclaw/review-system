@@ -4804,7 +4804,7 @@ def _fresh_reviewers(ctx: RunContext, effort: TierEffort) -> dict[str, ReviewerO
         ctx,
         step=StepName.FRESH_PHASE2,
         phase="phase2",
-        lm=ctx.lane_model(_with_effort(ctx.cfg.policy.phase2_reviewer, effort.phase2)),
+        lm=ctx.lane_model(ctx.cfg.policy.phase2_lane(effort)),
         expected_phase="final",
         fresh=True,
     )
@@ -5457,6 +5457,7 @@ def _choose_comparison(ctx: RunContext) -> None:
     """Sample this run for a model comparison (see ComparisonPolicy). Never on an audit or in
     degraded mode (both sets would run on the same stand-in)."""
     cmp = ctx.cfg.policy.comparison
+    primary = ctx.cfg.policy.phase2_lane(ctx.cfg.policy.tier_effort(ctx.tier)).model
     if (
         cmp is None
         or ctx.is_audit
@@ -5472,7 +5473,7 @@ def _choose_comparison(ctx: RunContext) -> None:
             repo=ctx.repo,
             number=ctx.number,
             run_id=ctx.run_id,
-            detail=f"tier={ctx.tier} primary={ctx.cfg.policy.phase2_reviewer.model} second={cmp.model}",
+            detail=f"tier={ctx.tier} primary={primary} second={cmp.model}",
         )
 
 
@@ -6431,7 +6432,7 @@ def _confirm12(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) ->
             ctx,
             step=step,
             phase="phase2",
-            lm=ctx.lane_model(_with_effort(pol.phase2_reviewer, effort.phase2)),
+            lm=ctx.lane_model(pol.phase2_lane(effort)),
             expected_phase="final",
             fresh=True,
             roles=conf.roles,
@@ -7641,7 +7642,7 @@ def _phase2_reviewers(ctx: RunContext, effort: TierEffort, abort: StopSignal | N
         ctx,
         step=StepName.PHASE2,
         phase="phase2",
-        lm=ctx.lane_model(_with_effort(ctx.cfg.policy.phase2_reviewer, effort.phase2)),
+        lm=ctx.lane_model(ctx.cfg.policy.phase2_lane(effort)),
         expected_phase="final",
         abort=abort,
     )

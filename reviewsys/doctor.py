@@ -321,6 +321,7 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             if cfg.policy.triage:
                 models.add(cfg.policy.triage.model)
             models.update(c.model for c in cfg.policy.phase1_candidates)
+            models.update(t.phase2_model for t in cfg.policy.tiers.values() if t.phase2_model)
             if cfg.policy.degraded:
                 models.update(s.model for s in cfg.policy.degraded.substitutes.values())
             if cfg.policy.comparison:
@@ -328,9 +329,10 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
             for m in sorted(models):
                 good, detail = probe_single_stop(m, key)
                 ok &= _ok(f"proxy model {m} (single stop_sequence)", good, detail)
-        m = cfg.policy.phase2_reviewer.model
-        good, detail = probe_resume(m, cfg.claude_bin)
-        ok &= _ok(f"lane sessions ({m}: transcript, first request, resume)", good, detail)
+        tier_models = {t.phase2_model for t in cfg.policy.tiers.values() if t.phase2_model}
+        for m in sorted({cfg.policy.phase2_reviewer.model} | tier_models):
+            good, detail = probe_resume(m, cfg.claude_bin)
+            ok &= _ok(f"lane sessions ({m}: transcript, first request, resume)", good, detail)
         if cfg.policy.has_phase1_ladder:
             ok &= report_quota(cfg)
             for c in cfg.policy.phase1_candidates:
