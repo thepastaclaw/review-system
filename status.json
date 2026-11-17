@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-17T08:19:20Z",
-  "generated_at": "2026-11-17T08:19:31Z",
+  "data_as_of": "2026-11-17T08:20:15Z",
+  "generated_at": "2026-11-17T08:20:19Z",
   "history": {
     "daily": [
       {
@@ -415,6 +415,30 @@
     },
     "recent_events": [
       {
+        "detail": "28401de3 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 5519,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-17T08:20:15Z"
+      },
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5207,
+        "repo": "dashpay/platform",
+        "run_id": 11142,
+        "ts": "2026-11-17T08:20:13Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5207,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-17T08:19:52Z"
+      },
+      {
         "detail": "attempt 1 sha=ecf37943",
         "kind": "run.spawned",
         "number": 5207,
@@ -709,30 +733,6 @@
         "repo": null,
         "run_id": null,
         "ts": "2026-11-17T07:17:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.correction_failed",
-        "number": 5952,
-        "repo": "dashpay/platform",
-        "run_id": 11137,
-        "ts": "2026-11-17T07:10:22Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.corrected",
-        "number": 5952,
-        "repo": "dashpay/platform",
-        "run_id": 11137,
-        "ts": "2026-11-17T07:06:09Z"
-      },
-      {
-        "detail": null,
-        "kind": "lane.corrected",
-        "number": 5952,
-        "repo": "dashpay/platform",
-        "run_id": 11137,
-        "ts": "2026-11-17T07:01:13Z"
       }
     ],
     "tokens_by_effort": [
@@ -1338,35 +1338,45 @@
         "attempt": 1,
         "author": "lklimek",
         "deadline_at": "2026-11-17T14:18:35Z",
-        "deadline_in_seconds": 21555,
+        "deadline_in_seconds": 21500,
         "degraded": false,
-        "elapsed_seconds": 45,
+        "elapsed_seconds": 100,
         "findings": null,
-        "heartbeat_age_seconds": 0,
-        "heartbeat_at": "2026-11-17T08:19:20Z",
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-11-17T08:20:05Z",
         "id": 11142,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.1-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 31,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 2,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 1,
             "state": "running"
           }
         ],
         "number": 5207,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase1",
         "pr_url": "https://github.com/dashpay/platform/pull/5207",
         "priority": false,
-        "progress": 0.021,
+        "progress": 0.037,
         "queue": "live",
         "queued_at": "2026-11-17T07:47:54Z",
-        "remaining_seconds": 2079,
+        "remaining_seconds": 2595,
         "repo": "dashpay/platform",
         "sha": "ecf37943925c635e1947804edb753629262eaa07",
         "started_at": "2026-11-17T08:18:35Z",
@@ -1380,28 +1390,62 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 32,
+            "seconds": 64,
             "started_at": "2026-11-17T08:18:48Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.1-sol",
+              "reasoning": "This is a contained five-file Rust change adjusting wallet persistence capability gates and reconciliation tests, but it affects asset-lock accounting behavior without being large or intricate enough for the critical tier.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 63,
+            "started_at": "2026-11-17T08:18:49Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 31,
-            "started_at": "2026-11-17T08:18:49Z",
+            "name": "context",
+            "seconds": 19,
+            "started_at": "2026-11-17T08:19:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 4,
+            "started_at": "2026-11-17T08:20:11Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "normal",
         "title": "fix(platform-wallet): require only atomic tracked-lock writes for reconciliation",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
           "verify1",
           "gate",
           "phase2",
@@ -1491,13 +1535,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 0,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1510,12 +1554,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1337,
+        "age_seconds": 1392,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-11-17T08:27:03Z",
-        "eligible_in_seconds": 463,
+        "eligible_in_seconds": 408,
         "number": 5644,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5644",
@@ -1529,12 +1573,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 869,
+        "age_seconds": 924,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-11-17T08:34:51Z",
-        "eligible_in_seconds": 931,
+        "eligible_in_seconds": 876,
         "number": 5565,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5565",
@@ -1548,12 +1592,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 677,
+        "age_seconds": 732,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-11-17T08:38:03Z",
-        "eligible_in_seconds": 1123,
+        "eligible_in_seconds": 1068,
         "number": 5661,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5661",
@@ -1565,6 +1609,25 @@
         "sha": "96b38ab38c708f7be30a437e61c9319089efcc5e",
         "title": "feat: decide which identity keys may be disabled in the wallet, not in the mobile apps",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 0,
+        "attempts": 0,
+        "author": "lklimek",
+        "eligible": false,
+        "eligible_at": "2026-11-17T08:50:15Z",
+        "eligible_in_seconds": 1800,
+        "number": 5519,
+        "position": 4,
+        "pr_url": "https://github.com/dashpay/platform/pull/5519",
+        "prioritize_url": "https://github.com/dashpay/platform/issues/5519#issuecomment-6319843100",
+        "priority": false,
+        "queued_at": "2026-11-17T08:20:15Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/platform",
+        "sha": "28401de38ef7480e23729a087f41aecb4cbd9fc3",
+        "title": "refactor: remove DPP raw secp256k1 dependency",
+        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1574,7 +1637,7 @@
       "reviews": 39,
       "tokens": 570371165
     },
-    "ts": "2026-11-17T08:19:20Z",
+    "ts": "2026-11-17T08:20:15Z",
     "typical_minutes_by_tier": {
       "critical": 38.0,
       "low": 43.0,
@@ -1585,7 +1648,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.7833333333333333,
+      "idle_minutes": 1.6833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1593,7 +1656,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-17T08:19:20Z",
+    "generated_at": "2026-11-17T08:20:15Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
