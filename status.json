@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-17T08:07:20Z",
-  "generated_at": "2026-11-17T08:07:26Z",
+  "data_as_of": "2026-11-17T08:08:06Z",
+  "generated_at": "2026-11-17T08:08:08Z",
   "history": {
     "daily": [
       {
@@ -417,6 +417,22 @@
       {
         "detail": null,
         "kind": "check.synced",
+        "number": 5661,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-17T08:08:08Z"
+      },
+      {
+        "detail": "96b38ab3 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 5661,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-17T08:08:03Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
         "number": 5565,
         "repo": "dashpay/platform",
         "run_id": null,
@@ -717,22 +733,6 @@
         "repo": "dashpay/platform",
         "run_id": 11137,
         "ts": "2026-11-17T06:58:39Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 5954,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-17T06:56:02Z"
-      },
-      {
-        "detail": "17b38caa trigger=new_pr priority=0",
-        "kind": "head.queued",
-        "number": 5954,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-17T06:55:29Z"
       }
     ],
     "tokens_by_effort": [
@@ -1387,7 +1387,7 @@
       "closed": 696,
       "done": 10053,
       "failed": 100,
-      "queued": 3,
+      "queued": 4,
       "superseded": 3451
     },
     "ingest_error_streak": 0,
@@ -1432,12 +1432,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1166,
+        "age_seconds": 1212,
         "attempts": 0,
         "author": "lklimek",
         "eligible": false,
         "eligible_at": "2026-11-17T08:17:54Z",
-        "eligible_in_seconds": 634,
+        "eligible_in_seconds": 588,
         "number": 5207,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5207",
@@ -1451,12 +1451,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 617,
+        "age_seconds": 663,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-11-17T08:27:03Z",
-        "eligible_in_seconds": 1183,
+        "eligible_in_seconds": 1137,
         "number": 5644,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/5644",
@@ -1470,12 +1470,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 149,
+        "age_seconds": 195,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-11-17T08:34:51Z",
-        "eligible_in_seconds": 1651,
+        "eligible_in_seconds": 1605,
         "number": 5565,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/5565",
@@ -1487,6 +1487,25 @@
         "sha": "ad658d7915d83ca02eece9b5f299870239982770",
         "title": "feat(platform-wallet)!: detect inconsistent shielded commitment trees and add explicit rebuild",
         "trigger": "new_push"
+      },
+      {
+        "age_seconds": 3,
+        "attempts": 0,
+        "author": "Claudius-Maginificent",
+        "eligible": false,
+        "eligible_at": "2026-11-17T08:38:03Z",
+        "eligible_in_seconds": 1797,
+        "number": 5661,
+        "position": 4,
+        "pr_url": "https://github.com/dashpay/platform/pull/5661",
+        "prioritize_url": "https://github.com/dashpay/platform/issues/5661#issuecomment-6494203807",
+        "priority": false,
+        "queued_at": "2026-11-17T08:08:03Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/platform",
+        "sha": "96b38ab38c708f7be30a437e61c9319089efcc5e",
+        "title": "feat: decide which identity keys may be disabled in the wallet, not in the mobile apps",
+        "trigger": "new_push"
       }
     ],
     "today": {
@@ -1496,7 +1515,7 @@
       "reviews": 39,
       "tokens": 570371165
     },
-    "ts": "2026-11-17T08:07:20Z",
+    "ts": "2026-11-17T08:08:06Z",
     "typical_minutes_by_tier": {
       "critical": 38.0,
       "low": 43.0,
@@ -1507,7 +1526,7 @@
     "watchdog": {
       "active": 0,
       "eligible": 0,
-      "idle_minutes": 14.866666666666667,
+      "idle_minutes": 15.633333333333333,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1515,7 +1534,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-17T08:07:20Z",
+    "generated_at": "2026-11-17T08:08:06Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
