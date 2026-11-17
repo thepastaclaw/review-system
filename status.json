@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-17T21:04:01Z",
-  "generated_at": "2026-11-17T21:04:02Z",
+  "data_as_of": "2026-11-17T21:05:02Z",
+  "generated_at": "2026-11-17T21:05:02Z",
   "history": {
     "daily": [
       {
@@ -416,6 +416,14 @@
     "recent_events": [
       {
         "detail": null,
+        "kind": "gc.run",
+        "number": null,
+        "repo": null,
+        "run_id": null,
+        "ts": "2026-11-17T21:04:47Z"
+      },
+      {
+        "detail": null,
         "kind": "phase1.skipped_repo",
         "number": 1051,
         "repo": "dashpay/grovedb",
@@ -725,14 +733,6 @@
         "repo": null,
         "run_id": 11295,
         "ts": "2026-11-17T20:45:05Z"
-      },
-      {
-        "detail": "pr_closed",
-        "kind": "head.closed",
-        "number": 5944,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-17T20:44:55Z"
       }
     ],
     "tokens_by_effort": [
@@ -762,9 +762,9 @@
       },
       {
         "effort": "high",
-        "lanes": 26858,
-        "tokens_in": 27228884469,
-        "tokens_out": 253722407
+        "lanes": 26860,
+        "tokens_in": 27237221703,
+        "tokens_out": 253748052
       },
       {
         "effort": "low",
@@ -803,11 +803,11 @@
         "tokens_out": 259385
       },
       {
-        "avg_tokens_per_lane": 2002707.0,
-        "lanes": 11,
+        "avg_tokens_per_lane": 2337897.0,
+        "lanes": 13,
         "model": "gpt-6.2-astra",
-        "tokens_in": 21899564,
-        "tokens_out": 130217
+        "tokens_in": 30236798,
+        "tokens_out": 155862
       },
       {
         "avg_tokens_per_lane": 2163312.0,
@@ -834,8 +834,8 @@
     "tokens_by_run": [
       {
         "run_id": 11298,
-        "tokens_in": 905433,
-        "tokens_out": 4854
+        "tokens_in": 9242667,
+        "tokens_out": 30499
       },
       {
         "run_id": 11296,
@@ -1334,16 +1334,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 14334423,
+      "avg_tokens_per_completed_review": 14335356,
       "completed_reviews": 8956,
       "findings": 70862,
       "findings_posted": 10178,
       "reviews": 10254,
       "reviews_imported": 2245,
       "runs": 11300,
-      "tokens_in": 127019192506,
-      "tokens_out": 1359895717,
-      "tokens_total": 128379088223
+      "tokens_in": 127027529740,
+      "tokens_out": 1359921362,
+      "tokens_total": 128387451102
     }
   },
   "live": {
@@ -1352,12 +1352,12 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-11-18T02:58:32Z",
-        "deadline_in_seconds": 21271,
+        "deadline_in_seconds": 21210,
         "degraded": false,
-        "elapsed_seconds": 329,
+        "elapsed_seconds": 390,
         "findings": null,
-        "heartbeat_age_seconds": 14,
-        "heartbeat_at": "2026-11-17T21:03:47Z",
+        "heartbeat_age_seconds": 15,
+        "heartbeat_at": "2026-11-17T21:04:47Z",
         "id": 11298,
         "lanes": [
           {
@@ -1369,6 +1369,26 @@
             "status": "completed",
             "tokens_in": 905433,
             "tokens_out": 4854
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "role": "rust-quality",
+            "status": "completed",
+            "tokens_in": 4063596,
+            "tokens_out": 12280
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 4273638,
+            "tokens_out": 13365
           }
         ],
         "live_lanes": [
@@ -1378,28 +1398,8 @@
             "model": "gpt-6.2-astra",
             "phase": "phase2",
             "pool": "gpt",
-            "role": "architecture-layering",
-            "since_seconds": 314,
-            "state": "running"
-          },
-          {
-            "effort": "high",
-            "line_position": null,
-            "model": "gpt-6.2-astra",
-            "phase": "phase2",
-            "pool": "gpt",
-            "role": "general",
-            "since_seconds": 313,
-            "state": "running"
-          },
-          {
-            "effort": "high",
-            "line_position": null,
-            "model": "gpt-6.2-astra",
-            "phase": "phase2",
-            "pool": "gpt",
-            "role": "rust-quality",
-            "since_seconds": 316,
+            "role": "architecture-layering (correction 1)",
+            "since_seconds": 29,
             "state": "running"
           }
         ],
@@ -1408,10 +1408,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/grovedb/pull/1050",
         "priority": true,
-        "progress": 0.169,
+        "progress": 0.201,
         "queue": "live",
         "queued_at": "2026-11-17T20:58:24Z",
-        "remaining_seconds": 1615,
+        "remaining_seconds": 1554,
         "repo": "dashpay/grovedb",
         "sha": "cc5a7c898ee9e11772c5b009ffbd75381fbcf66f",
         "started_at": "2026-11-17T20:58:32Z",
@@ -1474,23 +1474,21 @@
                 "rust-quality"
               ]
             },
-            "lanes_done": 1,
+            "lanes_done": 3,
             "lanes_left": [
-              "general",
-              "architecture-layering",
-              "rust-quality"
+              "architecture-layering"
             ],
             "lanes_total": 4,
             "name": "phase2",
-            "seconds": 316,
+            "seconds": 377,
             "started_at": "2026-11-17T20:58:45Z",
             "status": "running"
           }
         ],
         "tier": "critical",
         "title": "feat!: add Element::ProvableCountProvableBigSumTree (GROVE_V5)",
-        "tokens_in": 905433,
-        "tokens_out": 4854,
+        "tokens_in": 9242667,
+        "tokens_out": 30499,
         "trigger": "new_push",
         "upcoming": [
           "verify2",
@@ -1502,12 +1500,12 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-11-18T03:03:09Z",
-        "deadline_in_seconds": 21548,
+        "deadline_in_seconds": 21487,
         "degraded": false,
-        "elapsed_seconds": 52,
+        "elapsed_seconds": 113,
         "findings": null,
-        "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-11-17T21:03:54Z",
+        "heartbeat_age_seconds": 8,
+        "heartbeat_at": "2026-11-17T21:04:54Z",
         "id": 11300,
         "lanes": [],
         "live_lanes": [
@@ -1518,7 +1516,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "architecture-layering",
-            "since_seconds": 36,
+            "since_seconds": 97,
             "state": "running"
           },
           {
@@ -1528,7 +1526,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 37,
+            "since_seconds": 98,
             "state": "running"
           },
           {
@@ -1538,7 +1536,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "platform-versioning",
-            "since_seconds": 37,
+            "since_seconds": 98,
             "state": "running"
           },
           {
@@ -1548,7 +1546,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "rust-quality",
-            "since_seconds": 35,
+            "since_seconds": 96,
             "state": "running"
           }
         ],
@@ -1557,10 +1555,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/grovedb/pull/1051",
         "priority": true,
-        "progress": 0.044,
+        "progress": 0.095,
         "queue": "live",
         "queued_at": "2026-11-17T21:03:04Z",
-        "remaining_seconds": 1135,
+        "remaining_seconds": 1074,
         "repo": "dashpay/grovedb",
         "sha": "4e953d68714bd7cae0aa30f020fab67f3c2d8188",
         "started_at": "2026-11-17T21:03:09Z",
@@ -1632,7 +1630,7 @@
             ],
             "lanes_total": 4,
             "name": "phase2",
-            "seconds": 37,
+            "seconds": 98,
             "started_at": "2026-11-17T21:03:24Z",
             "status": "running"
           }
@@ -1732,7 +1730,7 @@
       },
       {
         "pool": "gpt",
-        "running": 7,
+        "running": 5,
         "slots": 12,
         "waiting": 0
       },
@@ -1751,12 +1749,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 878,
+        "age_seconds": 939,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-11-17T21:19:23Z",
-        "eligible_in_seconds": 922,
+        "eligible_in_seconds": 861,
         "number": 5767,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5767",
@@ -1770,12 +1768,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 333,
+        "age_seconds": 394,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-17T21:28:28Z",
-        "eligible_in_seconds": 1467,
+        "eligible_in_seconds": 1406,
         "number": 27,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/27",
@@ -1796,7 +1794,7 @@
       "reviews": 167,
       "tokens": 3406557859
     },
-    "ts": "2026-11-17T21:04:01Z",
+    "ts": "2026-11-17T21:05:02Z",
     "typical_minutes_by_tier": {
       "critical": 42.1,
       "low": 46.0,
@@ -1807,7 +1805,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 0.8666666666666667,
+      "idle_minutes": 1.8833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1815,7 +1813,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-17T21:04:01Z",
+    "generated_at": "2026-11-17T21:05:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
