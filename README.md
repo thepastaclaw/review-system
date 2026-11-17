@@ -1616,6 +1616,12 @@ A draft PR, and a new head still waiting out the push debounce (not priority, no
 **Request priority review**. Each PR gets exactly one of the two bodies per pass, and a body equal to
 what GitHub has is never rewritten.
 
+A priority run's gpt lanes also run in fast mode (`[scheduling] fast_priority`, on by default): every
+lane of the run sends `X-Reviewsys-Tier: priority` (Claude Code's `ANTHROPIC_CUSTOM_HEADERS`), and a
+CLIProxyAPI `payload.override` rule matching that header sets OpenAI's `service_tier: priority`, the
+tier Codex's fast mode uses, which spends plan quota faster. Without the proxy rule the header does
+nothing.
+
 ### Live progress in the dashboard
 
 While a run is in progress the gate comment has one static line with the commit and a link to the dashboard

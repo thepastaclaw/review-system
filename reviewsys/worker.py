@@ -76,6 +76,7 @@ from .gate import gate_score, phase1_blocks
 from .gh import Gh
 from .ingest import reviewed_sha
 from .lane import (
+    FAST_TIER_ENV,
     LaneResult,
     LaneRunner,
     LaneSpec,
@@ -87,6 +88,7 @@ from .lane import (
     prompt_sha,
     run_claude_lane,
     sandboxed,
+    with_overrides,
 )
 from .models import FailKind, HeadStatus, ReviewError, RunStatus, StepName, Trigger
 from .prompts import (
@@ -7892,9 +7894,12 @@ def main(
     queue = "audit" if ctx.is_audit else "priority" if row["priority"] else "live"
     if replay:
         queue = "replay"
+    runner = lane_runner or run_claude_lane
+    if queue == "priority" and cfg.fast_priority:
+        runner = with_overrides(runner, env=FAST_TIER_ENV)
     ctx.lane_runner = lanepool.gated(
         sandboxed(
-            isolated(lane_runner or run_claude_lane, cfg.policy.isolates_lane_env),
+            isolated(runner, cfg.policy.isolates_lane_env),
             exec_deny_profile(cfg.lane_deny_exec),
         ),
         lambda: ctx.conn,
