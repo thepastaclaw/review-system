@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-17T06:28:02Z",
-  "generated_at": "2026-11-17T06:28:03Z",
+  "data_as_of": "2026-11-17T06:29:01Z",
+  "generated_at": "2026-11-17T06:29:02Z",
   "history": {
     "daily": [
       {
@@ -377,18 +377,18 @@
       "paths": {
         "normal": {
           "duration": {
-            "median_seconds": 2203,
-            "n": 1038,
+            "median_seconds": 2205,
+            "n": 1037,
             "p90_seconds": 6147
           },
           "slot_wait": {
             "median_seconds": 11,
-            "n": 1038,
-            "p90_seconds": 4041
+            "n": 1037,
+            "p90_seconds": 4042
           },
           "wait": {
-            "median_seconds": 1814,
-            "n": 1196,
+            "median_seconds": 1813,
+            "n": 1195,
             "p90_seconds": 1882
           }
         },
@@ -1432,19 +1432,19 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1749,
+        "age_seconds": 1808,
         "attempts": 0,
         "author": "Claudius-Maginificent",
-        "eligible": false,
+        "eligible": true,
         "eligible_at": "2026-11-17T06:28:53Z",
-        "eligible_in_seconds": 51,
+        "eligible_in_seconds": 0,
         "number": 5952,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/5952",
         "prioritize_url": "https://github.com/dashpay/platform/issues/5952#issuecomment-6939840627",
         "priority": false,
         "queued_at": "2026-11-17T05:58:53Z",
-        "reason": "debounce (more pushes may follow)",
+        "reason": "waiting for a review slot",
         "repo": "dashpay/platform",
         "sha": "249bd4a7f61b60a21e86158f21963137745e791e",
         "title": "chore: merge v5.1-dev into v5.2-dev",
@@ -1458,7 +1458,7 @@
       "reviews": 35,
       "tokens": 434134459
     },
-    "ts": "2026-11-17T06:28:02Z",
+    "ts": "2026-11-17T06:29:01Z",
     "typical_minutes_by_tier": {
       "critical": 37.0,
       "low": 43.0,
@@ -1468,16 +1468,16 @@
     },
     "watchdog": {
       "active": 0,
-      "eligible": 0,
-      "idle_minutes": 30.633333333333333,
+      "eligible": 1,
+      "idle_minutes": 31.616666666666667,
       "ingest_stale": false,
-      "stuck": false
+      "stuck": true
     }
   },
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-17T06:28:02Z",
+    "generated_at": "2026-11-17T06:29:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -5705,7 +5705,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-17T06:27:05Z",
+      "at": "2026-11-17T06:28:05Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
