@@ -46,7 +46,7 @@ State: `~/.reviewsys/review.db` (SQLite, WAL). Tables: `prs, heads, runs, steps,
 
 Models, agents and default reasoning levels come from `review_model_policy` in the
 skills repo's `config.json`, read at every config load (no redeploy to change them).
-If the policy has a `triage` block, a `gpt-6.1-sol --effort low` lane rates each PR
+If the policy has a `triage` block, a `gpt-6.2-sol --effort low` lane rates each PR
 and the tier picks the `--effort` of the reviewer lanes; verifiers keep their fixed
 level. The same lane also picks the discretionary specialists (see
 [The prep lane](#the-prep-lane-tier-and-specialists-in-one-call)). Blockers always win: a Phase-1 blocker publishes the preliminary review
@@ -60,12 +60,18 @@ alone never qualifies, and the tie-break is the lower tier. This replaced the
 "large *or* sensitive, when unsure go higher" wording on 2026-09-10 after 87 % of
 runs came out critical.
 
-| tier | Phase 1 (ladder rung, capped by the rung's `reasoning`) | Phase 2 (gpt-6.1-sol) |
+| tier | Phase 1 (ladder rung, capped by the rung's `reasoning`) | Phase 2 |
 |---|---|---|
 | trivial | high | skipped |
-| low | high | medium |
-| normal | max | high |
-| critical | max | xhigh |
+| low | high | medium (gpt-6.2-sol) |
+| normal | max | high (gpt-6.2-sol) |
+| critical | max | high (gpt-6.2-astra) |
+
+A tier may set `phase2_model` to run its Phase-2 reviewers (and the confirmation pass) on
+a model other than `phase2.reviewer.model`; the verifiers, the conversation lane and the
+stepback pass keep their own models. The tier needs a `phase2` effort, the model needs a
+degraded-mode substitute when the policy has a `degraded` block, and a comparison on that
+tier cannot use the same model. `doctor` probes every tier model.
 
 Efforts are validated against `low|medium|high|xhigh|max` at load. Every lane's
 effort is stored in `lanes.effort`, the tier in `runs.tier`, and both are printed
