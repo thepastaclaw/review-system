@@ -45,6 +45,8 @@ from tests.test_pipeline_policy import load_with
 
 V028_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
 ISOLATION = {"CLAUDE_CODE_DISABLE_CLAUDE_MDS": "1", "CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS": "1"}
+# `_run` queues a mention, a priority run: its lanes add the fast-tier header and nothing else
+FAST = lane_mod.FAST_TIER_ENV
 
 
 def v028_argv(spec: LaneSpec, argv: list[str]) -> list[str]:
@@ -168,7 +170,7 @@ def test_v11_lanes_start_exactly_as_v028(cfg, conn, gh, lanes, monkeypatch, _cla
     assert any(s.resume for s, _, _ in procs.started), "a correction turn ran"
     for spec, argv, env in procs.started:
         assert argv == v028_argv(spec, argv), spec.role
-        assert env == v028_env(spec, env), spec.role
+        assert env == v028_env(spec, env, FAST), spec.role
         assert not spec.isolate_env
 
 
@@ -204,7 +206,7 @@ def test_v12_isolation_reaches_every_lane_and_correction_turn(
     assert resumed, "a correction turn ran"
     for spec, argv, env in procs.started:
         assert spec.isolate_env, spec.role
-        assert env == v028_env(spec, env, ISOLATION), spec.role
+        assert env == v028_env(spec, env, {**ISOLATION, **FAST}), spec.role
         assert env["CLAUDE_CONFIG_DIR"] == str(_claude_config_dir)
         assert argv == v028_argv(spec, argv), "isolation is environment only"
     first = next(s for s, _, _ in procs.started if s.session_id == resumed[0][0].session_id)
@@ -219,7 +221,7 @@ def test_v12_without_isolation_keeps_the_v11_environment(
     procs = ClaudeProcesses(monkeypatch, lanes)
     _, status = _run(cfg, conn, gh, procs)
     assert status == RunStatus.DONE
-    assert all(env == v028_env(spec, env) for spec, _, env in procs.started)
+    assert all(env == v028_env(spec, env, FAST) for spec, _, env in procs.started)
 
 
 # ---- structured_output ----

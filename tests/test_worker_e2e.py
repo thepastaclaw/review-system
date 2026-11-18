@@ -15,6 +15,7 @@ from reviewsys.contract import Finding
 from reviewsys.daemon import Daemon
 from reviewsys.db import kv_get, kv_set, tx
 from reviewsys.ingest import enqueue_head
+from reviewsys.lane import FAST_TIER_ENV
 from reviewsys.models import RunStatus, Trigger
 from reviewsys.scheduler import schedule
 from reviewsys.steps import worktree as wt
@@ -4284,3 +4285,31 @@ def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, 
     assert status == RunStatus.DONE
     assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
     assert not conn.execute("SELECT 1 FROM events WHERE kind='defer.grandfathered'").fetchone()
+
+
+def _lane_envs(cfg, conn, gh, lanes, trigger):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, trigger)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    assert lanes.calls
+    return [dict(s.env) for s in lanes.calls]
+
+
+def test_priority_run_lanes_ask_for_the_fast_tier(cfg, conn, gh, lanes):
+    envs = _lane_envs(cfg, conn, gh, lanes, Trigger.MENTION)
+    assert all(e.items() >= FAST_TIER_ENV.items() for e in envs)
+
+
+def test_normal_run_lanes_stay_on_the_default_tier(cfg, conn, gh, lanes):
+    envs = _lane_envs(cfg, conn, gh, lanes, Trigger.NORMAL_REQUEST)
+    assert not any("ANTHROPIC_CUSTOM_HEADERS" in e for e in envs)
+
+
+def test_fast_priority_off_keeps_priority_runs_on_the_default_tier(cfg, conn, gh, lanes):
+    cfg = dataclasses.replace(cfg, fast_priority=False)
+    envs = _lane_envs(cfg, conn, gh, lanes, Trigger.MENTION)
+    assert not any("ANTHROPIC_CUSTOM_HEADERS" in e for e in envs)

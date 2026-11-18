@@ -536,6 +536,9 @@ class Config:
     skip_labels: tuple[str, ...]
     # PR authors (lower-cased) whose PRs are always priority: no push debounce, front of line
     priority_authors: tuple[str, ...]
+    # priority runs' lanes ask the proxy for the provider's fast tier (lane.FAST_TIER_HEADER;
+    # the proxy maps it to OpenAI's `service_tier: priority`, Codex's fast mode, on gpt lanes)
+    fast_priority: bool
     # reviewer lanes one phase of one run runs at once (1 = sequential, the pre-v0.19 flow;
     # 0 = every lane of the phase at once). Model pools (lanepool.py) still bound the machine.
     phase_parallelism: int
@@ -740,6 +743,10 @@ skip_labels = ["tag:skip-review"]
 # every new PR and push by one of these authors is a priority review: no push debounce,
 # at the front of the line
 priority_authors = ["QuantumExplorer"]
+# priority reviews run their gpt lanes in fast mode (OpenAI's priority service tier, which
+# spends plan quota faster): every lane of a priority run sends X-Reviewsys-Tier: priority,
+# and a CLIProxyAPI payload rule on that header sets `service_tier: priority`
+fast_priority = true
 # the general reviewer and the specialists of one phase run side by side, at most this
 # many at once per run (1 = one after another, 0 = all of them); the model pools below
 # still bound the machine
@@ -1284,6 +1291,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         priority_authors=tuple(
             str(a).lower() for a in s.get("priority_authors", DEFAULT_PRIORITY_AUTHORS)
         ),
+        fast_priority=bool(s.get("fast_priority", True)),
         phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
         lane_pools={
             str(k): max(1, int(v))

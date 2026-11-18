@@ -43,6 +43,11 @@ LANE_NICE = 10  # claude lanes run at low scheduling priority so CLIProxyAPI is 
 # Plan mode otherwise enables Claude Code's separate LLM permission classifier.
 # Scope the opt-out to Reviewsys; retain plan mode and ordinary permission rules.
 CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
+# Sent on every request of a priority run's lanes (`[scheduling] fast_priority`): Claude Code
+# adds ANTHROPIC_CUSTOM_HEADERS to each API call, and the box's CLIProxyAPI payload rule on
+# this header sets OpenAI's `service_tier: priority` (Codex fast mode) for gpt models. Other
+# providers ignore it. Fixed when the run starts, like the run's lane-pool rank.
+FAST_TIER_ENV = {"ANTHROPIC_CUSTOM_HEADERS": "X-Reviewsys-Tier: priority"}
 # Every lane's environment: the proxied lanes resolve DNS in Go, and send no telemetry
 BASE_LANE_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
 # Policy v12 lanes (`pipeline.lane_env_isolation`) add these. `--add-dir` re-enables CLAUDE.md
