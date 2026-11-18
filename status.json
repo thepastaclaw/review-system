@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-18T00:43:01Z",
-  "generated_at": "2026-11-18T00:43:01Z",
+  "data_as_of": "2026-11-18T00:44:01Z",
+  "generated_at": "2026-11-18T00:44:02Z",
   "history": {
     "daily": [
       {
@@ -388,7 +388,7 @@
           },
           "wait": {
             "median_seconds": 1813,
-            "n": 1095,
+            "n": 1096,
             "p90_seconds": 1882
           }
         },
@@ -414,6 +414,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 135,
+        "repo": "dashpay/base-sdk",
+        "run_id": 11316,
+        "ts": "2026-11-18T00:43:17Z"
+      },
+      {
+        "detail": "attempt 1 sha=681099d4",
+        "kind": "run.spawned",
+        "number": 135,
+        "repo": "dashpay/base-sdk",
+        "run_id": 11316,
+        "ts": "2026-11-18T00:43:02Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -717,22 +733,6 @@
         "repo": "PastaPastaPasta/dashwallet-desktop",
         "run_id": null,
         "ts": "2026-11-17T22:32:53Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 5975,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-17T22:28:23Z"
-      },
-      {
-        "detail": null,
-        "kind": "phase1.model_selected",
-        "number": 5975,
-        "repo": "dashpay/platform",
-        "run_id": 11311,
-        "ts": "2026-11-17T22:27:45Z"
       }
     ],
     "tokens_by_effort": [
@@ -1340,14 +1340,180 @@
       "findings_posted": 10188,
       "reviews": 10263,
       "reviews_imported": 2245,
-      "runs": 11315,
+      "runs": 11316,
       "tokens_in": 127116680479,
       "tokens_out": 1361180360,
       "tokens_total": 128477860839
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-18T06:43:02Z",
+        "deadline_in_seconds": 21541,
+        "degraded": false,
+        "elapsed_seconds": 59,
+        "findings": null,
+        "heartbeat_age_seconds": 14,
+        "heartbeat_at": "2026-11-18T00:43:47Z",
+        "id": 11316,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 43,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 44,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 46,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 43,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 44,
+            "state": "running"
+          }
+        ],
+        "number": 135,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/dashpay/base-sdk/pull/135",
+        "priority": false,
+        "progress": 0.013,
+        "queue": "live",
+        "queued_at": "2026-11-18T00:13:01Z",
+        "remaining_seconds": 4414,
+        "repo": "dashpay/base-sdk",
+        "sha": "681099d4542340d23c59a6dd176f5d56aba35fa4",
+        "started_at": "2026-11-18T00:43:02Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 5,
+            "started_at": "2026-11-18T00:43:02Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-11-18T00:43:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "This is a large, intricate change to peer-facing network deserialization in `pkgs/p2p_core/src/msg/compact.rs` and related message decoding, including bounds and index validation for remotely supplied payloads.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-18T00:43:07Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-11-18T00:43:12Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 3,
+            "name": "phase2",
+            "seconds": 46,
+            "started_at": "2026-11-18T00:43:15Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 46,
+            "started_at": "2026-11-18T00:43:15Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "p2p_core%feat!: type the block, tx and BIP152 compact block messages",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_pr",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1801
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1363,7 +1529,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1403,7 +1569,8 @@
       "closed": 712,
       "done": 10170,
       "failed": 100,
-      "queued": 3,
+      "queued": 2,
+      "running": 1,
       "superseded": 3486
     },
     "ingest_error_streak": 0,
@@ -1429,52 +1596,33 @@
       },
       {
         "pool": "gpt",
-        "running": 0,
+        "running": 3,
         "slots": 12,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-17T23:49:33Z",
-    "last_run_started_at": "2026-11-17T23:48:47Z",
+    "last_run_started_at": "2026-11-18T00:43:02Z",
     "median_run_minutes": 14.683333333333334,
     "notify_last_at": "2026-11-18T00:42:35Z",
-    "oldest_queued_at": "2026-11-18T00:13:01Z",
+    "oldest_queued_at": "2026-11-18T00:17:31Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1800,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-11-18T00:43:01Z",
-        "eligible_in_seconds": 0,
-        "number": 135,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/base-sdk/pull/135",
-        "prioritize_url": "https://github.com/dashpay/base-sdk/issues/135#issuecomment-6964961964",
-        "priority": false,
-        "queued_at": "2026-11-18T00:13:01Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/base-sdk",
-        "sha": "681099d4542340d23c59a6dd176f5d56aba35fa4",
-        "title": "p2p_core%feat!: type the block, tx and BIP152 compact block messages",
-        "trigger": "new_pr"
-      },
-      {
-        "age_seconds": 1530,
+        "age_seconds": 1590,
         "attempts": 0,
         "author": "HashEngineering",
         "eligible": false,
         "eligible_at": "2026-11-18T00:47:31Z",
-        "eligible_in_seconds": 270,
+        "eligible_in_seconds": 210,
         "number": 1713,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash-wallet/pull/1713",
         "prioritize_url": "https://github.com/dashpay/dash-wallet/issues/1713#issuecomment-6965046702",
         "priority": false,
@@ -1486,14 +1634,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1524,
+        "age_seconds": 1584,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-18T00:47:37Z",
-        "eligible_in_seconds": 276,
+        "eligible_in_seconds": 216,
         "number": 23,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/23",
         "prioritize_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/issues/23#issuecomment-6894759608",
         "priority": false,
@@ -1512,7 +1660,7 @@
       "reviews": 0,
       "tokens": 0
     },
-    "ts": "2026-11-18T00:43:01Z",
+    "ts": "2026-11-18T00:44:01Z",
     "typical_minutes_by_tier": {
       "critical": 41.4,
       "low": 46.0,
@@ -1521,17 +1669,17 @@
       "unknown": 0.4
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 54.233333333333334,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 1.0,
       "ingest_stale": false,
-      "stuck": true
+      "stuck": false
     }
   },
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-18T00:43:01Z",
+    "generated_at": "2026-11-18T00:44:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -5753,7 +5901,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-18T00:42:24Z",
+      "at": "2026-11-18T00:43:24Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
