@@ -133,6 +133,11 @@ def test_prompt_carries_exchange_commits_and_rules():
     assert "<!--" not in text.split("finding_body")[1].split("\n")[0]
     assert f"git show {'c' * 40}" in text and "could NOT be fetched (gone)" in text
     assert "Never repeat a point you already made" in text
+    # a backport is not asked to fix, defer or track what its upstream did not (dash#8136,
+    # #8172, #8176: "matching upstream does not make it correct", then a tracking-issue ask)
+    backport = text.split("- Backported code is its own case.")[1].split("\n- ")[0]
+    assert "mark it WITHDRAWN" in backport and "do not ask for a tracking issue" in backport
+    assert text.index("- Backported code is its own case.") < text.index("- A deferral is")
     assert "NO_REPLY" in text and "Emit exactly one raw JSON object" in text
 
 
