@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-18T04:16:02Z",
-  "generated_at": "2026-11-18T04:16:03Z",
+  "data_as_of": "2026-11-18T04:17:02Z",
+  "generated_at": "2026-11-18T04:17:02Z",
   "history": {
     "daily": [
       {
@@ -393,7 +393,7 @@
           },
           "wait": {
             "median_seconds": 1813,
-            "n": 1079,
+            "n": 1080,
             "p90_seconds": 1882
           }
         },
@@ -419,6 +419,14 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": "attempt 1 sha=742de358",
+        "kind": "run.spawned",
+        "number": 5969,
+        "repo": "dashpay/platform",
+        "run_id": 11326,
+        "ts": "2026-11-18T04:16:41Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -730,14 +738,6 @@
         "repo": "dashpay/base-sdk",
         "run_id": null,
         "ts": "2026-11-18T01:48:03Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 1713,
-        "repo": "dashpay/dash-wallet",
-        "run_id": null,
-        "ts": "2026-11-18T01:45:19Z"
       }
     ],
     "tokens_by_effort": [
@@ -1345,14 +1345,95 @@
       "findings_posted": 10198,
       "reviews": 10271,
       "reviews_imported": 2245,
-      "runs": 11325,
+      "runs": 11326,
       "tokens_in": 127219304532,
       "tokens_out": 1361930827,
       "tokens_total": 128581235359
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "shumkov",
+        "deadline_at": "2026-11-18T10:16:41Z",
+        "deadline_in_seconds": 21579,
+        "degraded": false,
+        "elapsed_seconds": 21,
+        "findings": null,
+        "heartbeat_age_seconds": 6,
+        "heartbeat_at": "2026-11-18T04:16:56Z",
+        "id": 11326,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5969,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5969",
+        "priority": false,
+        "progress": 0.004,
+        "queue": "live",
+        "queued_at": "2026-11-18T03:46:40Z",
+        "remaining_seconds": 5400,
+        "repo": "dashpay/platform",
+        "sha": "742de358a50eee2644e532e049d35e3db587dde5",
+        "started_at": "2026-11-18T04:16:41Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 11,
+            "started_at": "2026-11-18T04:16:41Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 6,
+            "started_at": "2026-11-18T04:16:52Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "This is a large, intricate change that modifies consensus validation and cryptographic sighash/signature binding for token-pool transitions, directly affecting funds movement and proof soundness in rs-drive-abci and rs-dpp.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-18T04:16:53Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 4,
+            "started_at": "2026-11-18T04:16:58Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "feat(platform)!: token pool transitions paid from the credit pool bind their fee bundle (PV15)",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1801
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1368,7 +1449,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 12,
       "priority_overflow": 3,
@@ -1408,7 +1489,8 @@
       "closed": 712,
       "done": 10178,
       "failed": 100,
-      "queued": 2,
+      "queued": 1,
+      "running": 1,
       "superseded": 3486
     },
     "ingest_error_streak": 0,
@@ -1446,40 +1528,21 @@
       }
     ],
     "last_run_done_at": "2026-11-18T03:45:01Z",
-    "last_run_started_at": "2026-11-18T03:34:13Z",
+    "last_run_started_at": "2026-11-18T04:16:41Z",
     "median_run_minutes": 14.083333333333334,
     "notify_last_at": "2026-11-18T04:14:49Z",
-    "oldest_queued_at": "2026-11-18T03:46:40Z",
+    "oldest_queued_at": "2026-11-18T04:13:47Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1762,
-        "attempts": 0,
-        "author": "shumkov",
-        "eligible": false,
-        "eligible_at": "2026-11-18T04:16:40Z",
-        "eligible_in_seconds": 38,
-        "number": 5969,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5969",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5969#issuecomment-6954529407",
-        "priority": false,
-        "queued_at": "2026-11-18T03:46:40Z",
-        "reason": "debounce (more pushes may follow)",
-        "repo": "dashpay/platform",
-        "sha": "742de358a50eee2644e532e049d35e3db587dde5",
-        "title": "feat(platform)!: token pool transitions paid from the credit pool bind their fee bundle (PV15)",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 135,
+        "age_seconds": 195,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-18T04:43:47Z",
-        "eligible_in_seconds": 1665,
+        "eligible_in_seconds": 1605,
         "number": 8191,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8191",
         "prioritize_url": "https://github.com/dashpay/dash/pull/8191#issuecomment-new",
         "priority": false,
@@ -1498,7 +1561,7 @@
       "reviews": 10,
       "tokens": 103374520
     },
-    "ts": "2026-11-18T04:16:02Z",
+    "ts": "2026-11-18T04:17:02Z",
     "typical_minutes_by_tier": {
       "critical": 41.4,
       "low": 45.5,
@@ -1507,9 +1570,9 @@
       "unknown": 0.4
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 41.833333333333336,
+      "idle_minutes": 0.35,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1517,7 +1580,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-18T04:16:02Z",
+    "generated_at": "2026-11-18T04:17:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -5739,7 +5802,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-18T04:15:53Z",
+      "at": "2026-11-18T04:16:53Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
