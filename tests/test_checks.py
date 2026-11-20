@@ -316,9 +316,54 @@ def github():
     return GitHubChecks()
 
 
+class GitHubReviews:
+    def __init__(self):
+        self.review = {
+            "id": 555,
+            "user": {"login": "thepastaclaw"},
+            "commit_id": SHA,
+            "state": "CHANGES_REQUESTED",
+        }
+        self.timeline = []
+        self.calls = []
+        self.fail = None
+
+    def __call__(self, method, ep, body):
+        assert method == "GET", "dismissal reconciliation must not post reviews or enqueue work"
+        self.calls.append(ep)
+        if self.fail:
+            return self.fail
+        if "/reviews/" in ep:
+            return self.review
+        assert "/timeline?per_page=100" in ep
+        return self.timeline
+
+    def dismiss(self, *, sha=SHA, review_id=555):
+        self.review.update(state="DISMISSED", commit_id=sha, id=review_id)
+        self.timeline = [
+            {
+                "id": 1234,
+                "event": "review_dismissed",
+                "created_at": "2026-11-09T11:30:13Z",
+                "actor": {"login": "lklimek", "type": "User"},
+                "performed_via_github_app": None,
+                "dismissed_review": {
+                    "review_id": review_id,
+                    "state": "changes_requested",
+                    "dismissal_message": "This edge case is not reachable in pracice.",
+                },
+            }
+        ]
+
+
 @pytest.fixture
-def rec(cfg, github):
-    return checks.Reconciler(cfg, FakeApp(ScriptedGh(github)))  # type: ignore[arg-type]
+def review_api():
+    return GitHubReviews()
+
+
+@pytest.fixture
+def rec(cfg, github, review_api):
+    return checks.Reconciler(cfg, FakeApp(ScriptedGh(github)), review_gh=ScriptedGh(review_api))  # type: ignore[arg-type]
 
 
 def test_create_then_update_in_place(conn, rec, github):
@@ -819,3 +864,295 @@ def test_late_review_stamped_before_the_cancel_still_lands(conn, rec, github):
     _review(conn, "APPROVE", sha=OLD, at=stamped)
     rec.reconcile(conn)
     assert github.runs[100]["conclusion"] == "success"
+
+
+# ---- explicit maintainer override, independent of automated findings ----
+
+
+def test_maintainer_dismissal_repairs_failure_without_new_review(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "failure"
+    # The database verdict and its digest have not changed. A later inline-only bot review
+    # and a human approval must not hide dismissal of the substantive review linked here.
+    review_api.dismiss()
+    review_api.timeline += [
+        {"event": "reviewed", "state": "approved", "actor": {"login": "lklimek"}},
+        {"event": "reviewed", "state": "commented", "actor": {"login": "thepastaclaw"}},
+    ]
+    assert rec.reconcile(conn)["updated"] == 1
+    run = github.runs[100]
+    assert (run["status"], run["conclusion"]) == ("completed", "neutral")
+    assert len(github.runs) == 1
+    assert run["output"]["title"] == "Review dismissed — maintainer override"
+    summary = run["output"]["summary"]
+    assert "@lklimek" in summary
+    assert "This edge case is not reachable in pracice." in summary
+    assert SHA in summary and "does not claim" in summary
+    assert "technical validation passed" in summary
+    assert run["completed_at"] == "2026-11-09T11:30:13Z"
+    assert run["details_url"].endswith("#pullrequestreview-555")
+    assert conn.execute("SELECT event FROM reviews").fetchone()[0] == "REQUEST_CHANGES"
+    assert conn.execute("SELECT status FROM heads").fetchone()[0] == "done"
+    assert conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0] == 0
+    evidence = json.loads(
+        conn.execute("SELECT detail FROM events WHERE kind='check.review_dismissed'").fetchone()[0]
+    )
+    assert evidence["timeline_event_id"] == 1234 and evidence["actor"] == "lklimek"
+
+
+def test_dismissal_survives_restart_and_stale_github_reads(conn, cfg, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    rec.reconcile(conn)
+    review_api.review["state"] = "CHANGES_REQUESTED"  # stale API snapshot
+    review_api.calls.clear()
+    restarted = checks.Reconciler(cfg, rec.app, review_gh=ScriptedGh(review_api))
+    assert restarted.reconcile(conn)["unchanged"] == 1
+    assert review_api.calls == []
+    assert github.runs[100]["conclusion"] == "neutral"
+    assert (
+        conn.execute("SELECT COUNT(*) FROM events WHERE kind='check.review_dismissed'").fetchone()[
+            0
+        ]
+        == 1
+    )
+
+
+def test_dismissal_retries_failed_check_write_from_persisted_evidence(
+    conn, rec, github, review_api
+):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    rec.reconcile(conn)
+    review_api.dismiss()
+    github.fail = RuntimeError("HTTP 502 bad gateway")
+    assert rec.reconcile(conn)["deferred"] == 1
+    assert _want(conn).conclusion == "neutral", "evidence committed before publication"
+    github.fail = None
+    review_api.fail = RuntimeError("HTTP 502 no more reads")
+    rec.retry_at = now_dt()
+    assert rec.reconcile(conn)["updated"] == 1
+    assert github.runs[100]["conclusion"] == "neutral"
+
+
+@pytest.mark.parametrize("mismatch", ["review_id", "sha", "author"])
+def test_dismissal_must_match_exact_review_and_head(conn, rec, github, review_api, mismatch):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    if mismatch == "review_id":
+        review_api.review["id"] = 556
+    elif mismatch == "sha":
+        review_api.review["commit_id"] = OLD
+    else:
+        review_api.review["user"]["login"] = "someone-else"
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "failure"
+    assert (
+        conn.execute("SELECT COUNT(*) FROM events WHERE kind='check.review_dismissed'").fetchone()[
+            0
+        ]
+        == 0
+    )
+
+
+@pytest.mark.parametrize(
+    "unrelated",
+    [
+        "human_approval",
+        "resolved_thread",
+        "different_review",
+        "bot_dismissal",
+        "self_dismissal",
+        "automatic_stale",
+        "app_dismissal",
+        "no_actor",
+        "no_event",
+    ],
+)
+def test_only_explicit_authorized_human_dismissal_overrides(
+    conn, rec, github, review_api, unrelated
+):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    item = review_api.timeline[0]
+    if unrelated == "human_approval":
+        review_api.review["state"] = "CHANGES_REQUESTED"
+        item["event"] = "reviewed"
+        item["state"] = "approved"
+    elif unrelated == "resolved_thread":
+        item["event"] = "review_thread_resolved"
+    elif unrelated == "different_review":
+        item["dismissed_review"]["review_id"] = 999
+    elif unrelated == "bot_dismissal":
+        item["actor"] = {"login": "a-bot[bot]", "type": "Bot"}
+    elif unrelated == "self_dismissal":
+        item["actor"]["login"] = "thepastaclaw"
+    elif unrelated == "automatic_stale":
+        item["dismissed_review"]["dismissal_commit_id"] = OLD
+    elif unrelated == "app_dismissal":
+        item["performed_via_github_app"] = {"id": 1}
+    elif unrelated == "no_actor":
+        item["actor"] = None
+    else:
+        review_api.timeline = []
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "failure"
+
+
+def test_dismissal_is_not_inherited_by_a_changed_head_or_other_checks(
+    conn, rec, github, review_api
+):
+    _pr(conn, sha=OLD)
+    _head(conn, sha=OLD, status="done")
+    _review(conn, "REQUEST_CHANGES", sha=OLD)
+    review_api.dismiss(sha=OLD)
+    github.runs[42] = {
+        "name": "build",
+        "head_sha": OLD,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    # Existing recorded review check; don't adopt the fake build check.
+    github.runs[100] = {
+        "name": "PastaClaw review",
+        "head_sha": OLD,
+        "status": "completed",
+        "conclusion": "failure",
+    }
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO check_runs VALUES (?,?,?,100,'completed','failure','old',?)",
+            (REPO, 1, OLD, T0),
+        )
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "neutral"
+    assert github.runs[42]["conclusion"] == "failure"
+    _pr(conn)
+    _head(conn)
+    rec.reconcile(conn)
+    assert _want(conn).status == "queued"
+    assert _want(conn, OLD).conclusion == "neutral"
+
+
+def test_dismissal_of_carried_review_follows_unchanged_diff(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, sha=OLD, status="superseded")
+    _review(conn, "REQUEST_CHANGES", sha=OLD)
+    _head(conn, status="done", carried=OLD)
+    review_api.dismiss(sha=OLD)
+    rec.reconcile(conn)
+    assert github.runs[100]["head_sha"] == SHA
+    assert github.runs[100]["conclusion"] == "neutral"
+    assert OLD in github.runs[100]["output"]["summary"]
+
+
+def test_phase1_gate_dismissal_is_nonblocking(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES", phase="preliminary")
+    review_api.dismiss()
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "neutral"
+    assert "technical validation passed" in github.runs[100]["output"]["summary"]
+
+
+def test_canonical_only_verdict_update_keeps_exact_review_binding(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "COMMENT", review_id=555)
+    _review(conn, "REQUEST_CHANGES", review_id=None, at="2026-11-02T00:00:00Z")
+    review_api.dismiss()
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "neutral"
+    assert github.runs[100]["details_url"].endswith("#pullrequestreview-555")
+
+
+def test_read_failure_never_reasserts_cached_failure(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    rec.reconcile(conn)
+    previous = dict(github.runs[100])
+    review_api.fail = RuntimeError("HTTP 502 timeout")
+    assert rec.reconcile(conn)["deferred"] == 1
+    assert github.runs[100] == previous
+
+
+def test_live_dismissal_reads_are_bounded_and_rotate(conn, rec, review_api, monkeypatch):
+    monkeypatch.setattr(checks, "MAX_READS_PER_PASS", 1)
+    for n in (1, 2):
+        _pr(conn, number=n)
+        _head(conn, status="done", number=n)
+        _review(conn, "REQUEST_CHANGES", number=n)
+    assert rec.reconcile(conn)["deferred"] == 1
+    assert len(review_api.calls) == 1 and "/pulls/1/" in review_api.calls[0]
+    rec.reconcile(conn)
+    assert len(review_api.calls) == 2 and "/pulls/2/" in review_api.calls[1]
+
+
+def test_dismissal_timeline_is_paginated(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    # gh --paginate --slurp returns pages; the matching event is not on the first one.
+    review_api.timeline = [[{"event": "commented"}] * 100, review_api.timeline]
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "neutral"
+    call = rec.review_gh.calls[-1][3]
+    assert "--paginate" in call and "--slurp" in call
+
+
+def test_dismissal_without_reason_does_not_invent_one(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    review_api.timeline[0]["dismissed_review"]["dismissal_message"] = ""
+    rec.reconcile(conn)
+    assert "(no reason supplied)" in github.runs[100]["output"]["summary"]
+
+
+def test_follow_up_activity_does_not_reset_dismissal(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    rec.reconcile(conn)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='running', trigger='review_reply'")
+    assert rec.reconcile(conn)["unchanged"] == 1
+    assert github.runs[100]["conclusion"] == "neutral"
+
+
+def test_new_substantive_review_is_not_dismissed_by_old_override(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    rec.reconcile(conn)
+    _review(conn, "COMMENT", review_id=556, at="2026-11-10T00:00:00Z")
+    review_api.review.update(id=556, state="COMMENTED")
+    rec.reconcile(conn)
+    run = github.runs[100]
+    assert run["conclusion"] == "neutral"
+    assert "override" not in run["output"]["title"]
+    assert run["details_url"].endswith("#pullrequestreview-556")
+
+
+def test_review_binding_does_not_fall_back_to_another_phase(conn):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES", phase="preliminary", review_id=555)
+    _review(conn, "COMMENT", review_id=None, at="2026-11-02T00:00:00Z")
+    assert _want(conn).details_url == f"https://github.com/{REPO}/pull/1"
