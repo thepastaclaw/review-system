@@ -338,8 +338,12 @@ class FakeGh(Gh):
                 if pid not in self.pending_reviews:
                     raise _GhFailure(f"unknown pending review {pid}")
                 pending = self.pending_reviews.pop(pid)
-                rid = 5000 + len(self.submitted_reviews)
                 body_text = str(inp.get("body") or "")
+                rid = (
+                    5000 + len(self.posted_reviews)
+                    if body_text
+                    else 9000 + len(self.submitted_reviews)
+                )
                 event_name = str(inp["event"])
                 states = {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}
                 record = {
@@ -469,7 +473,7 @@ class FakeGh(Gh):
             if ep == "rate_limit":
                 return {"resources": {"core": {"remaining": 5000}}}
             if "/pulls/" in ep and ep.endswith("/reviews") and method == "POST":
-                rid = 5000 + len(self.submitted_reviews)
+                rid = 5000 + len(self.posted_reviews)
                 record = {"id": rid, **(body or {})}
                 self.posted_reviews.append(record)
                 self.submitted_reviews.append(record)
