@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-20T11:33:23Z",
-  "generated_at": "2026-11-20T11:33:24Z",
+  "data_as_of": "2026-11-20T11:34:02Z",
+  "generated_at": "2026-11-20T11:34:02Z",
   "history": {
     "daily": [
       {
@@ -403,7 +403,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 910,
+            "n": 911,
             "p90_seconds": 1894
           }
         },
@@ -429,6 +429,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5997,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-20T11:33:27Z"
+      },
+      {
+        "detail": "attempt 1 sha=66f33a0e",
+        "kind": "run.spawned",
+        "number": 5997,
+        "repo": "dashpay/platform",
+        "run_id": 12124,
+        "ts": "2026-11-20T11:33:27Z"
+      },
       {
         "detail": null,
         "kind": "head.review_reply",
@@ -732,22 +748,6 @@
         "repo": "PastaPastaPasta/yappr",
         "run_id": 12120,
         "ts": "2026-11-20T11:10:57Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 940,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-11-20T11:10:31Z"
-      },
-      {
-        "detail": null,
-        "kind": "head.review_reply",
-        "number": 940,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": null,
-        "ts": "2026-11-20T11:10:31Z"
       }
     ],
     "tokens_by_effort": [
@@ -1355,7 +1355,7 @@
       "findings_posted": 11693,
       "reviews": 10833,
       "reviews_imported": 2245,
-      "runs": 12123,
+      "runs": 12124,
       "tokens_in": 132884963500,
       "tokens_out": 1429511267,
       "tokens_total": 134314474767
@@ -1367,16 +1367,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-20T17:21:21Z",
-        "deadline_in_seconds": 20878,
+        "deadline_in_seconds": 20839,
         "degraded": false,
-        "elapsed_seconds": 722,
+        "elapsed_seconds": 761,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-20T11:33:22Z",
+        "heartbeat_age_seconds": 10,
+        "heartbeat_at": "2026-11-20T11:33:52Z",
         "id": 12123,
         "lanes": [
           {
@@ -1438,7 +1438,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 211,
+            "since_seconds": 250,
             "state": "running"
           }
         ],
@@ -1447,10 +1447,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/152",
         "priority": false,
-        "progress": 0.633,
+        "progress": 0.667,
         "queue": "live",
         "queued_at": "2026-11-20T10:51:09Z",
-        "remaining_seconds": 419,
+        "remaining_seconds": 380,
         "repo": "PastaPastaPasta/dashwallet-desktop",
         "sha": "fc86c3ea356ce6eff67aa0d96b7d80b4cc56921c",
         "started_at": "2026-11-20T11:21:21Z",
@@ -1544,7 +1544,7 @@
             ],
             "lanes_total": 3,
             "name": "phase2",
-            "seconds": 212,
+            "seconds": 251,
             "started_at": "2026-11-20T11:29:51Z",
             "status": "running"
           }
@@ -1559,6 +1559,85 @@
           "publish"
         ],
         "wait_seconds": 1812
+      },
+      {
+        "attempt": 1,
+        "author": "llbartekll",
+        "deadline_at": "2026-11-20T17:33:27Z",
+        "deadline_in_seconds": 21565,
+        "degraded": false,
+        "elapsed_seconds": 35,
+        "findings": null,
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-11-20T11:33:57Z",
+        "id": 12124,
+        "lanes": [],
+        "live_lanes": [],
+        "number": 5997,
+        "overdue": false,
+        "phase": "context",
+        "pr_url": "https://github.com/dashpay/platform/pull/5997",
+        "priority": false,
+        "progress": 0.02,
+        "queue": "live",
+        "queued_at": "2026-11-20T11:03:22Z",
+        "remaining_seconds": 1707,
+        "repo": "dashpay/platform",
+        "sha": "66f33a0ebf69aabb627107ff5a10034e0460ba51",
+        "started_at": "2026-11-20T11:33:27Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 9,
+            "started_at": "2026-11-20T11:33:27Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 15,
+            "started_at": "2026-11-20T11:33:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "This is a substantial refactor across masternode registration and service-update logic that changes cryptographic key handling, signature construction and recovery, operator-key matching, and payout-script derivation in files such as update_registrar.rs and update_service.rs.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 15,
+            "started_at": "2026-11-20T11:33:36Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 11,
+            "started_at": "2026-11-20T11:33:51Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "refactor(platform-wallet): share the masternode update helpers and use rust-dashcore's key and script types",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "phase1",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1805
       }
     ],
     "audit": {
@@ -1576,7 +1655,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1616,8 +1695,8 @@
       "closed": 779,
       "done": 10726,
       "failed": 100,
-      "queued": 4,
-      "running": 1,
+      "queued": 3,
+      "running": 2,
       "superseded": 3672
     },
     "ingest_error_streak": 0,
@@ -1655,40 +1734,21 @@
       }
     ],
     "last_run_done_at": "2026-11-20T11:28:04Z",
-    "last_run_started_at": "2026-11-20T11:21:21Z",
+    "last_run_started_at": "2026-11-20T11:33:27Z",
     "median_run_minutes": 20.566666666666666,
     "notify_last_at": "2026-11-20T11:32:38Z",
-    "oldest_queued_at": "2026-11-20T11:03:22Z",
+    "oldest_queued_at": "2026-11-20T11:06:37Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1801,
-        "attempts": 0,
-        "author": "llbartekll",
-        "eligible": true,
-        "eligible_at": "2026-11-20T11:33:22Z",
-        "eligible_in_seconds": 0,
-        "number": 5997,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/platform/pull/5997",
-        "prioritize_url": "https://github.com/dashpay/platform/issues/5997#issuecomment-7017480306",
-        "priority": false,
-        "queued_at": "2026-11-20T11:03:22Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/platform",
-        "sha": "66f33a0ebf69aabb627107ff5a10034e0460ba51",
-        "title": "refactor(platform-wallet): share the masternode update helpers and use rust-dashcore's key and script types",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1606,
+        "age_seconds": 1645,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-20T11:36:37Z",
-        "eligible_in_seconds": 194,
+        "eligible_in_seconds": 155,
         "number": 8086,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8086",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8086#issuecomment-6761563731",
         "priority": false,
@@ -1700,14 +1760,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1604,
+        "age_seconds": 1643,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-20T11:36:39Z",
-        "eligible_in_seconds": 196,
+        "eligible_in_seconds": 157,
         "number": 6012,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/6012",
         "prioritize_url": "https://github.com/dashpay/platform/issues/6012#issuecomment-7036574437",
         "priority": false,
@@ -1719,14 +1779,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 360,
+        "age_seconds": 399,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-20T11:57:23Z",
-        "eligible_in_seconds": 1440,
+        "eligible_in_seconds": 1401,
         "number": 1469,
-        "position": 4,
+        "position": 3,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1469",
         "prioritize_url": "https://github.com/dashpay/dashwallet-ios/issues/1469#issuecomment-7038451808",
         "priority": false,
@@ -1745,7 +1805,7 @@
       "reviews": 170,
       "tokens": 847192897
     },
-    "ts": "2026-11-20T11:33:23Z",
+    "ts": "2026-11-20T11:34:02Z",
     "typical_minutes_by_tier": {
       "critical": 40.7,
       "low": 25.6,
@@ -1754,9 +1814,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 1,
-      "eligible": 1,
-      "idle_minutes": 12.033333333333333,
+      "active": 2,
+      "eligible": 0,
+      "idle_minutes": 0.5833333333333334,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1764,7 +1824,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-20T11:33:23Z",
+    "generated_at": "2026-11-20T11:34:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -6032,7 +6092,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-20T11:32:25Z",
+      "at": "2026-11-20T11:33:25Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
