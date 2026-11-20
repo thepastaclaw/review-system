@@ -186,11 +186,25 @@ class Gh:
     def graphql(
         self, query: str, variables: dict[str, Any] | None = None, *, timeout: int | None = None
     ) -> Any:
-        args = ["api", "graphql", "-f", f"query={query}"]
-        for k, v in (variables or {}).items():
-            flag = "-F" if isinstance(v, int | bool) else "-f"
-            args += [flag, f"{k}={json.dumps(v) if isinstance(v, bool) else v}"]
-        data = self.json(*args, timeout=timeout)
+        vars_dict = variables or {}
+        if any(
+            isinstance(v, dict | list) or (isinstance(v, str) and len(v) > 32_768)
+            for v in vars_dict.values()
+        ):
+            data = self.json(
+                "api",
+                "graphql",
+                "--input",
+                "-",
+                stdin=json.dumps({"query": query, "variables": vars_dict}),
+                timeout=timeout,
+            )
+        else:
+            args = ["api", "graphql", "-f", f"query={query}"]
+            for k, v in vars_dict.items():
+                flag = "-F" if isinstance(v, int | bool) else "-f"
+                args += [flag, f"{k}={json.dumps(v) if isinstance(v, bool) else v}"]
+            data = self.json(*args, timeout=timeout)
         if isinstance(data, dict) and data.get("errors"):
             raise ReviewError(
                 FailKind.CONTRACT, f"graphql errors: {json.dumps(data['errors'])[:400]}"

@@ -6,6 +6,7 @@ Network happens only in `publish()`.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import re
 from collections.abc import Callable, Iterable
@@ -815,6 +816,250 @@ def _thread_has_marker(thread: dict[str, Any], marker: str) -> bool:
     )
 
 
+@dataclass(slots=True)
+class _QueuedReply:
+    comment_id: int
+    thread_id: str | None
+    body: str
+    comment_node_id: str = ""
+    on_ok: Callable[[], None] | None = None
+    on_error: Callable[[str], None] | None = None
+    post_submit: Callable[[], None] | None = None
+    attached: bool = False
+    failed: bool = False
+    fallback: bool = False
+
+
+class ReviewBatch:
+    """Batch a single run's review (summary + new inline comments) and every inline thread
+    reply (thread answers, dedupe reuse notes, CodeRabbit replies, severity upgrades) into
+    one GitHub Pull Request Review so GitHub Mobile sends one notification per review.
+
+    When no replies are queued, `submit_review` uses REST `github.post_review` directly
+    (one call). When replies are queued, it opens a GraphQL PENDING review, attaches every
+    reply via `addPullRequestReviewThreadReply`, submits once via `submitPullRequestReview`,
+    and only then runs post-submit silent actions (resolving threads, editing root status
+    lines). For runs whose verdict depends on which replies attached (conversations, policy
+    v12), `stage_replies()` attaches replies up front and `submit_review()` /
+    `submit_replies_only()` submits them in one review."""
+
+    def __init__(
+        self,
+        gh: Gh,
+        repo: str,
+        number: int,
+        bot_login: str,
+        *,
+        commit_oid: str | None = None,
+    ) -> None:
+        self.gh = gh
+        self.repo = repo
+        self.number = number
+        self.bot_login = bot_login
+        self.commit_oid = commit_oid
+        self._replies: list[_QueuedReply] = []
+        self._post_hooks: list[Callable[[], None]] = []
+        self._pending_id: str | None = None
+
+    def queue_reply(
+        self,
+        *,
+        comment_id: int,
+        thread_id: str | None,
+        body: str,
+        comment_node_id: str = "",
+        on_ok: Callable[[], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
+        post_submit: Callable[[], None] | None = None,
+    ) -> None:
+        self._replies.append(
+            _QueuedReply(
+                comment_id=comment_id,
+                thread_id=thread_id,
+                body=body,
+                comment_node_id=comment_node_id,
+                on_ok=on_ok,
+                on_error=on_error,
+                post_submit=post_submit,
+            )
+        )
+
+    def queue_post_action(self, fn: Callable[[], None]) -> None:
+        self._post_hooks.append(fn)
+
+    def _resolve_thread_id(self, r: _QueuedReply) -> str | None:
+        if r.thread_id:
+            return r.thread_id
+        if r.comment_node_id:
+            t = github.thread_for_comment(self.gh, r.comment_node_id) or {}
+            tid = str(t.get("id") or "")
+            if tid:
+                r.thread_id = tid
+                return tid
+        return None
+
+    def _open_pending(
+        self, *, commit_oid: str | None = None, comments: list[dict[str, Any]] | None = None
+    ) -> str:
+        if self._pending_id is not None:
+            return self._pending_id
+        pr_id, stale = github.pr_review_state(self.gh, self.repo, self.number, self.bot_login)
+        for old_id in stale:
+            with contextlib.suppress(ReviewError):
+                github.delete_pending_review(self.gh, old_id)
+        self._pending_id = github.start_pending_review(
+            self.gh,
+            pr_id,
+            commit_oid=commit_oid or self.commit_oid,
+            comments=comments,
+        )
+        return self._pending_id
+
+    def _attach_pending_replies(self) -> None:
+        assert self._pending_id is not None
+        for r in self._replies:
+            if r.attached or r.failed or r.fallback:
+                continue
+            tid = self._resolve_thread_id(r)
+            if not tid:
+                r.fallback = True
+                continue
+            try:
+                github.add_pending_reply(self.gh, self._pending_id, tid, r.body)
+                r.attached = True
+                if r.on_ok is not None:
+                    r.on_ok()
+            except ReviewError as exc:
+                r.failed = True
+                if r.on_error is not None:
+                    r.on_error(str(exc))
+
+    def _deliver_fallbacks_and_hooks(self) -> None:
+        for r in self._replies:
+            if r.fallback and not r.attached and not r.failed:
+                try:
+                    github.post_reply(self.gh, self.repo, self.number, r.comment_id, r.body)
+                    r.attached = True
+                    if r.on_ok is not None:
+                        r.on_ok()
+                except (ReviewError, ValueError) as exc:
+                    r.failed = True
+                    if r.on_error is not None:
+                        r.on_error(str(exc))
+            if r.attached and r.post_submit is not None:
+                fn, r.post_submit = r.post_submit, None
+                fn()
+        hooks, self._post_hooks = self._post_hooks, []
+        for fn in hooks:
+            fn()
+
+    def stage_replies(self) -> None:
+        """Open the pending review (when at least one queued reply has a thread id) and
+        attach all queued replies so callers know which succeeded before deciding the verdict."""
+        pending = [r for r in self._replies if not r.attached and not r.failed and not r.fallback]
+        if not pending:
+            return
+        has_thread = False
+        for r in pending:
+            if self._resolve_thread_id(r):
+                has_thread = True
+            else:
+                r.fallback = True
+        if has_thread:
+            self._open_pending()
+            self._attach_pending_replies()
+        # Any reply lacking a thread_id falls back to standalone post_reply immediately so
+        # callers (e.g. unit tests with synthetic thread dicts) still see its outcome now.
+        for r in pending:
+            if r.fallback and not r.attached and not r.failed:
+                try:
+                    github.post_reply(self.gh, self.repo, self.number, r.comment_id, r.body)
+                    r.attached = True
+                    if r.on_ok is not None:
+                        r.on_ok()
+                except (ReviewError, ValueError) as exc:
+                    r.failed = True
+                    if r.on_error is not None:
+                        r.on_error(str(exc))
+
+    def abort(self) -> None:
+        """Discard an unsubmitted pending review so a failed run never leaves one behind."""
+        if self._pending_id is None:
+            return
+        rid, self._pending_id = self._pending_id, None
+        with contextlib.suppress(ReviewError):
+            github.delete_pending_review(self.gh, rid)
+
+    def submit_review(
+        self,
+        *,
+        commit_id: str,
+        event: str,
+        body: str,
+        comments: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Publish the review together with every queued reply as one GitHub review."""
+        unhandled = [r for r in self._replies if not r.attached and not r.failed and not r.fallback]
+        if self._pending_id is None:
+            batchable = False
+            for r in unhandled:
+                if self._resolve_thread_id(r):
+                    batchable = True
+                else:
+                    r.fallback = True
+            if not batchable:
+                resp = github.post_review(
+                    self.gh,
+                    self.repo,
+                    self.number,
+                    {"commit_id": commit_id, "body": body, "event": event, "comments": comments},
+                )
+                self._deliver_fallbacks_and_hooks()
+                return resp
+            try:
+                pid = self._open_pending(commit_oid=commit_id, comments=comments)
+                self._attach_pending_replies()
+                resp = github.submit_pending_review(self.gh, pid, event=event, body=body)
+                self._pending_id = None
+            except Exception:
+                self.abort()
+                raise
+            self._deliver_fallbacks_and_hooks()
+            return resp
+        try:
+            for c in comments:
+                github.add_pending_thread(self.gh, self._pending_id, c)
+            self._attach_pending_replies()
+            resp = github.submit_pending_review(self.gh, self._pending_id, event=event, body=body)
+            self._pending_id = None
+        except Exception:
+            self.abort()
+            raise
+        self._deliver_fallbacks_and_hooks()
+        return resp
+
+    def submit_replies_only(self) -> dict[str, Any] | None:
+        """Submit queued replies without a review summary (conversation with no verdict move)."""
+        self.stage_replies()
+        if self._pending_id is None:
+            self._deliver_fallbacks_and_hooks()
+            return None
+        if not any(r.attached and not r.fallback for r in self._replies):
+            self.abort()
+            self._deliver_fallbacks_and_hooks()
+            return None
+        try:
+            resp = github.submit_pending_review(
+                self.gh, self._pending_id, event="COMMENT", body=None
+            )
+            self._pending_id = None
+        except Exception:
+            self.abort()
+            raise
+        self._deliver_fallbacks_and_hooks()
+        return resp
+
+
 def dedupe_against_github(
     gh: Gh,
     repo: str,
@@ -826,6 +1071,7 @@ def dedupe_against_github(
     dry_run: bool,
     fresh: Callable[[Finding, ExistingComment], bool] | None = None,
     settled_hashes: set[str] | None = None,
+    batch: ReviewBatch | None = None,
 ) -> tuple[list[Finding], list[Suppressed]]:
     """`fresh(f, comment)`: `f` is never folded onto that comment (policy v12: a regression or a
     revival gets a new thread instead of disappearing into a closed one)."""
@@ -896,17 +1142,37 @@ def dedupe_against_github(
             elif dry_run:
                 base.action = "would_reply_to_resolved_thread"
             else:
-                try:
-                    github.post_reply(
-                        gh,
-                        repo,
-                        number,
-                        int(match.id),
-                        f"{marker}\n⚠️ Reusing this existing thread because the same finding still applies on `{head_sha[:8]}`. If it has already been addressed, please mark the thread resolved.",
-                    )
-                    base.action = "replied_to_resolved_thread"
-                except (ReviewError, ValueError):
-                    base.action = "failed_to_reply_to_resolved_thread"
+                reuse_body = (
+                    f"{marker}\n⚠️ Reusing this existing thread because the same finding still "
+                    f"applies on `{head_sha[:8]}`. If it has already been addressed, please mark "
+                    "the thread resolved."
+                )
+                if batch is not None:
+                    try:
+                        cid = int(match.id)
+                    except ValueError:
+                        base.action = "failed_to_reply_to_resolved_thread"
+                    else:
+                        # Optimistically mark as replied so render(model) sees the resolved-thread
+                        # action; on_error flips it if attaching the reply fails.
+                        base.action = "replied_to_resolved_thread"
+
+                        def _on_reuse_err(_err: str, b: Suppressed = base) -> None:
+                            b.action = "failed_to_reply_to_resolved_thread"
+
+                        batch.queue_reply(
+                            comment_id=cid,
+                            thread_id=str(thread.get("id") or "") or None,
+                            comment_node_id=match.node_id,
+                            body=reuse_body,
+                            on_error=_on_reuse_err,
+                        )
+                else:
+                    try:
+                        github.post_reply(gh, repo, number, int(match.id), reuse_body)
+                        base.action = "replied_to_resolved_thread"
+                    except (ReviewError, ValueError):
+                        base.action = "failed_to_reply_to_resolved_thread"
         sup.append(base)
     return kept, sup
 
@@ -936,6 +1202,7 @@ def build(
     rereview: bool = False,
     fresh: Callable[[Finding, ExistingComment], bool] | None = None,
     settled_hashes: set[str] | None = None,
+    batch: ReviewBatch | None = None,
 ) -> ReviewModel:
     findings, collapsed = collapse_same_root(list(verified.findings))
     kept, sup = dedupe_against_github(
@@ -948,6 +1215,7 @@ def build(
         dry_run=dry_run,
         fresh=fresh,
         settled_hashes=settled_hashes,
+        batch=batch,
     )
     suppressed = list(collapsed) + list(sup)
     if has_same_root_duplicates(kept):
@@ -991,6 +1259,7 @@ def publish(
     bot_login: str,
     dry_run: bool,
     force_comment: bool = False,
+    batch: ReviewBatch | None = None,
 ) -> PublishResult:
     body = render(m)
     event = m.canonical_event
@@ -1013,7 +1282,12 @@ def publish(
             suppressed=m.suppressed,
             skipped_reason="dry_run",
         )
-    resp = github.post_review(gh, m.repo, m.number, payload)
+    if batch is not None:
+        resp = batch.submit_review(
+            commit_id=m.head_sha, event=transport, body=body, comments=m.comments
+        )
+    else:
+        resp = github.post_review(gh, m.repo, m.number, payload)
     return PublishResult(
         posted=True,
         event=event,
@@ -1027,10 +1301,18 @@ def publish(
 
 
 def post_coderabbit_reactions(
-    gh: Gh, repo: str, number: int, reactions: list[dict[str, Any]], bot_login: str
+    gh: Gh,
+    repo: str,
+    number: int,
+    reactions: list[dict[str, Any]],
+    bot_login: str,
+    *,
+    thread_ids: dict[int, str] | None = None,
+    batch: ReviewBatch | None = None,
 ) -> list[dict[str, Any]]:
     content = {"agree": "+1", "disagree": "-1", "extend": "+1"}
     replied: set[int] | None = None
+    node_ids: dict[int, str] = {}
     results = []
     for r in reactions:
         cid, action = int(r["comment_id"]), str(r["action"])
@@ -1044,18 +1326,42 @@ def post_coderabbit_reactions(
         reply = str(r.get("reply") or "").strip()
         if action in {"disagree", "extend"} and reply:
             if replied is None:
+                all_inline = github.inline_comments(gh, repo, number)
                 replied = {
                     int(c["in_reply_to_id"])
-                    for c in github.inline_comments(gh, repo, number)
+                    for c in all_inline
                     if (c.get("user") or {}).get("login") == bot_login and c.get("in_reply_to_id")
                 }
+                node_ids = {
+                    int(c["id"]): str(c.get("node_id") or "")
+                    for c in all_inline
+                    if c.get("id") and c.get("node_id")
+                }
             if cid not in replied:
-                try:
-                    github.post_reply(gh, repo, number, cid, reply)
+                if batch is not None:
                     replied.add(cid)
-                    item["replied"] = True
-                except ReviewError as exc:
-                    item.update(ok=False, error=str(exc))
+
+                    def _on_cr_ok(it: dict[str, Any] = item) -> None:
+                        it["replied"] = True
+
+                    def _on_cr_err(err: str, it: dict[str, Any] = item) -> None:
+                        it.update(ok=False, error=err)
+
+                    batch.queue_reply(
+                        comment_id=cid,
+                        thread_id=(thread_ids or {}).get(cid),
+                        comment_node_id=node_ids.get(cid, ""),
+                        body=reply,
+                        on_ok=_on_cr_ok,
+                        on_error=_on_cr_err,
+                    )
+                else:
+                    try:
+                        github.post_reply(gh, repo, number, cid, reply)
+                        replied.add(cid)
+                        item["replied"] = True
+                    except ReviewError as exc:
+                        item.update(ok=False, error=str(exc))
         results.append(item)
     return results
 
@@ -1220,6 +1526,8 @@ def _deliver_answer(
     root_status: str | None,
     head_sha: str,
     tracking_url: str = "",
+    reply_thread_id: Any = None,
+    batch: ReviewBatch | None = None,
 ) -> None:
     """Post one answer on a finding thread and, when the outcome retires the finding, resolve
     the thread. Records what happened on `item` (`action`, and `resolved` when we tried).
@@ -1227,31 +1535,51 @@ def _deliver_answer(
     `root_status` is the outcome when it lifts the finding (or says what a deferral waits
     for). If the thread then stays open, the root comment gets that status line (`marked`);
     any other answer clears a stale one."""
+
+    def _post_submit() -> None:
+        if resolve and thread_id:
+            try:
+                github.resolve_thread(gh, str(thread_id))
+                item["resolved"] = True
+            except ReviewError as exc:
+                item["resolved"] = f"failed: {exc}"
+        if not root_body:
+            return
+        status = None if item.get("resolved") is True else root_status
+        if status or THREAD_STATUS_MARKER in root_body:
+            item["marked"] = _set_thread_status(
+                gh,
+                repo,
+                comment_id=comment_id,
+                root_body=root_body,
+                status=status,
+                head_sha=head_sha,
+                tracking_url=tracking_url,
+            )
+
+    if batch is not None:
+        try:
+            cid = int(comment_id)
+        except ValueError as exc:
+            item["action"] = f"reply_failed: {exc}"
+            return
+        tid = reply_thread_id if reply_thread_id is not None else thread_id
+        batch.queue_reply(
+            comment_id=cid,
+            thread_id=str(tid) if tid else None,
+            body=body,
+            on_ok=lambda: item.__setitem__("action", "replied"),
+            on_error=lambda err: item.__setitem__("action", f"reply_failed: {err}"),
+            post_submit=_post_submit,
+        )
+        return
     try:
         github.post_reply(gh, repo, number, int(comment_id), body)
         item["action"] = "replied"
     except (ReviewError, ValueError) as exc:
         item["action"] = f"reply_failed: {exc}"
         return
-    if resolve and thread_id:
-        try:
-            github.resolve_thread(gh, str(thread_id))
-            item["resolved"] = True
-        except ReviewError as exc:
-            item["resolved"] = f"failed: {exc}"
-    if not root_body:
-        return
-    status = None if item.get("resolved") is True else root_status
-    if status or THREAD_STATUS_MARKER in root_body:
-        item["marked"] = _set_thread_status(
-            gh,
-            repo,
-            comment_id=comment_id,
-            root_body=root_body,
-            status=status,
-            head_sha=head_sha,
-            tracking_url=tracking_url,
-        )
+    _post_submit()
 
 
 def answer_conversation(
@@ -1263,6 +1591,7 @@ def answer_conversation(
     threads: dict[str, dict[str, Any]],
     outcomes: dict[str, Any],
     settled: dict[str, str] | None = None,
+    batch: ReviewBatch | None = None,
 ) -> list[dict[str, Any]]:
     """Post the conversation lane's replies: one per replied thread with something to say,
     exactly once per (human reply, head), resolving threads the model conceded. `outcomes` maps finding_hash -> ThreadOutcome. Returns what was done.
@@ -1335,6 +1664,8 @@ def answer_conversation(
             root_status=o.status if o.status in _THREAD_STATUS_LINE else None,
             head_sha=head_sha,
             tracking_url=o.tracking_url,
+            reply_thread_id=t.get("thread_id"),
+            batch=batch,
         )
         done.append(item)
     return done
@@ -1383,6 +1714,7 @@ def answer_thread_lane(
     same_sha: bool,
     keep: set[str] | frozenset[str] = frozenset(),
     settled: set[str] | frozenset[str] = frozenset(),
+    batch: ReviewBatch | None = None,
 ) -> list[dict[str, Any]]:
     """Post the policy v12 thread lane's outcomes (`outcomes`: finding_hash -> ThreadOutcome):
     exactly once per (human reply, head) on each open thread, resolving the thread when the
@@ -1462,6 +1794,8 @@ def answer_thread_lane(
             root_status=o.status if o.status in _THREAD_STATUS_LINE else None,
             head_sha=head_sha,
             tracking_url=o.tracking_url,
+            reply_thread_id=t.get("thread_id"),
+            batch=batch,
         )
         done.append(item)
     for h in sorted(keep):
@@ -1469,23 +1803,33 @@ def answer_thread_lane(
         body = str((t or {}).get("body") or "")
         if t is None or h in outcomes or THREAD_STATUS_MARKER not in body:
             continue
-        done.append(
-            {
-                "finding_hash": h,
-                "status": "STILL_VALID",
-                "comment_id": t.get("comment_id"),
-                "mode": mode,
-                "action": "status_cleared",
-                "marked": _set_thread_status(
-                    gh,
-                    repo,
-                    comment_id=t.get("comment_id"),
-                    root_body=body,
-                    status=None,
-                    head_sha=head_sha,
-                ),
-            }
-        )
+        cleared_item: dict[str, Any] = {
+            "finding_hash": h,
+            "status": "STILL_VALID",
+            "comment_id": t.get("comment_id"),
+            "mode": mode,
+            "action": "status_cleared",
+        }
+
+        def _clear_lane(
+            it: dict[str, Any] = cleared_item,
+            cid_arg: Any = t.get("comment_id"),
+            body_arg: str = body,
+        ) -> None:
+            it["marked"] = _set_thread_status(
+                gh,
+                repo,
+                comment_id=cid_arg,
+                root_body=body_arg,
+                status=None,
+                head_sha=head_sha,
+            )
+
+        if batch is not None:
+            batch.queue_post_action(_clear_lane)
+        else:
+            _clear_lane()
+        done.append(cleared_item)
     return done
 
 
@@ -1550,6 +1894,7 @@ def answer_replied_threads(
     reconciliation: dict[str, dict[str, Any]],
     verified: VerifierOutput,
     open_threads: dict[str, dict[str, Any]] | None = None,
+    batch: ReviewBatch | None = None,
 ) -> list[dict[str, Any]]:
     """Reply once per (human reply, head) on each replied prior finding thread with the
     reconciliation outcome, and resolve threads whose finding a reviewer explicitly withdrew,
@@ -1633,6 +1978,8 @@ def answer_replied_threads(
             root_body=str(t.get("body") or ""),
             root_status=status if marks else None,
             head_sha=head_sha,
+            reply_thread_id=t.get("thread_id"),
+            batch=batch,
         )
         done.append(item)
     # a finding this review keeps again must not go on reading "✅ Withdrawn" from an earlier
@@ -1647,14 +1994,25 @@ def answer_replied_threads(
         ):
             item = {"finding_hash": h, "status": "STILL_VALID", "comment_id": t.get("comment_id")}
             item["action"] = "status_cleared"
-            item["marked"] = _set_thread_status(
-                gh,
-                repo,
-                comment_id=t.get("comment_id"),
-                root_body=body,
-                status=None,
-                head_sha=head_sha,
-            )
+
+            def _clear_replied(
+                it: dict[str, Any] = item,
+                cid_arg: Any = t.get("comment_id"),
+                body_arg: str = body,
+            ) -> None:
+                it["marked"] = _set_thread_status(
+                    gh,
+                    repo,
+                    comment_id=cid_arg,
+                    root_body=body_arg,
+                    status=None,
+                    head_sha=head_sha,
+                )
+
+            if batch is not None:
+                batch.queue_post_action(_clear_replied)
+            else:
+                _clear_replied()
             done.append(item)
     return done
 
@@ -1988,6 +2346,7 @@ def publish_verdict_update(
     bot_login: str,
     note: str = "",
     dry_run: bool = False,
+    batch: ReviewBatch | None = None,
 ) -> PublishResult:
     event = verdict_event(verified, provenance)
     body = render_verdict_update(
@@ -2012,9 +2371,15 @@ def publish_verdict_update(
             body=body,
             skipped_reason="dry_run",
         )
-    resp = github.post_review(
-        gh, repo, number, {"commit_id": head_sha, "body": body, "event": transport, "comments": []}
-    )
+    if batch is not None:
+        resp = batch.submit_review(commit_id=head_sha, event=transport, body=body, comments=[])
+    else:
+        resp = github.post_review(
+            gh,
+            repo,
+            number,
+            {"commit_id": head_sha, "body": body, "event": transport, "comments": []},
+        )
     return PublishResult(
         posted=True,
         event=event,
