@@ -175,6 +175,10 @@ class FakeGh(Gh):
         self.calls: list[list[str]] = []
         self.routes: dict[str, Any] = {}
         self.posted_reviews: list[dict[str, Any]] = []
+        self.submitted_reviews: list[dict[str, Any]] = []
+        self.pending_reviews: dict[str, dict[str, Any]] = {}
+        self.deleted_pending_reviews: list[str] = []
+        self.standalone_replies: list[dict[str, Any]] = []
         self.gate_bodies: list[str] = []
         self.replies: list[dict[str, Any]] = []
         self.reactions: list[dict[str, Any]] = []
@@ -253,7 +257,134 @@ class FakeGh(Gh):
             self.created_issues.append({"repo": repo, "title": title, "body": stdin, "number": n})
             return f"https://github.com/{repo}/issues/{n}\n"
         if args[:2] == ["api", "graphql"]:
-            q = next(a for a in args if a.startswith("query="))
+            if "--input" in args and stdin:
+                payload = json.loads(stdin)
+                q = str(payload.get("query") or "")
+                gql_vars = payload.get("variables") or {}
+            else:
+                q = next(a for a in args if a.startswith("query="))
+                gql_vars = {}
+            if "states: [PENDING]" in q:
+                return {
+                    "data": {
+                        "repository": {
+                            "pullRequest": {
+                                "id": "PR_1",
+                                "reviews": {"nodes": [{"id": pid} for pid in self.pending_reviews]},
+                            }
+                        }
+                    }
+                }
+            if "addPullRequestReview(" in q:
+                inp = gql_vars.get("input") or {}
+                pid = f"PRR_pending_{len(self.pending_reviews) + len(self.submitted_reviews) + 1}"
+                self.pending_reviews[pid] = {
+                    "commit_id": inp.get("commitOID", ""),
+                    "comments": [
+                        {
+                            "path": t["path"],
+                            "line": t["line"],
+                            "side": t.get("side", "RIGHT"),
+                            "body": t["body"],
+                            **(
+                                {"start_line": t["startLine"], "start_side": t["startSide"]}
+                                if "startLine" in t
+                                else {}
+                            ),
+                        }
+                        for t in (inp.get("threads") or [])
+                    ],
+                    "replies": [],
+                }
+                return {
+                    "data": {
+                        "addPullRequestReview": {
+                            "pullRequestReview": {"id": pid, "state": "PENDING"}
+                        }
+                    }
+                }
+            if "addPullRequestReviewThread(" in q:
+                inp = gql_vars.get("input") or {}
+                pid = str(inp.get("pullRequestReviewId") or "")
+                if pid not in self.pending_reviews:
+                    raise _GhFailure(f"unknown pending review {pid}")
+                t = {
+                    "path": inp["path"],
+                    "line": inp["line"],
+                    "side": inp.get("side", "RIGHT"),
+                    "body": inp["body"],
+                    **(
+                        {"start_line": inp["startLine"], "start_side": inp["startSide"]}
+                        if "startLine" in inp
+                        else {}
+                    ),
+                }
+                self.pending_reviews[pid]["comments"].append(t)
+                return {"data": {"addPullRequestReviewThread": {"thread": {"id": "PRRT_new"}}}}
+            if "addPullRequestReviewThreadReply(" in q:
+                inp = gql_vars.get("input") or {}
+                pid = str(inp.get("pullRequestReviewId") or "")
+                if pid not in self.pending_reviews:
+                    raise _GhFailure(f"unknown pending review {pid}")
+                self.pending_reviews[pid]["replies"].append(
+                    {"thread_id": inp["pullRequestReviewThreadId"], "body": inp["body"]}
+                )
+                return {
+                    "data": {"addPullRequestReviewThreadReply": {"comment": {"id": "PRRC_reply"}}}
+                }
+            if "submitPullRequestReview(" in q:
+                inp = gql_vars.get("input") or {}
+                pid = str(inp.get("pullRequestReviewId") or "")
+                if pid not in self.pending_reviews:
+                    raise _GhFailure(f"unknown pending review {pid}")
+                pending = self.pending_reviews.pop(pid)
+                body_text = str(inp.get("body") or "")
+                rid = (
+                    5000 + len(self.posted_reviews)
+                    if body_text
+                    else 9000 + len(self.submitted_reviews)
+                )
+                event_name = str(inp["event"])
+                states = {"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVE": "APPROVED"}
+                record = {
+                    "id": rid,
+                    "commit_id": pending["commit_id"],
+                    "event": event_name,
+                    "body": body_text,
+                    "comments": pending["comments"],
+                    "replies": pending["replies"],
+                }
+                self.submitted_reviews.append(record)
+                for rep in pending["replies"]:
+                    self.replies.append({"body": rep["body"]})
+                if body_text:
+                    self.posted_reviews.append(
+                        {
+                            "id": rid,
+                            "commit_id": pending["commit_id"],
+                            "body": body_text,
+                            "event": event_name,
+                            "comments": pending["comments"],
+                        }
+                    )
+                return {
+                    "data": {
+                        "submitPullRequestReview": {
+                            "pullRequestReview": {
+                                "id": f"PRR_{rid}",
+                                "fullDatabaseId": str(rid),
+                                "url": f"https://github.com/r/pull/1#pullrequestreview-{rid}",
+                                "state": states.get(event_name, "COMMENTED"),
+                            }
+                        }
+                    }
+                }
+            if "deletePullRequestReview(" in q:
+                inp = gql_vars.get("input") or {}
+                pid = str(inp.get("pullRequestReviewId") or "")
+                self.pending_reviews.pop(pid, None)
+                self.deleted_pending_reviews.append(pid)
+                return {"data": {"deletePullRequestReview": {"pullRequestReview": {"id": pid}}}}
             if "pullRequests(" in q:
                 name = next(a for a in args if a.startswith("name=")).split("=", 1)[1]
                 owner = next(a for a in args if a.startswith("owner=")).split("=", 1)[1]
@@ -343,7 +474,9 @@ class FakeGh(Gh):
                 return {"resources": {"core": {"remaining": 5000}}}
             if "/pulls/" in ep and ep.endswith("/reviews") and method == "POST":
                 rid = 5000 + len(self.posted_reviews)
-                self.posted_reviews.append({"id": rid, **(body or {})})
+                record = {"id": rid, **(body or {})}
+                self.posted_reviews.append(record)
+                self.submitted_reviews.append(record)
                 return {
                     "id": rid,
                     "html_url": f"https://github.com/r/pull/1#pullrequestreview-{rid}",
@@ -365,6 +498,7 @@ class FakeGh(Gh):
                 ]
             if "/pulls/" in ep and "/comments/" in ep and ep.endswith("/replies"):
                 self.replies.append(body or {})
+                self.standalone_replies.append(body or {})
                 return {"id": 1}
             if "/pulls/comments/" in ep and method == "PATCH":
                 cid = int(ep.rsplit("/", 1)[1])

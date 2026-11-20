@@ -3692,6 +3692,20 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
             ctx.conn.executemany(_FINDINGS_INSERT, rows)
 
 
+def _review_batch(ctx: RunContext) -> publish.ReviewBatch | None:
+    if ctx.dry_run:
+        return None
+    return publish.ReviewBatch(ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, commit_oid=ctx.sha)
+
+
+def _coderabbit_thread_ids(ctx: RunContext) -> dict[int, str]:
+    return {
+        int(f["comment_id"]): str(f["thread_id"])
+        for f in (ctx.coderabbit.get("findings") or [])
+        if f.get("comment_id") and f.get("thread_id")
+    }
+
+
 def step_publish(
     ctx: RunContext,
     *,
@@ -3710,37 +3724,52 @@ def step_publish(
         )
     _require_live_base(ctx)
     existing, phase = _existing_review(ctx, phase)
-    if existing:
-        # Either a prior attempt posted but died before recording it, or this is a reply-
-        # triggered re-review of an already-reviewed commit. Backfill so future rounds still
-        # see these findings as "prior", never re-post the review for this sha/phase, answer the
-        # threads that were replied to, and, if the verdict moved (a blocker withdrawn or a new
-        # one found), post a short follow-up review so the standing verdict is not left stale.
-        _backfill_posted(ctx, phase, existing, verified)
-        _backfill_step_back(ctx, phase, existing)
-        _record_lifted_reconciliations(ctx, phase, verified)
-        _answer_threads(ctx, phase, verified)
-        update = _verdict_update(ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped)
-        if update is not None:
-            return update
-        return _publish_review(
+    batch = _review_batch(ctx)
+    try:
+        if existing:
+            # Either a prior attempt posted but died before recording it, or this is a reply-
+            # triggered re-review of an already-reviewed commit. Backfill so future rounds still
+            # see these findings as "prior", never re-post the review for this sha/phase, answer
+            # the threads that were replied to, and, if the verdict moved (a blocker withdrawn or
+            # a new one found), post a short follow-up review so the standing verdict is not left
+            # stale — bundled with all thread answers in one GitHub review.
+            _backfill_posted(ctx, phase, existing, verified)
+            _backfill_step_back(ctx, phase, existing)
+            _record_lifted_reconciliations(ctx, phase, verified)
+            recon, answered = _plan_answer_threads(ctx, phase, verified, batch=batch)
+            update = _verdict_update(
+                ctx, phase, verified, verifier_lm, phase2_skipped=phase2_skipped, batch=batch
+            )
+            if update is not None:
+                _commit_answer_threads(ctx, recon, answered)
+                return update
+            result = _publish_review(
+                ctx,
+                phase=phase,
+                verified=verified,
+                verifier_lm=verifier_lm,
+                phase2_skipped=phase2_skipped,
+                rereview=True,
+                batch=batch,
+            )[1]
+            _commit_answer_threads(ctx, recon, answered)
+            return result
+        recon, answered = _plan_answer_threads(ctx, phase, verified, batch=batch)
+        result = _publish_review(
             ctx,
             phase=phase,
             verified=verified,
             verifier_lm=verifier_lm,
             phase2_skipped=phase2_skipped,
-            rereview=True,
+            rereview=False,
+            batch=batch,
         )[1]
-    result = _publish_review(
-        ctx,
-        phase=phase,
-        verified=verified,
-        verifier_lm=verifier_lm,
-        phase2_skipped=phase2_skipped,
-        rereview=False,
-    )[1]
-    _answer_threads(ctx, phase, verified)
-    return result
+        _commit_answer_threads(ctx, recon, answered)
+        return result
+    except Exception:
+        if batch is not None:
+            batch.abort()
+        raise
 
 
 def _require_live_base(ctx: RunContext) -> None:
@@ -3780,6 +3809,7 @@ def _publish_review(
     verifier_lm: LaneModel,
     phase2_skipped: str | None,
     rereview: bool,
+    batch: publish.ReviewBatch | None = None,
 ) -> tuple[publish.ReviewModel, publish.PublishResult]:
     """Build, post and record the review. `rereview`: a same-sha re-review whose review
     already stands, posted as an informational COMMENT; otherwise the review proper, with its
@@ -3791,6 +3821,7 @@ def _publish_review(
         verifier_lm=verifier_lm,
         phase2_skipped=phase2_skipped,
         rereview=rereview or ctx.has_prior_review,
+        batch=batch,
     )
     if rereview:
         # the artifact goes first, as on the normal path: a failed write after the post would
@@ -3802,6 +3833,7 @@ def _publish_review(
             bot_login=ctx.cfg.bot_login,
             dry_run=ctx.dry_run,
             force_comment=True,
+            batch=batch,
         )
         with contextlib.suppress(OSError):  # the posted body (with its transport note)
             (ctx.run_dir / f"review-{phase}.md").write_text(result.body)
@@ -3811,25 +3843,38 @@ def _publish_review(
             # our record, which the summary's COMMENT just overwrote
             _record_verdict(ctx, phase, verified, ctx.kept_verdict)
         return model, result
+    if verified.coderabbit_reactions and not ctx.dry_run:
+        publish.post_coderabbit_reactions(
+            ctx.gh,
+            ctx.repo,
+            ctx.number,
+            verified.coderabbit_reactions,
+            ctx.cfg.bot_login,
+            thread_ids=_coderabbit_thread_ids(ctx),
+            batch=batch,
+        )
     (ctx.run_dir / f"review-{phase}.md").write_text(publish.render(model))
     result = publish.publish(
         ctx.gh,
         model,
         bot_login=ctx.cfg.bot_login,
         dry_run=ctx.dry_run,
+        batch=batch,
     )
     _record_publication(ctx, phase, model, result, verified)
     _record_lifted_reconciliations(ctx, phase, verified)
-    if result.posted and verified.coderabbit_reactions and not ctx.dry_run:
-        publish.post_coderabbit_reactions(
-            ctx.gh, ctx.repo, ctx.number, verified.coderabbit_reactions, ctx.cfg.bot_login
-        )
     return model, result
 
 
-def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> None:
+def _plan_answer_threads(
+    ctx: RunContext,
+    phase: str,
+    verified: VerifierOutput,
+    *,
+    batch: publish.ReviewBatch | None = None,
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     if not ctx.open_threads or ctx.dry_run:
-        return
+        return {}, []
     recon = _reconciliation(ctx, phase, verified)
     answered = publish.answer_replied_threads(
         ctx.gh,
@@ -3840,7 +3885,18 @@ def _answer_threads(ctx: RunContext, phase: str, verified: VerifierOutput) -> No
         open_threads=ctx.open_threads,
         reconciliation=recon,
         verified=verified,
+        batch=batch,
     )
+    return recon, answered
+
+
+def _commit_answer_threads(
+    ctx: RunContext,
+    recon: dict[str, dict[str, Any]],
+    answered: list[dict[str, Any]],
+) -> None:
+    if not answered or ctx.dry_run:
+        return
     with tx(ctx.conn):
         _record_answered_events(ctx, answered)
         for a in answered:
@@ -3942,6 +3998,7 @@ def _verdict_update(
     *,
     phase2_skipped: str | None,
     lifted_titles: list[str] | None = None,
+    batch: publish.ReviewBatch | None = None,
 ) -> publish.PublishResult | None:
     """On a same-sha re-review, post a follow-up review when the verdict moved.
     `lifted_titles` (policy v12): the blockers this round lifted, from the thread lane.
@@ -4021,6 +4078,7 @@ def _verdict_update(
         bot_login=ctx.cfg.bot_login,
         note=f"Disputed, left to the maintainers: {'; '.join(disputed)}." if disputed else "",
         dry_run=ctx.dry_run,
+        batch=batch,
     )
     if not result.posted:
         _record_dry_publication(ctx, phase, result, verified.findings, verdict_update=True)
@@ -4094,6 +4152,7 @@ def _build_review(
     verifier_lm: LaneModel,
     phase2_skipped: str | None = None,
     rereview: bool = False,
+    batch: publish.ReviewBatch | None = None,
 ) -> publish.ReviewModel:
     diff = github.pr_diff(ctx.gh, ctx.repo, ctx.number)
     # comparison lanes are dropped on failure: disclose the comparison only when one finished
@@ -4137,6 +4196,7 @@ def _build_review(
         rereview=rereview,
         fresh=_fresh_threads(ctx),
         settled_hashes=ctx.settled_hashes,
+        batch=batch,
     )
     model.fix_forward = ctx.cfg.policy.pipeline is None
     model.disputed = _newly_disputed(ctx, verified)
@@ -5651,27 +5711,41 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     )
     out = converse.settle_disputes(out, threads, author=ctx.meta.author, settled=set(settled))
     answered: list[dict[str, Any]] = []
-    if not ctx.dry_run:
-        out = _file_tracking_issues(ctx, out, threads, settled)
-        answered = publish.answer_conversation(
-            ctx.gh,
-            ctx.repo,
-            ctx.number,
-            ctx.sha,
-            threads=threads,
-            outcomes=out.outcomes,
-            settled=settled,
+    batch = _review_batch(ctx)
+    update = None
+    try:
+        if not ctx.dry_run:
+            out = _file_tracking_issues(ctx, out, threads, settled)
+            answered = publish.answer_conversation(
+                ctx.gh,
+                ctx.repo,
+                ctx.number,
+                ctx.sha,
+                threads=threads,
+                outcomes=out.outcomes,
+                settled=settled,
+                batch=batch,
+            )
+            assert batch is not None
+            batch.stage_replies()
+        posted_ok = {a["finding_hash"] for a in answered if a.get("action") == "replied"}
+        considered = {a["finding_hash"] for a in answered}
+        # only an outcome that actually reached the thread lifts a blocker or counts as silence
+        lifted = {h for h in posted_ok if out.outcomes[h].status in converse.LIFTING_STATUSES}
+        silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
+        kept = _standing_findings(
+            ctx, phase, lifted=lifted, conceded={h: out.outcomes[h] for h in lifted}
         )
-    # Posting happens before the bookkeeping below is committed. If the worker dies in
-    # between, the reply is public but no `conceded` row exists, and the requeued run will not
-    # revisit the thread (our own comment is now its newest). That blocker then keeps counting
-    # until a fresh review of a new push resets the standing set; accepted rather than risking
-    # the reverse (a recorded concession that never reached the thread).
-    posted_ok = {a["finding_hash"] for a in answered if a.get("action") == "replied"}
-    considered = {a["finding_hash"] for a in answered}
-    # only an outcome that actually reached the thread lifts a blocker or counts as silence
-    lifted = {h for h in posted_ok if out.outcomes[h].status in converse.LIFTING_STATUSES}
-    silent = {h for h, o in out.outcomes.items() if o.status == "NO_REPLY" and h in considered}
+        if not ctx.dry_run:
+            update = _conversation_verdict_update(ctx, phase, lm, kept, lifted=lifted, batch=batch)
+            if update is None and batch is not None:
+                batch.submit_replies_only()
+    except Exception:
+        if batch is not None:
+            batch.abort()
+        raise
+    # Posting happens before the bookkeeping below is committed. All replies (and any verdict
+    # follow-up) were submitted together in one GitHub review above.
     with tx(ctx.conn):
         _record_answered_events(ctx, answered)
         for h in silent:
@@ -5694,11 +5768,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
             conceded=lifted,
         ),
     )
-    kept = _standing_findings(ctx, phase, lifted=lifted)
     summary = _mark_lifted_in_review(ctx, phase, kept, reviews)
-    update = None
-    if not ctx.dry_run:
-        update = _conversation_verdict_update(ctx, phase, lm, kept, lifted=lifted)
     _gate_comment(ctx, "done", phase=phase, blocker_count=kept.blockers)
     return {
         "answered": len(posted_ok),
@@ -5917,7 +5987,13 @@ def _identity(file: Any, title: Any) -> tuple[str, str]:
     return str(file or ""), str(title or "").strip().lower()
 
 
-def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None = None) -> _Standing:
+def _standing_findings(
+    ctx: RunContext,
+    phase: str,
+    *,
+    lifted: set[str] | None = None,
+    conceded: dict[str, converse.ThreadOutcome] | None = None,
+) -> _Standing:
     """Findings on this commit's `phase` publication that still stand.
 
     The publication is the latest run that posted findings or published the review for this
@@ -6013,17 +6089,30 @@ def _standing_findings(ctx: RunContext, phase: str, *, lifted: set[str] | None =
     for h in lifted or set():
         t = ctx.open_threads.get(h) or {}
         gone[h] = _identity(t.get("path"), t.get("title"))
+    for h, o in (conceded or {}).items():
+        t = ctx.open_threads.get(h) or {}
+        ident = _identity(t.get("path"), t.get("title"))
+        gone[h] = ident
+        outcome[h] = outcome[ident] = o.status
+        link = o.tracking_url or ""
+        tracking[h] = link or tracking.get(h, "")
+        tracking[ident] = link or tracking.get(ident, "")
     gone_ids = {i for i in gone.values() if i[1]}
     lifted_hashes = {h for h, (_, ident) in pub.items() if h in gone or ident in gone_ids}
-    latest: dict[str, sqlite3.Row] = {}
+    latest: dict[str, tuple[str, str]] = {}
     for r in rows:
         if r["stage"] == "conceded" and run_id is not None and int(r["run_id"]) >= run_id:
-            latest[str(r["hash"])] = r
+            latest[str(r["hash"])] = (
+                str(r["severity"]),
+                str(r["body"] or "").partition("\n")[0],
+            )
+    if run_id is not None:
+        for h, o in (conceded or {}).items():
+            t = ctx.open_threads.get(h) or {}
+            sev = str(t.get("severity") or (pub[h][0] if h in pub else "nitpick"))
+            latest[h] = (sev, o.status)
     disputed = {
-        h
-        for h, r in latest.items()
-        if r["severity"] == "blocking"
-        and str(r["body"] or "").partition("\n")[0] == converse.DISPUTED
+        h for h, (sev, st) in latest.items() if sev == "blocking" and st == converse.DISPUTED
     }
     return _Standing(
         disputed_blockers=len(disputed),
@@ -6193,7 +6282,13 @@ def _request_fresh_audit(ctx: RunContext) -> bool:
 
 
 def _conversation_verdict_update(
-    ctx: RunContext, phase: str, lm: LaneModel, standing: _Standing, *, lifted: set[str]
+    ctx: RunContext,
+    phase: str,
+    lm: LaneModel,
+    standing: _Standing,
+    *,
+    lifted: set[str],
+    batch: publish.ReviewBatch | None = None,
 ) -> publish.PublishResult | None:
     """Move the verdict on this commit after a conversation lifted findings of its review.
 
@@ -6284,7 +6379,15 @@ def _conversation_verdict_update(
         if h in lifted and t.get("severity") == "blocking" and t.get("title")
     ]
     return _post_conversation_update(
-        ctx, phase, verified, prov, state=state, new_event=new_event, titles=titles, note=note
+        ctx,
+        phase,
+        verified,
+        prov,
+        state=state,
+        new_event=new_event,
+        titles=titles,
+        note=note,
+        batch=batch,
     )
 
 
@@ -6336,6 +6439,7 @@ def _post_conversation_update(
     new_event: str,
     titles: list[str],
     note: str,
+    batch: publish.ReviewBatch | None = None,
 ) -> publish.PublishResult | None:
     """Post a conversation's verdict follow-up on the commit and record it; nothing when
     GitHub would record the state it already shows (then only our own record moves)."""
@@ -6361,6 +6465,7 @@ def _post_conversation_update(
         lifted_blockers=titles,
         bot_login=ctx.cfg.bot_login,
         note=note,
+        batch=batch,
     )
     what = "every finding" if result.event == "APPROVE" else "every blocker"
     with tx(ctx.conn):
@@ -6591,14 +6696,37 @@ def _record_thread_answers(
     return lifted
 
 
-def _apply_thread_outcomes(ctx: RunContext, verified: VerifierOutput, phase: str) -> set[str]:
-    """Deliver the new-sha thread lane's outcomes on their threads, a FIXED / OUTDATED of an
-    issue a finder just restated suppressed (it stays open, unanswered), and book them."""
+def _delivered_statuses(answered: Iterable[dict[str, Any]]) -> dict[str, str]:
+    """hash -> ledger status for outcomes whose reply attached/delivered on GitHub."""
+    out: dict[str, str] = {}
+    for a in answered:
+        if a.get("action") in ledger.DELIVERED_ACTIONS:
+            st = ledger.OUTCOME_STATUS.get(str(a.get("status") or ""))
+            if st is not None:
+                out[str(a["finding_hash"])] = st
+    return out
+
+
+def _lifted_from_answered(answered: Iterable[dict[str, Any]]) -> set[str]:
+    return {
+        str(a["finding_hash"])
+        for a in answered
+        if a.get("action") in ledger.DELIVERED_ACTIONS
+        and ledger.OUTCOME_STATUS.get(str(a.get("status") or "")) in ledger.CLOSED
+    }
+
+
+def _plan_thread_outcomes(
+    ctx: RunContext,
+    verified: VerifierOutput,
+    *,
+    batch: publish.ReviewBatch | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, converse.ThreadOutcome]]:
+    """Queue the new-sha thread lane's outcomes into `batch` (or post directly when `batch` is
+    None), suppressing FIXED / OUTDATED of an issue a finder just restated."""
     outs = _thread_outcomes(ctx)
     if ctx.dry_run:
-        # nothing goes on a thread, nothing is booked; a replay still decides on what the
-        # outcomes would lift (the titles of a same-sha verdict follow-up)
-        return _projected_lifted(outs, _refound(verified)) if ctx.replay else set()
+        return [], outs
     corroborated = _refound(verified)
     answered: list[dict[str, Any]] = []
     deliver: dict[str, converse.ThreadOutcome] = {}
@@ -6625,10 +6753,9 @@ def _apply_thread_outcomes(ctx: RunContext, verified: VerifierOutput, phase: str
             same_sha=False,
             keep=corroborated,
             settled=_ledger_deferred(ctx, deliver),
+            batch=batch,
         )
-    if not outs and not answered:
-        return set()
-    return _record_thread_answers(ctx, answered, outs, source="thread", phase=phase)
+    return answered, outs
 
 
 def _resolve_conflicts(ctx: RunContext, verified: VerifierOutput) -> None:
@@ -6723,9 +6850,13 @@ def _drop_settled_refolds(ctx: RunContext, verified: VerifierOutput) -> None:
     _record_conflicts(ctx, conflicts)
 
 
-def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
-    """An open non-blocking issue a candidate restated and the verifier CONFIRMED as blocking
-    is raised in place: the ledger's severity, and a note on its thread (never a new thread)."""
+def _plan_upgrades(
+    ctx: RunContext,
+    verified: VerifierOutput,
+    *,
+    batch: publish.ReviewBatch | None = None,
+) -> None:
+    """Queue severity-upgrade thread notes for open non-blocking issues confirmed as blocking."""
     outcome = _outcome(verified)
     if not outcome.upgrades or ctx.dry_run:
         return
@@ -6736,11 +6867,35 @@ def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
                 f"Raising this to **blocking** at `{ctx.sha[:8]}`: {f.extra.get('evidence') or f.body}",
                 2500,
             )
-            if note:
+            if not note:
+                continue
+            if batch is not None:
+                try:
+                    cid = int(t["comment_id"])
+                except ValueError as exc:
+                    log.warning("severity note on %s failed: %s", h, exc)
+                    continue
+
+                def _on_upgrade_err(err: str, fh: str = h) -> None:
+                    log.warning("severity note on %s failed: %s", fh, err)
+
+                batch.queue_reply(
+                    comment_id=cid,
+                    thread_id=str(t.get("thread_id") or "") or None,
+                    body=note,
+                    on_error=_on_upgrade_err,
+                )
+            else:
                 try:
                     github.post_reply(ctx.gh, ctx.repo, ctx.number, int(t["comment_id"]), note)
                 except (ReviewError, ValueError) as exc:
                     log.warning("severity note on %s failed: %s", h, exc)
+
+
+def _commit_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
+    outcome = _outcome(verified)
+    if not outcome.upgrades or ctx.dry_run:
+        return
 
     def record(c: sqlite3.Connection) -> None:
         for h, f in outcome.upgrades.items():
@@ -6759,13 +6914,19 @@ def _apply_upgrades(ctx: RunContext, verified: VerifierOutput) -> None:
     _ledger_write(ctx, "severity", record)
 
 
-def _ledger_after(ctx: RunContext, verified: VerifierOutput) -> dict[str, ledger.Issue]:
-    """The ledger after this round's outcomes: re-read once they are recorded; projected in a
-    dry run, where nothing is."""
+def _ledger_after(
+    ctx: RunContext,
+    verified: VerifierOutput,
+    answered: list[dict[str, Any]] | None = None,
+) -> dict[str, ledger.Issue]:
+    """The ledger after this round's outcomes: projected from staged answers before submit,
+    or from pending statuses in a dry run."""
+    upgrades = _outcome(verified).upgrades
+    if answered is not None and not ctx.dry_run:
+        return rules.project(ctx.issues, _delivered_statuses(answered), upgrades)
     if not ctx.dry_run:
         return ledger.load(ctx.conn, ctx.repo, ctx.number)
     corroborated = _refound(verified)
-    upgrades = _outcome(verified).upgrades
     return rules.project(
         ctx.issues, _pending_statuses(_thread_outcomes(ctx), corroborated), upgrades
     )
@@ -6779,57 +6940,95 @@ def _publish12(
     verifier_lm: LaneModel,
     phase2_skipped: str | None,
 ) -> publish.PublishResult:
-    """Publish a policy v12 round from the ledger: the thread lane's outcomes go on their
-    threads first, then the verdict is computed over what the ledger now holds plus this
-    round's new issues (`_verdict12`), and the review posts the new issues inline and lists
-    the carried ones under "Still open from earlier rounds" (never re-posted)."""
+    """Publish a policy v12 round from the ledger: the thread lane's outcomes and severity
+    upgrades stage onto one pending review first, then the verdict is computed over the
+    projected ledger plus this round's new issues (`_verdict12`), and the review posts new
+    issues inline alongside every staged thread reply in a single GitHub review."""
     _require_live_base(ctx)
     before = dict(ctx.issues)
     _drop_settled_refolds(ctx, verified)
     _apply_budget(ctx, verified)
     _resolve_conflicts(ctx, verified)
-    lifted = _apply_thread_outcomes(ctx, verified, phase)
-    _apply_upgrades(ctx, verified)
-    verified.carried = _carried12(ctx, _ledger_after(ctx, verified))
-    verified.review_action = _verdict12(ctx, phase, verified, phase2_skipped)
+    batch = _review_batch(ctx)
     corroborated = _refound(verified)
-    if corroborated:
-        _ledger_write(
+    try:
+        answered_th, outs_th = _plan_thread_outcomes(ctx, verified, batch=batch)
+        _plan_upgrades(ctx, verified, batch=batch)
+        if batch is not None:
+            batch.stage_replies()
+        if ctx.dry_run:
+            lifted = _projected_lifted(outs_th, corroborated) if ctx.replay else set()
+        else:
+            lifted = _lifted_from_answered(answered_th)
+        verified.carried = _carried12(ctx, _ledger_after(ctx, verified, answered_th))
+        verified.review_action = _verdict12(ctx, phase, verified, phase2_skipped)
+        existing, phase = _existing_review(ctx, phase)
+        if existing:
+            # a same-sha re-review: as v11, never a second full review for the commit; a verdict
+            # that moved gets a follow-up (bundled with all staged thread replies)
+            _backfill_posted(ctx, phase, existing, verified)
+            update = _verdict_update(
+                ctx,
+                phase,
+                verified,
+                verifier_lm,
+                phase2_skipped=phase2_skipped,
+                lifted_titles=_lifted_blocker_titles(before, lifted),
+                batch=batch,
+            )
+            if update is not None:
+                if not ctx.dry_run:
+                    if outs_th or answered_th:
+                        _record_thread_answers(
+                            ctx, answered_th, outs_th, source="thread", phase=phase
+                        )
+                    _commit_upgrades(ctx, verified)
+                    if corroborated:
+                        _ledger_write(
+                            ctx,
+                            "corroborated",
+                            lambda c: ledger.record_seen(
+                                c,
+                                ctx.repo,
+                                ctx.number,
+                                run_id=ctx.run_id,
+                                sha=ctx.sha,
+                                hashes=corroborated,
+                                source="verifier",
+                            ),
+                        )
+                return update
+        model, result = _publish_review(
             ctx,
-            "corroborated",
-            lambda c: ledger.record_seen(
-                c,
-                ctx.repo,
-                ctx.number,
-                run_id=ctx.run_id,
-                sha=ctx.sha,
-                hashes=corroborated,
-                source="verifier",
-            ),
-        )
-    existing, phase = _existing_review(ctx, phase)
-    if existing:
-        # a same-sha re-review: as v11, never a second full review for the commit; a verdict
-        # that moved gets a follow-up
-        _backfill_posted(ctx, phase, existing, verified)
-        update = _verdict_update(
-            ctx,
-            phase,
-            verified,
-            verifier_lm,
+            phase=phase,
+            verified=verified,
+            verifier_lm=verifier_lm,
             phase2_skipped=phase2_skipped,
-            lifted_titles=_lifted_blocker_titles(before, lifted),
+            rereview=bool(existing),
+            batch=batch,
         )
-        if update is not None:
-            return update
-    model, result = _publish_review(
-        ctx,
-        phase=phase,
-        verified=verified,
-        verifier_lm=verifier_lm,
-        phase2_skipped=phase2_skipped,
-        rereview=bool(existing),
-    )
+    except Exception:
+        if batch is not None:
+            batch.abort()
+        raise
+    if not ctx.dry_run:
+        if outs_th or answered_th:
+            _record_thread_answers(ctx, answered_th, outs_th, source="thread", phase=phase)
+        _commit_upgrades(ctx, verified)
+        if corroborated:
+            _ledger_write(
+                ctx,
+                "corroborated",
+                lambda c: ledger.record_seen(
+                    c,
+                    ctx.repo,
+                    ctx.number,
+                    run_id=ctx.run_id,
+                    sha=ctx.sha,
+                    hashes=corroborated,
+                    source="verifier",
+                ),
+            )
     _record_folds(ctx, model)
     _record_revivals(ctx, verified)
     return result
@@ -6961,39 +7160,58 @@ def step_threads(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
     _require_live(ctx, github.pr_meta(ctx.gh, ctx.repo, ctx.number))
     before = ledger.load(ctx.conn, ctx.repo, ctx.number)
     answered: list[dict[str, Any]] = []
-    if not ctx.dry_run:
-        answered = publish.answer_thread_lane(
-            ctx.gh,
-            ctx.repo,
-            ctx.number,
-            ctx.sha,
-            outcomes=out.outcomes,
-            threads=ctx.open_threads,
-            same_sha=True,
-            settled=_ledger_deferred(ctx, out.outcomes),
+    batch = _review_batch(ctx)
+    update = None
+    replayed: dict[str, Any] = {}
+    try:
+        if not ctx.dry_run:
+            answered = publish.answer_thread_lane(
+                ctx.gh,
+                ctx.repo,
+                ctx.number,
+                ctx.sha,
+                outcomes=out.outcomes,
+                threads=ctx.open_threads,
+                same_sha=True,
+                settled=_ledger_deferred(ctx, out.outcomes),
+                batch=batch,
+            )
+            assert batch is not None
+            batch.stage_replies()
+        lifted = (
+            _lifted_from_answered(answered)
+            if not ctx.dry_run
+            else (_projected_lifted(out.outcomes, set()) if ctx.replay else set())
         )
-    lifted = _record_thread_answers(ctx, answered, out.outcomes, source="conversation", phase=phase)
+        issues = (
+            rules.project(before, _delivered_statuses(answered))
+            if not ctx.dry_run
+            else rules.project(before, _pending_statuses(out.outcomes, set()))
+        )
+        stand = _stand12(ctx, issues, out.outcomes)
+        blockers = _blockers(stand)
+        if not ctx.dry_run:
+            update = _conversation_verdict12(
+                ctx, phase, lm, stand, lifted=lifted, before=before, batch=batch
+            )
+            if update is None and batch is not None:
+                batch.submit_replies_only()
+        elif ctx.replay:
+            # a replay delivers nothing (its gh is read-only), so it decides on what the outcomes
+            # would lift and records the follow-up it would post (the eval's S8 reads it)
+            replayed["would_post"] = _would_post12(
+                ctx, phase, lm, stand, lifted=lifted, before=before
+            )
+            path = ctx.run_dir / "conversation.json"
+            path.write_text(json.dumps({**json.loads(path.read_text()), **replayed}, indent=1))
+    except Exception:
+        if batch is not None:
+            batch.abort()
+        raise
+    _record_thread_answers(ctx, answered, out.outcomes, source="conversation", phase=phase)
     # the standing review's body says what the discussion lifted, as under v11 (its counts
     # and agent prompt would otherwise go on listing a withdrawn blocker)
     summary = _mark_lifted_in_review(ctx, phase, _lifted_standing12(ctx, phase), reviews)
-    issues = (
-        ledger.load(ctx.conn, ctx.repo, ctx.number)
-        if not ctx.dry_run
-        else rules.project(before, _pending_statuses(out.outcomes, set()))
-    )
-    stand = _stand12(ctx, issues, out.outcomes)
-    blockers = _blockers(stand)
-    update = None
-    replayed: dict[str, Any] = {}
-    if not ctx.dry_run:
-        update = _conversation_verdict12(ctx, phase, lm, stand, lifted=lifted, before=before)
-    elif ctx.replay:
-        # a replay delivers nothing (its gh is read-only), so it decides on what the outcomes
-        # would lift and records the follow-up it would post (the eval's S8 reads it)
-        lifted = _projected_lifted(out.outcomes, set())
-        replayed["would_post"] = _would_post12(ctx, phase, lm, stand, lifted=lifted, before=before)
-        path = ctx.run_dir / "conversation.json"
-        path.write_text(json.dumps({**json.loads(path.read_text()), **replayed}, indent=1))
     _gate_comment(ctx, "done", phase=phase, blocker_count=blockers)
     return {
         "answered": sum(1 for a in answered if a.get("action") == "replied"),
@@ -7108,6 +7326,7 @@ def _conversation_verdict12(
     *,
     lifted: set[str],
     before: dict[str, ledger.Issue],
+    batch: publish.ReviewBatch | None = None,
 ) -> publish.PublishResult | None:
     """#38 restated over the ledger (`_decide_conversation12`), posted: nothing is when the
     verdict would not move, or a human overrode it."""
@@ -7125,6 +7344,7 @@ def _conversation_verdict12(
         new_event=d.event,
         titles=d.titles,
         note=d.note,
+        batch=batch,
     )
 
 

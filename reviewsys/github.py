@@ -518,6 +518,156 @@ def post_reply(gh: Gh, repo: str, number: int, comment_id: int, body: str) -> No
     )
 
 
+PENDING_REVIEW_QUERY = """
+query($owner: String!, $name: String!, $number: Int!, $author: String!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id
+      reviews(last: 20, states: [PENDING], author: $author) {
+        nodes { id }
+      }
+    }
+  }
+}
+"""
+
+
+def _draft_thread(comment: dict[str, Any]) -> dict[str, Any]:
+    """Convert a REST inline review comment dict to GraphQL thread input fields."""
+    thread: dict[str, Any] = {
+        "path": comment["path"],
+        "line": int(comment["line"]),
+        "side": str(comment.get("side") or "RIGHT"),
+        "body": str(comment["body"]),
+    }
+    if comment.get("start_line") is not None:
+        thread["startLine"] = int(comment["start_line"])
+        thread["startSide"] = str(comment.get("start_side") or thread["side"])
+    return thread
+
+
+def pr_review_state(gh: Gh, repo: str, number: int, bot_login: str) -> tuple[str, list[str]]:
+    """Return `(pr_node_id, pending_review_node_ids)` for `bot_login` on this PR."""
+    owner, name = repo.split("/", 1)
+    data = (
+        gh.graphql(
+            PENDING_REVIEW_QUERY,
+            {"owner": owner, "name": name, "number": number, "author": bot_login},
+        )
+        or {}
+    )
+    pr = (data.get("repository") or {}).get("pullRequest") or {}
+    pr_id = str(pr.get("id") or "")
+    if not pr_id:
+        raise ReviewError(
+            FailKind.INFRA,
+            f"pr_review_state returned no pullRequest id: {json.dumps(data)[:200]}",
+        )
+    pending = [
+        str(n["id"])
+        for n in ((pr.get("reviews") or {}).get("nodes") or [])
+        if isinstance(n, dict) and n.get("id")
+    ]
+    return pr_id, pending
+
+
+def delete_pending_review(gh: Gh, review_node_id: str) -> None:
+    gh.graphql(
+        "mutation($input: DeletePullRequestReviewInput!) { "
+        "deletePullRequestReview(input: $input) { pullRequestReview { id } } }",
+        {"input": {"pullRequestReviewId": review_node_id}},
+    )
+
+
+def start_pending_review(
+    gh: Gh,
+    pr_node_id: str,
+    *,
+    commit_oid: str | None = None,
+    comments: list[dict[str, Any]] | None = None,
+    timeout: int = 300,
+) -> str:
+    """Open a PENDING review (omitting `event`, so nothing is visible and no notification
+    fires until `submit_pending_review`). Returns its GraphQL node id."""
+    inp: dict[str, Any] = {"pullRequestId": pr_node_id}
+    if commit_oid:
+        inp["commitOID"] = commit_oid
+    if comments:
+        inp["threads"] = [_draft_thread(c) for c in comments]
+    data = gh.graphql(
+        "mutation($input: AddPullRequestReviewInput!) { "
+        "addPullRequestReview(input: $input) { pullRequestReview { id state } } }",
+        {"input": inp},
+        timeout=timeout,
+    )
+    prr = ((data or {}).get("addPullRequestReview") or {}).get("pullRequestReview") or {}
+    rid = str(prr.get("id") or "")
+    if not rid:
+        raise ReviewError(
+            FailKind.INFRA,
+            f"addPullRequestReview returned unexpected payload: {json.dumps(data)[:200]}",
+        )
+    return rid
+
+
+def add_pending_thread(gh: Gh, review_node_id: str, comment: dict[str, Any]) -> None:
+    """Attach a new inline comment thread to an open PENDING review."""
+    gh.graphql(
+        "mutation($input: AddPullRequestReviewThreadInput!) { "
+        "addPullRequestReviewThread(input: $input) { thread { id } } }",
+        {"input": {"pullRequestReviewId": review_node_id, **_draft_thread(comment)}},
+    )
+
+
+def add_pending_reply(gh: Gh, review_node_id: str, thread_id: str, body: str) -> None:
+    """Attach a reply to an existing review thread as part of an open PENDING review."""
+    gh.graphql(
+        "mutation($input: AddPullRequestReviewThreadReplyInput!) { "
+        "addPullRequestReviewThreadReply(input: $input) { comment { id } } }",
+        {
+            "input": {
+                "pullRequestReviewId": review_node_id,
+                "pullRequestReviewThreadId": thread_id,
+                "body": body,
+            }
+        },
+    )
+
+
+def submit_pending_review(
+    gh: Gh,
+    review_node_id: str,
+    *,
+    event: str,
+    body: str | None = None,
+    timeout: int = 300,
+) -> dict[str, Any]:
+    """Submit a PENDING review once, publishing every attached thread and reply together."""
+    inp: dict[str, Any] = {"pullRequestReviewId": review_node_id, "event": event}
+    if body:
+        inp["body"] = body
+    data = gh.graphql(
+        "mutation($input: SubmitPullRequestReviewInput!) { "
+        "submitPullRequestReview(input: $input) { "
+        "pullRequestReview { id fullDatabaseId url state } } }",
+        {"input": inp},
+        timeout=timeout,
+    )
+    prr = ((data or {}).get("submitPullRequestReview") or {}).get("pullRequestReview") or {}
+    raw_id = prr.get("fullDatabaseId") or prr.get("databaseId")
+    if not raw_id:
+        raise ReviewError(
+            FailKind.INFRA,
+            f"submitPullRequestReview returned unexpected payload: {json.dumps(data)[:200]}",
+        )
+    return {
+        "id": int(raw_id),
+        "node_id": str(prr.get("id") or review_node_id),
+        "html_url": str(prr.get("url") or ""),
+        "state": str(prr.get("state") or ""),
+    }
+
+
 def open_issues_matching(gh: Gh, repo: str, terms: str) -> list[dict[str, Any]]:
     """Open issues in `repo` whose title matches the search `terms`: [{number, title, url}]."""
     rows = gh.json(
