@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-20T06:43:38Z",
-  "generated_at": "2026-11-20T06:43:54Z",
+  "data_as_of": "2026-11-20T06:44:26Z",
+  "generated_at": "2026-11-20T06:44:27Z",
   "history": {
     "daily": [
       {
@@ -431,6 +431,14 @@
     "recent_events": [
       {
         "detail": null,
+        "kind": "phase1.skipped_repo",
+        "number": 937,
+        "repo": "PastaPastaPasta/yappr",
+        "run_id": 12074,
+        "ts": "2026-11-20T06:44:05Z"
+      },
+      {
+        "detail": null,
         "kind": "ci.watch_green",
         "number": 8205,
         "repo": "dashpay/dash",
@@ -740,14 +748,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": null,
         "ts": "2026-11-20T06:24:03Z"
-      },
-      {
-        "detail": "ok in 355s",
-        "kind": "run.done",
-        "number": 936,
-        "repo": "PastaPastaPasta/yappr",
-        "run_id": 12068,
-        "ts": "2026-11-20T06:23:36Z"
       }
     ],
     "tokens_by_effort": [
@@ -1367,16 +1367,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-20T12:09:05Z",
-        "deadline_in_seconds": 19527,
+        "deadline_in_seconds": 19479,
         "degraded": false,
-        "elapsed_seconds": 2073,
+        "elapsed_seconds": 2121,
         "findings": {
           "blocking": 0,
           "nitpick": 2,
           "suggestion": 1
         },
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-11-20T06:43:36Z",
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-11-20T06:44:21Z",
         "id": 12067,
         "lanes": [
           {
@@ -1408,7 +1408,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 25,
+            "since_seconds": 73,
             "state": "running"
           },
           {
@@ -1418,7 +1418,7 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "security-auditor",
-            "since_seconds": 26,
+            "since_seconds": 74,
             "state": "running"
           }
         ],
@@ -1427,10 +1427,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/137",
         "priority": true,
-        "progress": 0.836,
+        "progress": 0.855,
         "queue": "live",
         "queued_at": "2026-11-20T05:55:22Z",
-        "remaining_seconds": 406,
+        "remaining_seconds": 358,
         "repo": "PastaPastaPasta/dashwallet-desktop",
         "sha": "3972520e7d9743651b65998ebefcbaf440217d57",
         "started_at": "2026-11-20T06:09:05Z",
@@ -1522,7 +1522,7 @@
             ],
             "lanes_total": 2,
             "name": "phase2",
-            "seconds": 26,
+            "seconds": 74,
             "started_at": "2026-11-20T06:43:12Z",
             "status": "running"
           }
@@ -1537,6 +1537,116 @@
           "publish"
         ],
         "wait_seconds": 823
+      },
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-20T12:43:43Z",
+        "deadline_in_seconds": 21557,
+        "degraded": false,
+        "elapsed_seconds": 43,
+        "findings": null,
+        "heartbeat_age_seconds": 13,
+        "heartbeat_at": "2026-11-20T06:44:13Z",
+        "id": 12074,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 21,
+            "state": "running"
+          }
+        ],
+        "number": 937,
+        "overdue": false,
+        "phase": "phase2",
+        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/937",
+        "priority": true,
+        "progress": 0.032,
+        "queue": "live",
+        "queued_at": "2026-11-20T06:35:03Z",
+        "remaining_seconds": 1288,
+        "repo": "PastaPastaPasta/yappr",
+        "sha": "e932782c34b0f8167bec11c3834b47f944ff9431",
+        "started_at": "2026-11-20T06:43:43Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-11-20T06:43:45Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": []
+            },
+            "name": "select",
+            "seconds": 1,
+            "started_at": "2026-11-20T06:43:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "The diff changes when renewed wallet keys become durable in mobile/engine/src/api/session.ts and migrates pending renewals containing ephemeral private keys from account-scoped storage to shared storage in carryRenewalOver, with correctness depending on write and delete ordering across restarts.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 10,
+            "started_at": "2026-11-20T06:43:50Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 5,
+            "started_at": "2026-11-20T06:44:00Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "reason": "disabled for this repository"
+            },
+            "lanes_done": 0,
+            "name": "phase1",
+            "seconds": 0,
+            "started_at": "2026-11-20T06:44:05Z",
+            "status": "skipped"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase2",
+            "seconds": 21,
+            "started_at": "2026-11-20T06:44:05Z",
+            "status": "running"
+          }
+        ],
+        "tier": "critical",
+        "title": "fix(mobile): keep App Connect requests consistent across kills and engine restarts",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "priority_request",
+        "upcoming": [
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 520
       }
     ],
     "audit": {
@@ -1554,7 +1664,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 1,
+      "live_in_flight": 2,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1565,14 +1675,14 @@
     },
     "ci_watches": {
       "queued": 0,
-      "watching": 3
+      "watching": 2
     },
     "degraded": {
       "active": false,
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-20T06:40:55Z",
+        "at": "2026-11-20T06:43:47Z",
         "quota_exhausted": false,
         "reason": "gpt-6.2-sol answered"
       },
@@ -1595,11 +1705,11 @@
       "done": 10686,
       "failed": 100,
       "queued": 2,
-      "running": 1,
+      "running": 2,
       "superseded": 3670
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-20T06:39:21Z",
+    "ingest_last_at": "2026-11-20T06:43:41Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1621,7 +1731,7 @@
       },
       {
         "pool": "gpt",
-        "running": 2,
+        "running": 3,
         "slots": 8,
         "waiting": 0
       },
@@ -1633,40 +1743,21 @@
       }
     ],
     "last_run_done_at": "2026-11-20T06:41:25Z",
-    "last_run_started_at": "2026-11-20T06:39:22Z",
+    "last_run_started_at": "2026-11-20T06:43:43Z",
     "median_run_minutes": 13.6,
-    "notify_last_at": "2026-11-20T06:41:56Z",
-    "oldest_queued_at": "2026-11-20T06:35:03Z",
-    "priority_queued": 1,
+    "notify_last_at": "2026-11-20T06:44:08Z",
+    "oldest_queued_at": "2026-11-20T06:39:20Z",
+    "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 515,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-11-20T06:42:03Z",
-        "eligible_in_seconds": 0,
-        "number": 937,
-        "position": 1,
-        "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/937",
-        "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/937#issuecomment-7000117827",
-        "priority": true,
-        "queued_at": "2026-11-20T06:35:03Z",
-        "reason": "waiting for a review slot",
-        "repo": "PastaPastaPasta/yappr",
-        "sha": "e932782c34b0f8167bec11c3834b47f944ff9431",
-        "title": "fix(mobile): keep App Connect requests consistent across kills and engine restarts",
-        "trigger": "priority_request"
-      },
-      {
-        "age_seconds": 258,
+        "age_seconds": 306,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-20T07:09:20Z",
-        "eligible_in_seconds": 1542,
+        "eligible_in_seconds": 1494,
         "number": 958,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/958",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/958#issuecomment-7032529281",
         "priority": false,
@@ -1678,14 +1769,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 0,
+        "age_seconds": 47,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-20T07:13:39Z",
-        "eligible_in_seconds": 1801,
+        "eligible_in_seconds": 1753,
         "number": 940,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/940",
         "prioritize_url": "https://github.com/PastaPastaPasta/yappr/issues/940#issuecomment-7000184030",
         "priority": false,
@@ -1704,7 +1795,7 @@
       "reviews": 123,
       "tokens": 601500081
     },
-    "ts": "2026-11-20T06:43:38Z",
+    "ts": "2026-11-20T06:44:26Z",
     "typical_minutes_by_tier": {
       "critical": 42.5,
       "low": 27.9,
@@ -1713,9 +1804,9 @@
       "unknown": 0.6
     },
     "watchdog": {
-      "active": 1,
-      "eligible": 1,
-      "idle_minutes": 4.3,
+      "active": 2,
+      "eligible": 0,
+      "idle_minutes": 0.7166666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1723,7 +1814,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-20T06:43:38Z",
+    "generated_at": "2026-11-20T06:44:26Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
