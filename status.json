@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-21T06:23:01Z",
-  "generated_at": "2026-11-21T06:23:02Z",
+  "data_as_of": "2026-11-21T06:24:01Z",
+  "generated_at": "2026-11-21T06:24:02Z",
   "history": {
     "daily": [
       {
@@ -389,7 +389,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 43574,
+        "count": 43575,
         "severity": "suggestion"
       }
     ],
@@ -782,15 +782,15 @@
       },
       {
         "effort": "high",
-        "lanes": 30665,
-        "tokens_in": 33467261485,
-        "tokens_out": 294301727
+        "lanes": 30666,
+        "tokens_in": 33467398752,
+        "tokens_out": 294305270
       },
       {
         "effort": "low",
-        "lanes": 46,
-        "tokens_in": 6862565,
-        "tokens_out": 57656
+        "lanes": 47,
+        "tokens_in": 7010142,
+        "tokens_out": 58863
       }
     ],
     "tokens_by_model": [
@@ -809,11 +809,11 @@
         "tokens_out": 124926470
       },
       {
-        "avg_tokens_per_lane": 927530.0,
-        "lanes": 3029,
+        "avg_tokens_per_lane": 927013.0,
+        "lanes": 3031,
         "model": "gpt-6.2-sol",
-        "tokens_in": 2789929797,
-        "tokens_out": 19557100
+        "tokens_in": 2790214641,
+        "tokens_out": 19561850
       },
       {
         "avg_tokens_per_lane": 1019991.0,
@@ -859,8 +859,8 @@
       },
       {
         "run_id": 12459,
-        "tokens_in": 152943,
-        "tokens_out": 2026
+        "tokens_in": 437787,
+        "tokens_out": 6776
       },
       {
         "run_id": 12458,
@@ -1354,16 +1354,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 13731854,
+      "avg_tokens_per_completed_review": 13731883,
       "completed_reviews": 9920,
-      "findings": 85997,
+      "findings": 85998,
       "findings_posted": 12303,
       "reviews": 11073,
       "reviews_imported": 2245,
       "runs": 12460,
-      "tokens_in": 134766106968,
-      "tokens_out": 1453882531,
-      "tokens_total": 136219989499
+      "tokens_in": 134766391812,
+      "tokens_out": 1453887281,
+      "tokens_total": 136220279093
     }
   },
   "live": {
@@ -1372,12 +1372,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-21T12:20:43Z",
-        "deadline_in_seconds": 21462,
+        "deadline_in_seconds": 21402,
         "degraded": false,
-        "elapsed_seconds": 138,
-        "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-11-21T06:22:59Z",
+        "elapsed_seconds": 198,
+        "findings": {
+          "blocking": 0,
+          "nitpick": 0,
+          "suggestion": 0
+        },
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-11-21T06:24:00Z",
         "id": 12459,
         "lanes": [
           {
@@ -1389,6 +1393,26 @@
             "status": "completed",
             "tokens_in": 152943,
             "tokens_out": 2026
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.2-sol",
+            "phase": "verify2",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 137267,
+            "tokens_out": 3543
+          },
+          {
+            "attempt": 1,
+            "effort": "low",
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 147577,
+            "tokens_out": 1207
           }
         ],
         "live_lanes": [
@@ -1399,19 +1423,19 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 72,
+            "since_seconds": 5,
             "state": "running"
           }
         ],
         "number": 962,
         "overdue": false,
-        "phase": "verify2",
+        "phase": "fresh_verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/962",
         "priority": false,
-        "progress": 0.708,
+        "progress": 0.98,
         "queue": "live",
         "queued_at": "2026-11-21T05:50:35Z",
-        "remaining_seconds": 57,
+        "remaining_seconds": 4,
         "repo": "PastaPastaPasta/yappr",
         "sha": "98d5b634e238344043100c7cbc411a5283669bdc",
         "started_at": "2026-11-21T06:20:43Z",
@@ -1476,17 +1500,41 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 0,
+              "findings": 0
+            },
             "name": "verify2",
-            "seconds": 72,
+            "seconds": 92,
             "started_at": "2026-11-21T06:21:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 1,
+            "lanes_left": [],
+            "lanes_total": 1,
+            "name": "fresh_phase2",
+            "seconds": 35,
+            "started_at": "2026-11-21T06:23:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "fresh_verify2",
+            "seconds": 5,
+            "started_at": "2026-11-21T06:23:56Z",
             "status": "running"
           }
         ],
         "tier": "trivial",
         "title": "docs: mainnet v20 readiness checklist",
-        "tokens_in": 152943,
-        "tokens_out": 2026,
+        "tokens_in": 437787,
+        "tokens_out": 6776,
         "trigger": "new_push",
         "upcoming": [
           "publish"
@@ -1497,12 +1545,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-21T12:20:43Z",
-        "deadline_in_seconds": 21462,
+        "deadline_in_seconds": 21402,
         "degraded": false,
-        "elapsed_seconds": 138,
+        "elapsed_seconds": 198,
         "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-11-21T06:22:59Z",
+        "heartbeat_age_seconds": 1,
+        "heartbeat_at": "2026-11-21T06:24:00Z",
         "id": 12460,
         "lanes": [
           {
@@ -1524,7 +1572,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 29,
+            "since_seconds": 89,
             "state": "running"
           }
         ],
@@ -1533,10 +1581,10 @@
         "phase": "verify2",
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/965",
         "priority": false,
-        "progress": 0.574,
+        "progress": 0.817,
         "queue": "live",
         "queued_at": "2026-11-21T05:50:35Z",
-        "remaining_seconds": 102,
+        "remaining_seconds": 44,
         "repo": "PastaPastaPasta/yappr",
         "sha": "93ee723c72288b212a981142fd4244fdacf2ad3c",
         "started_at": "2026-11-21T06:20:43Z",
@@ -1603,7 +1651,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 29,
+            "seconds": 89,
             "started_at": "2026-11-21T06:22:32Z",
             "status": "running"
           }
@@ -1720,12 +1768,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 938,
+        "age_seconds": 998,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-21T06:37:23Z",
-        "eligible_in_seconds": 862,
+        "eligible_in_seconds": 802,
         "number": 8214,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8214",
@@ -1746,7 +1794,7 @@
       "reviews": 62,
       "tokens": 414617426
     },
-    "ts": "2026-11-21T06:23:01Z",
+    "ts": "2026-11-21T06:24:01Z",
     "typical_minutes_by_tier": {
       "critical": 32.7,
       "low": 21.7,
@@ -1757,7 +1805,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 2.3,
+      "idle_minutes": 3.3,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1765,7 +1813,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-21T06:23:01Z",
+    "generated_at": "2026-11-21T06:24:01Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -6015,7 +6063,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-21T06:23:00Z",
+      "at": "2026-11-21T06:24:01Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
@@ -6062,8 +6110,8 @@
         "by_status": {
           "done": 119,
           "queued": 44,
-          "skipped": 2083,
-          "waiting": 203
+          "skipped": 2084,
+          "waiting": 202
         },
         "discovered": 2449,
         "failed_by_reason": {},
@@ -6072,7 +6120,7 @@
         "shadowed_7d": 28,
         "shadowed_total": 119,
         "skipped_by_reason": {
-          "aged out": 1552,
+          "aged out": 1553,
           "degraded": 193,
           "head already shadowed": 17,
           "superseded": 321
@@ -6080,7 +6128,7 @@
         "waiting_by_reason": {
           "accounts": 23,
           "backlog": 127,
-          "quota guard": 53
+          "quota guard": 52
         }
       },
       "latency": {
