@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-21T10:48:02Z",
-  "generated_at": "2026-11-21T10:48:02Z",
+  "data_as_of": "2026-11-21T10:49:02Z",
+  "generated_at": "2026-11-21T10:49:03Z",
   "history": {
     "daily": [
       {
@@ -436,6 +436,14 @@
     "recent_events": [
       {
         "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5220,
+        "repo": "dashpay/platform",
+        "run_id": 12506,
+        "ts": "2026-11-21T10:48:40Z"
+      },
+      {
+        "detail": null,
         "kind": "check.synced",
         "number": 5220,
         "repo": "dashpay/platform",
@@ -737,14 +745,6 @@
         "repo": "dashpay/dash",
         "run_id": 12504,
         "ts": "2026-11-21T10:22:04Z"
-      },
-      {
-        "detail": null,
-        "kind": "thread.answered",
-        "number": 8101,
-        "repo": "dashpay/dash",
-        "run_id": 12504,
-        "ts": "2026-11-21T10:22:01Z"
       },
       {
         "detail": null,
@@ -1372,35 +1372,105 @@
         "attempt": 1,
         "author": "lklimek",
         "deadline_at": "2026-11-21T16:47:39Z",
-        "deadline_in_seconds": 21577,
+        "deadline_in_seconds": 21517,
         "degraded": false,
-        "elapsed_seconds": 23,
+        "elapsed_seconds": 83,
         "findings": null,
         "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-11-21T10:47:55Z",
+        "heartbeat_at": "2026-11-21T10:48:55Z",
         "id": 12506,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.2-sol",
-            "phase": "prep",
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 22,
+            "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 22,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 3,
+            "role": "architecture-layering",
+            "since_seconds": 22,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 23,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 24,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "platform-versioning",
+            "since_seconds": 24,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 22,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 22,
             "state": "running"
           }
         ],
         "number": 5220,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5220",
         "priority": false,
-        "progress": 0.02,
+        "progress": 0.064,
         "queue": "live",
         "queued_at": "2026-11-21T10:17:36Z",
-        "remaining_seconds": 1122,
+        "remaining_seconds": 1222,
         "repo": "dashpay/platform",
         "sha": "f82a3d69fca9f2071a462f2848ca732a96dba555",
         "started_at": "2026-11-21T10:47:39Z",
@@ -1414,29 +1484,91 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 3,
+            "seconds": 10,
             "started_at": "2026-11-21T10:47:59Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "The diff adds intricate replay and repair logic in `manager/history_replay.rs` and `manager/history_repair.rs` that determines which outputs remain spendable after restart, and changes persisted wallet state through SQLite migration V023 and the SwiftData V5 schema.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 10,
+            "started_at": "2026-11-21T10:47:59Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 3,
-            "started_at": "2026-11-21T10:47:59Z",
+            "name": "context",
+            "seconds": 29,
+            "started_at": "2026-11-21T10:48:09Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "ffi-engineer",
+                "platform-versioning",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "ffi-engineer",
+              "platform-versioning",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 6,
+            "name": "phase2",
+            "seconds": 24,
+            "started_at": "2026-11-21T10:48:38Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 24,
+            "started_at": "2026-11-21T10:48:38Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(platform-wallet)!: replay recorded transaction history on load for every persister",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase2",
           "verify2",
+          "stepback",
           "publish"
         ],
         "wait_seconds": 1803
@@ -1524,13 +1656,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 6,
         "slots": 8,
         "waiting": 0
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1543,12 +1675,12 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1120,
+        "age_seconds": 1180,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-21T10:59:22Z",
-        "eligible_in_seconds": 680,
+        "eligible_in_seconds": 620,
         "number": 8101,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8101",
@@ -1569,7 +1701,7 @@
       "reviews": 102,
       "tokens": 744345508
     },
-    "ts": "2026-11-21T10:48:02Z",
+    "ts": "2026-11-21T10:49:02Z",
     "typical_minutes_by_tier": {
       "critical": 30.8,
       "low": 20.9,
@@ -1580,7 +1712,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.38333333333333336,
+      "idle_minutes": 1.3833333333333333,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1588,7 +1720,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-21T10:48:02Z",
+    "generated_at": "2026-11-21T10:49:02Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -5838,7 +5970,7 @@
       }
     ],
     "runner": {
-      "at": "2026-11-21T10:48:00Z",
+      "at": "2026-11-21T10:49:02Z",
       "reason": "quota guard",
       "running": true,
       "state": "waiting"
