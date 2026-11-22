@@ -3003,6 +3003,56 @@ def test_open_thread_with_same_answer_is_not_replied_again_on_new_head(cfg, conn
     assert not gh.replies
 
 
+def test_a_deferral_is_stated_once_on_a_thread_that_last_said_still_applies(cfg, conn, gh, lanes):
+    """dashpay/dash#8158 (2026-11-22): a full re-review accepted the maintainer's deferral of a
+    finding whose reply the bot had already answered "Still applies". The review stopped
+    counting it, and the thread went on saying it stood."""
+    from reviewsys.contract import parse_verifier_output
+    from reviewsys.publish import answer_replied_threads
+
+    verified = parse_verifier_output(
+        {**_verifier([]), "review_phase": "final"},
+        expected_phase="final",
+        expected_coderabbit_ids=[],
+    )
+    stood = (
+        "<!-- thepastaclaw-thread-answer v1 sha=old reply=77 finding=aaa -->\n"
+        "**Still applies** (re-reviewed at `old`): the gate admits the index"
+    )
+    thread = {
+        "comment_id": 900,
+        "thread_id": "T1",
+        "awaiting_answer": False,
+        "latest_reply_id": None,
+        "bot_answers": [{"id": 901, "body": stood}],
+        "replies": [],
+    }
+    row = {
+        "finding_hash": "aaa",
+        "status": "INTENTIONALLY_DEFERRED",
+        "reason": "Deferred to the later backport of bitcoin#29770.",
+    }
+
+    def answer(t):
+        return answer_replied_threads(
+            gh,
+            "dashpay/platform",
+            1,
+            "b" * 40,
+            threads={},
+            open_threads={"aaa": t},
+            reconciliation={"aaa": row},
+            verified=verified,
+        )
+
+    out = answer(thread)
+    assert [o["action"] for o in out] == ["replied"]
+    said = gh.replies[0]["body"]
+    assert "Deferred" in said and "bitcoin#29770" in said
+    again = answer({**thread, "bot_answers": [*thread["bot_answers"], {"id": 902, "body": said}]})
+    assert [o["action"] for o in again] == ["already_answered"] and len(gh.replies) == 1
+
+
 def test_same_sha_rereview_that_finds_a_blocker_updates_final_verdict(cfg, conn, gh, lanes):
     """The standing review is a clean FINAL; the re-review finds a blocker at Phase 1. Instead of
     stacking a full preliminary review on the same commit, the final verdict gets a follow-up."""
