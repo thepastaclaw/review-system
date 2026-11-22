@@ -424,15 +424,12 @@ def test_the_ci_lane_reads_the_lead_without_its_marker():
 
 def test_a_verdict_update_lists_what_still_blocks():
     still = finding(STALE, extra={"thread_url": THREAD.format(6)}, impact="Signers see stale data.")
+    v = verified([still])
     body = publish.render_verdict_update(
         head_sha=HEAD,
         phase="final",
-        verified=verified([still]),
-        provenance=publish.Provenance(
-            reviewers=[],
-            verifier={"model": "m", "agent": "a", "role": "final-verifier"},
-            policy_fingerprint="f" * 64,
-        ),
+        verified=v,
+        provenance=model(v).provenance,
         previous_event="CHANGES_REQUESTED",
         new_event="REQUEST_CHANGES",
         lifted_blockers=["Gone now"],
