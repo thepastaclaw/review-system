@@ -451,6 +451,58 @@ def test_a_rebase_with_added_or_changed_commits_is_not_reviewed(repo):
     )
 
 
+def test_a_follow_up_the_rebase_made_necessary_is_not_demoted(repo):
+    """Rebased onto a base that has since taken bitcoin#30000: a follow-up adapting to it, on
+    unchanged lines of an unchanged commit, is the base-branch breakage the confirmation lane
+    is there for."""
+    base = _base(repo)
+    lines = _lines(20, "init")
+    since = _pr(repo, base, [{INIT: "\n".join(lines) + "\n"}])[-1]
+    _advance(repo, {"base.cpp": "upstream 1\n"})
+    _git(repo, "commit", "-q", "--amend", "-m", "Merge bitcoin/bitcoin#30000: change the API")
+    newer = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "update-ref", "refs/remotes/origin/develop", newer)
+    head = _pr(repo, newer, [{INIT: "\n".join(lines) + "\n"}])[-1]
+    commits = late.Commits(
+        repo, head, since, newer, late.rewrite_since(repo, since, head, "develop", newer)
+    )
+    assert commits.reviewed(_f(INIT, 3, 5))
+    assert commits.base_took({30000}, UPS)
+    assert not commits.base_took({29770}, UPS)
+    merge_form = late.Commits(repo, head, since, newer, commits.rewrite)
+    assert merge_form.base_took({30000}, ())  # "Merge ... #N" without the repository names
+    # the base range cannot be read: not demoted
+    unread = late.Commits(repo, head, since, newer, late.Rewrite("0" * 40, newer))
+    assert unread.base_took({30000}, UPS)
+    # no rebase: the rule does not apply
+    assert not late.Commits(repo, since, since, base).base_took({30000}, UPS)
+    f = Finding.from_dict({**FOLLOWUP, "title": "Missing follow-up: adapt to bitcoin#30000"})
+    assert late.upstream_changes(f, UPS) == {30000}
+    from types import SimpleNamespace
+
+    ctx = SimpleNamespace(
+        cfg=SimpleNamespace(
+            policy=SimpleNamespace(pipeline=None),
+            repo=lambda name: SimpleNamespace(upstream_repos=UPS),
+        ),
+        is_audit=False,
+        repo="dashpay/dash",
+        worktree=repo,
+        sha=head,
+        prev_final_sha=since,
+        merge_base=newer,
+        meta=SimpleNamespace(base_ref="develop"),
+        since_rewrite=None,
+        since_rewrite_read=False,
+    )
+    reviewed = worker._reviewed_test(ctx)
+    other = Finding.from_dict({**FOLLOWUP, "file": INIT, "line_start": 3, "line_end": 5})
+    assert reviewed(other)  # bitcoin#29770: not what the base took
+    assert not reviewed(
+        Finding.from_dict({**FOLLOWUP, "title": f.title, "line_start": 3, "line_end": 5})
+    )
+
+
 def test_blame_drops_base_lines_in_every_group(repo):
     """`git blame --porcelain` prints `boundary` only the first time a commit appears: base
     lines on both sides of the pull request's line are all left out."""
@@ -487,20 +539,33 @@ def places(monkeypatch, request):
     monkeypatch.setattr(late, "listed_spots", lambda repo, head, rows: _same_places(rows))
 
 
-def test_a_reworded_blocker_on_the_same_lines_keeps_its_earlier_verdict(
+def test_a_reworded_blocker_on_the_same_lines_is_asked_with_the_earlier_verdict(
     cfg, conn, gh, lanes, places
 ):
     """#8158: 635d64ec1b53, not confirmed in run 12925, came back as 64cc089d0e88 on the same
-    `validation.cpp:3944-3958` lines and was confirmed in run 12981."""
+    `validation.cpp:3944-3958` lines and was confirmed in run 12981 by a lane that never saw
+    the earlier verdict. It is asked again, anchored on that verdict: matched only by place,
+    it could also be a different defect (a missing hunk) that must not be settled unasked."""
+    _first_round(cfg, conn, gh, lanes)
+    lanes.confirm = {STOPATHEIGHT["title"]: "non_blocking", REWORDED["title"]: "non_blocking"}
+    _round(cfg, conn, gh, lanes, C, [STOPATHEIGHT])
+    _round(cfg, conn, gh, lanes, D, [REWORDED])
+    confirms = [c.prompt for c in lanes.calls if c.role == "confirm"]
+    assert len(confirms) == 2
+    assert '"earlier_at_place": {' in confirms[1]
+    assert f'"title": "{STOPATHEIGHT["title"]}"' in confirms[1]
+    assert '"verdict": "non_blocking"' in confirms[1] and '"reason": "read the code"' in confirms[1]
+    assert "If it is the same concern in other words, answer as before" in confirms[1]
+    assert gh.posted_reviews[-1]["event"] == "APPROVE"
+
+
+def test_a_reworded_blocker_matched_by_hash_is_not_asked_again(cfg, conn, gh, lanes, places):
     _first_round(cfg, conn, gh, lanes)
     lanes.confirm = {STOPATHEIGHT["title"]: "non_blocking"}
     _round(cfg, conn, gh, lanes, C, [STOPATHEIGHT])
-    lanes.confirm = {}
-    _round(cfg, conn, gh, lanes, D, [REWORDED])
+    _round(cfg, conn, gh, lanes, D, [{**STOPATHEIGHT, "body": "Reworded body."}])
     assert len([c for c in lanes.calls if c.role == "confirm"]) == 1
-    review = gh.posted_reviews[-1]
-    assert review["event"] == "APPROVE"
-    assert "(1 as an earlier confirmation decided" in review["body"]
+    assert "(1 as an earlier confirmation decided" in gh.posted_reviews[-1]["body"]
 
 
 def test_a_reply_since_the_verdict_has_the_reworded_blocker_asked_again(
@@ -524,7 +589,8 @@ def test_a_reply_since_the_verdict_has_the_reworded_blocker_asked_again(
     gh.threads[0]["comments"]["nodes"].append(_gql_comment({**KNST, "body": "Repro: ..."}))
     lanes.confirm = {}
     _round(cfg, conn, gh, lanes, D, [{**sugg, "finding_hash": hs}, REWORDED], still)
-    assert len([c for c in lanes.calls if c.role == "confirm"]) == 2
+    confirms = [c.prompt for c in lanes.calls if c.role == "confirm"]
+    assert len(confirms) == 2 and "earlier_at_place" not in confirms[1]
 
 
 def test_a_blocker_elsewhere_in_the_file_is_asked(cfg, conn, gh, lanes, places, monkeypatch):
@@ -556,7 +622,8 @@ def test_a_blocker_on_changed_code_or_a_wider_range_is_asked(
     lanes.confirm = {STOPATHEIGHT["title"]: "non_blocking"}
     _round(cfg, conn, gh, lanes, C, [STOPATHEIGHT])
     _round(cfg, conn, gh, lanes, D, [new])
-    assert len([c for c in lanes.calls if c.role == "confirm"]) == 2
+    confirms = [c.prompt for c in lanes.calls if c.role == "confirm"]
+    assert len(confirms) == 2 and "earlier_at_place" not in confirms[1]
 
 
 def test_an_invalid_verdict_is_not_applied_by_place(cfg, conn, gh, lanes, places):
@@ -565,7 +632,8 @@ def test_an_invalid_verdict_is_not_applied_by_place(cfg, conn, gh, lanes, places
     _round(cfg, conn, gh, lanes, C, [STOPATHEIGHT])
     lanes.confirm = {}
     _round(cfg, conn, gh, lanes, D, [REWORDED])
-    assert len([c for c in lanes.calls if c.role == "confirm"]) == 2
+    confirms = [c.prompt for c in lanes.calls if c.role == "confirm"]
+    assert len(confirms) == 2 and "earlier_at_place" not in confirms[1]
 
 
 def test_within():

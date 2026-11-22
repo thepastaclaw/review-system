@@ -5176,7 +5176,8 @@ def _reviews_of_lines(ctx: RunContext, f: Finding) -> int:
 
 def _reviewed_test(ctx: RunContext) -> Callable[[Finding], bool]:
     """For `late.split`: the pull request wrote a finding's lines and none of its commits was
-    added or changed since the previous full review (`late.Commits.reviewed`)."""
+    added or changed since the previous full review (`late.Commits.reviewed`), and no rebase
+    since brought in the upstream change the finding names (`late.Commits.base_took`)."""
     if ctx.worktree is None or ctx.prev_final_sha is None:
         return lambda f: False
     commits = late.Commits(
@@ -5186,7 +5187,10 @@ def _reviewed_test(ctx: RunContext) -> Callable[[Finding], bool]:
         ctx.merge_base,
         _since_rewrite(ctx),
     )
-    return commits.reviewed
+    ups = _upstreams(ctx)
+    return lambda f: (
+        commits.reviewed(f) and not commits.base_took(late.upstream_changes(f, ups), ups)
+    )
 
 
 def _converges(ctx: RunContext) -> bool:
@@ -5485,9 +5489,12 @@ def _gate_late(
     raw_findings, raw_blockers = len(verified.findings), verified.blocker_count
     known = known or {}
     remembered = {id(f): known[f.hash] for f in split.candidates if f.hash in known}
-    remembered |= _remembered_decisions(ctx, [f for f in split.candidates if f.hash not in known])
+    by_hash, at_place = _remembered_decisions(
+        ctx, [f for f in split.candidates if f.hash not in known]
+    )
+    remembered |= by_hash
     ask = [f for f in split.candidates if id(f) not in remembered]
-    asked = _confirm_late(ctx, ask) if ask else {}
+    asked = _confirm_late(ctx, ask, at_place) if ask else {}
     unchecked = ask if asked is None else []
     decisions = {**remembered, **(asked or {})}
     confirmed, unconfirmed, invalid = _apply_decisions(split.candidates, decisions)
@@ -5546,7 +5553,12 @@ def _gate_late(
         late.STAGE_NIT: split.nits,
         late.STAGE_FOLLOWUP: split.followups + split.upstream,
         late.STAGE_REPEAT: split.repeats,
-        late.STAGE_UNCONFIRMED: unconfirmed,
+        late.STAGE_UNCONFIRMED: [
+            dataclasses.replace(
+                f, body=f"{f.body}\n\n{late.NOT_CONFIRMED}{f.extra['confirmation']['reason']}"
+            )
+            for f in unconfirmed
+        ],
         late.STAGE_INVALID: invalid,
         late.STAGE_SETTLED: split.settled,
     }
@@ -5676,45 +5688,61 @@ def _apply_decisions(
     return confirmed, unconfirmed, invalid
 
 
-def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision]:
+def _remembered_decisions(
+    ctx: RunContext, candidates: list[Finding]
+) -> tuple[dict[int, late.Decision], dict[int, dict[str, Any]]]:
     """Candidates an earlier full-strength round's confirmation already judged not blocking,
-    whose thread nobody replied on since: its verdict stands, no lane asks again. Matched by
-    hash with the file unchanged since that round, or, for a `non_blocking` verdict and a
-    candidate on unchanged lines, by place (`late.within`: the same file, within the range of
-    that finding, whose lines are unchanged since): dashpay/dash#8158 had a blocker the lane
-    did not confirm come back reworded on the same lines and get confirmed. A
-    re-review of the head of the last full review, which someone asked for, asks again."""
+    whose threads nobody replied on since. Matched by hash with the file unchanged since that
+    round, its verdict stands and no lane asks again. Matched only by place (a `non_blocking`
+    verdict, a candidate on unchanged lines `late.within` the range of that finding, its lines
+    unchanged since), the lane is asked, shown that earlier verdict
+    (`late.candidate_briefs`'s `earlier`): dashpay/dash#8158 had a blocker the lane did not
+    confirm come back reworded on the same lines and get confirmed, but a different defect at
+    the same place, a missing hunk for one, must not be settled unasked. Returns (verdicts by
+    hash, earlier verdicts by place), both by `id(finding)`. A re-review of the head of the
+    last full review, which someone asked for, has neither."""
     if not candidates or ctx.code_history is None or ctx.sha == ctx.prev_final_sha:
-        return {}
+        return {}, {}
     marks = ",".join("?" * len(late.REMEMBERED))
     rows = ctx.conn.execute(
-        "SELECT f.hash, f.stage, f.file, f.line_start, f.line_end, h.sha, r.started_at "
-        "FROM findings f JOIN runs r ON r.id=f.run_id "
+        "SELECT f.hash, f.stage, f.file, f.line_start, f.line_end, f.title, f.body, h.sha, "
+        "r.started_at FROM findings f JOIN runs r ON r.id=f.run_id "
         "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND h.queue='live' "
         f"AND r.degraded=0 AND f.run_id<>? AND f.stage IN ({marks}) ORDER BY f.id",
         (ctx.repo, ctx.number, ctx.run_id, *late.REMEMBERED),
     ).fetchall()
     earlier = {str(r["hash"]): r for r in rows}
     places: list[tuple[late.Spot, sqlite3.Row]] | None = None
-    out: dict[int, late.Decision] = {}
+    by_hash: dict[int, late.Decision] = {}
+    at_place: dict[int, dict[str, Any]] = {}
     for f in candidates:
         row = earlier.get(f.hash)
-        if row is not None and ctx.code_history.changed_since(str(row["sha"]), f.file) is not False:
+        hashed = row is not None and (
+            ctx.code_history.changed_since(str(row["sha"]), f.file) is False
+        )
+        if not hashed:
             row = None
-        if row is None and late.on_unchanged(f):
-            if places is None:
-                places = _decided_places(ctx, rows)
-            row = next((r for spot, r in places if late.within(f, spot)), None)
+            if late.on_unchanged(f):
+                if places is None:
+                    places = _decided_places(ctx, rows)
+                row = next((r for spot, r in places if late.within(f, spot)), None)
         thread = (f.extra.get("judged_fixed") or {}).get("hash") or f.prior_hash or f.hash
         at = str(row["started_at"]) if row is not None else ""
-        if row is not None and not any(
-            _human_replies_since(ctx, h, at) for h in {thread, str(row["hash"])}
-        ):
-            sha = str(row["sha"])
-            out[id(f)] = late.Decision(
-                late.REMEMBERED[str(row["stage"])], reason=f"decided at {sha[:8]}"
-            )
-    return out
+        if row is None or any(_human_replies_since(ctx, h, at) for h in {thread, str(row["hash"])}):
+            continue
+        verdict = late.REMEMBERED[str(row["stage"])]
+        if hashed:
+            by_hash[id(f)] = late.Decision(verdict, reason=f"decided at {str(row['sha'])[:8]}")
+        else:
+            at_place[id(f)] = {
+                "title": str(row["title"]),
+                "verdict": verdict,
+                "reason": str(row["body"] or "").rpartition(late.NOT_CONFIRMED)[2]
+                if late.NOT_CONFIRMED in str(row["body"] or "")
+                else "",
+                "lines_unchanged_since": str(row["sha"]),
+            }
+    return by_hash, at_place
 
 
 def _decided_places(
@@ -5751,7 +5779,11 @@ def _human_replies_since(ctx: RunContext, h: str, since: str) -> list[dict[str, 
     ]
 
 
-def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision] | None:
+def _confirm_late(
+    ctx: RunContext,
+    candidates: list[Finding],
+    earlier: dict[int, dict[str, Any]] | None = None,
+) -> dict[int, late.Decision] | None:
     """One confirmation lane for all the blockers of this round to confirm: the final
     verifier's model and effort in a fresh session, shown the claims, the code and the PR
     diff, never the verifier's reasoning. Decisions by `id(finding)`. None when the lane
@@ -5772,7 +5804,9 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
         meta=ctx.meta.as_dict(),
         coverage_from=ctx.coverage_from,
         reported=late.candidate_briefs(
-            candidates, reviews=[_reviews_of_lines(ctx, f) for f in candidates]
+            candidates,
+            reviews=[_reviews_of_lines(ctx, f) for f in candidates],
+            earlier=[(earlier or {}).get(id(f)) for f in candidates],
         ),
         guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
         settled=settled_matters(ctx.prior),

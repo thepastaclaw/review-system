@@ -50,6 +50,8 @@ STAGE_SETTLED = "late-settled"  # judged fixed earlier, raised again on unchange
 STAGE_LISTED = "followup"
 # a confirmation verdict that is remembered for the finding: (stage, verdict)
 REMEMBERED = {STAGE_UNCONFIRMED: "non_blocking", STAGE_INVALID: "invalid"}
+# how a `late-unconfirmed` row's body ends: the confirmation's reason follows
+NOT_CONFIRMED = "Not confirmed as blocking by an independent pass: "
 # a prior finding a full review judged fixed, its body the status and the head it was judged
 # at (two lines); later rounds read it until a review carries or posts the finding again
 STAGE_FIXED = "judged-fixed"
@@ -316,8 +318,21 @@ LATE_FOLLOWUP_NOTE = (
 )
 # a change in another repository: `owner/repo#N`, `repo#N` or a link to it
 _UPSTREAM_REF = re.compile(
-    r"github\.com/([\w.-]+/[\w.-]+)/(?:pull|issues)/\d+|(?<![\w./-])((?:[\w.-]+/)?[\w.-]+)#\d+\b"
+    r"github\.com/([\w.-]+/[\w.-]+)/(?:pull|issues)/(\d+)"
+    r"|(?<![\w./-])((?:[\w.-]+/)?[\w.-]+)#(\d+)\b"
 )
+
+
+def upstream_changes(f: Finding, upstreams: Iterable[str]) -> set[int]:
+    """The numbers of the changes in the repositories this one backports from (`upstreams`)
+    that `f`'s title or body names, as `bitcoin#N`, `bitcoin/bitcoin#N` or a link."""
+    ups = {u.lower() for u in upstreams}
+    names = ups | {u.rsplit("/", 1)[-1] for u in ups}
+    return {
+        int(m.group(2) or m.group(4))
+        for m in _UPSTREAM_REF.finditer(f"{f.title}\n{f.body}")
+        if (m.group(1) or m.group(3)).lower() in names
+    }
 
 
 def is_missing_followup(f: Finding, upstreams: Iterable[str]) -> bool:
@@ -329,12 +344,7 @@ def is_missing_followup(f: Finding, upstreams: Iterable[str]) -> bool:
     marked = f.extra.get("upstream_followup") is True or f.title.lower().startswith(
         "missing follow-up:"
     )
-    ups = {u.lower() for u in upstreams}
-    names = ups | {u.rsplit("/", 1)[-1] for u in ups}
-    refs = {
-        (m.group(1) or m.group(2)).lower() for m in _UPSTREAM_REF.finditer(f"{f.title}\n{f.body}")
-    }
-    return marked and bool(refs & names)
+    return marked and bool(upstream_changes(f, upstreams))
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,6 +428,30 @@ class Commits:
         rows = [m.group(1) for line in lines if (m := _RANGE_DIFF_ROW.match(line))]
         return len(rows) == len(lines) and not any(r in "!>" for r in rows)
 
+    def base_took(self, changes: set[int], upstreams: Iterable[str]) -> bool:
+        """After a rebase, the base branch took one of the upstream `changes` between the two
+        merge bases (a commit subject names it: `bitcoin#N`, `bitcoin/bitcoin#N`, `Merge ...
+        #N`), so the rebase may be what made the follow-up necessary. True as well when that
+        range cannot be read; False without a rebase."""
+        rw = self.rewrite
+        if rw is None or not changes:
+            return False
+        if not (rw.old_base and rw.new_base):
+            return True
+        res = _git(self.repo, "log", "--format=%s", f"{rw.old_base}..{rw.new_base}")
+        if res is None or res.returncode != 0:
+            return True
+        names = "|".join(
+            re.escape(n) for u in upstreams for n in {u.lower(), u.lower().rsplit("/", 1)[-1]}
+        )
+        took = re.compile(
+            rf"(?:(?<![\w./-])(?:{names})#|^merge\b.*#)({'|'.join(map(str, changes))})(?!\d)"
+            if names
+            else rf"^merge\b.*#({'|'.join(map(str, changes))})(?!\d)",
+            re.IGNORECASE,
+        )
+        return any(took.search(line) for line in res.stdout.splitlines())
+
     def blame(self, f: Finding) -> set[str] | None:
         """The pull request's commits that last touched `f`'s lines at `head` (lines from the
         base branch are boundary lines, not in it)."""
@@ -467,11 +501,14 @@ def candidate_ids(n: int) -> list[str]:
 
 
 def candidate_briefs(
-    findings: list[Finding], reviews: list[int] | None = None
+    findings: list[Finding],
+    reviews: list[int] | None = None,
+    earlier: list[dict[str, Any] | None] | None = None,
 ) -> list[dict[str, Any]]:
     """What the confirmation lane is shown of each candidate: the claim, never the verifier's
     reasoning, confidence or sources; on a later round, its code status in words and how many
-    full reviews its lines have been through (`reviews`, one per finding)."""
+    full reviews its lines have been through (`reviews`, one per finding), and the verdict an
+    earlier confirmation gave a finding at the same place (`earlier`, `earlier_at_place`)."""
     return [
         {
             "id": cid,
@@ -482,6 +519,7 @@ def candidate_briefs(
             "title": f.title,
             "body": f.body,
             **({"suggested_fix": f.suggestion} if f.suggestion else {}),
+            **({"earlier_at_place": before} if before else {}),
             **(
                 {
                     "code_status": STATUS_WORDS[status],
@@ -500,8 +538,12 @@ def candidate_briefs(
                 else {}
             ),
         }
-        for cid, f, n in zip(
-            candidate_ids(len(findings)), findings, reviews or [0] * len(findings), strict=True
+        for cid, f, n, before in zip(
+            candidate_ids(len(findings)),
+            findings,
+            reviews or [0] * len(findings),
+            earlier or [None] * len(findings),
+            strict=True,
         )
     ]
 

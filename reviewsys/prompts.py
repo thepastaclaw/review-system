@@ -1087,6 +1087,13 @@ def confirmation_prompt(
         "reproduction someone posted, for one): check it against the code.\n"
         if any(r.get("judged_fixed_at") for r in reported)
         else ""
+    ) + (
+        "- A finding with `earlier_at_place` lies within the lines of an earlier finding that "
+        "an independent pass judged as `verdict`, for `reason`, with those lines unchanged "
+        "since. If it is the same concern in other words, answer as before unless it shows "
+        "something new; if it is a different defect, judge it on its own.\n"
+        if any(r.get("earlier_at_place") for r in reported)
+        else ""
     )
     settled_block = (
         "## Settled on this pull request\n\n"
