@@ -42,8 +42,8 @@ log = logging.getLogger(__name__)
 API_ROOT = "https://api.github.com/"
 BATCH_DELAY = timedelta(minutes=5)
 BATCH_RETRY = timedelta(minutes=15)
-# re-reviews of one commit that pending review requests may start
-MAX_REQUESTED_REREVIEWS = 3
+# re-reviews of one already-reviewed commit that review requests and mentions may start
+MAX_ASKED_REREVIEWS = 3
 DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
 ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
@@ -142,15 +142,15 @@ def _route_row(
 
     if kind == "review_requested" and watched and is_open and head and not own_pr:
         with tx(conn):
-            enqueue_head(
+            _ask(
                 conn,
                 cfg,
                 repo,
                 number,
                 head,
                 Trigger.REVIEW_REQUESTED,
-                ts=ts,
-                rereview=_review_awaited(conn, cfg, meta, repo, number, head),
+                ts,
+                rereview=_review_awaited(cfg, meta),
             )
             _handled(conn, row["id"], "review_requested", ts)
         return "review_requested"
@@ -181,7 +181,7 @@ def _route_row(
     ):
         with tx(conn):
             first = _asks_again(conn, cfg, row, comment or {}, actor, body)
-            enqueue_head(conn, cfg, repo, number, head, Trigger.MENTION, ts=ts, rereview=first)
+            _ask(conn, cfg, repo, number, head, Trigger.MENTION, ts, rereview=first)
             _handled(conn, row["id"], "mention", ts)
         return "mention"
 
@@ -330,6 +330,20 @@ def _already_routed(conn: sqlite3.Connection, row: sqlite3.Row, action: str) -> 
     )
 
 
+def _own_words(body: str) -> str:
+    """A comment without what it quotes or shows as code: a quoted "> @bot review" or a
+    command in backticks is not the commenter asking."""
+    kept: list[str] = []
+    fenced = False
+    for line in body.splitlines():
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        if not fenced and not line.lstrip().startswith(">"):
+            kept.append(re.sub(r"`[^`\n]*`", " ", line))
+    return "\n".join(kept)
+
+
 def _asks_again(
     conn: sqlite3.Connection,
     cfg: Config,
@@ -348,31 +362,50 @@ def _asks_again(
         and login not in (cfg.bot_login.lower(), *ALLOWED_BOTS)
         and not login.endswith("[bot]")
         and _trusted(cfg, comment, actor)
-        and bool(_rereview_re(cfg.bot_login).search(body))
+        and bool(_rereview_re(cfg.bot_login).search(_own_words(body)))
         and not _already_routed(conn, row, "mention")
     )
 
 
-def _review_awaited(
-    conn: sqlite3.Connection, cfg: Config, meta: dict[str, Any], repo: str, number: int, head: str
-) -> bool:
+def _review_awaited(cfg: Config, meta: dict[str, Any]) -> bool:
     """Someone asked the bot for a review that it has not given yet: it is among the pull
     request's requested reviewers, which GitHub clears when the bot next submits a review.
     Every later update of the pull request repeats the `review_requested` notification, so
-    the notification alone says nothing. Bounded per commit in case a re-review ends without
-    submitting one."""
-    asked = any(
+    the notification alone says nothing."""
+    return any(
         str((r or {}).get("login") or "").lower() == cfg.bot_login.lower()
         for r in meta.get("requested_reviewers") or []
     )
-    if not asked:
-        return False
-    done = conn.execute(
-        "SELECT COUNT(*) FROM events WHERE kind='head.requeued' AND repo=? AND number=? "
-        "AND detail=?",
-        (repo, number, f"{head[:8]} re-opened by {Trigger.REVIEW_REQUESTED.value}"),
-    ).fetchone()[0]
-    return bool(done < MAX_REQUESTED_REREVIEWS)
+
+
+def _ask(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    repo: str,
+    number: int,
+    head: str,
+    trigger: Trigger,
+    ts: str,
+    *,
+    rereview: bool,
+) -> None:
+    """Queue `head` for someone asking. A fresh explicit ask (`rereview`) also re-reviews a
+    commit that has its own review, at most MAX_ASKED_REREVIEWS times per commit across
+    requests and mentions: a re-review that ends without submitting a review leaves the
+    request standing, and each new comment is a new ask. Caller holds the transaction."""
+    key = f"router.asked_rereviews:{repo}#{number}:{head}"
+    done = int(kv_get(conn, key) or 0)
+    allowed = rereview and done < MAX_ASKED_REREVIEWS
+    reviewed = (
+        conn.execute(
+            "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1",
+            (repo, number, head),
+        ).fetchone()
+        is not None
+    )
+    res = enqueue_head(conn, cfg, repo, number, head, trigger, ts=ts, rereview=allowed)
+    if allowed and reviewed and res in ("requeued", "promoted"):
+        kv_set(conn, key, str(done + 1))
 
 
 def _reply_after_push(

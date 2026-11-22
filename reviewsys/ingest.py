@@ -107,8 +107,9 @@ def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
     return bool(row and row["skip_label"])
 
 
-# what re-opens an already-reviewed commit: a reply under a finding, an operator, either
-# gate-comment box (a mention or review request on a reviewed commit changes nothing)
+# what always re-opens an already-reviewed commit: a reply under a finding, an operator,
+# either gate-comment box. A mention or review request (`ASKING`) does so only when the
+# router found it a fresh, explicit ask (`rereview`); otherwise it changes nothing there
 REOPENING = frozenset(
     {Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST}
 )
@@ -292,18 +293,14 @@ def enqueue_head(
             # so review it again with the threads in context and answer on them; the normal
             # box re-opens it at the back of the line, everything else at the front
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts, priority=priority)
-        if trigger in ASKING and (
-            existing["status"] == HeadStatus.FAILED
-            or (
-                existing["status"] == HeadStatus.DONE
-                and (
-                    carried_from(conn, repo, number, sha)
-                    or not _has_review(conn, repo, number, sha)
-                )
-            )
+        if (
+            trigger in ASKING
+            and existing["status"] in (HeadStatus.FAILED, HeadStatus.DONE)
+            and (carried_from(conn, repo, number, sha) or not _has_review(conn, repo, number, sha))
         ):
             # nothing reviewed this commit itself (its review is carried, or the review gave
-            # up): someone asking gets a review
+            # up): someone asking gets a review. A commit with its own review, failed
+            # re-review or not, takes a fresh explicit ask (`rereview`) above
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
     supersede_other_heads(conn, repo, number, sha, ts)

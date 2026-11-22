@@ -1467,11 +1467,11 @@ def test_requested_rereviews_of_one_commit_are_bounded(cfg, conn, gh, notifier):
     sha = "8" * 40
     _reviewed(conn, cfg, 77, sha)
     gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "thepastaclaw"}]}
-    for i in range(router.MAX_REQUESTED_REREVIEWS + 2):
+    for i in range(router.MAX_ASKED_REREVIEWS + 2):
         _ask(conn, f"n{i}", "review_requested", 77)
         route_inbox(conn, cfg, gh, notifier)
         _finish(conn, 77)
-    assert _requeues(conn, 77) == router.MAX_REQUESTED_REREVIEWS
+    assert _requeues(conn, 77) == router.MAX_ASKED_REREVIEWS
 
 
 def test_a_trusted_mention_rereviews_a_reviewed_commit_once(cfg, conn, gh, notifier):
@@ -1574,3 +1574,64 @@ def test_a_pending_request_takes_over_a_queued_ci_check(cfg, conn, gh, notifier)
     route_inbox(conn, cfg, gh, notifier)
     head = conn.execute("SELECT status, trigger FROM heads WHERE number=99").fetchone()
     assert tuple(head) == ("queued", "review_requested")
+
+
+def test_a_failed_rereview_is_not_restarted_by_later_activity(cfg, conn, gh, notifier):
+    """A re-review that gave up leaves the commit's earlier review standing. The repeated
+    `review_requested` notifications of later comments must not start it again."""
+    sha = "8" * 40
+    _reviewed(conn, cfg, 78, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    _ask(conn, "n0", "review_requested", 78)
+    route_inbox(conn, cfg, gh, notifier)
+    assert _requeues(conn, 78) == 1
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE number=78")
+    gh.pr = {**gh.pr, "requested_reviewers": []}
+    for i in range(1, 4):
+        _ask(conn, f"n{i}", "review_requested", 78)
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT status FROM heads WHERE number=78").fetchone()[0] == "failed"
+    assert _requeues(conn, 78) == 1
+
+
+def test_a_failed_first_review_is_still_restarted_by_someone_asking(cfg, conn, gh, notifier):
+    sha = "7" * 40
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 79, sha, Trigger.NEW_PUSH)
+        conn.execute("UPDATE heads SET status='failed', finished_at='x' WHERE sha=?", (sha,))
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": []}
+    _ask(conn, "n0", "review_requested", 79)
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT status FROM heads WHERE number=79").fetchone()[0] == "queued"
+
+
+def test_a_quoted_or_code_command_is_not_the_commenter_asking(cfg, conn, gh, notifier):
+    quoted = "> @thepastaclaw review\n\nThanks, @thepastaclaw, the existing review is enough."
+    assert _mention(conn, cfg, gh, notifier, 61, 611, quoted, "knst") == 0
+    code = "To ask again, write `@thepastaclaw review`. Not needed here, @thepastaclaw."
+    assert _mention(conn, cfg, gh, notifier, 62, 621, code, "knst") == 0
+    fenced = "```\n@thepastaclaw review\n```\n@thepastaclaw fyi"
+    assert _mention(conn, cfg, gh, notifier, 63, 631, fenced, "knst") == 0
+    own = "> the guard is there\n\n@thepastaclaw please re-review"
+    assert _mention(conn, cfg, gh, notifier, 64, 641, own, "knst") == 1
+
+
+def test_mentions_and_requests_share_the_per_commit_bound(cfg, conn, gh, notifier):
+    from reviewsys import router
+
+    sha = "9" * 40
+    _reviewed(conn, cfg, 65, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    for i in range(router.MAX_ASKED_REREVIEWS + 2):
+        path = f"repos/dashpay/platform/issues/comments/{650 + i}"
+        gh.routes[path] = {
+            "id": 650 + i,
+            "body": "@thepastaclaw review",
+            "user": {"login": "knst"},
+            "author_association": "CONTRIBUTOR",
+        }
+        _ask(conn, f"m{i}", "mention", 65, f"https://api.github.com/{path}")
+        route_inbox(conn, cfg, gh, notifier)
+        _finish(conn, 65)
+    assert _requeues(conn, 65) == router.MAX_ASKED_REREVIEWS
