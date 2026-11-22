@@ -38,6 +38,12 @@ no issue was ever filed. So a deferral (of anything above a nitpick) is accepted
 tracking reference a reader of the PR can see, which code checks (`accept_deferrals`), or an
 issue the worker files at a maintainer's request (`FileRequest`).
 
+A backport's missing upstream follow-up is the exception: the project tracks every upstream
+change it has not taken, so when a maintainer defers the fix to a later backport the upstream
+change itself is the tracking (`upstream_followup`), and nothing is asked for. On
+dashpay/dash#8158 a maintainer said twice that the fix "will be backported in its turn" and
+the finding stood for six rounds, first for want of an issue and then as a dispute.
+
 A dispute is answered once. On dashpay/platform#5529 an author declined a blocker with
 precedents and got "Still applies" for 24 reviews. A maintainer or the PR author who still
 disputes a finding after the bot answered their argument leaves it DISPUTED
@@ -139,6 +145,8 @@ class ThreadOutcome:
     tracking_url: str = ""
     file_request: FileRequest | None = None
     tracking_filed: bool = False  # the worker filed that issue for this outcome just now
+    # the upstream change a backport's missing follow-up is deferred to, as the lane cited it
+    upstream: str = ""
     # the latest human message disputes the finding on its merits (the lane's reading)
     disputed: bool = False
 
@@ -226,6 +234,38 @@ def latest_has_standing(thread: dict[str, Any], author: str = "") -> bool:
     """The newest human reply on a finding thread (other bots left out) has standing."""
     replies = thread.get("replies") or []
     return bool(replies) and has_standing(replies[-1], author)
+
+
+def maintainer_spoke(thread: dict[str, Any]) -> bool:
+    """A maintainer replied somewhere on the thread."""
+    return any(has_standing(c) for c in thread.get("transcript") or [])
+
+
+def upstream_followup(
+    cited: Any,
+    thread: dict[str, Any],
+    *,
+    repo: str,
+    number: int,
+    upstreams: tuple[str, ...] | list[str],
+) -> str:
+    """A link to the upstream change a backport's missing follow-up is deferred to: `cited`
+    (a URL or `owner/repo#N`) names a change in one of the repositories `repo` backports from
+    (`upstreams`, its config's `upstream_repos`), not this pull request itself, and its
+    number is on the finding's thread (the finding or a reply) in some form (`#N`,
+    `bitcoin#N`, a link); "" otherwise."""
+    named = next(iter(_refs(cited, "").items()), None) if isinstance(cited, str) else None
+    if named is None:
+        return ""
+    (owner_repo, n), link = named
+    said = str(thread.get("body") or "") + "\n" + thread_text(thread)
+    if (
+        owner_repo not in {u.lower() for u in upstreams}
+        or (owner_repo, n) == (repo.lower(), number)
+        or not re.search(rf"(?:#|/pull/|/issues/){n}(?!\d)", said)
+    ):
+        return ""
+    return link
 
 
 def _maintainer_spoke_last(thread: dict[str, Any]) -> bool:
@@ -416,6 +456,7 @@ def accept_deferrals(
     pr_text: str = "",
     can_file: bool = True,
     author: str = "",
+    upstreams: tuple[str, ...] = (),
 ) -> ConversationOutput:
     """Vet every INTENTIONALLY_DEFERRED outcome in code; the lane's word is not enough.
 
@@ -431,6 +472,10 @@ def accept_deferrals(
     asks next is not a new deferral to vet, though a maintainer may still have the bot file
     its tracking issue. `can_file` False: the lane cannot ask for one to be filed (see
     `tracking_ask`).
+
+    A backport's missing upstream follow-up a maintainer defers to a later backport needs
+    neither: the upstream change the lane cites (`upstream`), in one of the repositories
+    this one backports from (`upstreams`), is its tracking (`upstream_followup`).
 
     A non-blocking finding is the PR's `author`'s call as much as a maintainer's, and is asked
     for tracking once: on a thread where that ask was already made (`tracking_asked`), the
@@ -453,6 +498,8 @@ def accept_deferrals(
         link = tracking_link(o.tracking_url, visible=visible, repo=repo, number=number) or (
             cued_link(str(asker.get("body") or ""), repo=repo, number=number) if asker else ""
         )
+        if not link and has_standing(asker):
+            link = upstream_followup(o.upstream, t, repo=repo, number=number, upstreams=upstreams)
         if h not in settled and asker is None:
             outcomes[h] = dataclasses.replace(
                 o, status=DEFERRAL_PENDING, tracking_url="", file_request=None
@@ -669,13 +716,17 @@ def prompt(
         "this repository or its target branch that makes it fail here where it does not fail "
         "upstream, or a build or test failure on this head that it causes. That the defect is "
         "real, or that matching upstream does not make the code correct, is not such a reason. "
-        "When a maintainer defers that later fix to an issue or pull request in this repository "
-        "that is linked in the thread, that is a tracked deferral (INTENTIONALLY_DEFERRED with "
-        "that link); the upstream change itself is not such a link. Otherwise a reply that "
-        "declines to take the fix here disputes the finding (`disputed`), which leaves it to "
-        "the maintainers: answer STILL_VALID once, asking for the fix. For a finding on "
-        "backported code, do not ask for a tracking issue and do not offer to file one, here or "
-        "in the upstream project.\n"
+        "Whether that later fix lands here or in a later backport is a maintainer's call "
+        '(association OWNER, MEMBER or COLLABORATOR). When one says it comes later ("in its '
+        'own batch", "will be backported in its turn"), accept that: mark the finding '
+        'INTENTIONALLY_DEFERRED with `"tracking": {"upstream": "<owner/repo#N of the upstream '
+        'change>"}` and acknowledge it in one sentence. It needs no tracking issue, because the '
+        "project tracks the upstream changes it has not taken. When someone who is not a "
+        "maintainer declines to take the fix here, treat that as disputing the finding "
+        "(`disputed`), even when they call it a deferral: answer STILL_VALID once, asking for "
+        "the fix. For a finding on backported code, do "
+        "not ask for a tracking issue and do not offer to file one, here or in the upstream "
+        "project.\n"
         "- A deferral is a maintainer's call (association OWNER, MEMBER or COLLABORATOR; the "
         "PR author counts when theirs is one of those), but the maintainer does not simply "
         "dictate it: accept one only when it is reasonable, i.e. the finding is not something "
@@ -683,7 +734,8 @@ def prompt(
         "fixing (it predates the change, or lies outside what the pull request claims to "
         "do). A defect this diff introduces or makes worse is not deferrable because someone "
         "prefers a follow-up: if you still believe the pull request must not merge as it "
-        "stands, use STILL_VALID when you have something new to say, otherwise NO_REPLY.\n"
+        "stands, use STILL_VALID when you have something new to say, otherwise NO_REPLY. (A "
+        "backport's missing upstream follow-up is deferrable all the same, as above.)\n"
         "- A reasonable deferral must also be tracked. A relevant issue or pull request "
         "linked in the thread, the PR description or a PR comment counts, even if it is not "
         "complete; an unrelated link does not. With one, mark the finding "
@@ -733,7 +785,8 @@ def prompt(
         '"reply": "<prose, empty when NO_REPLY>", '
         '"reasoning": "<one or two private sentences on why, never posted>", '
         '"disputed": <true when the latest human message disputes the finding; else omit>, '
-        '"tracking": <INTENTIONALLY_DEFERRED only: {"url": "..."} or {"file": {...}}>}]}\n'
+        '"tracking": <INTENTIONALLY_DEFERRED only: {"url": "..."}, {"upstream": "..."} or '
+        '{"file": {...}}>}]}\n'
         "```\n"
         "Include exactly one entry per `finding_hash` listed above. `reply` is required and "
         "non-empty for every status except NO_REPLY, and must be empty for NO_REPLY. Omit "
@@ -764,7 +817,7 @@ def parse(raw: dict[str, Any], *, expected: set[str]) -> ConversationOutput:
             reply = ""
         elif not reply:
             raise ReviewError(FailKind.CONTRACT, f"conversation row {h}: {st} without a reply")
-        url, request = _tracking(st, row.get("tracking"))
+        url, request, upstream = _tracking(st, row.get("tracking"))
         out[h] = ThreadOutcome(
             finding_hash=h,
             status=st,
@@ -773,6 +826,7 @@ def parse(raw: dict[str, Any], *, expected: set[str]) -> ConversationOutput:
             tracking_url=url,
             file_request=request,
             disputed=row.get("disputed") is True,
+            upstream=upstream,
         )
     missing = expected - set(out)
     if missing:
@@ -782,21 +836,23 @@ def parse(raw: dict[str, Any], *, expected: set[str]) -> ConversationOutput:
     return ConversationOutput(outcomes=out)
 
 
-def _tracking(status: str, raw: Any) -> tuple[str, FileRequest | None]:
-    """(cited url, file request) from a row's `tracking`; only a deferral carries one. A
+def _tracking(status: str, raw: Any) -> tuple[str, FileRequest | None, str]:
+    """(cited url, file request, cited upstream change) from a row's `tracking`; only a
+    deferral carries one. A
     malformed one is dropped, not a contract failure: the deferral is then vetted as
     untracked (`accept_deferrals` asks for tracking), which costs a reply, not the run."""
     if not isinstance(raw, dict) or status != "INTENTIONALLY_DEFERRED":
-        return "", None
+        return "", None, ""
     url = str(raw.get("url") or "").strip()[:300]
+    upstream = str(raw.get("upstream") or "").strip()[:300]
     f = raw.get("file")
     f = f if isinstance(f, dict) else {}
     repo = str(f.get("repo") or "").strip()
     title = str(f.get("title") or "").strip()
     if not _REPO_RE.fullmatch(repo) or not title:
-        return url, None
+        return url, None, upstream
     body = str(f.get("body") or "").strip()[:4000]
-    return url, FileRequest(repo=repo, title=title[:200], body=body)
+    return url, FileRequest(repo=repo, title=title[:200], body=body), upstream
 
 
 # ---- policy v12: the thread lane ----

@@ -77,7 +77,7 @@ class Raised:
     file: str
     title: str
     body: str
-    state: str  # open | closed (an earlier finding's thread) | new
+    state: str  # new | open | closed | deferred | disputed (an earlier finding: `raised`)
 
     @property
     def new(self) -> bool:
@@ -180,13 +180,34 @@ def due(
     return f"round {round_now}, {total} blockers so far, {recent} new in the last two rounds"
 
 
-def raised(earlier: list[Round], new: list[dict[str, Any]], open_hashes: set[str]) -> list[Raised]:
-    """Everything the PR has drawn, for the lane: the earlier rounds' findings (`p<n>`, open
-    while their thread is unresolved) and this round's new ones (`n<n>`)."""
+SETTLED_STATES = {"INTENTIONALLY_DEFERRED": "deferred", "DISPUTED": "disputed"}
+
+
+def without(earlier: list[Round], hashes: set[str]) -> list[Round]:
+    """`earlier` without the findings in `hashes`: the ones the review withdrew as wrong. They
+    are no defect the PR drew, so they count for no round and no cause (dashpay/dash#8158: a
+    withdrawn blocker was one of the three findings behind a named cause)."""
+    return [Round(r.sha, tuple(f for f in r.findings if f["hash"] not in hashes)) for r in earlier]
+
+
+def raised(
+    earlier: list[Round],
+    new: list[dict[str, Any]],
+    open_hashes: set[str],
+    settled: dict[str, str] | None = None,
+) -> list[Raised]:
+    """Everything the PR has drawn, for the lane: the earlier rounds' findings (`p<n>`) and
+    this round's new ones (`n<n>`). An earlier one is `open` while this review still carries
+    it (`open_hashes`), `deferred` or `disputed` when that is how it was settled (`settled`:
+    hash -> status), and `closed` otherwise."""
     out: list[Raised] = []
     for i, r in enumerate(earlier, 1):
         for f in r.findings:
-            state = "open" if f["hash"] in open_hashes else "closed"
+            state = (
+                "open"
+                if f["hash"] in open_hashes
+                else SETTLED_STATES.get((settled or {}).get(f["hash"], ""), "closed")
+            )
             out.append(
                 Raised(
                     f"p{len(out) + 1}", i, f["severity"], f["file"], f["title"], f["body"], state

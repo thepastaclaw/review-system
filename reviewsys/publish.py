@@ -2010,7 +2010,9 @@ def answer_replied_threads(
     same note and resolution when a reviewer explicitly withdrew their finding, so a dropped
     finding never lingers as an open comment; likewise, once, a finding settled as DISPUTED,
     a deferral held for want of tracking (`needs_tracking`: the ask to link or have the bot
-    file it) and one the orchestrator settled without a reply to answer (`announce`). A lift
+    file it), one the orchestrator settled without a reply to answer (`announce`) and a
+    finding that still stands with something new to say (`update`: its code changed, or the
+    reply it follows turned out to be a dispute). A lift
     that leaves the thread open, or a held deferral, is also shown on the thread's root
     comment. Returns what was done."""
     # a verifier that echoes the carried finding without its finding_hash must not turn a
@@ -2023,14 +2025,11 @@ def answer_replied_threads(
     todo = dict(threads)
     for h, t in (open_threads or {}).items():
         row = reconciliation.get(h) or {}
-        if h in todo or t.get("resolved") or (h in kept_hashes and not row.get("needs_tracking")):
+        says = row.get("needs_tracking") or row.get("update")
+        if h in todo or t.get("resolved") or (h in kept_hashes and not says):
             continue
         stated = str(row.get("status") or "")
-        if (
-            stated in {"WITHDRAWN", "FIXED", "OUTDATED", "DISPUTED"}
-            or row.get("needs_tracking")
-            or row.get("announce")
-        ):
+        if stated in {"WITHDRAWN", "FIXED", "OUTDATED", "DISPUTED"} or says or row.get("announce"):
             todo[h] = {**t, "latest_reply_id": None}
     # A malformed/legacy thread index can contain the same GitHub thread under more than
     # one finding identity (for example after a marker migration).  Replies are addressed to
@@ -2056,13 +2055,15 @@ def answer_replied_threads(
         marker = THREAD_ANSWER_MARKER.format(
             sha=head_sha, reply=t.get("latest_reply_id"), finding=h
         )
-        status, reason, explicit = _answer_outcome(h, reconciliation.get(h) or {}, kept_hashes)
+        row = reconciliation.get(h) or {}
+        status, reason, explicit = _answer_outcome(h, row, kept_hashes)
         item: dict[str, Any] = {"finding_hash": h, "status": status, "comment_id": cid}
         # For an open thread with no newer human reply, a prior answer with the same outcome is
         # already sufficient.  Do not retry the resolve mutation either: GitHub may leave the
         # thread open when the mutation is rejected or races, and repeating it on every head is
         # noisy and does not change the review state.
-        if not t.get("awaiting_answer") and _has_answer_for_status(t, status):
+        repeat = not row.get("update") and _has_answer_for_status(t, status)
+        if not t.get("awaiting_answer") and repeat:
             item["action"] = "already_answered"
             done.append(item)
             continue
