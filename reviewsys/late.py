@@ -143,10 +143,18 @@ class Split:
     repeats: list[Finding] = field(default_factory=list)  # ... already listed by a review
     candidates: list[Finding] = field(default_factory=list)  # new blockers: to confirm
     settled: list[Finding] = field(default_factory=list)  # revived below blocking: dropped
+    upstream: list[Finding] = field(default_factory=list)  # late missing follow-ups, listed
 
     @property
     def changed(self) -> bool:
-        return bool(self.nits or self.followups or self.repeats or self.candidates or self.settled)
+        return bool(
+            self.nits
+            or self.followups
+            or self.repeats
+            or self.candidates
+            or self.settled
+            or self.upstream
+        )
 
 
 def hold_severity(findings: Iterable[Finding], posted: Mapping[str, str]) -> list[Finding]:
@@ -231,6 +239,7 @@ def split(
     listed: set[str],
     spots: Iterable[Spot] = (),
     revived: Callable[[Finding], dict[str, Any] | None] = lambda f: None,
+    reviewed: Callable[[Finding], bool] = lambda f: False,
 ) -> Split:
     """`findings` (each with `extra["code_status"]` set) by what happens to them. `posted`:
     the severity an earlier round posted the finding with, None when it is new to the PR.
@@ -245,7 +254,13 @@ def split(
     fixed that `f` raises again on lines unchanged since, else None. Such a blocker is
     confirmed like a new one (`extra["judged_fixed"]`), and so is one held at the severity it
     was posted with (`hold_severity`): unconfirmed, it is that carried finding again
-    (`extra["posted_severity"]`). One the round raises below blocking stays settled."""
+    (`extra["posted_severity"]`). One the round raises below blocking stays settled.
+
+    A new missing upstream follow-up (`is_missing_followup`) on code unchanged since the
+    previous final review, in commits that review already read (`reviewed`, `Commits`), is
+    listed once as a follow-up candidate without a confirmation: a backport's follow-ups are
+    enumerated when its commit is first reviewed, and this one can be backported in its
+    turn."""
     out = Split()
     spots = list(spots)
     for f in findings:
@@ -260,7 +275,11 @@ def split(
             continue
         f.extra.pop("judged_fixed", None)
         was = posted(f)
-        if f.severity == "blocking" and was != "blocking":
+        if was is None and on_unchanged(f) and is_missing_followup(f) and reviewed(f):
+            f.severity = "suggestion"
+            f.body += f"\n\n_{LATE_FOLLOWUP_NOTE}_"
+            (out.repeats if is_listed(f, listed, spots) else out.upstream).append(f)
+        elif f.severity == "blocking" and was != "blocking":
             if was:
                 f.extra["posted_severity"] = was
             out.candidates.append(f)
@@ -273,6 +292,132 @@ def split(
         else:
             out.followups.append(f)
     return out
+
+
+LATE_FOLLOWUP_NOTE = (
+    "Found after this commit's first review, on code that review already read; it can be "
+    "backported in its turn."
+)
+
+
+def is_missing_followup(f: Finding) -> bool:
+    """`f` asks for a missing upstream follow-up of a backported commit: marked so by the lane
+    (`upstream_followup: true`), or titled `Missing follow-up: ...` as the backport review
+    rules require."""
+    return f.extra.get("upstream_followup") is True or f.title.lower().startswith(
+        "missing follow-up:"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Rewrite:
+    """The branch was rebased, or its history otherwise rewritten, since the last full review:
+    that head is not an ancestor of this one. `old_base` / `new_base`: the merge base of that
+    head / this one with the base branch, None when git cannot compute it."""
+
+    old_base: str | None
+    new_base: str | None
+
+
+def _merge_base(repo: Path, a: str, b: str) -> str | None:
+    res = _git(repo, "merge-base", a, b)
+    if res is None or res.returncode != 0:
+        return None
+    return res.stdout.strip() or None
+
+
+def rewrite_since(
+    repo: Path, since: str, head: str, base_ref: str, new_base: str | None
+) -> Rewrite | None:
+    """How `head` relates to `since`, the head of the last full review: None when `since` is
+    an ancestor of it (or git cannot tell), else the `Rewrite`, with the merge bases taken
+    against `origin/<base_ref>` in `repo` (`new_base`: the run's own, when it has one)."""
+    res = _git(repo, "merge-base", "--is-ancestor", since, head)
+    if res is None or res.returncode != 1:
+        return None
+    ref = f"origin/{base_ref}" if base_ref else ""
+    return Rewrite(
+        _merge_base(repo, ref, since) if ref else None,
+        new_base or (_merge_base(repo, ref, head) if ref else None),
+    )
+
+
+@dataclass(slots=True)
+class Commits:
+    """Which of the pull request's commits at `head` the full review of `since` already read:
+    an ancestor of `since`, or, after a `rewrite`, a commit `git range-diff` of the pull
+    request's own commits shows as unchanged (`=`). `base`: the merge base of `head` with the
+    base branch."""
+
+    repo: Path
+    head: str
+    since: str
+    base: str | None
+    rewrite: Rewrite | None = None
+    _same: set[str] | None = None
+
+    def reviewed(self, f: Finding) -> bool:
+        """Every commit that wrote the lines under `f` was already reviewed (lines from the base
+        branch count as such). False when git cannot tell."""
+        blamed = self.blame(f)
+        if blamed is None:
+            return False
+        if self.rewrite is None:
+            return all(self._ancestor(c) for c in blamed)
+        same = self.same()
+        return same is not None and blamed <= same
+
+    def blame(self, f: Finding) -> set[str] | None:
+        """The pull request's commits that last touched `f`'s lines at `head`."""
+        if not f.file or not f.line_start:
+            return None
+        rev = f"{self.base}..{self.head}" if self.base else self.head
+        lines = f"{f.line_start},{f.line_end or f.line_start}"
+        res = _git(self.repo, "blame", "--porcelain", "-L", lines, rev, "--", f.file)
+        if res is None or res.returncode != 0:
+            return None
+        out: set[str] = set()
+        commit = ""
+        for line in res.stdout.splitlines():
+            if re.match(r"^[0-9a-f]{40} \d+ \d+", line):
+                commit = line[:40]
+                out.add(commit)
+            elif line == "boundary":
+                out.discard(commit)
+        return out
+
+    def same(self) -> set[str] | None:
+        """The head-side commits `git range-diff` shows as unchanged after the rewrite."""
+        rw = self.rewrite
+        if self._same is None and rw is not None and rw.old_base and rw.new_base:
+            res = _git(
+                self.repo,
+                "range-diff",
+                "--no-color",
+                "--abbrev=40",
+                f"{rw.old_base}..{self.since}",
+                f"{rw.new_base}..{self.head}",
+            )
+            if res is not None and res.returncode == 0:
+                self._same = {
+                    m.group(1)
+                    for line in res.stdout.splitlines()
+                    if (m := re.match(r"^\s*\d+:\s+[0-9a-f]{40} = \d+:\s+([0-9a-f]{40})", line))
+                }
+        return self._same
+
+    def _ancestor(self, commit: str) -> bool:
+        res = _git(self.repo, "merge-base", "--is-ancestor", commit, self.since)
+        return res is not None and res.returncode == 0
+
+
+# a code status in words, for the confirmation lane
+STATUS_WORDS = {
+    CHANGED: "changed since the last reviewed head",
+    UNKNOWN: "changed since the last reviewed head (git cannot place it)",
+    IN_REVIEW: "unchanged since the last reviewed head",
+    SINCE_FIRST: "unchanged since the first review",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -288,7 +433,8 @@ def candidate_ids(n: int) -> list[str]:
 
 def candidate_briefs(findings: list[Finding]) -> list[dict[str, Any]]:
     """What the confirmation lane is shown of each candidate: the claim, never the verifier's
-    reasoning, confidence or sources."""
+    reasoning, confidence or sources; on a later round, its code status in words and how many
+    full reviews its lines have been through (`extra["full_reviews"]`)."""
     return [
         {
             "id": cid,
@@ -299,6 +445,14 @@ def candidate_briefs(findings: list[Finding]) -> list[dict[str, Any]]:
             "title": f.title,
             "body": f.body,
             **({"suggested_fix": f.suggestion} if f.suggestion else {}),
+            **(
+                {
+                    "code_status": STATUS_WORDS[status],
+                    "full_reviews_of_these_lines": int(f.extra.get("full_reviews") or 0),
+                }
+                if (status := f.extra.get("code_status")) in STATUS_WORDS
+                else {}
+            ),
             **(
                 {
                     "judged_fixed_at": judged["sha"],

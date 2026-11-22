@@ -477,6 +477,11 @@ def _late_line(d: dict[str, Any]) -> str:
             "settled",
             "finding(s) judged fixed earlier and raised again on unchanged lines kept settled",
         ),
+        (
+            "upstream",
+            "missing upstream follow-up(s) of commits already reviewed listed as follow-up "
+            "candidates",
+        ),
     ):
         if d.get(key):
             parts.append(f"{d[key]} {label}")

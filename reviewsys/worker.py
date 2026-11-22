@@ -334,6 +334,10 @@ class RunContext:
     first_reviewed_sha: str | None = None
     code_history: late.CodeHistory | None = None
     # the follow-up candidates reviews of this PR listed (`_listed_followups`), once per run
+    # the heads of the PR's full-strength final reviews, oldest first (`_review_history`)
+    full_reviewed: list[str] = field(default_factory=list)
+    # how this head relates to `_since` (`_since_rewrite`), once per run
+    since_rewrite: tuple[late.Rewrite | None] | None = None
     listed_followups: tuple[set[str], list[late.Spot]] | None = None
     # what this later round did with new findings on unchanged code (publish.Provenance.late)
     late_report: dict[str, Any] | None = None
@@ -1457,6 +1461,7 @@ def _review_history(ctx: RunContext, ours: list[dict[str, Any]]) -> None:
     full strength, is no basis for treating code as already reviewed."""
     rows = _pr_reviews(ctx)
     full = [r for r in rows if r["full"]]
+    ctx.full_reviewed = [str(r["sha"]) for r in full]
     if full:
         ctx.prev_final_sha = str(full[-1]["sha"])
         ctx.prev_final_blockers = _had_blockers(full[-1])
@@ -2516,6 +2521,7 @@ def _lane_prompts(
             stamp_echo=pol.stamps_echo_fields,
             guidance=guidance,
             since_sha=_since(ctx),
+            rewrite=_since_rewrite(ctx),
         )
         for role in roles
     }
@@ -2819,6 +2825,7 @@ def _verifier_lane(
         stamp_echo=stamp,
         guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
         since_sha=_since(ctx),
+        rewrite=_since_rewrite(ctx),
     )
     prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
 
@@ -5141,6 +5148,45 @@ def _since(ctx: RunContext) -> str | None:
     return since if since and since != ctx.sha and _converges(ctx) else None
 
 
+def _since_rewrite(ctx: RunContext) -> late.Rewrite | None:
+    """Whether the branch was rebased (or its history rewritten) since `_since`, with the
+    merge bases of both heads (`late.rewrite_since`); None when it was not, or on no
+    incremental round."""
+    since = _since(ctx)
+    if since is None or ctx.worktree is None or ctx.meta is None:
+        return None
+    if ctx.since_rewrite is None:
+        ctx.since_rewrite = (
+            late.rewrite_since(ctx.worktree, since, ctx.sha, ctx.meta.base_ref, ctx.merge_base),
+        )
+    return ctx.since_rewrite[0]
+
+
+def _reviews_of_lines(ctx: RunContext, f: Finding) -> int:
+    """How many full reviews, the latest first, read the lines under `f` as they are now."""
+    n = 0
+    for sha in dict.fromkeys(reversed(ctx.full_reviewed)):
+        if not _unchanged_since(ctx, sha, f):
+            break
+        n += 1
+    return n
+
+
+def _reviewed_test(ctx: RunContext) -> Callable[[Finding], bool]:
+    """For `late.split`: the commits that wrote a finding's lines were all read by the previous
+    full review (`late.Commits`)."""
+    if ctx.worktree is None or ctx.prev_final_sha is None:
+        return lambda f: False
+    commits = late.Commits(
+        ctx.worktree,
+        ctx.sha,
+        ctx.prev_final_sha,
+        ctx.merge_base,
+        _since_rewrite(ctx),
+    )
+    return commits.reviewed
+
+
 def _converges(ctx: RunContext) -> bool:
     """The round-converging rules of `_verify2` apply: a policy v11 review. An audit (nobody
     acts on a merged PR's review rounds) and a partial policy v12 pipeline keep the earlier
@@ -5225,6 +5271,7 @@ def _classify_late(ctx: RunContext, verified: VerifierOutput) -> late.Split | No
         listed=listed,
         spots=spots,
         revived=_revived_test(ctx),
+        reviewed=_reviewed_test(ctx),
     )
 
 
@@ -5425,7 +5472,9 @@ def _gate_late(
     raised. A finding judged fixed earlier and raised again on unchanged lines that does not
     stand stays settled (`_settle_revived`): not carried, and listed once as a follow-up
     candidate when it was raised as a blocker; one held at the suggestion it was posted as
-    (`late.hold_severity`) stays the carried suggestion it was.
+    (`late.hold_severity`) stays the carried suggestion it was. A new missing upstream
+    follow-up in commits the previous full review read is listed once as a follow-up
+    candidate, unasked (`late.split`).
     The run's final verifier rows (`stage`) are rewritten to what stands, with every finding's
     code status, each gated finding is kept under its `late-*` stage, and the step's counts
     are updated to match. `known`: this run's decisions so far, by hash; returns them with
@@ -5466,9 +5515,11 @@ def _gate_late(
     repeats = split.repeats + [f for f in demoted if late.is_listed(f, listed, spots)]
     stands = {id(f) for f in (*split.keep, *confirmed, *unchecked)}
     verified.findings = [f for f in verified.findings if id(f) in stands] + posted
-    verified.followups = split.followups + [
-        f for f in demoted if not late.is_listed(f, listed, spots)
-    ]
+    verified.followups = (
+        split.followups
+        + split.upstream
+        + [f for f in demoted if not late.is_listed(f, listed, spots)]
+    )
     unposted = [f for f in (*unconfirmed, *invalid) if not f.extra.get("posted_severity")]
     settled = _settle_revived(ctx, verified, confirmed, [*unposted, *split.settled])
     since = ctx.prev_final_sha or ""
@@ -5484,12 +5535,13 @@ def _gate_late(
         "remembered": len(remembered),
         "failed": asked is None,
         "settled": settled,
+        "upstream": len(split.upstream),
     }
     if split.changed:
         ctx.late_report = report
     left_out = {
         late.STAGE_NIT: split.nits,
-        late.STAGE_FOLLOWUP: split.followups,
+        late.STAGE_FOLLOWUP: split.followups + split.upstream,
         late.STAGE_REPEAT: split.repeats,
         late.STAGE_UNCONFIRMED: unconfirmed,
         late.STAGE_INVALID: invalid,
@@ -5622,30 +5674,60 @@ def _apply_decisions(
 
 
 def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision]:
-    """Candidates an earlier full-strength round's confirmation already judged not blocking (by
-    hash), whose file has not changed since that round and whose thread nobody replied on
-    since: its verdict stands, no lane asks again. A re-review of the head of the last full
-    review, which someone asked for, asks again."""
+    """Candidates an earlier full-strength round's confirmation already judged not blocking,
+    whose thread nobody replied on since: its verdict stands, no lane asks again. Matched by
+    hash with the file unchanged since that round, or by place (`late.listed_spots`: the same
+    file, an overlapping range, its lines unchanged since): dashpay/dash#8158 had a blocker
+    the lane did not confirm come back reworded on the same lines and get confirmed. A
+    re-review of the head of the last full review, which someone asked for, asks again."""
     if not candidates or ctx.code_history is None or ctx.sha == ctx.prev_final_sha:
         return {}
     marks = ",".join("?" * len(late.REMEMBERED))
     rows = ctx.conn.execute(
-        "SELECT f.hash, f.stage, h.sha, r.started_at FROM findings f JOIN runs r ON r.id=f.run_id "
+        "SELECT f.hash, f.stage, f.file, f.line_start, f.line_end, h.sha, r.started_at "
+        "FROM findings f JOIN runs r ON r.id=f.run_id "
         "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND h.queue='live' "
         f"AND r.degraded=0 AND f.run_id<>? AND f.stage IN ({marks}) ORDER BY f.id",
         (ctx.repo, ctx.number, ctx.run_id, *late.REMEMBERED),
     ).fetchall()
-    earlier = {str(r["hash"]): (str(r["stage"]), str(r["sha"]), str(r["started_at"])) for r in rows}
+    earlier = {str(r["hash"]): r for r in rows}
+    places: list[tuple[late.Spot, sqlite3.Row]] | None = None
     out: dict[int, late.Decision] = {}
     for f in candidates:
-        stage, sha, at = earlier.get(f.hash, ("", "", ""))
+        row = earlier.get(f.hash)
+        if row is not None and ctx.code_history.changed_since(str(row["sha"]), f.file) is not False:
+            row = None
+        if row is None:
+            if places is None:
+                places = _decided_places(ctx, rows)
+            row = next((r for spot, r in places if late.is_listed(f, set(), [spot])), None)
         thread = (f.extra.get("judged_fixed") or {}).get("hash") or f.prior_hash or f.hash
-        if (
-            stage
-            and ctx.code_history.changed_since(sha, f.file) is False
-            and not _human_replies_since(ctx, thread, at)
+        at = str(row["started_at"]) if row is not None else ""
+        if row is not None and not any(
+            _human_replies_since(ctx, h, at) for h in {thread, str(row["hash"])}
         ):
-            out[id(f)] = late.Decision(late.REMEMBERED[stage], reason=f"decided at {sha[:8]}")
+            sha = str(row["sha"])
+            out[id(f)] = late.Decision(
+                late.REMEMBERED[str(row["stage"])], reason=f"decided at {sha[:8]}"
+            )
+    return out
+
+
+def _decided_places(
+    ctx: RunContext, rows: list[sqlite3.Row]
+) -> list[tuple[late.Spot, sqlite3.Row]]:
+    """Where each remembered confirmation verdict's finding (`rows`, oldest first) is at this
+    head, the newest first; one whose lines changed since, or git cannot place, has none."""
+    if ctx.worktree is None:
+        return []
+    out = []
+    for r in reversed(rows):
+        spots = late.listed_spots(
+            ctx.worktree,
+            ctx.sha,
+            [(r["file"] or "", r["line_start"], r["line_end"], str(r["sha"]))],
+        )
+        out += [(spot, r) for spot in spots]
     return out
 
 
@@ -5675,6 +5757,8 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
         _lane_event(ctx, "late.confirm_skipped", f"{len(ids)} blocker(s) kept: degraded mode")
         return None
     _step_start(ctx, StepName.CONFIRM, {"candidates": len(candidates)})
+    for f in candidates:
+        f.extra["full_reviews"] = _reviews_of_lines(ctx, f)
     prompt = confirmation_prompt(
         ctx.cfg,
         repo=ctx.repo,
@@ -5685,6 +5769,8 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
         reported=late.candidate_briefs(candidates),
         guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
         settled=settled_matters(ctx.prior),
+        since_sha=_since(ctx),
+        rewrite=_since_rewrite(ctx),
     )
 
     def validate(raw: dict[str, Any]) -> dict[str, late.Decision]:
@@ -5799,6 +5885,11 @@ def _step_back(ctx: RunContext, verified: VerifierOutput) -> None:
         raised=[r.brief() for r in items],
         previous=previous.brief() if previous else None,
         guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
+        first_rewrite=late.rewrite_since(
+            ctx.worktree, ctx.first_reviewed_sha, ctx.sha, ctx.meta.base_ref, ctx.merge_base
+        )
+        if ctx.first_reviewed_sha and ctx.first_reviewed_sha != ctx.sha
+        else None,
     )
 
     def validate(raw: dict[str, Any]) -> stepback.Analysis:
