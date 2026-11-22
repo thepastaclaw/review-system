@@ -894,8 +894,11 @@ pipeline keep the earlier behaviour.
   `confirm`): the final verifier's model and effort in a fresh session, shown the claims
   (`late.candidate_briefs`: location, title, body, suggested fix), the code and the PR diff,
   never the verifier's reasoning, sources or confidence (`prompts.confirmation_prompt`,
-  self-contained). It answers `blocking` (with a concrete reachable `failure`),
-  `non_blocking` or `invalid` per finding. Confirmed blockers stay blocking, their body
+  self-contained). It judges by the project's own review rules (the repo's review skill) and
+  is shown what the PR already settled (`prompts.settled_matters`), so on a backport it
+  neither confirms what the maintainers deferred nor demotes an omitted upstream hunk the
+  project blocks on. It answers `blocking` (with a concrete reachable `failure`, or the
+  project rule that is broken), `non_blocking` or `invalid` per finding. Confirmed blockers stay blocking, their body
   saying an independent pass confirmed them; unconfirmed ones become follow-up candidates;
   invalid ones are dropped. Its answer never goes to the context-free repair lane, and a lane
   that fails for good keeps every blocker as raised (`late.confirm_failed`). A verdict is
@@ -943,7 +946,10 @@ model) named a cause on three of three such PRs it was tried on.
 - **The lane.** One lane (step `stepback`; the final verifier's model and effort, a fresh
   session) gets every finding the PR has drawn, this round's new ones included, the count of
   new blockers per round, the PR description and the code, and groups the findings by
-  underlying cause. Its answer is a `diagnosis` (`foundational_gap`, `patch_cascade`,
+  underlying cause. Each earlier finding comes with where it stands (`open` while this
+  review carries it, `closed`, `deferred`, `disputed`); one the review withdrew as wrong is
+  left out and counts for no round (`stepback.without`), and a theme needs a `new` or `open`
+  finding. Its answer is a `diagnosis` (`foundational_gap`, `patch_cascade`,
   `unstated_contract`, `scope_too_large` or `converging`), up to four themes (each a cause
   behind at least two findings, with the tracking issue when there is one) and one decision
   (`land_prerequisite_first`, `narrow_contract`, `redesign_component`, `split_pr`).
@@ -1001,7 +1007,12 @@ first checks the prior findings, discussion, and replies and stops if any blocke
 When that pass is clear and the previous final review had blockers (above), the worker
 starts a fresh Phase-2 review of the complete current merge-base range. Those reviewer
 lanes receive the full diff and evidence without the old finding checklist, which reduces
-anchoring on the previous conclusion. The fresh verifier receives all PR context—including
+anchoring on the previous conclusion. They are told the PR was reviewed before and shown
+only what was settled without a code change (withdrawn, deferred by a maintainer, disputed:
+`prompts.withheld_block`), so they do not raise it again; told "this is the first review
+round", they reported the same two settled findings as new blockers in every round they
+ran (dashpay/dash#8158). A carried finding on code unchanged since the previous final
+review is not raised to blocking by any pass (`late.hold_severity`). The fresh verifier receives all PR context—including
 prior findings, discussion, CodeRabbit evidence, and both sets of reviewer outputs—as
 historical evidence to reconcile before deciding the verdict.
 
@@ -1183,6 +1194,22 @@ verifier lanes):
   or say so and I'll file it in `<repo>`."). The maintainer-spoke-last rule still applies
   first. `DEFERRAL_NEEDS_TRACKING` lifts nothing; its note says the finding stands, and the
   root gets ``> ⏸️ **Needs a tracking issue** (not yet deferred)``.
+- A backport's missing upstream follow-up is the exception. It is raised as blocking, and a
+  maintainer may defer it to a later backport without a tracking issue, because the project
+  tracks the upstream changes it has not taken: the conversation lane answers
+  `INTENTIONALLY_DEFERRED` with `tracking: {"upstream": "bitcoin/bitcoin#N"}`, a full
+  review's row carries `tracking` and `upstream_followup: true`, and code accepts it when a
+  maintainer replied on the thread, the change is in a repository this one backports from
+  (`upstream_repos` on the repo in the skills `config.json`, e.g. `bitcoin/bitcoin` and, for
+  release-branch backports, the repo itself; without it the usual tracking rule applies) and
+  its number is on the thread (`converse.upstream_followup`, `worker._upstream_link`). It also ends a dispute
+  settled earlier on the same finding. The upstream link is recorded as the deferral's
+  tracking and shown to later rounds, which are told not to ask for that upstream change
+  again.
+- What a quiet thread still hears (`update` on a reconciliation row): a finding that stands
+  after the code under it changed gets the review's reason once per such push, and a reply
+  first answered with a tracking ask that the review reads as a dispute gets that answer
+  once and is then left to the maintainers as any dispute is.
 - Filing (`worker._file_tracking_issues`; lanes stay read-only): only in a repo allowed by
   `[deferral] file_owners` (default `["dashpay"]`) or `file_repos`; elsewhere the reply
   asks the maintainer to file it. A retry never files twice: kv

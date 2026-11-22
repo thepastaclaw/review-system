@@ -14,7 +14,7 @@ from reviewsys.db import tx
 from reviewsys.ingest import carried_from, enqueue_head
 from reviewsys.lane import LaneResult
 from reviewsys.models import ReviewError, RunStatus, Trigger
-from reviewsys.prompts import stepback_prompt
+from reviewsys.prompts import STEPBACK_FENCE, stepback_prompt
 from reviewsys.scheduler import schedule
 from tests.test_worker_e2e import (  # fake_git: autouse, fakes the mirror and worktree
     _blocking,
@@ -478,6 +478,38 @@ def test_the_first_round_that_names_causes_notes_them_and_changes_nothing_else(
     _push(conn, cfg, gh, lanes, D, Trigger.NEW_PUSH)
     assert len(lanes.calls) > calls and carried_from(conn, REPO, 1, D) is None
     assert len(_lane_calls(lanes)) == 1 and gh.posted_reviews[-1]["event"] == "APPROVE"
+
+
+def test_the_lane_is_shown_how_earlier_findings_were_settled(cfg, conn, gh, lanes):
+    """dashpay/dash#8158: a withdrawn blocker, shown as "open", was one of three findings
+    behind a named cause. A withdrawn finding counts for nothing; a deferred or disputed one
+    is shown as what it is."""
+    _seed_rounds(conn)
+    rid = conn.execute("SELECT MAX(id) FROM runs").fetchone()[0]
+    settled = [
+        (f"{S1[:6]}000000", "WITHDRAWN"),
+        (f"{S2[:6]}000000", "INTENTIONALLY_DEFERRED\nhttps://x/issues/1"),
+        (f"{S2[:6]}000001", "DISPUTED"),
+    ]
+    with tx(conn):
+        for h, body in settled:
+            conn.execute(
+                "INSERT INTO findings (run_id, phase, stage, hash, file, severity, category, "
+                "title, body) VALUES (?,'final','conceded',?,'f.rs','blocking','bug','t',?)",
+                (rid, h, body),
+            )
+    lanes.stepback = _themed
+    _push(conn, cfg, gh, lanes, C, Trigger.NEW_PUSH, [NEW1, NEW2])
+    (lane,) = _lane_calls(lanes)
+    assert "Reservation leaks on restart" not in lane.prompt  # the withdrawn one
+    assert "New blocking findings per round so far: 1, 2, 2, and 2 in this round." in lane.prompt
+    raised = json.loads(lane.prompt.split(STEPBACK_FENCE)[1].split("```")[0])
+    states = {r["title"]: r["state"] for r in raised}
+    assert states["Journal replay double-spends a note"] == "deferred"
+    assert states["Redrive ignores the wallet generation"] == "disputed"
+    assert states["Scan progress is not invalidated"] == "closed"
+    assert "Findings the review withdrew as wrong are not listed." in lane.prompt
+    assert "PR has drawn 7 blocking findings so far" in gh.posted_reviews[-1]["body"]
 
 
 def test_new_blockers_from_named_causes_again_step_back_and_pause_re_review(cfg, conn, gh, lanes):

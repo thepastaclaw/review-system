@@ -440,6 +440,37 @@ def test_a_new_blocker_on_unchanged_code_holds_the_fresh_gate_and_is_confirmed(
     assert ("verified", PANIC["title"]) in _stages(conn, rid)
 
 
+def test_a_carried_suggestion_raised_on_unchanged_code_stays_one_and_holds_no_gate(
+    cfg, conn, gh, lanes, statuses, monkeypatch
+):
+    """dashpay/dash#8158: a suggestion open for five rounds came back as a blocker from a pass
+    that was not shown its thread. On code nobody touched it keeps the severity it was posted
+    with, and counts as no blocker when the fresh gate is decided."""
+    monkeypatch.setitem(STATUS, FRESH_SUGG["title"], late.IN_REVIEW)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([FRESH_SUGG, _blocking()])
+    _run(cfg, conn, gh, lanes)
+    sugg, blocker = (Finding.from_dict(f).hash for f in (FRESH_SUGG, _blocking()))
+    recon = [
+        {"finding_hash": sugg, "status": "STILL_VALID", "reason": "still"},
+        {"finding_hash": blocker, "status": "FIXED", "reason": "ok"},
+    ]
+    raised = {**FRESH_SUGG, "severity": "blocking", "finding_hash": sugg}
+    rid = _round(cfg, conn, gh, lanes, C, [raised], recon)
+    steps = {r["name"] for r in conn.execute("SELECT name FROM steps WHERE run_id=?", (rid,))}
+    assert "fresh_phase2" in steps and "confirm" not in steps
+    assert gh.posted_reviews[-1]["event"] != "REQUEST_CHANGES"
+    stages = _stages(conn, rid)
+    assert stages[("verified-fresh", FRESH_SUGG["title"])] == ("suggestion", late.IN_REVIEW)
+    assert (
+        conn.execute(
+            "SELECT detail FROM events WHERE kind='late.severity_held' AND run_id=?", (rid,)
+        ).fetchone()["detail"]
+        == sugg
+    )
+
+
 def test_a_degraded_final_review_is_no_basis_for_unchanged_code(cfg, conn, gh, lanes, statuses):
     _first_round(cfg, conn, gh, lanes)
     with tx(conn):

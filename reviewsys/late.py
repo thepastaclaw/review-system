@@ -20,7 +20,7 @@ raised on the PR, and everything on A code, take the normal path."""
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -119,6 +119,22 @@ class Split:
     @property
     def changed(self) -> bool:
         return bool(self.nits or self.followups or self.repeats or self.candidates)
+
+
+def hold_severity(findings: Iterable[Finding], posted: Mapping[str, str]) -> list[Finding]:
+    """A carried finding on code unchanged since the previous final review is not raised to
+    blocking: nothing under it changed, its thread still states the severity it was posted
+    with (`posted`, by prior hash), and no confirmation lane looks at a carried finding. On
+    dashpay/dash#8158 a suggestion open for five rounds came back as a blocker from a pass
+    that was not shown its thread. Returns the findings held at their posted severity."""
+    held = []
+    for f in findings:
+        was = posted.get(f.prior_hash or "")
+        unchanged = f.extra.get("code_status") in UNCHANGED
+        if was and was != "blocking" and f.severity == "blocking" and unchanged:
+            f.severity = was
+            held.append(f)
+    return held
 
 
 def is_listed(f: Finding, listed: set[str]) -> bool:

@@ -360,6 +360,11 @@ class RepoConfig:
     # other repos (`owner/name`) whose default branch the review context checks out beside
     # the ones the repo's Cargo.lock pins (see sister.py), e.g. platform -> dashpay/tenderdash
     sister_repos: tuple[str, ...] = ()
+    # the repos (`owner/name`) this one backports from, itself included when it backports its
+    # own changes to release branches, e.g. dash -> bitcoin/bitcoin, dashpay/dash. The project
+    # tracks every change of theirs it has not taken, so a maintainer may defer a backport's
+    # missing follow-up to one of them without a tracking issue (`converse.upstream_followup`)
+    upstream_repos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1109,7 +1114,8 @@ def load_skills_config(
             enabled=bool(r.get("enabled", False)),
             disabled_reason=r.get("disabled_reason"),
             phase1=bool(r.get("phase1", True)),
-            sister_repos=_sister_repos(r.get("sister_repos")),
+            sister_repos=_repo_names(r.get("sister_repos"), "sister_repos"),
+            upstream_repos=_repo_names(r.get("upstream_repos"), "upstream_repos"),
         )
         for r in raw["repos"]
     )
@@ -1398,11 +1404,11 @@ def _strings(value: Any) -> tuple[str, ...]:
 _REPO_NAME = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
-def _sister_repos(value: Any) -> tuple[str, ...]:
+def _repo_names(value: Any, key: str) -> tuple[str, ...]:
     repos = _strings(value)
     for r in repos:
         if not _REPO_NAME.match(r):
-            raise ValueError(f"sister_repos entry {r!r}: need owner/name")
+            raise ValueError(f"{key} entry {r!r}: need owner/name")
     return repos
 
 
