@@ -20,6 +20,7 @@ from tests.test_worker_e2e import (  # fake_git: autouse, fakes the mirror and w
     _converse,
     _finding_thread,
     _gql_comment,
+    _no_filing,
     _queue_new_head,
     _reviewer_calls,
     _seed_prior,
@@ -382,6 +383,8 @@ def test_conversation_marks_a_dispute_answered_before_disputed(cfg, conn, gh, la
 
 
 def _deferral_round_one(cfg, conn, gh, lanes, finding, *, label, reply, resolved=False):
+    """The one ask for a tracking link: from a repository the bot may not file issues in
+    (`cfg` is `_no_filing`), or about a deferral no maintainer made."""
     h = _seed_prior(conn, finding)
     _thread(gh, h, finding["title"], [reply], label=label)
     gh.threads[0]["isResolved"] = resolved
@@ -389,7 +392,9 @@ def _deferral_round_one(cfg, conn, gh, lanes, finding, *, label, reply, resolved
     _review(cfg, conn, gh, lanes, HEAD)
     (ask,) = gh.replies
     assert "**Needs a tracking issue** (re-reviewed at `aaaaaaaa`)" in ask["body"]
-    assert "ask here and I'll file it" in ask["body"]
+    can_file = cfg.deferral.may_file("dashpay/platform")
+    says = "ask here and I'll file it" if can_file else "a maintainer can say so here"
+    assert says in ask["body"]
     assert kv_get(conn, f"defer.asked:dashpay/platform#1:{h}")
     gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(ask["body"])))
     return h
@@ -439,6 +444,7 @@ def test_a_blocker_deferred_without_a_link_is_asked_once_then_listed_compactly(
     cfg, conn, gh, lanes
 ):
     """platform#5810: an untracked deferral got no thread reply and kept blocking."""
+    cfg = _no_filing(cfg)
     blocker = _blocking()
     h = _deferral_round_one(
         cfg, conn, gh, lanes, blocker, label="🔴 Blocking", reply={**KNST, "body": "later"}
@@ -465,6 +471,7 @@ def test_a_blocker_deferred_without_a_link_is_asked_once_then_listed_compactly(
 
 
 def test_a_blocker_whose_tracking_turns_up_later_is_deferred(cfg, conn, gh, lanes):
+    cfg = _no_filing(cfg)
     blocker = _blocking()
     h = _deferral_round_one(
         cfg, conn, gh, lanes, blocker, label="🔴 Blocking", reply={**KNST, "body": "later"}
@@ -482,6 +489,7 @@ def test_a_deferral_on_a_thread_the_author_resolved_is_asked_for_then_lifts(cfg,
     """dashpay/platform#5905: "Deferred. Please file a tracking issue", then the author
     resolved the thread. The ask is still made there, and once the tracking turns up the
     blocker lifts; the resolved thread gets nothing more."""
+    cfg = _no_filing(cfg)
     blocker = _blocking()
     reply = {**KNST, "body": "Deferred. Please file a tracking issue for it."}
     h = _deferral_round_one(

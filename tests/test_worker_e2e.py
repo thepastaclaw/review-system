@@ -3822,6 +3822,16 @@ def _issue_calls(gh, verb):
     return [c for c in gh.calls if c[:2] == ["issue", verb]]
 
 
+def _no_filing(cfg):
+    """`cfg` for a repository the bot may not file issues in."""
+    from reviewsys.config import DeferralConfig
+
+    return dataclasses.replace(cfg, deferral=DeferralConfig(file_owners=(), file_repos=()))
+
+
+OUTSIDER = {**KNST, "author": "drive-by", "association": "CONTRIBUTOR"}
+
+
 def test_conversation_files_the_tracking_issue_a_maintainer_asks_for(cfg, conn, gh, lanes):
     bh = _deferral_thread(gh, conn)
     gh.open_issues = [
@@ -3908,23 +3918,30 @@ def test_conversation_asks_the_maintainer_to_file_when_the_bot_cannot(
 
 def test_conversation_deferral_without_tracking_keeps_the_blocker_and_asks(cfg, conn, gh, lanes):
     """platform#5258: a MEMBER deferred "to a change of its own", the lane accepted it, and
-    the finding was buried under an APPROVE with no issue ever filed."""
+    the finding was buried under an APPROVE with no issue ever filed. Where the bot cannot
+    file the issue itself it still asks for one, once."""
+    cfg = _no_filing(cfg)
     bh = _deferral_thread(gh, conn, body="deferred by decision, to a change of its own")
     defer = {"status": "INTENTIONALLY_DEFERRED", "reply": "Understood, deferring."}
     _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **defer}])
     reply = gh.replies[-1]["body"]
     assert "Before I mark this deferred it needs a tracking issue" in reply
-    assert "I'll file it in `dashpay/platform`" in reply and "Understood" not in reply
+    assert "a maintainer can say so here" in reply and "Understood" not in reply
+    assert kv_get(conn, f"defer.asked:dashpay/platform#1:{bh}")
+    fallback = conn.execute(
+        "SELECT detail FROM events WHERE kind='defer.issue_auto_fallback'"
+    ).fetchone()
+    assert fallback and "file_owners" in fallback["detail"]
     root = gh.threads[0]["comments"]["nodes"][0]["body"]
     assert "⏸️ **Needs a tracking issue** (not yet deferred)" in root
     assert not gh.created_issues and len(gh.posted_reviews) == 1
     assert not conn.execute("SELECT 1 FROM findings WHERE stage='conceded'").fetchone()
 
 
-def _full_review_deferral(gh, conn, lanes, reply_body):
+def _full_review_deferral(gh, conn, lanes, reply_body, *, who=KNST):
     blocker = _blocking()
     bh = _seed_prior(conn, blocker, body="blocker body")
-    t = _finding_thread(bh, blocker["title"], 900, [{**KNST, "body": reply_body}])
+    t = _finding_thread(bh, blocker["title"], 900, [{**who, "body": reply_body}])
     gh.threads = [t]
     deferred = {
         "finding_hash": bh,
@@ -3943,8 +3960,11 @@ def _full_review_deferral(gh, conn, lanes, reply_body):
 
 def test_full_review_keeps_a_deferred_finding_standing_until_it_is_tracked(cfg, conn, gh, lanes):
     """The verifier lifting a prior finding as INTENTIONALLY_DEFERRED is the same deferral: with
-    no tracking reference visible on the PR it does not lift, and the review says why."""
-    bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here, a follow-up later")
+    no tracking reference visible on the PR it does not lift, and the review says why (where
+    no maintainer made the call, so the bot files nothing)."""
+    bh, blocker = _full_review_deferral(
+        gh, conn, lanes, "out of scope here, a follow-up later", who=OUTSIDER
+    )
     _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
     assert status == RunStatus.DONE
     (review,) = gh.posted_reviews
@@ -3982,7 +4002,7 @@ def test_a_held_suggestion_stands_but_does_not_hold_the_approval(cfg, conn, gh, 
     s = _sugg()
     sh = _seed_prior(conn, s)
     gh.threads = [
-        _finding_thread(sh, s["title"], 900, [{**KNST, "body": "later"}], label="🟡 Suggestion")
+        _finding_thread(sh, s["title"], 900, [{**OUTSIDER, "body": "later"}], label="🟡 Suggestion")
     ]
     deferred = {"finding_hash": sh, "status": "INTENTIONALLY_DEFERRED", "reason": "Later."}
     lanes.reviewer["default"] = {
@@ -4049,13 +4069,13 @@ def test_a_create_that_may_have_gone_through_is_never_retried(cfg, conn, gh, lan
     key = f"defer.issue:dashpay/platform#1:{bh}"
     gh.issue_create_error = "HTTP 502: Bad Gateway"
     _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}])
-    assert kv_get(conn, key) == worker.TRACKING_ISSUE_PENDING
+    assert kv_get(conn, key).startswith(worker.TRACKING_ISSUE_PENDING)
     gh.issue_create_error = ""
     _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}], first=False)
     assert len(_issue_calls(gh, "create")) == 1 and not gh.created_issues
     assert "could not confirm it was filed" in gh.replies[-1]["body"]
     with tx(conn):
-        conn.execute("DELETE FROM kv WHERE key=?", (key,))
+        conn.execute("DELETE FROM kv WHERE key LIKE 'defer.issue%'")
     gh.issue_create_error = "HTTP 403: Resource not accessible by integration"
     _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **FILE_IT}], first=False)
     assert kv_get(conn, key) is None
@@ -4067,6 +4087,7 @@ def test_a_create_that_may_have_gone_through_is_never_retried(cfg, conn, gh, lan
 def test_full_review_reads_the_verifiers_own_row_first(cfg, conn, gh, lanes):
     """A reviewer's row with a reason must not stand in for the verifier's own decision: the
     verifier deferred (untracked) while a reviewer said STILL_VALID."""
+    cfg = _no_filing(cfg)
     bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here")
     lanes.reviewer["default"] = {
         **lanes.reviewer["default"],
@@ -4202,6 +4223,7 @@ def test_a_deferral_from_before_the_cutoff_stays_lifted_on_the_next_push(
 
 @pytest.mark.parametrize("source", ["concession", "event", "verifier_set", "bot_answer"])
 def test_an_untracked_deferral_after_the_cutoff_is_held(cfg, conn, gh, lanes, source):
+    cfg = _no_filing(cfg)
     bh, _ = _full_review_deferral(gh, conn, lanes, "out of scope here")
     _old_deferral(conn, gh, bh, source)
     with tx(conn):
@@ -4253,6 +4275,7 @@ def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, 
     """The last review before the cutoff being a conversation's verdict follow-up or a CI
     update (ci.py; neither has a verifier set) proves nothing; and a finding deferred long ago that a review carried
     again after the cutoff was standing, so deferring it now is a new deferral."""
+    cfg = _no_filing(cfg)
     bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here")
     if case == "stood_after_cutoff":
         _old_deferral(conn, gh, bh, "event")

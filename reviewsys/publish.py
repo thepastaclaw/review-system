@@ -2098,6 +2098,9 @@ def answer_replied_threads(
             root_body=str(t.get("body") or ""),
             root_status=status if marks else None,
             head_sha=head_sha,
+            tracking_url=str(row.get("tracking_url") or "")
+            if status == "INTENTIONALLY_DEFERRED"
+            else "",
             reply_thread_id=t.get("thread_id"),
             batch=batch,
         )
@@ -2362,6 +2365,64 @@ def tracking_issue_body(
     ]
     described = scrub_reply(body, 4000)
     return (described + "\n\n" if described else "") + "\n".join(origin).replace("@", "@\u200b")
+
+
+def issue_title(title: str) -> str:
+    """A tracking issue's title: one line, at most 200 characters, paging nobody."""
+    return _block_text(title)[:200].replace("@", "@\u200b")
+
+
+def auto_tracking_issue_body(
+    *,
+    repo: str,
+    number: int,
+    thread_url: str,
+    severity: str,
+    title: str,
+    finding: str,
+    impact: str | None,
+    path: str,
+    line_start: int | None,
+    line_end: int | None,
+    sha: str,
+) -> str:
+    """The body of a tracking issue the bot files by itself, for a deferral it accepted on a
+    maintainer's decision that nothing tracked (`tracking_issue_body` is the one a maintainer
+    asked for): what is wrong, its impact, where (`path` lines at commit `sha`, with a
+    permalink), and where it came from. It reads on its own and pages nobody."""
+    where = ""
+    if path:
+        span = (
+            ""
+            if not line_start
+            else f":{line_start}" + (f"-{line_end}" if line_end and line_end != line_start else "")
+        )
+        anchor = span.replace(":", "#L", 1).replace("-", "-L") if span else ""
+        link = f"https://github.com/{repo}/blob/{sha}/{path}{anchor}" if sha else ""
+        where = f"`{path}{span}`" + (f" at `{sha[:12]}`: {link}" if link else "")
+    quote = "\n".join(f"> {ln}" for ln in finding.strip()[:1500].splitlines()) or "> (no text)"
+    lines = [
+        f"PastaClaw flagged this while reviewing https://github.com/{repo}/pull/{number}, "
+        "where it was deferred to a follow-up instead of being fixed in that pull request. "
+        "This issue tracks the follow-up.",
+        "",
+        f"**{_block_text(title)}** ({severity})",
+        "",
+    ]
+    if impact:
+        lines += [f"**Impact:** {_block_text(impact)}", ""]
+    if where:
+        lines += [f"**Where:** {where}", ""]
+    lines += [
+        quote,
+        "",
+        "### Origin",
+        "",
+        f"- Pull request: https://github.com/{repo}/pull/{number}",
+        *([f"- Review thread: {thread_url}"] if thread_url else []),
+        "- Filed by PastaClaw when it accepted the deferral, as nothing else tracked it.",
+    ]
+    return "\n".join(lines).replace("@", "@\u200b")
 
 
 # ---- same-sha verdict update ----

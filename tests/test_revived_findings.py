@@ -726,3 +726,30 @@ def test_a_verifier_cannot_set_the_gates_routing_keys(cfg, conn, gh, lanes, stat
     assert gh.posted_reviews[-1]["event"] == "APPROVE"
     assert ("verified", FALSE["title"]) not in _stages(conn, rid)
     assert ("followup", FALSE["title"]) in _stages(conn, rid)
+
+
+def _issue_calls(gh):
+    return [c for c in gh.calls if c[:1] == ["issue"]]
+
+
+def test_a_deferral_on_a_finding_judged_fixed_files_no_issue(cfg, conn, gh, lanes, unchanged):
+    """A finding a full review judged fixed needs confirmation if it is back, not a tracking
+    issue: a maintainer deferring it in the conversation, or a verifier reconciling it as
+    deferred, files nothing."""
+    from tests.test_settle_disputes import _run_conversation
+
+    h = _fixed(cfg, conn, gh, lanes)
+    lanes.confirm = {B["title"]: "non_blocking"}
+    _raised_again(cfg, conn, gh, lanes, h, D)
+    gh.threads[0]["comments"]["nodes"].append(
+        _gql_comment({**KNST, "body": "Out of scope here, let's defer it."})
+    )
+    defer = {"finding_hash": h, "status": "INTENTIONALLY_DEFERRED", "reply": "Deferring it."}
+    _run_conversation(cfg, conn, gh, lanes, D, [defer])
+    assert not _issue_calls(gh) and not gh.created_issues
+    assert "Before I mark this deferred" in gh.replies[-1]["body"]
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
+
+    recon = [{"finding_hash": h, "status": "INTENTIONALLY_DEFERRED", "reason": "Later."}]
+    _round(cfg, conn, gh, lanes, E, [], recon)
+    assert not _issue_calls(gh) and not gh.created_issues

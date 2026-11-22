@@ -28,6 +28,7 @@ from tests.test_worker_e2e import (  # fake_git: autouse, fakes the mirror and w
     KNST,
     _blocking,
     _gql_comment,
+    _no_filing,
     _seed_prior,
     fake_git,  # noqa: F401
 )
@@ -113,6 +114,7 @@ def _vet(replies, *, severity="blocking"):
 def test_a_maintainer_defers_a_missing_follow_up_without_a_tracking_issue():
     got = _vet([{**MEMBER, "body": "will be backported in its turn"}])
     assert got.status == "INTENTIONALLY_DEFERRED" and got.tracking_url == UPSTREAM
+    assert not got.auto_file
 
 
 def test_only_a_maintainer_defers_a_follow_up_without_a_tracking_issue():
@@ -154,6 +156,7 @@ def test_a_full_review_defers_a_follow_up_to_its_upstream_change(cfg, conn, gh, 
     assert kv_get(conn, f"defer.asked:dashpay/platform#1:{h}") is None
     row = conn.execute("SELECT body FROM findings WHERE stage='conceded' AND hash=?", (h,))
     assert row.fetchone()["body"] == f"INTENTIONALLY_DEFERRED\n{UPSTREAM}"
+    assert not gh.created_issues and not any(c[:1] == ["issue"] for c in gh.calls)
 
     # the next head is shown what the deferral rests on
     gh.threads[0]["comments"]["nodes"].append(_gql_comment(_bot(answer["body"])))
@@ -164,6 +167,7 @@ def test_a_full_review_defers_a_follow_up_to_its_upstream_change(cfg, conn, gh, 
 
 
 def test_an_upstream_deferral_still_needs_a_maintainer_and_the_flag(cfg, conn, gh, lanes):
+    cfg = _no_filing(cfg)
     blocker = _blocking(FOLLOW_UP)
     h = _seed_prior(conn, blocker)
     _thread(gh, h, blocker["title"], [{**LATER, "author": "x", "association": "CONTRIBUTOR"}])
@@ -214,6 +218,7 @@ def test_a_maintainer_deferral_ends_a_standing_dispute(cfg, conn, gh, lanes):
 def test_a_reply_first_read_as_a_deferral_is_answered_once_as_a_dispute(cfg, conn, gh, lanes):
     """The ask for a tracking issue stood for six rounds while the review, reading the same
     reply as a dispute, wrote answers nobody saw."""
+    cfg = _no_filing(cfg)
     blocker = _blocking()
     h = _deferral_round_one(
         cfg, conn, gh, lanes, blocker, label="🔴 Blocking", reply={**KNST, "body": "later"}

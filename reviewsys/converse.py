@@ -17,11 +17,11 @@ so the model can read them). It returns one outcome per replied thread:
                        until the change is pushed and that push is reviewed
   STILL_VALID          the finding still holds and there is something NEW to say: say it
   INTENTIONALLY_DEFERRED  the maintainers chose not to act and the finding need not block this
-                       PR (pre-existing, out of scope, a follow-up), and the follow-up is
-                       tracked (a linked issue or PR, or one the bot files on request):
-                       acknowledge and stop
-  DEFERRAL_NEEDS_TRACKING  a reasonable deferral nothing tracks yet: ask for a link, or for
-                       permission to file the issue; the finding keeps standing
+                       PR (pre-existing, out of scope, a follow-up): acknowledge and stop; the
+                       follow-up is tracked by a linked issue or PR, or by one the bot files
+  DEFERRAL_NEEDS_TRACKING  a reasonable deferral nothing tracks yet, as the system posts it
+                       where it cannot file the issue itself: it asks for a link once, and
+                       the finding keeps standing until then
   NO_REPLY             nothing useful to add (a question addressed to someone else, an
                        acknowledgement, a repeat of a point already answered): stay silent
 
@@ -36,7 +36,17 @@ A deferral nobody tracks is a finding nobody fixes: on dashpay/platform#5258 a m
 "deferred by decision, to a change of its own", the finding was lifted under an APPROVE, and
 no issue was ever filed. So a deferral (of anything above a nitpick) is accepted only with a
 tracking reference a reader of the PR can see, which code checks (`accept_deferrals`), or an
-issue the worker files at a maintainer's request (`FileRequest`).
+issue the worker files: at a maintainer's request (`FileRequest`), or by itself.
+
+The bot files it by itself because asking cost more than arguing: on
+dashpay/dash-evo-tool#1210 and #1161 a maintainer declined blockers as out of scope, the lane
+agreed the deferral was reasonable and asked for a tracking link, and the blockers stood for
+rounds after "no tracking issue", while a decline the bot disagreed with stopped blocking as
+DISPUTED after one answer. So a reasonable deferral a maintainer made, with nothing tracking
+it, has its issue found or filed by the worker (`ThreadOutcome.auto_file`; the full review's
+`worker._hold_untracked_deferrals` does the same). Where the bot cannot file it, it asks for
+a link once, and a maintainer who answers that ask without one has the deferral accepted
+untracked (`tracking_asked`): an explicit "no tracking" is an exit, never a dead end.
 
 A backport's missing upstream follow-up is the exception: the project tracks every upstream
 change it has not taken, so when a maintainer defers the fix to a later backport the upstream
@@ -100,6 +110,15 @@ DISPUTE_REPLY = (
 UNTRACKED_SUGGESTION_REPLY = (
     "Deferring this one without a tracking issue: it isn't blocking, so I won't raise it again."
 )
+# a blocking finding deferred without a link, accepted once a maintainer answered the one ask
+# for a link without one where the bot could not file it
+UNTRACKED_BLOCKER_REPLY = (
+    "Deferring this without a tracking issue, at the maintainers' decision: nothing tracks the "
+    "follow-up, and the finding no longer blocks this pull request."
+)
+# what the system answers in place of a lane that agreed to the deferral but marked it as
+# needing tracking (or said nothing to a maintainer answering its ask for a link)
+DEFERRAL_REPLY = "Agreed, this can follow in a change of its own, so I'm deferring it here."
 # posted-only status: the lane chose INTENTIONALLY_DEFERRED but no maintainer made that call
 DEFERRAL_PENDING = "DEFERRAL_PENDING"
 # a deferral that would be accepted but nothing tracks the follow-up: the reply asks for a
@@ -145,6 +164,11 @@ class ThreadOutcome:
     tracking_url: str = ""
     file_request: FileRequest | None = None
     tracking_filed: bool = False  # the worker filed that issue for this outcome just now
+    # an untracked maintainer deferral the worker finds or files the tracking issue for by
+    # itself; `untracked_ok`: if it cannot, the deferral is accepted untracked, since the
+    # thread already had its one ask for a link (`accept_deferrals`)
+    auto_file: bool = False
+    untracked_ok: bool = False
     # the upstream change a backport's missing follow-up is deferred to, as the lane cited it
     upstream: str = ""
     # the latest human message disputes the finding on its merits (the lane's reading)
@@ -398,11 +422,47 @@ def review_deferral_link(
 
 
 # what a full review answers on the thread of a deferral it holds back for want of tracking
-UNTRACKED_DEFERRAL_REASON = (
+# (`_NO_FILE`: in a repository the bot cannot file issues in)
+_UNLINKED = (
     "Deferring this needs a tracking issue for the follow-up, and none is linked in this "
-    "thread, the PR description or the PR comments. Link one, or ask here and I'll file it; "
-    "until then the finding stands."
+    "thread, the PR description or the PR comments."
 )
+_STAY_UNTRACKED = "or, if it should stay untracked, a maintainer can say so here"
+UNTRACKED_DEFERRAL_REASON = (
+    f"{_UNLINKED} Link one, or ask here and I'll file it; until then the finding stands."
+)
+UNTRACKED_DEFERRAL_REASON_NO_FILE = (
+    f"{_UNLINKED} Link one; {_STAY_UNTRACKED}. Until then the finding stands."
+)
+_ASK_LEAD = "Before I mark this deferred it needs a tracking issue for the follow-up."
+# what each ask for tracking the bot has posted starts with (`asked_in_thread`)
+_ASK_CUES = (
+    _UNLINKED,
+    _ASK_LEAD,
+    "I tried to file the tracking issue in",
+    "I can't file issues in",
+)
+
+
+def asked_in_thread(thread: dict[str, Any]) -> bool:
+    """One of our own answers on `thread` asks for a tracking link: the one ask was made,
+    whether or not it was recorded (an ask from before `defer.asked` was kept)."""
+    return any(
+        c.get("is_bot") and any(cue in str(c.get("body") or "") for cue in _ASK_CUES)
+        for c in thread.get("transcript") or []
+    )
+
+
+def untracked_reply(severity: Any) -> str:
+    """The reply that accepts a deferral without a tracking issue after the one ask."""
+    return UNTRACKED_BLOCKER_REPLY if severity == "blocking" else UNTRACKED_SUGGESTION_REPLY
+
+
+def filed_deferral_reply(url: str, *, filed: bool) -> str:
+    """A full review's answer on a deferral whose tracking issue it just filed (`filed`) or
+    found."""
+    tracked = f"I filed {url} to track it" if filed else f"already tracked in {url}"
+    return f"This moves to a follow-up: {tracked}, so it no longer blocks this pull request."
 
 
 def tracking_ask(
@@ -424,11 +484,9 @@ def tracking_ask(
     offer = (
         f" Link one, or say so and I'll file it in `{repo}`."
         if can_file
-        else " Link one here, in the PR description or in a PR comment."
+        else f" Link one here, in the PR description or in a PR comment; {_STAY_UNTRACKED}."
     )
-    return (
-        f"Before I mark this deferred it needs a tracking issue for the follow-up.{missing}{offer}"
-    )
+    return f"{_ASK_LEAD}{missing}{offer}"
 
 
 def filing_failed_reply(repo: str, *, allowed: bool, settled: bool = False) -> str:
@@ -457,6 +515,7 @@ def accept_deferrals(
     can_file: bool = True,
     author: str = "",
     upstreams: tuple[str, ...] = (),
+    unfiled: frozenset[str] | set[str] = frozenset(),
 ) -> ConversationOutput:
     """Vet every INTENTIONALLY_DEFERRED outcome in code; the lane's word is not enough.
 
@@ -473,24 +532,38 @@ def accept_deferrals(
     its tracking issue. `can_file` False: the lane cannot ask for one to be filed (see
     `tracking_ask`).
 
+    A maintainer's deferral that nothing tracks is `auto_file`: the worker finds or files its
+    issue by itself, and asks for a link only where it cannot (`can_file` False: never tried;
+    nor for a deferral to an upstream change that did not qualify, which the project does
+    not track in issues; nor on a thread in `unfiled`, whose finding a full review judged
+    fixed: a deferral there is asked for tracking as before, and never lifted untracked).
+    A lane that agreed to such a deferral but answered DEFERRAL_NEEDS_TRACKING (`_concedes`)
+    is read as the deferral.
+
     A backport's missing upstream follow-up a maintainer defers to a later backport needs
     neither: the upstream change the lane cites (`upstream`), in one of the repositories
     this one backports from (`upstreams`), is its tracking (`upstream_followup`).
 
-    A non-blocking finding is the PR's `author`'s call as much as a maintainer's, and is asked
-    for tracking once: on a thread where that ask was already made (`tracking_asked`), the
-    deferral is accepted without a link."""
+    Tracking is asked for once: on a thread where that ask was already made
+    (`tracking_asked`) and was answered by someone with standing (a maintainer; for a
+    non-blocking finding the PR's `author` too, whose call it is as much as a maintainer's),
+    a deferral no issue can be had for is accepted without a link (not a blocker deferred to
+    an upstream change that did not qualify: that one is asked for tracking as before)."""
     outcomes: dict[str, ThreadOutcome] = {}
     for h, o in out.outcomes.items():
         t = threads[h]
         blocking = t.get("severity") == "blocking"
         asker = maintainer_reply(t, author="" if blocking else author)
-        asked_once = bool(t.get("tracking_asked")) and not blocking and asker is not None
-        if o.status == DEFERRAL_NEEDS_TRACKING and asked_once:
-            outcomes[h] = dataclasses.replace(
-                o, status="INTENTIONALLY_DEFERRED", reply=UNTRACKED_SUGGESTION_REPLY
+        asked_once = bool(t.get("tracking_asked")) and asker is not None
+        conceded = h not in settled and asker is not None and _concedes(o)
+        if conceded:
+            o = dataclasses.replace(
+                o,
+                status="INTENTIONALLY_DEFERRED",
+                reply=DEFERRAL_REPLY,
+                tracking_url="",
+                file_request=None,
             )
-            continue
         if o.status != "INTENTIONALLY_DEFERRED":
             outcomes[h] = o
             continue
@@ -506,9 +579,16 @@ def accept_deferrals(
             )
         elif link or (h in settled and not (asker and o.file_request)):
             outcomes[h] = dataclasses.replace(o, tracking_url=link, file_request=None)
-        elif o.file_request or not needs_tracking(t.get("severity")) or asked_once:
+        elif o.file_request or not needs_tracking(t.get("severity")):
             # the worker files it (and downgrades the outcome if it cannot)
             outcomes[h] = dataclasses.replace(o, tracking_url="")
+        elif can_file and has_standing(asker) and not o.upstream and h not in unfiled:
+            outcomes[h] = dataclasses.replace(
+                o, tracking_url="", auto_file=True, untracked_ok=asked_once
+            )
+        elif asked_once and not (blocking and o.upstream) and h not in unfiled:
+            reply = untracked_reply(t.get("severity")) if blocking or conceded else o.reply
+            outcomes[h] = dataclasses.replace(o, tracking_url="", reply=reply)
         else:
             outcomes[h] = dataclasses.replace(
                 o,
@@ -522,6 +602,14 @@ def accept_deferrals(
                 tracking_url="",
             )
     return ConversationOutput(outcomes=outcomes)
+
+
+def _concedes(o: ThreadOutcome) -> bool:
+    """The lane judged a deferral reasonable but asked for its tracking itself
+    (DEFERRAL_NEEDS_TRACKING), which the system now supplies. Silence (NO_REPLY) never
+    counts: the lane is silent too when it still holds that the pull request must not merge
+    as it stands, or when the reply was not for it."""
+    return o.status == DEFERRAL_NEEDS_TRACKING
 
 
 def settle_disputes(
@@ -578,6 +666,8 @@ def _thread_for_prompt(h: str, t: dict[str, Any], settled: dict[str, str]) -> di
     }
     if t.get("dispute_answered"):
         item["dispute_answered"] = True
+    if t.get("tracking_asked"):
+        item["tracking_asked"] = True
     return item
 
 
@@ -658,9 +748,11 @@ def prompt(
         "for it: a WITHDRAWN or (maintainer-made) INTENTIONALLY_DEFERRED finding is marked "
         "on its thread, struck from the counts and the agent prompt of your review summary, "
         "and dropped from the status comment; once no blocking finding is left, a follow-up "
-        "review clears REQUEST_CHANGES. An INTENTIONALLY_DEFERRED outcome whose tracking the "
-        "system cannot see on the pull request is posted as needing a tracking issue "
-        "instead, and lifts nothing. While any other blocking finding stands, "
+        "review clears REQUEST_CHANGES. For an INTENTIONALLY_DEFERRED outcome whose tracking "
+        "the system cannot see on the pull request, the system finds or files the tracking "
+        "issue itself and links it under your reply; only where it cannot is the outcome "
+        "posted as needing a tracking issue instead, lifting nothing. While any other "
+        "blocking finding stands, "
         "REQUEST_CHANGES stays because of that one, not because of the finding you lifted. "
         "If a human says the summary or verdict still shows a finding you already settled "
         "(`already_settled_as` is set), do not settle it again: answer that one time with "
@@ -741,19 +833,29 @@ def prompt(
         "complete; an unrelated link does not. With one, mark the finding "
         'INTENTIONALLY_DEFERRED with `"tracking": {"url": "<that link or owner/repo#N>"}`, '
         "acknowledge it in one sentence, and stop. This lifts the finding on this commit.\n"
-        "- If it is reasonable but nothing tracks it yet, mark it DEFERRAL_NEEDS_TRACKING "
-        "and ask for a link or for permission to file it, naming the repository that owns "
-        f"the follow-up (this pull request's `{repo}`, or a sister repository such as "
-        'dashpay/rust-dashcore when the fix belongs upstream), roughly: "Before I mark this '
-        "deferred it needs a tracking issue for the follow-up. Link one, or say so and I'll "
-        'file it in <owner/repo>." The finding keeps standing.\n'
-        '- If a maintainer answers that ask (or asks you outright) with "file it", "go '
-        'ahead" or the like, mark it INTENTIONALLY_DEFERRED with '
-        '`"tracking": {"file": {"repo": "<owner/repo>", "title": "<issue title>", '
-        '"body": "<issue body>"}}`: a self-contained title and a short body saying what is '
-        "wrong, where, and what a fix needs. The system looks for an existing issue first, "
-        "files it otherwise, and adds the link to your reply; do not write a link or claim "
-        "it is filed in `reply`, just acknowledge the deferral.\n"
+        "- If it is reasonable but nothing tracks it yet, still mark it "
+        "INTENTIONALLY_DEFERRED, without `tracking`, and acknowledge the deferral in one "
+        "sentence. Do not ask for a link and do not offer to file one: the system looks for "
+        f"an existing issue, files one in this pull request's `{repo}` otherwise, and adds "
+        "the link under your reply (where it cannot file, it asks for a link itself). Do not "
+        "write a link or claim anything is filed in `reply`.\n"
+        '- If a maintainer asks you outright to file it ("file it", "go ahead" or the like), '
+        'mark it INTENTIONALLY_DEFERRED with `"tracking": {"file": {"repo": "<owner/repo>", '
+        '"title": "<issue title>", "body": "<issue body>"}}`, naming the repository that '
+        f"owns the follow-up (this pull request's `{repo}`, or a sister repository such as "
+        "dashpay/rust-dashcore when the fix belongs upstream): a self-contained title and a "
+        "short body saying what is wrong, where, and what a fix needs. The system looks for "
+        "an existing issue first, files it otherwise, and adds the link under your reply; "
+        "just acknowledge the deferral.\n"
+        "- A thread marked `tracking_asked` already has your one ask for a tracking link. If "
+        'a maintainer answers it by declining to link one ("no tracking issue", "out of '
+        'scope, not tracking it"), check the deferral again against the current code: only '
+        "if you still judge it reasonable (by the rules above), mark it "
+        "INTENTIONALLY_DEFERRED again without `tracking` and do not ask again; the system "
+        "files the issue or, where it cannot, records the deferral as untracked. Any other "
+        "reply (a request to fix it here after all, a question for someone else, thanks) is "
+        "no such decline: answer it as you would anywhere else, and the finding keeps "
+        "standing.\n"
         "- If a reply is addressed to someone else, is a bare acknowledgement, or asks a "
         "question you cannot usefully answer from the code, mark NO_REPLY. Silence is better "
         "than noise. In particular, if a human explicitly asked someone else to weigh in, do not "
@@ -786,7 +888,7 @@ def prompt(
         '"reasoning": "<one or two private sentences on why, never posted>", '
         '"disputed": <true when the latest human message disputes the finding; else omit>, '
         '"tracking": <INTENTIONALLY_DEFERRED only: {"url": "..."}, {"upstream": "..."} or '
-        '{"file": {...}}>}]}\n'
+        '{"file": {...}}; omit it when nothing tracks the deferral yet>}]}\n'
         "```\n"
         "Include exactly one entry per `finding_hash` listed above. `reply` is required and "
         "non-empty for every status except NO_REPLY, and must be empty for NO_REPLY. Omit "
