@@ -336,8 +336,9 @@ class RunContext:
     # the follow-up candidates reviews of this PR listed (`_listed_followups`), once per run
     # the heads of the PR's full-strength final reviews, oldest first (`_review_history`)
     full_reviewed: list[str] = field(default_factory=list)
-    # how this head relates to `_since` (`_since_rewrite`), once per run
-    since_rewrite: tuple[late.Rewrite | None] | None = None
+    # how this head relates to `_since` (`_since_rewrite`), read once per run
+    since_rewrite: late.Rewrite | None = None
+    since_rewrite_read: bool = False
     listed_followups: tuple[set[str], list[late.Spot]] | None = None
     # what this later round did with new findings on unchanged code (publish.Provenance.late)
     late_report: dict[str, Any] | None = None
@@ -5155,11 +5156,12 @@ def _since_rewrite(ctx: RunContext) -> late.Rewrite | None:
     since = _since(ctx)
     if since is None or ctx.worktree is None or ctx.meta is None:
         return None
-    if ctx.since_rewrite is None:
-        ctx.since_rewrite = (
-            late.rewrite_since(ctx.worktree, since, ctx.sha, ctx.meta.base_ref, ctx.merge_base),
+    if not ctx.since_rewrite_read:
+        ctx.since_rewrite_read = True
+        ctx.since_rewrite = late.rewrite_since(
+            ctx.worktree, since, ctx.sha, ctx.meta.base_ref, ctx.merge_base
         )
-    return ctx.since_rewrite[0]
+    return ctx.since_rewrite
 
 
 def _reviews_of_lines(ctx: RunContext, f: Finding) -> int:
@@ -5173,8 +5175,8 @@ def _reviews_of_lines(ctx: RunContext, f: Finding) -> int:
 
 
 def _reviewed_test(ctx: RunContext) -> Callable[[Finding], bool]:
-    """For `late.split`: the commits that wrote a finding's lines were all read by the previous
-    full review (`late.Commits`)."""
+    """For `late.split`: the pull request wrote a finding's lines and none of its commits was
+    added or changed since the previous full review (`late.Commits.reviewed`)."""
     if ctx.worktree is None or ctx.prev_final_sha is None:
         return lambda f: False
     commits = late.Commits(
@@ -5272,6 +5274,7 @@ def _classify_late(ctx: RunContext, verified: VerifierOutput) -> late.Split | No
         spots=spots,
         revived=_revived_test(ctx),
         reviewed=_reviewed_test(ctx),
+        upstreams=_upstreams(ctx),
     )
 
 
@@ -5676,9 +5679,10 @@ def _apply_decisions(
 def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision]:
     """Candidates an earlier full-strength round's confirmation already judged not blocking,
     whose thread nobody replied on since: its verdict stands, no lane asks again. Matched by
-    hash with the file unchanged since that round, or by place (`late.listed_spots`: the same
-    file, an overlapping range, its lines unchanged since): dashpay/dash#8158 had a blocker
-    the lane did not confirm come back reworded on the same lines and get confirmed. A
+    hash with the file unchanged since that round, or, for a `non_blocking` verdict and a
+    candidate on unchanged lines, by place (`late.within`: the same file, within the range of
+    that finding, whose lines are unchanged since): dashpay/dash#8158 had a blocker the lane
+    did not confirm come back reworded on the same lines and get confirmed. A
     re-review of the head of the last full review, which someone asked for, asks again."""
     if not candidates or ctx.code_history is None or ctx.sha == ctx.prev_final_sha:
         return {}
@@ -5697,10 +5701,10 @@ def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[in
         row = earlier.get(f.hash)
         if row is not None and ctx.code_history.changed_since(str(row["sha"]), f.file) is not False:
             row = None
-        if row is None:
+        if row is None and late.on_unchanged(f):
             if places is None:
                 places = _decided_places(ctx, rows)
-            row = next((r for spot, r in places if late.is_listed(f, set(), [spot])), None)
+            row = next((r for spot, r in places if late.within(f, spot)), None)
         thread = (f.extra.get("judged_fixed") or {}).get("hash") or f.prior_hash or f.hash
         at = str(row["started_at"]) if row is not None else ""
         if row is not None and not any(
@@ -5716,12 +5720,15 @@ def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[in
 def _decided_places(
     ctx: RunContext, rows: list[sqlite3.Row]
 ) -> list[tuple[late.Spot, sqlite3.Row]]:
-    """Where each remembered confirmation verdict's finding (`rows`, oldest first) is at this
-    head, the newest first; one whose lines changed since, or git cannot place, has none."""
+    """Where each remembered `non_blocking` verdict's finding (`rows`, oldest first) is at this
+    head, the newest first; one whose lines changed since, or git cannot place, has none. An
+    `invalid` verdict is matched by hash only."""
     if ctx.worktree is None:
         return []
     out = []
     for r in reversed(rows):
+        if r["stage"] != late.STAGE_UNCONFIRMED:
+            continue
         spots = late.listed_spots(
             ctx.worktree,
             ctx.sha,
@@ -5757,8 +5764,6 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
         _lane_event(ctx, "late.confirm_skipped", f"{len(ids)} blocker(s) kept: degraded mode")
         return None
     _step_start(ctx, StepName.CONFIRM, {"candidates": len(candidates)})
-    for f in candidates:
-        f.extra["full_reviews"] = _reviews_of_lines(ctx, f)
     prompt = confirmation_prompt(
         ctx.cfg,
         repo=ctx.repo,
@@ -5766,7 +5771,9 @@ def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.
         head_sha=ctx.sha,
         meta=ctx.meta.as_dict(),
         coverage_from=ctx.coverage_from,
-        reported=late.candidate_briefs(candidates),
+        reported=late.candidate_briefs(
+            candidates, reviews=[_reviews_of_lines(ctx, f) for f in candidates]
+        ),
         guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
         settled=settled_matters(ctx.prior),
         since_sha=_since(ctx),

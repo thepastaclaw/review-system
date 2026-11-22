@@ -233,20 +233,25 @@ RULE_BLOCKERS = (
 )
 
 
-def rewritten_since(since_sha: str, head_sha: str, rewrite: Rewrite | None) -> str:
+# what is reported on code a full review already read, beside what the change breaks: a
+# backport's missing hunk is a fidelity defect of the pull request itself
+ALREADY_REVIEWED_EXCEPTIONS = (
+    "a defect that loses funds, breaks consensus or exposes key material, and a backport "
+    "that leaves out part of the upstream change it claims to land (a missing hunk)"
+)
+NOT_UNDER_REVIEW = (
+    "which are not under review, except where they change the behaviour of code this pull "
+    "request adds or relies on"
+)
+
+
+def rebase_commands(since_sha: str, head_sha: str, rewrite: Rewrite | None) -> str:
     """What a later round after a rebase (`rewrite`, late.py) reads instead of `git diff
     since..head`, which would mostly show the base branch's changes: dashpay/dash#8158's
-    11-commit pull request showed 374 files after one rebase. "" without a rewrite; after
-    one whose merge bases git could not compute, a warning to go with the usual commands."""
-    if rewrite is None:
+    11-commit pull request showed 374 files after one rebase. "" without a rewrite whose
+    merge bases git computed."""
+    if not (rewrite and rewrite.old_base and rewrite.new_base):
         return ""
-    if not _rebased(rewrite):
-        return (
-            f"The branch was rebased, or its history rewritten, since `{since_sha}`, and its "
-            f"merge bases with the base branch could not be computed: a diff against "
-            f"`{since_sha}` may also show the base branch's changes, which are not this pull "
-            "request's and are not under review."
-        )
     return (
         f"The branch was rebased, or its history rewritten, since then: `{since_sha}` is not "
         f"an ancestor of `{head_sha}`. Compare the pull request's own commits before and "
@@ -254,12 +259,20 @@ def rewritten_since(since_sha: str, head_sha: str, rewrite: Rewrite | None) -> s
         f"{rewrite.new_base}..{head_sha}`; a commit it shows as unchanged (`=`) was already "
         f"reviewed. `git diff {rewrite.new_base}..{head_sha}` is the pull request as it "
         f"stands. `git diff {since_sha}..{head_sha}` would mostly show the base branch's "
-        "changes, which are not this pull request's and are not under review."
+        f"changes, {NOT_UNDER_REVIEW}."
     )
 
 
-def _rebased(rewrite: Rewrite | None) -> bool:
-    return bool(rewrite and rewrite.old_base and rewrite.new_base)
+def rebase_warning(since_sha: str, rewrite: Rewrite | None) -> str:
+    """After a rewrite whose merge bases git could not compute: the usual commands, with this
+    warning ("" otherwise)."""
+    if rewrite is None or (rewrite.old_base and rewrite.new_base):
+        return ""
+    return (
+        f" The branch was rebased, or its history rewritten, since `{since_sha}`, and its "
+        f"merge bases with the base branch could not be computed: a diff against `{since_sha}` "
+        f"may also show the base branch's changes, {NOT_UNDER_REVIEW}."
+    )
 
 
 def incremental_block(since_sha: str, head_sha: str, rewrite: Rewrite | None = None) -> str:
@@ -268,21 +281,17 @@ def incremental_block(since_sha: str, head_sha: str, rewrite: Rewrite | None = N
     kept finding something: over 260 client pull requests, 60% of the blockers raised after
     round one were on lines the previous push had not touched, and the rate of new blockers
     did not fall from round 2 to round 15. After a rebase it names the commands that show
-    the pull request's own change (`rewritten_since`)."""
-    if _rebased(rewrite):
-        scope = (
-            f"{rewritten_since(since_sha, head_sha, rewrite)} Review what the pull request's "
-            "own commits do differently since then and check the prior findings against it."
-        )
-    else:
-        scope = (
-            f"Review what changed since then (`git diff {since_sha}..{head_sha}`; when the "
-            f"branch was rebased or squashed since, `git range-diff {since_sha}...{head_sha}` "
-            "shows what the commits now do differently, apart from what came in from the base "
-            "branch) and check the prior findings against it."
-        )
-        if rewrite:
-            scope += " " + rewritten_since(since_sha, head_sha, rewrite)
+    the pull request's own change (`rebase_commands`)."""
+    commands = rebase_commands(since_sha, head_sha, rewrite)
+    scope = (
+        f"{commands} Review what the pull request's own commits do differently since then "
+        "and check the prior findings against it."
+        if commands
+        else f"Review what changed since then (`git diff {since_sha}..{head_sha}`; when the "
+        f"branch was rebased or squashed since, `git range-diff {since_sha}...{head_sha}` "
+        "shows what the commits now do differently, apart from what came in from the base "
+        "branch) and check the prior findings against it." + rebase_warning(since_sha, rewrite)
+    )
     return (
         f"- This is a later review round: the pull request was reviewed in full at "
         f"`{since_sha}`. Do not review it again from the start. {scope} The complete range "
@@ -291,8 +300,8 @@ def incremental_block(since_sha: str, head_sha: str, rewrite: Rewrite | None = N
         "that the change breaks or newly relies on, and then name the change. Anything else "
         "in code that was already reviewed is not reported in this round, however valid: the "
         "earlier rounds had their chance at it, and a pull request must be able to finish. "
-        "The one exception is a defect that loses funds, breaks consensus or exposes key "
-        "material: report that wherever it is.\n"
+        f"The exceptions are {ALREADY_REVIEWED_EXCEPTIONS}: report those wherever they are. "
+        "Any other rule of the project's (layer ownership, for one) follows this paragraph.\n"
         "- A new finding is `blocking` only with actual reachability. Its body names "
         f"{ACTUAL_REACHABILITY}. A failure that needs {NOT_REACHABLE} is a suggestion at "
         f"most. {RULE_BLOCKERS} An independent pass re-derives the path, or checks the rule, "
@@ -305,25 +314,21 @@ def verifier_incremental_block(
 ) -> str:
     """The later-round rules of `incremental_block`, as the verifier applies them to the
     reviewers' claims."""
-    if _rebased(rewrite):
-        scope = "what the pull request's own commits do differently since then. " + rewritten_since(
-            since_sha, head_sha, rewrite
-        )
-    else:
-        scope = (
-            f"what changed since then (`git diff {since_sha}..{head_sha}`, or `git range-diff "
-            f"{since_sha}...{head_sha}` after a rebase)."
-        )
-        if rewrite:
-            scope += " " + rewritten_since(since_sha, head_sha, rewrite)
+    commands = rebase_commands(since_sha, head_sha, rewrite)
+    scope = (
+        f"what the pull request's own commits do differently since then. {commands}"
+        if commands
+        else f"what changed since then (`git diff {since_sha}..{head_sha}`, or `git range-diff "
+        f"{since_sha}...{head_sha}` after a rebase)." + rebase_warning(since_sha, rewrite)
+    )
     return (
         f"- This is a later review round: the pull request was reviewed in full at "
         f"`{since_sha}`, and this round reviews {scope} Keep a new finding only when it is on code that changed since then, or on "
         "unchanged code that the change breaks or newly relies on, with the change named in "
         "its body. Drop any other new finding on code that was already reviewed, with a "
         "reason that starts with `ALREADY_REVIEWED`; a pull request must be able to finish. "
-        "The one exception is a defect that loses funds, breaks consensus or exposes key "
-        "material: keep that wherever it is.\n"
+        f"The exceptions are {ALREADY_REVIEWED_EXCEPTIONS}: keep those wherever they are. "
+        "Any other rule of the project's (layer ownership, for one) follows this paragraph.\n"
         "- A new finding is `blocking` only with actual reachability, which you check in the "
         f"code yourself: {ACTUAL_REACHABILITY}. Put all four in its body. A failure that "
         f"needs {NOT_REACHABLE} is a suggestion at most. {RULE_BLOCKERS} Hold it to what a "
@@ -437,8 +442,11 @@ def prior_findings_block(
         "in this repository or its target branch that makes it fail here where it does not fail "
         "upstream, or a build or test failure on this head that it causes. That matching upstream "
         "does not make the code correct is not such a reason. Whether a later upstream fix "
-        "lands here or in a later backport is a maintainer's call (association OWNER, MEMBER or "
-        "COLLABORATOR): when one says it comes later, reconcile the finding "
+        "raised in the first full review of its commit, or for a commit added or changed since "
+        "the last reviewed head, lands here or in a later backport is a maintainer's call "
+        "(association OWNER, MEMBER or COLLABORATOR); one found on a later round, in a backport "
+        "already reviewed, is listed as an optional follow-up. When a maintainer says it comes "
+        "later, reconcile the finding "
         "INTENTIONALLY_DEFERRED with `tracking` set to the upstream change (`owner/repo#N`) and "
         "`upstream_followup: true`. It needs no issue in this repository, because the project "
         "tracks the upstream changes it has not taken. Anyone else declining the fix is treated "
@@ -893,7 +901,7 @@ def stepback_prompt(
             f"The branch was rebased since its first review: `git range-diff "
             f"{first_rewrite.old_base}..{first_sha} {first_rewrite.new_base}..{head_sha}` shows "
             "how the PR's own commits changed since then (`git diff` against that review's head "
-            "would mostly show the base branch's changes). "
+            f"would mostly show the base branch's changes, {NOT_UNDER_REVIEW}). "
         )
     earlier = ""
     if previous:
@@ -1049,23 +1057,24 @@ def confirmation_prompt(
     without them it confirmed a verifier's finding on lines eleven full reviews had read."""
     project_skill, review_skill = skill_texts(cfg, repo)
     rules = review_skill.strip()
-    change = rewritten_since(since_sha, head_sha, rewrite) if since_sha else ""
-    if since_sha and not _rebased(rewrite):
-        change = (
-            f"Its change since then is `git diff {since_sha}..{head_sha}` (`git range-diff "
-            f"{since_sha}...{head_sha}` after a rebase). {change}"
-        ).strip()
+    change = rebase_commands(since_sha or "", head_sha, rewrite) or (
+        f"Its change since then is `git diff {since_sha}..{head_sha}` (`git range-diff "
+        f"{since_sha}...{head_sha}` after a rebase).{rebase_warning(since_sha or '', rewrite)}"
+    )
     round_rules = (
         f"- This is a later review round: the pull request was last reviewed in full at "
         f"`{since_sha}`. {change} Each finding gives its `code_status` against that review "
         "and `full_reviews_of_these_lines`, how many full reviews have read its lines as "
         "they are now.\n"
         "- A finding on lines unchanged since a full review is `blocking` only if (a) it "
-        "names the change in this pull request since that review that breaks them, or (b) it "
-        "is a defect that loses funds, breaks consensus or exposes key material, and in both "
-        "cases it also meets the rules above (an actually reachable failure, or a project "
-        "rule you checked applies). Otherwise the verdict is `non_blocking`, with the reason "
-        '"already reviewed, nothing in the change affects it".\n'
+        "names the change since that review, in this pull request or in the base branch it "
+        "was rebased onto, that breaks those lines, or (b) it is "
+        f"{ALREADY_REVIEWED_EXCEPTIONS}; and in both cases it also meets the rules above (an "
+        "actually reachable failure, or a project rule you checked applies). This holds for "
+        "the project-rule blockers above too: a missing hunk is one of the exceptions, while "
+        "any other rule (a later upstream fix, layer ownership) needs (a). Otherwise the "
+        'verdict is `non_blocking`, with the reason "already reviewed, nothing in the change '
+        'affects it".\n'
         if since_sha
         else ""
     )

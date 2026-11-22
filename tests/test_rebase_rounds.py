@@ -100,7 +100,8 @@ AFTER_REBASE = (
     f"and after with `git range-diff {'1' * 40}..{C} {'2' * 40}..{D}`; a commit it shows as "
     f"unchanged (`=`) was already reviewed. `git diff {'2' * 40}..{D}` is the pull request as "
     f"it stands. `git diff {C}..{D}` would mostly show the base branch's changes, which are "
-    "not this pull request's and are not under review. Review what the pull request's own "
+    "not under review, except where they change the behaviour of code this pull request adds "
+    "or relies on. Review what the pull request's own "
     "commits do differently since then and check the prior findings against it. The complete "
     "range is context for that, not the subject.\n"
 )
@@ -126,6 +127,10 @@ def test_after_a_rebase_every_lane_is_given_the_pull_requests_own_change(cfg):
     )
     assert f"git range-diff {'1' * 40}..{C} {'2' * 40}..{D}" in confirm
     assert f"Its change since then is `git diff {C}..{D}`" not in confirm
+    # a base-branch change that breaks the pull request's code is not out of scope
+    for p in (prompts.incremental_block(C, D, rewrite), verifier, confirm):
+        assert "except where they change the behaviour of code this pull request adds" in p
+    assert "in this pull request or in the base branch it was rebased onto" in confirm
     # a linear push keeps today's wording
     linear = prompts.incremental_block(C, D)
     assert f"Review what changed since then (`git diff {C}..{D}`; when the branch" in linear
@@ -156,7 +161,7 @@ def test_the_8158_rebase_reads_the_pull_requests_commits_not_the_base_branch(
     rewrite = late.rewrite_since(repo, since, head, "develop", newer)
     assert rewrite == late.Rewrite(base, newer)
     commits = late.Commits(repo, head, since, newer, rewrite)
-    assert len(commits.same() or ()) == 2  # both commits unchanged by the rebase
+    assert commits.unchanged()  # both commits unchanged by the rebase
 
     monkeypatch.setattr(late, "rewrite_since", lambda *a: rewrite)
     _first_round(cfg, conn, gh, lanes)
@@ -238,22 +243,36 @@ def test_the_confirmation_lane_is_told_the_code_status_and_the_already_reviewed_
     assert '"code_status": "unchanged since the first review"' in confirm
     assert '"full_reviews_of_these_lines": 1' in confirm
     assert f"last reviewed in full at `{'a' * 40}`" in confirm
-    assert "(a) it names the change in this pull request since that review" in confirm
-    assert "loses funds, breaks consensus or exposes key material" in confirm
+    assert "(a) it names the change since that review, in this pull request" in confirm
+    assert "loses funds, breaks consensus or exposes key material, and a backport" in confirm
     assert '"already reviewed, nothing in the change affects it"' in confirm
     assert gh.posted_reviews[-1]["event"] == "APPROVE"
 
 
 def test_the_brief_says_the_status_in_words():
     f = _with(_f(INIT, 3, 4), late.IN_REVIEW)
-    f.extra["full_reviews"] = 4
-    (brief,) = late.candidate_briefs([f])
+    (brief,) = late.candidate_briefs([f], reviews=[4])
     assert brief["code_status"] == "unchanged since the last reviewed head"
     assert brief["full_reviews_of_these_lines"] == 4
     assert "code_status" not in late.candidate_briefs([_f(INIT, 3)])[0]
 
 
 # ---- 3: a missing upstream follow-up is enumerated once ----
+
+
+@pytest.fixture
+def backports(cfg):
+    """The reviewed repository backports from Bitcoin Core (#78's `upstream_repos`)."""
+    import dataclasses
+
+    repos = tuple(
+        dataclasses.replace(r, upstream_repos=("bitcoin/bitcoin",))
+        if r.repo == "dashpay/platform"
+        else r
+        for r in cfg.repos
+    )
+    return dataclasses.replace(cfg, repos=repos)
+
 
 FOLLOWUP = {
     **_blocking("Missing follow-up: bitcoin#29770 checks for undo data before starting indexes"),
@@ -266,7 +285,7 @@ FOLLOWUP = {
 
 @pytest.mark.usefixtures("statuses")
 def test_a_late_missing_follow_up_in_a_reviewed_commit_is_listed_once_unasked(
-    cfg,
+    backports,
     conn,
     gh,
     lanes,
@@ -277,8 +296,8 @@ def test_a_late_missing_follow_up_in_a_reviewed_commit_is_listed_once_unasked(
     the maintainer had said twice that follow-ups get backported in their turn."""
     monkeypatch.setitem(STATUS, FOLLOWUP["title"], late.SINCE_FIRST)
     monkeypatch.setattr(late.Commits, "reviewed", lambda self, f: True)
-    _first_round(cfg, conn, gh, lanes)
-    rid = _round(cfg, conn, gh, lanes, C, [FOLLOWUP])
+    _first_round(backports, conn, gh, lanes)
+    rid = _round(backports, conn, gh, lanes, C, [FOLLOWUP])
     assert not [c for c in lanes.calls if c.role == "confirm"]
     review = gh.posted_reviews[-1]
     assert review["event"] == "APPROVE" and not review["comments"]
@@ -291,7 +310,7 @@ def test_a_late_missing_follow_up_in_a_reviewed_commit_is_listed_once_unasked(
     again = {**FOLLOWUP, "title": "Missing follow-up: bitcoin#29770 (undo data)"}
     monkeypatch.setitem(STATUS, again["title"], late.SINCE_FIRST)
     monkeypatch.setattr(late, "listed_spots", lambda repo, head, rows: _same_places(rows))
-    _round(cfg, conn, gh, lanes, D, [again])
+    _round(backports, conn, gh, lanes, D, [again])
     assert "Follow-up candidates" not in gh.posted_reviews[-1]["body"]
     assert not [c for c in lanes.calls if c.role == "confirm"]
 
@@ -302,7 +321,7 @@ def _same_places(rows):
 
 @pytest.mark.usefixtures("statuses")
 def test_a_missing_follow_up_in_a_new_or_changed_commit_still_blocks_until_confirmed(
-    cfg,
+    backports,
     conn,
     gh,
     lanes,
@@ -310,8 +329,8 @@ def test_a_missing_follow_up_in_a_new_or_changed_commit_still_blocks_until_confi
 ):
     monkeypatch.setitem(STATUS, FOLLOWUP["title"], late.SINCE_FIRST)
     monkeypatch.setattr(late.Commits, "reviewed", lambda self, f: False)
-    _first_round(cfg, conn, gh, lanes)
-    _round(cfg, conn, gh, lanes, C, [FOLLOWUP])
+    _first_round(backports, conn, gh, lanes)
+    _round(backports, conn, gh, lanes, C, [FOLLOWUP])
     assert [c for c in lanes.calls if c.role == "confirm"]
     assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
 
@@ -319,41 +338,129 @@ def test_a_missing_follow_up_in_a_new_or_changed_commit_still_blocks_until_confi
 def test_a_missing_follow_up_in_the_first_full_review_blocks():
     """First round: no gate. In a later round, on changed code: the confirmation lane."""
     f = _with(Finding.from_dict(FOLLOWUP), late.CHANGED)
-    split = late.split([f], posted=lambda f: None, listed=set(), reviewed=lambda f: True)
+    split = late.split(
+        [f], posted=lambda f: None, listed=set(), reviewed=lambda f: True, upstreams=UPS
+    )
     assert split.candidates == [f] and f.severity == "blocking"
 
 
+UPS = ("bitcoin/bitcoin", "dashpay/dash")
+
+
 def test_what_marks_a_missing_follow_up():
-    assert late.is_missing_followup(Finding.from_dict(FOLLOWUP))
-    marked = Finding.from_dict({**_blocking("Undo data is not checked"), "upstream_followup": True})
-    assert late.is_missing_followup(marked)
-    assert not late.is_missing_followup(Finding.from_dict(_blocking("A follow-up is missing")))
+    assert late.is_missing_followup(Finding.from_dict(FOLLOWUP), UPS)
+    body = "bitcoin/bitcoin#29770 fixed it later."
+    marked = {**_blocking("Undo data is not checked"), "upstream_followup": True, "body": body}
+    assert late.is_missing_followup(Finding.from_dict(marked), UPS)
+    linked = {**marked, "body": "See https://github.com/bitcoin/bitcoin/pull/29770."}
+    assert late.is_missing_followup(Finding.from_dict(linked), UPS)
+    # no marker, no upstream repositories configured, or no upstream change named
+    assert not late.is_missing_followup(Finding.from_dict(_blocking("bitcoin#29770")), UPS)
+    assert not late.is_missing_followup(Finding.from_dict(FOLLOWUP), ())
+    own = _blocking("Missing follow-up: caller in validation.cpp still passes the old arg")
+    assert not late.is_missing_followup(Finding.from_dict(own), UPS)
+    elsewhere = {**own, "body": "As in rust-dashcore#12."}
+    assert not late.is_missing_followup(Finding.from_dict(elsewhere), UPS)
+
+
+@pytest.mark.usefixtures("statuses")
+def test_an_in_pr_omission_titled_like_a_follow_up_still_goes_to_confirmation(
+    cfg, conn, gh, lanes, monkeypatch
+):
+    """A repository with no upstream repositories, or a title that names no upstream change,
+    keeps #79's rule for a new blocker."""
+    own = {**FOLLOWUP, "title": "Missing follow-up: caller in validation.cpp keeps the old arg"}
+    monkeypatch.setitem(STATUS, own["title"], late.SINCE_FIRST)
+    monkeypatch.setattr(late.Commits, "reviewed", lambda self, f: True)
+    _first_round(cfg, conn, gh, lanes)
+    _round(cfg, conn, gh, lanes, C, [own, FOLLOWUP])
+    (confirm,) = [c.prompt for c in lanes.calls if c.role == "confirm"]
+    assert own["title"] in confirm and FOLLOWUP["title"] in confirm  # no upstream_repos here
+
+
+def test_a_missing_hunk_on_unchanged_lines_stays_blocking():
+    """A backport that leaves out part of the upstream change it claims to land blocks
+    whenever it is found: it is an exception of the already-reviewed rule, and goes to the
+    confirmation lane, which is told so."""
+    hunk = _with(
+        Finding.from_dict({**_blocking("Missing upstream validation hunk from bitcoin#12345")}),
+        late.SINCE_FIRST,
+    )
+    split = late.split(
+        [hunk], posted=lambda f: None, listed=set(), reviewed=lambda f: True, upstreams=UPS
+    )
+    assert split.candidates == [hunk] and hunk.severity == "blocking"
+    for text in (
+        prompts.incremental_block(C, D),
+        prompts.verifier_incremental_block(C, D),
+    ):
+        assert "a backport that leaves out part of the upstream change it claims to land" in text
 
 
 def test_which_commits_the_last_full_review_read(repo):
+    """A late follow-up is demoted only for lines the pull request wrote, and only while none
+    of its commits was added or changed since the last full review."""
     base = _base(repo)
     lines = _lines(20, "init")
-    first = _pr(repo, base, [{INIT: "\n".join(lines) + "\n"}])
-    since = first[-1]
+    since = _pr(repo, base, [{INIT: "\n".join(lines) + "\n"}])[-1]
+    reviewed = late.Commits(repo, since, since, base)
+    assert reviewed.reviewed(_f(INIT, 3, 5))
+    # base-branch lines the pull request never touched: an empty blame is not reviewed
+    assert reviewed.blame(_f("base.cpp", 2)) == set()
+    assert not reviewed.reviewed(_f("base.cpp", 2))
+    # a merge of the base branch adds no commit of the pull request
+    _advance(repo, {"other.cpp": "from the base branch\n"})
+    _git(repo, "checkout", "-q", "pr")
+    _git(repo, "merge", "-q", "--no-edit", "develop")
+    merged = _git(repo, "rev-parse", "HEAD")
+    merged_base = _git(repo, "merge-base", "develop", merged)
+    assert late.Commits(repo, merged, since, merged_base).reviewed(_f(INIT, 3, 5))
+    # a new commit, even one that touches other lines: the follow-up may be its own
     head = _commit(repo, {INIT: "\n".join([*lines, "added after the review"]) + "\n"})
-    commits = late.Commits(repo, head, since, base)
-    assert commits.reviewed(_f(INIT, 3, 5))  # an ancestor of the reviewed head
-    assert not commits.reviewed(_f(INIT, 21))  # the commit after it
-    assert commits.reviewed(_f("base.cpp", 2))  # the base branch's lines
-    # rebased: an unchanged commit is reviewed, an amended one is not
+    added = late.Commits(repo, head, since, merged_base)
+    assert not added.unchanged()
+    assert not added.reviewed(_f(INIT, 3, 5)) and not added.reviewed(_f(INIT, 21))
+
+
+def test_a_rebase_with_added_or_changed_commits_is_not_reviewed(repo):
+    base = _base(repo)
+    lines = _lines(20, "init")
+    since = _pr(repo, base, [{INIT: "\n".join(lines) + "\n"}, {"y.cpp": "y\n"}])[-1]
     newer = _advance(repo, {"base.cpp": "\n".join(_lines(40, "b")) + "\nbase tail\n"})
+
+    def commits(head):
+        return late.Commits(
+            repo, head, since, newer, late.rewrite_since(repo, since, head, "develop", newer)
+        )
+
+    same = _pr(repo, newer, [{INIT: "\n".join(lines) + "\n"}, {"y.cpp": "y\n"}])[-1]
+    assert commits(same).reviewed(_f(INIT, 3, 5))  # every row `=`
+    added = _pr(repo, newer, [{INIT: "\n".join(lines) + "\n"}, {"y.cpp": "y\n"}, {"x.cpp": "x\n"}])[
+        -1
+    ]
+    assert "> 3:" in _git(repo, "range-diff", f"{base}..{since}", f"{newer}..{added}")
+    assert not commits(added).reviewed(_f(INIT, 3, 5))
     amended = list(lines)
     amended[10] = "amended in the rebase"
-    rebased = _pr(repo, newer, [{INIT: "\n".join(lines) + "\n"}, {"x.cpp": "x\n"}])[-1]
-    rewrite = late.rewrite_since(repo, since, rebased, "develop", newer)
-    assert late.Commits(repo, rebased, since, newer, rewrite).reviewed(_f(INIT, 3, 5))
-    changed = _pr(repo, newer, [{INIT: "\n".join(amended) + "\n"}])[-1]
-    rewrite = late.rewrite_since(repo, since, changed, "develop", newer)
-    assert not late.Commits(repo, changed, since, newer, rewrite).reviewed(_f(INIT, 3, 5))
+    changed = _pr(repo, newer, [{INIT: "\n".join(amended) + "\n"}, {"y.cpp": "y\n"}])[-1]
+    assert " ! " in _git(repo, "range-diff", f"{base}..{since}", f"{newer}..{changed}")
+    assert not commits(changed).reviewed(_f(INIT, 3, 5))
     # no merge bases after a rewrite: git cannot tell
-    assert not late.Commits(repo, changed, since, newer, late.Rewrite(None, None)).reviewed(
+    assert not late.Commits(repo, same, since, newer, late.Rewrite(None, None)).reviewed(
         _f(INIT, 3, 5)
     )
+
+
+def test_blame_drops_base_lines_in_every_group(repo):
+    """`git blame --porcelain` prints `boundary` only the first time a commit appears: base
+    lines on both sides of the pull request's line are all left out."""
+    lines = _lines(20, "init")
+    (repo / "src").mkdir()
+    base = _commit(repo, {INIT: "\n".join(lines) + "\n"})
+    _git(repo, "branch", "-M", "develop")
+    lines[9] = "the pull request's own line"
+    pr = _pr(repo, base, [{INIT: "\n".join(lines) + "\n"}])[-1]
+    assert late.Commits(repo, pr, pr, base).blame(_f(INIT, 5, 15)) == {pr}
 
 
 # ---- 4: a remembered verdict is matched by place ----
@@ -428,7 +535,46 @@ def test_a_blocker_elsewhere_in_the_file_is_asked(cfg, conn, gh, lanes, places, 
     _round(cfg, conn, gh, lanes, C, [STOPATHEIGHT])
     _round(cfg, conn, gh, lanes, D, [elsewhere])
     assert len([c for c in lanes.calls if c.role == "confirm"]) == 2
-    assert _verifier  # the e2e helpers above build these rounds
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"title": "A blocker in the rewritten code", "status": late.CHANGED},
+        {"title": "A blocker over a wider range", "line_end": 3990, "status": late.IN_REVIEW},
+    ],
+)
+def test_a_blocker_on_changed_code_or_a_wider_range_is_asked(
+    cfg, conn, gh, lanes, places, monkeypatch, change
+):
+    """A verdict on lines 3946-3958 is not inherited by a blocker on code this push rewrote,
+    nor by one over a range much wider than the one it was given for."""
+    status = change.pop("status")
+    new = {**REWORDED, **change}
+    monkeypatch.setitem(STATUS, new["title"], status)
+    _first_round(cfg, conn, gh, lanes)
+    lanes.confirm = {STOPATHEIGHT["title"]: "non_blocking"}
+    _round(cfg, conn, gh, lanes, C, [STOPATHEIGHT])
+    _round(cfg, conn, gh, lanes, D, [new])
+    assert len([c for c in lanes.calls if c.role == "confirm"]) == 2
+
+
+def test_an_invalid_verdict_is_not_applied_by_place(cfg, conn, gh, lanes, places):
+    _first_round(cfg, conn, gh, lanes)
+    lanes.confirm = {STOPATHEIGHT["title"]: "invalid"}
+    _round(cfg, conn, gh, lanes, C, [STOPATHEIGHT])
+    lanes.confirm = {}
+    _round(cfg, conn, gh, lanes, D, [REWORDED])
+    assert len([c for c in lanes.calls if c.role == "confirm"]) == 2
+
+
+def test_within():
+    spot = ("v.cpp", 3946, 3958)
+    assert late.within(_f("v.cpp", 3944, 3958), spot)
+    assert late.within(_f("v.cpp", 3950, 3952), spot)
+    assert not late.within(_f("v.cpp", 3956, 3990), spot)
+    assert not late.within(_f("v.cpp", 3900, 3990), spot)
+    assert not late.within(_f("w.cpp", 3946, 3958), spot)
 
 
 def test_the_step_back_lane_reads_the_pull_requests_growth_after_a_rebase(cfg):
