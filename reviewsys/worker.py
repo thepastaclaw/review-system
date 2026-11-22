@@ -333,6 +333,8 @@ class RunContext:
     prev_final_blockers: bool = False
     first_reviewed_sha: str | None = None
     code_history: late.CodeHistory | None = None
+    # the follow-up candidates reviews of this PR listed (`_listed_followups`), once per run
+    listed_followups: tuple[set[str], list[late.Spot]] | None = None
     # what this later round did with new findings on unchanged code (publish.Provenance.late)
     late_report: dict[str, Any] | None = None
     # this round stepped back from its findings to their causes (stepback.py); None otherwise
@@ -1151,18 +1153,46 @@ def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
     by run id makes a later independently evidenced reintroduction active again, while a later
     withdrawal remains a tombstone for every subsequent head.
     """
-    row = ctx.conn.execute(
-        "SELECT f.stage, f.body FROM findings f JOIN runs r ON r.id=f.run_id "
-        "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND f.hash=? "
-        "AND f.stage IN ('conceded','verified','verified-fresh','posted') "
-        "ORDER BY r.id DESC, f.id DESC LIMIT 1",
-        (ctx.repo, ctx.number, finding_hash),
-    ).fetchone()
+    row = _settling_row(ctx, finding_hash)
     if not row or row["stage"] != "conceded":
         return None
     status = str(row["body"] or "").split("\n", 1)[0]
     # judgement lifts only: FIXED/OUTDATED rest on the code, which a later head may revert
     return status if status in converse.LIFTING_STATUSES else None
+
+
+def _judged_fixed(ctx: RunContext, finding_hash: str) -> dict[str, str] | None:
+    """How a full review last judged a finding fixed (`status` FIXED or OUTDATED, the head
+    `sha` it was judged at and the time `since` that run started), unless a later review
+    carried or posted it again or a judgement lift settled it since. A FIXED row kept from a
+    dispute counts too."""
+    row = _settling_row(ctx, finding_hash)
+    if not row or row["stage"] not in (late.STAGE_FIXED, "conceded"):
+        return None
+    status, _, sha = str(row["body"] or "").partition("\n")
+    if status not in late.JUDGED_FIXED:
+        return None
+    return {"status": status, "sha": sha.strip() or str(row["sha"]), "since": row["started_at"]}
+
+
+def _settling_row(ctx: RunContext, finding_hash: str) -> sqlite3.Row | None:
+    """The newest record of how a finding stands on this PR: a settlement (`conceded`,
+    `late.STAGE_FIXED`), a publication, or the final verifier set of a finished run that
+    carried it again. The verifier set of a run that was superseded, failed or cancelled
+    before it published, and a Phase-1 pass whose final review did not keep the finding,
+    re-keep nothing."""
+    return cast(
+        "sqlite3.Row | None",
+        ctx.conn.execute(
+            "SELECT f.stage, f.body, h.sha, r.started_at FROM findings f "
+            "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
+            "WHERE h.repo=? AND h.number=? AND h.queue='live' AND f.hash=? "
+            "AND (f.stage IN ('conceded', 'posted', ?) OR (r.status='done' "
+            "AND f.stage IN ('verified','verified-fresh') AND f.phase='verify2')) "
+            "ORDER BY r.id DESC, f.id DESC LIMIT 1",
+            (ctx.repo, ctx.number, finding_hash, late.STAGE_FIXED),
+        ).fetchone(),
+    )
 
 
 def _thread_impact(ctx: RunContext, h: str) -> str | None:
@@ -1186,6 +1216,8 @@ def _prior_extra(ctx: RunContext, h: str, thread: dict[str, Any] | None) -> dict
         tracking = _known_tracking(ctx, h) if settled == "INTENTIONALLY_DEFERRED" else ""
         if tracking:
             extra["tracking"] = tracking
+    elif judged := _judged_fixed(ctx, h):
+        extra["judged_fixed"] = judged
     return extra
 
 
@@ -1228,6 +1260,12 @@ def _prior_status(ctx: RunContext, h: str) -> str | None:
     """How an earlier round settled prior finding `h` (`_prior_extra`), if it did."""
     prior = ctx.prior_findings.get(h)
     return prior.extra.get("prior_status") if prior else None
+
+
+def _prior_judged_fixed(ctx: RunContext, h: str) -> dict[str, str] | None:
+    """How an earlier full review judged prior finding `h` fixed (`_prior_extra`), if it did."""
+    prior = ctx.prior_findings.get(h)
+    return prior.extra.get("judged_fixed") if prior else None
 
 
 def _pr_author(ctx: RunContext) -> str:
@@ -2820,6 +2858,9 @@ def _verifier_lane(
         ctx.reviewers,
         lane_findings,
     )
+    for f in out.findings:
+        for key in late.ROUTING_KEYS:
+            f.extra.pop(key, None)
     _hold_untracked_deferrals(ctx, out, expected_phase)
     _settle_discussions(ctx, out, expected_phase)
     _record_findings(ctx, phase, "verified-fresh" if fresh_final else "verified", out.findings)
@@ -2942,6 +2983,8 @@ _RETIRED = frozenset({"FIXED", "OUTDATED", "WITHDRAWN", converse.DISPUTED})
 # (`update` on the row): the code under the finding changed, or the reply a tracking ask
 # followed is a dispute on the merits as this review reads it, answered now
 UPDATE_MOVED, UPDATE_DISPUTE = "moved", "dispute"
+# ... or a finding judged fixed earlier was raised again and confirmed (`_settle_revived`)
+UPDATE_REVIVED = "revived"
 
 
 def _settle_discussions(ctx: RunContext, out: VerifierOutput, expected_phase: str) -> None:
@@ -2964,7 +3007,11 @@ def _settle_discussions(ctx: RunContext, out: VerifierOutput, expected_phase: st
     - a STILL_VALID finding nobody replied to, whose code changed since the last review, gets
       this review's reason on its thread (`update`): the author changed something and should
       hear what still stands (dashpay/dash#8158: an author applied the suggested guard and
-      the next three reviews said only "still open").
+      the next three reviews said only "still open");
+    - in the final verification of a converging review, a STILL_VALID finding an earlier full
+      review judged fixed, on lines unchanged since, is left as it is: whether it stands is
+      the later-round gate's to decide (`_gate_late`), and a reply on its thread does not
+      make it a dispute first. A preliminary review has no such gate.
 
     A blocking finding left DISPUTED also withholds an APPROVE: the review has not changed its
     mind about it, it only stopped arguing."""
@@ -2984,7 +3031,7 @@ def _settle_discussions(ctx: RunContext, out: VerifierOutput, expected_phase: st
         if row is None or h in revived:
             continue
         carried = next((f for f in out.findings if h in (f.prior_hash, f.hash)), None)
-        new = _discussion_outcome(ctx, h, prior, row, carried)
+        new = _discussion_outcome(ctx, h, prior, row, carried, expected_phase)
         if new is None:
             continue
         rows[h] = new
@@ -3013,7 +3060,12 @@ def _settle_discussions(ctx: RunContext, out: VerifierOutput, expected_phase: st
 
 
 def _discussion_outcome(
-    ctx: RunContext, h: str, prior: Finding, row: dict[str, Any], carried: Finding | None
+    ctx: RunContext,
+    h: str,
+    prior: Finding,
+    row: dict[str, Any],
+    carried: Finding | None,
+    expected_phase: str,
 ) -> dict[str, Any] | None:
     """The reconciliation row `_settle_discussions` puts in place of `row`, or None to keep it.
     `carried`: the verifier's finding for `h` on this head, if it kept one."""
@@ -3026,6 +3078,10 @@ def _discussion_outcome(
         return {**row, "status": converse.DISPUTED}
     if status == converse.DISPUTED:  # only a settled dispute may be restated as one
         return {**row, "status": settled} if settled else None
+    judged = prior.extra.get("judged_fixed")
+    gated = expected_phase == "final" and _converges(ctx)
+    if gated and judged and carried and _unchanged_since(ctx, judged["sha"], carried):
+        return None
     t = ctx.open_threads.get(h)
     if status != "STILL_VALID" or row.get("needs_tracking") or t is None:
         return None
@@ -3725,6 +3781,12 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
     back as an ordinary active blocker. A later full review may explicitly reintroduce the same
     identity; its marker is evidence that the new finding is intentional and keeps the tombstone
     from winning over the new publication.
+
+    A final review's FIXED or OUTDATED is kept too (`late.STAGE_FIXED`, with the head it was
+    judged at), so a later round that raises the finding again on unchanged lines has it
+    confirmed first (`_revived_test`). A degraded review's judgement is not kept, nor one the
+    finding already has with the same status and head; a revival kept settled is written
+    again with the head it was judged at, since this run's raw verifier rows carried it.
     """
     kept = _kept_hashes(verified)
     rows = []
@@ -3733,11 +3795,36 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
         prior = ctx.prior_findings.get(h)
         if h in kept or prior is None:
             continue
+        settlement = _latest_settlement(ctx, h)
         # code that fixed a disputed finding ends the dispute: without a newer row the old
         # DISPUTED settlement would keep withholding approval on every later head
-        ends_dispute = status in {"FIXED", "OUTDATED"} and (
-            _latest_settlement(ctx, h) == converse.DISPUTED
-        )
+        ends_dispute = status in late.JUDGED_FIXED and settlement == converse.DISPUTED
+        if status in late.JUDGED_FIXED and phase == "final" and settlement is None:
+            was = prior.extra.get("judged_fixed") or {}
+            revival = bool(outcome.get("kept_settled") and was.get("sha"))
+            sha = str(was["sha"]) if revival else ctx.sha
+            if not revival and (
+                ctx.is_degraded or (was.get("status"), was.get("sha")) == (status, sha)
+            ):
+                continue
+            rows.append(
+                (
+                    ctx.run_id,
+                    phase,
+                    late.STAGE_FIXED,
+                    h,
+                    prior.file,
+                    prior.line_start,
+                    prior.line_end,
+                    prior.severity,
+                    None,
+                    prior.category,
+                    prior.title,
+                    f"{status}\n{sha}",
+                    None,
+                )
+            )
+            continue
         if status not in converse.LIFTING_STATUSES and not ends_dispute:
             continue
         # a deferral keeps the tracking link it was checked against on a second line, as
@@ -5045,8 +5132,13 @@ def _classify_late(ctx: RunContext, verified: VerifierOutput) -> late.Split | No
     a later round's findings; None on a first full review (or without `_converges`)."""
     if not _code_statuses(ctx, verified):
         return None
+    listed, spots = _listed_followups(ctx)
     return late.split(
-        verified.findings, posted=_posted_severity(ctx), listed=_listed_followups(ctx)
+        verified.findings,
+        posted=_posted_severity(ctx),
+        listed=listed,
+        spots=spots,
+        revived=_revived_test(ctx),
     )
 
 
@@ -5055,20 +5147,72 @@ def _code_statuses(ctx: RunContext, verified: VerifierOutput) -> bool:
     a carried one on unchanged code at the severity it was posted with
     (`late.hold_severity`). False on a first full review (or without `_converges`), where
     there is nothing to compare with."""
-    if not _converges(ctx) or ctx.prev_final_sha is None or ctx.worktree is None:
+    history = _code_history(ctx)
+    if history is None:
         return False
-    if ctx.code_history is None:
-        ctx.code_history = late.CodeHistory(
-            ctx.worktree, ctx.sha, ctx.prev_final_sha, ctx.first_reviewed_sha
-        )
     for f in verified.findings:
-        f.extra["code_status"] = ctx.code_history.status(f)
+        f.extra["code_status"] = history.status(f)
     held = late.hold_severity(
         verified.findings, {h: p.severity for h, p in ctx.prior_findings.items()}
     )
     if held:
         _lane_event(ctx, "late.severity_held", ", ".join(f.prior_hash or f.hash for f in held))
     return True
+
+
+def _code_history(ctx: RunContext) -> late.CodeHistory | None:
+    """The run's code history (late.py) on a later round under `_converges`; None on a first
+    full review."""
+    if not _converges(ctx) or ctx.prev_final_sha is None or ctx.worktree is None:
+        return None
+    if ctx.code_history is None:
+        ctx.code_history = late.CodeHistory(
+            ctx.worktree, ctx.sha, ctx.prev_final_sha, ctx.first_reviewed_sha
+        )
+    return ctx.code_history
+
+
+def _unchanged_since(ctx: RunContext, sha: str, f: Finding) -> bool:
+    """The lines under `f` (as this head reads them) are unchanged since `sha`, as
+    `CodeHistory.status` decides it (a file renamed without a change is unchanged); False when
+    git cannot tell or this is no later round."""
+    history = _code_history(ctx)
+    if history is None or not f.file or not f.line_start:
+        return False
+    changed = history.changed_since(sha, f.file)
+    return changed is False or (changed is True and not history.moved(sha, f))
+
+
+# how much of a human reply on its thread the confirmation lane is shown of a revived finding
+REPLY_EXCERPT = 600
+
+
+def _revived_test(ctx: RunContext) -> Callable[[Finding], dict[str, Any] | None]:
+    """For `late.split`: the judgement of a prior finding an earlier full review judged fixed
+    (`_judged_fixed`, with its `hash` and the last three human replies on its thread since,
+    shortened) that a finding of this round raises again (carried, under its hash or
+    restating it) on lines unchanged since, else None."""
+    identity = _prior_identity(ctx)
+
+    def revived(f: Finding) -> dict[str, Any] | None:
+        h = identity(f)
+        judged = _prior_judged_fixed(ctx, h) if h else None
+        if not h or not judged or not _unchanged_since(ctx, judged["sha"], f):
+            return None
+        replies = _human_replies_since(ctx, h, str(judged.get("since") or ""))
+        return {
+            "hash": h,
+            **judged,
+            "replies": [
+                {
+                    "author": str(c.get("author") or ""),
+                    "body": converse.strip_marker(str(c.get("body") or ""))[:REPLY_EXCERPT],
+                }
+                for c in replies[-3:]
+            ],
+        }
+
+    return revived
 
 
 def _new_test(ctx: RunContext) -> Callable[[Finding], bool]:
@@ -5082,6 +5226,23 @@ def _posted_severity(ctx: RunContext) -> Callable[[Finding], str | None]:
     """The severity an earlier round posted a finding of this round with (carried by hash,
     posted under its own hash, or restating a posted one), or None when it is new to the PR.
     One whose earlier severity is not on record counts as posted blocking."""
+    identity = _prior_identity(ctx)
+
+    def posted(f: Finding) -> str | None:
+        h = identity(f)
+        if h is None:
+            return None
+        prior = ctx.prior_findings.get(h)
+        thread = ctx.open_threads.get(h) or {}
+        return str((prior.severity if prior else thread.get("severity")) or "blocking")
+
+    return posted
+
+
+def _prior_identity(ctx: RunContext) -> Callable[[Finding], str | None]:
+    """The hash an earlier round raised a finding of this round under (carried by hash,
+    posted under its own hash, or restating a posted one), or None when it is new to the
+    PR."""
     records = _raised_records(ctx)
     raised = {
         str(r["hash"])
@@ -5091,18 +5252,13 @@ def _posted_severity(ctx: RunContext) -> Callable[[Finding], str | None]:
     }
     raised |= set(ctx.prior_findings) | set(ctx.open_threads)
 
-    def was(h: str) -> str:
-        prior = ctx.prior_findings.get(h)
-        thread = ctx.open_threads.get(h) or {}
-        return str((prior.severity if prior else thread.get("severity")) or "blocking")
-
-    def posted(f: Finding) -> str | None:
+    def identity(f: Finding) -> str | None:
         if f.prior_hash or f.hash in raised:
-            return was(f.prior_hash or f.hash)
+            return f.prior_hash or f.hash
         match = find_duplicate(f, records)[0]
-        return was(match.finding_hash) if match else None
+        return match.finding_hash if match else None
 
-    return posted
+    return identity
 
 
 def _raised_record(
@@ -5139,19 +5295,31 @@ def _raised_records(ctx: RunContext) -> list[ExistingComment]:
     return out
 
 
-def _listed_followups(ctx: RunContext) -> set[str]:
-    """The hashes and dedupe keys of every follow-up candidate a review of this PR listed."""
+def _listed_followups(ctx: RunContext) -> tuple[set[str], list[late.Spot]]:
+    """The hashes and dedupe keys of every follow-up candidate a review of this PR listed, and
+    where those whose code is unchanged since are at this head (`late.listed_spots`). Once per
+    run: what this run lists is recorded when it publishes."""
+    if ctx.listed_followups is None:
+        ctx.listed_followups = _read_listed_followups(ctx)
+    return ctx.listed_followups
+
+
+def _read_listed_followups(ctx: RunContext) -> tuple[set[str], list[late.Spot]]:
     rows = ctx.conn.execute(
-        "SELECT f.hash, f.file, f.category, f.title, f.body FROM findings f "
-        "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
+        "SELECT f.hash, f.file, f.line_start, f.line_end, f.category, f.title, f.body, "
+        "h.sha FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
         "WHERE h.repo=? AND h.number=? AND h.queue='live' AND f.stage=?",
         (ctx.repo, ctx.number, late.STAGE_LISTED),
     ).fetchall()
     keys = {str(r["hash"]) for r in rows}
-    return keys | {
+    keys |= {
         finding_dedupe_key(r["file"] or "", r["category"] or "general", r["title"], r["body"])
         for r in rows
     }
+    if ctx.worktree is None:
+        return keys, []
+    places = {(r["file"] or "", r["line_start"], r["line_end"], str(r["sha"])) for r in rows}
+    return keys, late.listed_spots(ctx.worktree, ctx.sha, sorted(places, key=str))
 
 
 def _gate_late(
@@ -5168,7 +5336,10 @@ def _gate_late(
     blockers, wherever they are, are kept only when the confirmation lane finds a failure
     that is actually reachable; an unconfirmed one becomes a suggestion (a follow-up
     candidate on unchanged code), an invalid one is dropped, and a failed lane keeps them as
-    raised.
+    raised. A finding judged fixed earlier and raised again on unchanged lines that does not
+    stand stays settled (`_settle_revived`): not carried, and listed once as a follow-up
+    candidate when it was raised as a blocker; one held at the suggestion it was posted as
+    (`late.hold_severity`) stays the carried suggestion it was.
     The run's final verifier rows (`stage`) are rewritten to what stands, with every finding's
     code status, each gated finding is kept under its `late-*` stage, and the step's counts
     are updated to match. `known`: this run's decisions so far, by hash; returns them with
@@ -5182,7 +5353,7 @@ def _gate_late(
     unchecked = ask if asked is None else []
     decisions = {**remembered, **(asked or {})}
     confirmed, unconfirmed, invalid = _apply_decisions(split.candidates, decisions)
-    listed = _listed_followups(ctx)
+    listed, spots = _listed_followups(ctx)
     demoted = [
         dataclasses.replace(
             f,
@@ -5193,7 +5364,12 @@ def _gate_late(
     ]
     # a demoted blocker stays in the review, with its thread, when this round changed its
     # code or an earlier round posted it; only a new one on unchanged code is a follow-up
-    posted = [f for f in demoted if f.extra.get("posted_severity") or not late.on_unchanged(f)]
+    posted = [
+        f
+        for f in demoted
+        if f.extra.get("posted_severity")
+        or not (late.on_unchanged(f) or f.extra.get("judged_fixed"))
+    ]
     for f in posted:
         reason = f.extra["confirmation"]["reason"]
         f.body += (
@@ -5201,10 +5377,14 @@ def _gate_late(
             f"would actually hit, so it does not block: {reason}_"
         )
     demoted = [f for f in demoted if not any(f is p for p in posted)]
-    repeats = split.repeats + [f for f in demoted if late.is_listed(f, listed)]
+    repeats = split.repeats + [f for f in demoted if late.is_listed(f, listed, spots)]
     stands = {id(f) for f in (*split.keep, *confirmed, *unchecked)}
     verified.findings = [f for f in verified.findings if id(f) in stands] + posted
-    verified.followups = split.followups + [f for f in demoted if not late.is_listed(f, listed)]
+    verified.followups = split.followups + [
+        f for f in demoted if not late.is_listed(f, listed, spots)
+    ]
+    unposted = [f for f in (*unconfirmed, *invalid) if not f.extra.get("posted_severity")]
+    settled = _settle_revived(ctx, verified, confirmed, [*unposted, *split.settled])
     since = ctx.prev_final_sha or ""
     report: dict[str, Any] = {
         "since": since[:8],
@@ -5217,6 +5397,7 @@ def _gate_late(
         "invalid": len(invalid),
         "remembered": len(remembered),
         "failed": asked is None,
+        "settled": settled,
     }
     if split.changed:
         ctx.late_report = report
@@ -5226,6 +5407,7 @@ def _gate_late(
         late.STAGE_REPEAT: split.repeats,
         late.STAGE_UNCONFIRMED: unconfirmed,
         late.STAGE_INVALID: invalid,
+        late.STAGE_SETTLED: split.settled,
     }
     with tx(ctx.conn):
         ctx.conn.execute(
@@ -5274,11 +5456,58 @@ def _gate_late(
     return known | {f.hash: decisions[id(f)] for f in split.candidates if id(f) in decisions}
 
 
+def _settle_revived(
+    ctx: RunContext, verified: VerifierOutput, confirmed: list[Finding], settled: list[Finding]
+) -> int:
+    """The reconciliation rows (what goes on their threads) of the findings judged fixed
+    earlier that this round raised again on unchanged lines (`extra["judged_fixed"]`). A
+    `confirmed` one stands, its row's reason led by its `extra["revived_note"]`. One that does
+    not stand (`settled`) keeps its judgement and the head it was made at (its row is marked
+    `kept_settled`, which publishing records again with that head). Returns how many stay
+    settled."""
+    rows = {str(r.get("finding_hash") or ""): r for r in verified.prior_reconciliation}
+    merged = _reconciliation(ctx, "final", verified)
+    for f in confirmed:
+        judged = f.extra.get("judged_fixed")
+        if not judged:
+            continue
+        row = merged.get(judged["hash"]) or {}
+        rows[judged["hash"]] = {
+            **row,
+            "finding_hash": judged["hash"],
+            "status": "STILL_VALID",
+            "reason": f"{f.extra['revived_note']}\n\n{row.get('reason') or ''}".strip(),
+            "update": UPDATE_REVIVED,
+        }
+    kept = 0
+    for f in settled:
+        judged = f.extra.get("judged_fixed")
+        if not judged:
+            continue
+        why = (f.extra.get("confirmation") or {}).get("reason")
+        base = (
+            f"Judged fixed at `{judged['sha'][:8]}`, and the lines it cites have not changed since"
+        )
+        rows[judged["hash"]] = {
+            "finding_hash": judged["hash"],
+            "status": judged["status"],
+            "kept_settled": True,
+            "reason": f"{base}. Raised again, but an independent pass did not confirm it, so "
+            f"it stays settled: {why}"
+            if why
+            else f"{base}, so it stays settled.",
+        }
+        kept += 1
+    verified.prior_reconciliation = list(rows.values())
+    return kept
+
+
 def _apply_decisions(
     candidates: list[Finding], decisions: dict[int, late.Decision]
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
     """(confirmed, unconfirmed, invalid) candidates by their confirmation verdicts (keyed by
-    `id(finding)`); a confirmed one's body says so. A candidate without one is in none. One an
+    `id(finding)`); a confirmed one's body says so (a revived one's in `revived_note`, which
+    its thread is also told). A candidate without one is in none. One an
     earlier round posted is never dropped as invalid: it goes back to its posted severity."""
     confirmed: list[Finding] = []
     unconfirmed: list[Finding] = []
@@ -5294,7 +5523,10 @@ def _apply_decisions(
                 if late.on_unchanged(f)
                 else "Confirmed"
             )
-            f.body += f"\n\n_{where} by an independent pass: {d.failure}_"
+            line = f"{where} by an independent pass: {d.failure}"
+            if judged := f.extra.get("judged_fixed"):
+                line = f.extra["revived_note"] = late.revived_sentence(judged, d.failure)
+            f.body += f"\n\n_{line}_"
             confirmed.append(f)
         elif d.verdict == "invalid" and not f.extra.get("posted_severity"):
             invalid.append(f)
@@ -5305,24 +5537,43 @@ def _apply_decisions(
 
 def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision]:
     """Candidates an earlier full-strength round's confirmation already judged not blocking (by
-    hash), whose file has not changed since that round: its verdict stands, no lane asks
-    again."""
-    if not candidates or ctx.code_history is None:
+    hash), whose file has not changed since that round and whose thread nobody replied on
+    since: its verdict stands, no lane asks again. A re-review of the head of the last full
+    review, which someone asked for, asks again."""
+    if not candidates or ctx.code_history is None or ctx.sha == ctx.prev_final_sha:
         return {}
     marks = ",".join("?" * len(late.REMEMBERED))
     rows = ctx.conn.execute(
-        "SELECT f.hash, f.stage, h.sha FROM findings f JOIN runs r ON r.id=f.run_id "
+        "SELECT f.hash, f.stage, h.sha, r.started_at FROM findings f JOIN runs r ON r.id=f.run_id "
         "JOIN heads h ON h.id=r.head_id WHERE h.repo=? AND h.number=? AND h.queue='live' "
         f"AND r.degraded=0 AND f.run_id<>? AND f.stage IN ({marks}) ORDER BY f.id",
         (ctx.repo, ctx.number, ctx.run_id, *late.REMEMBERED),
     ).fetchall()
-    earlier = {str(r["hash"]): (str(r["stage"]), str(r["sha"])) for r in rows}
+    earlier = {str(r["hash"]): (str(r["stage"]), str(r["sha"]), str(r["started_at"])) for r in rows}
     out: dict[int, late.Decision] = {}
     for f in candidates:
-        stage, sha = earlier.get(f.hash, ("", ""))
-        if stage and ctx.code_history.changed_since(sha, f.file) is False:
+        stage, sha, at = earlier.get(f.hash, ("", "", ""))
+        thread = (f.extra.get("judged_fixed") or {}).get("hash") or f.prior_hash or f.hash
+        if (
+            stage
+            and ctx.code_history.changed_since(sha, f.file) is False
+            and not _human_replies_since(ctx, thread, at)
+        ):
             out[id(f)] = late.Decision(late.REMEMBERED[stage], reason=f"decided at {sha[:8]}")
     return out
+
+
+def _human_replies_since(ctx: RunContext, h: str, since: str) -> list[dict[str, Any]]:
+    """The human replies on finding `h`'s thread posted after `since` (a stored timestamp): not
+    ours, nor another bot's."""
+    transcript = (ctx.open_threads.get(h) or {}).get("transcript") or []
+    return [
+        c
+        for c in transcript
+        if not c.get("is_bot")
+        and not github._is_other_bot(c)
+        and str(c.get("created_at") or "") > since
+    ]
 
 
 def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision] | None:
@@ -5816,7 +6067,19 @@ def _run_conversation_lane(
     raise ReviewError(FailKind.CONTRACT, f"conversation lane output invalid twice: {last}")
 
 
+STAYS_RESOLVED = (
+    "_This stays resolved for now: the next full review re-checks it, and an independent pass "
+    "confirms it before it counts again._"
+)
+
+
 def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
+    """Answer the replies on finding threads of the commit whose review stands. A reply on a
+    finding a full review judged fixed, which this review does not stand on, is answered as
+    settled (`fixed`): the answer keeps the resolved status on its thread, and one that says
+    the finding still applies ends with `STAYS_RESOLVED`. Only a later full review can
+    re-open it, and its confirmation lane is asked afresh after the reply
+    (`_remembered_decisions`)."""
     assert ctx.meta and ctx.worktree
     phase = str(standing["phase"])
     threads = {
@@ -5857,6 +6120,11 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         for h in threads
         if h not in settled and _prior_status(ctx, h) == converse.DISPUTED
     }
+    fixed = {
+        h: judged["status"]
+        for h in threads
+        if h not in settled and h not in before.findings and (judged := _prior_judged_fixed(ctx, h))
+    }
     out = _run_conversation_lane(
         ctx,
         lm,
@@ -5874,7 +6142,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         still_blocking=[
             before.titles.get(h) or h for h, sev in before.findings.items() if sev == "blocking"
         ],
-        settled=settled,
+        settled={**settled, **fixed},
     )
     (ctx.run_dir / "conversation.json").write_text(
         json.dumps({h: dataclasses.asdict(o) for h, o in out.outcomes.items()}, indent=1)
@@ -5894,6 +6162,14 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
         upstreams=_upstreams(ctx),
     )
     out = converse.settle_disputes(out, threads, author=ctx.meta.author, settled=set(settled))
+    out = converse.ConversationOutput(
+        outcomes={
+            h: dataclasses.replace(o, reply=f"{o.reply}\n\n{STAYS_RESOLVED}")
+            if h in fixed and o.status == "STILL_VALID" and o.reply.strip()
+            else o
+            for h, o in out.outcomes.items()
+        }
+    )
     answered: list[dict[str, Any]] = []
     batch = _review_batch(ctx)
     update = None
@@ -5907,7 +6183,7 @@ def step_converse(ctx: RunContext, standing: dict[str, Any]) -> dict[str, Any]:
                 ctx.sha,
                 threads=threads,
                 outcomes=out.outcomes,
-                settled=settled,
+                settled={**settled, **fixed},
                 batch=batch,
             )
             assert batch is not None

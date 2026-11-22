@@ -902,8 +902,11 @@ pipeline keep the earlier behaviour.
   normal path; a carried STILL_VALID blocker stays blocking. Nitpicks are dropped.
   Suggestions open no inline thread: they are listed once in a collapsed "Follow-up
   candidates (optional)" section (in the review, or in a same-sha verdict update) and never
-  restated (what a posted review listed is kept as `followup` rows, matched by hash or dedupe
-  key). Blockers go to **one independent confirmation lane** per run (step `confirm`, role
+  restated (what a posted review listed is kept as `followup` rows, matched by hash, dedupe
+  key or place: the same file and an overlapping or adjoining range, its lines unchanged
+  since the listing and re-located by `ledger.map_lines` (`late.listed_spots`), so a
+  reworded title or lines shifted by unrelated inserts is still a repeat, whatever its
+  severity). Blockers go to **one independent confirmation lane** per run (step `confirm`, role
   `confirm`): the final verifier's model and effort in a fresh session, shown the claims
   (`late.candidate_briefs`: location, title, body, suggested fix), the code and the PR diff,
   never the verifier's reasoning, sources or confidence (`prompts.confirmation_prompt`,
@@ -916,7 +919,8 @@ pipeline keep the earlier behaviour.
   invalid ones are dropped. Its answer never goes to the context-free repair lane, and a lane
   that fails for good keeps every blocker as raised (`late.confirm_failed`). A verdict is
   remembered by finding hash: a blocker an earlier round judged `non_blocking` or `invalid`
-  is not sent again while its file is unchanged since that round. Disclosed in the
+  is not sent again while its file is unchanged since that round and nobody replied on its
+  thread since; a re-review of the last fully reviewed head asks again. Disclosed in the
   provenance ("New since the last final review").
 - **Every new blocker of a later round is confirmed**, on changed code as well, and so is
   one an earlier round posted below blocking (carried or restated): it blocks only with
@@ -930,13 +934,40 @@ pipeline keep the earlier behaviour.
   review would post blockers nothing confirmed. A stand-in model's confirmation (degraded
   mode) never demotes a blocker (`late.confirm_skipped`), and its verdicts are never
   remembered.
+- **A finding judged fixed stays fixed on unchanged code.** A full-strength final review's
+  FIXED or OUTDATED reconciliation is kept as a `judged-fixed` row (body: the status and the
+  head it was judged at; written when either changes), unless a judgement lift (WITHDRAWN,
+  DEFERRED, DISPUTED) already settled the finding. Only a finished run's final review that
+  carries or posts the finding again supersedes it (a superseded, failed or cancelled run,
+  and a Phase-1 pass, re-keep nothing; the same holds for judgement lifts). Later prior lists
+  show it (`judged_fixed: {status, at}`, with a 400-character excerpt of its body), and the
+  reviewers and verifier are told it counts again only once confirmed. When a later round raises it again (carried
+  STILL_VALID, under its hash, or a restatement that folds onto it) on lines unchanged since
+  that head (`CodeHistory.moved`; git cannot tell = changed), a blocker is a new blocker for
+  the gate: the confirmation lane is told it was judged fixed with its lines unchanged, and is
+  shown the human replies on its thread since (the last three, shortened). So is one held at
+  the suggestion it was posted as (`late.hold_severity`): unconfirmed, it stays that carried
+  suggestion.
+  Confirmed, it stands, and its thread says "Judged fixed at `<sha>`; raised again and
+  confirmed by an independent pass: <failure>" (in the thread answer, or the reuse note on a
+  resolved thread). Not confirmed (or judged invalid), it is not carried and does not count,
+  its thread answer says it stays settled, its judgement is recorded again with the original
+  head, and a blocker is listed once as a follow-up candidate. One below blocking stays
+  settled without a lane (`late-settled`). A failed or degraded confirmation keeps it as
+  raised, as for any new blocker. On lines changed since, it takes the normal path. A reply
+  on its thread is still answered, but neither makes it a dispute first in a final review
+  (`_settle_discussions`; a preliminary review, with no gate after it, settles disputes as
+  before) nor, in a conversation on the same commit, re-opens it: the lane sees
+  `already_settled_as`, the thread keeps its resolved line, and an answer that says it still
+  applies ends saying it stays resolved for now and the next full review re-checks it, whose
+  confirmation lane is then asked afresh.
 - **The fresh final gate**, a second unanchored review of the whole PR, no longer runs on a
   later round of a new head: the first full review already reads everything twice. It runs
   on a re-review of a head already reviewed in full with blockers, when none stands now.
 
 Record: the run's final verifier rows (`verified` / `verified-fresh`) are rewritten to what
 stands, with code statuses; gated findings keep their original severity under `late-nit`,
-`late-followup`, `late-repeat`, `late-unconfirmed` and `late-invalid`; the verify step's
+`late-followup`, `late-repeat`, `late-unconfirmed`, `late-invalid` and `late-settled`; the verify step's
 detail gets `raw_findings` / `raw_blockers`; `late.gated` (event) and `late.json` (run dir)
 summarize the round.
 

@@ -473,6 +473,10 @@ def _late_line(d: dict[str, Any]) -> str:
         ("nits", "nitpick(s) on unchanged code dropped"),
         ("followups", "suggestion(s) on unchanged code listed as follow-up candidates"),
         ("repeats", "follow-up candidate(s) already listed by an earlier review, not repeated"),
+        (
+            "settled",
+            "finding(s) judged fixed earlier and raised again on unchanged lines kept settled",
+        ),
     ):
         if d.get(key):
             parts.append(f"{d[key]} {label}")
@@ -1254,10 +1258,13 @@ def dedupe_against_github(
             elif dry_run:
                 base.action = "would_reply_to_resolved_thread"
             else:
+                revived = str(f.extra.get("revived_note") or "")
                 reuse_body = (
-                    f"{marker}\n⚠️ Reusing this existing thread because the same finding still "
-                    f"applies on `{head_sha[:8]}`. If it has already been addressed, please mark "
-                    "the thread resolved."
+                    f"{marker}\n⚠️ Reusing this existing thread on `{head_sha[:8]}`. {revived}"
+                    if revived
+                    else f"{marker}\n⚠️ Reusing this existing thread because the same finding "
+                    f"still applies on `{head_sha[:8]}`. If it has already been addressed, please "
+                    "mark the thread resolved."
                 )
                 if batch is not None:
                     try:
