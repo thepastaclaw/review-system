@@ -58,6 +58,16 @@ SUGGESTION = (
 )
 
 
+TITLE = (
+    "What goes wrong and when, in plain words a maintainer understands without reading the "
+    "body. Not an instruction and never the fix (the fix goes in the body)."
+)
+IMPACT = (
+    "One sentence: who hits the problem, under what condition, and what they then see or "
+    "lose. Optional."
+)
+
+
 def _line(description: str) -> dict[str, Any]:
     return {"type": "integer", "minimum": 1, "description": description}
 
@@ -77,12 +87,16 @@ FINDER_SCHEMA: dict[str, Any] = {
                     "line_end": _line("Last line of the problem; omit for a single line."),
                     "severity": _one_of(SEVERITIES, "How much the problem matters."),
                     "category": _one_of(CATEGORIES, "The kind of problem."),
-                    "title": _text("One line naming the problem."),
+                    "title": _text(f"One line. {TITLE}"),
+                    "impact": _text(IMPACT),
                     "failure_scenario": _text(
                         "The concrete input, state or sequence that makes it go wrong, "
                         "and what then happens."
                     ),
-                    "body": _text("The explanation a maintainer reads, with evidence."),
+                    "body": _text(
+                        "The explanation a maintainer reads, with evidence: the consequence "
+                        "first, then the mechanism, then the fix."
+                    ),
                     "suggestion": _text(SUGGESTION),
                 },
                 "required": ["file", "severity", "category", "title", "failure_scenario", "body"],
@@ -95,7 +109,11 @@ FINDER_SCHEMA: dict[str, Any] = {
 VERIFIER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "summary": _text("The review summary a maintainer reads first."),
+        "summary": _text(
+            "What the change does (on a later round, what changed on this head) and the CI "
+            "state. It never presents findings as the reason for the verdict and never "
+            "mentions a problem that is not one of your groups other than REFUTED."
+        ),
         "groups": {
             "type": "array",
             "description": (
@@ -138,11 +156,13 @@ VERIFIER_SCHEMA: dict[str, Any] = {
                     ),
                     "severity": _one_of(SEVERITIES, "The final severity; omit for REFUTED."),
                     "title": _text(
-                        "The final one-line title; omit for REFUTED, except a REFUTED group "
-                        "whose evidence starts with `Out of scope:`, which needs one."
+                        f"The final one-line title; omit for REFUTED, except a REFUTED group "
+                        f"whose evidence starts with `Out of scope:`, which needs one. {TITLE}"
                     ),
+                    "impact": _text(f"{IMPACT} Omit for REFUTED."),
                     "body": _text(
-                        "The final explanation a maintainer reads, with evidence; omit for REFUTED."
+                        "The final explanation a maintainer reads, with evidence: the "
+                        "consequence first, then the mechanism, then the fix; omit for REFUTED."
                     ),
                     "suggestion": _text(SUGGESTION),
                 },

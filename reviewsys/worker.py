@@ -69,6 +69,7 @@ from .dedupe import (
     carry_forward_tokens,
     content_tokens,
     find_duplicate,
+    impact_of,
     title_similarity,
 )
 from .degraded import Prober
@@ -1160,6 +1161,12 @@ def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
     return status if status in converse.LIFTING_STATUSES else None
 
 
+def _thread_impact(ctx: RunContext, h: str) -> str | None:
+    """The impact line on the root comment of finding `h`'s thread, when the run read one."""
+    t = ctx.open_threads.get(h) or ctx.thread_index.get(h) or {}
+    return impact_of(t.get("body"))
+
+
 def _prior_extra(ctx: RunContext, h: str, thread: dict[str, Any] | None) -> dict[str, Any]:
     """A prior finding's `extra`: its thread's exchange as the conversation lane reads it, the
     settled status if any, and whether the bot already answered a dispute on it."""
@@ -1313,6 +1320,7 @@ def step_context(ctx: RunContext) -> None:
                 line_start=r["line_start"],
                 line_end=r["line_end"],
                 extra=_prior_extra(ctx, str(r["hash"]), thread),
+                impact=_thread_impact(ctx, str(r["hash"])),
             )
         )
     for h, t in replied.items():
@@ -1331,6 +1339,7 @@ def step_context(ctx: RunContext) -> None:
                 line_end=t.get("line"),
                 prior_hash=h,
                 extra=_prior_extra(ctx, h, t),
+                impact=_thread_impact(ctx, h),
             )
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
@@ -3165,6 +3174,7 @@ def _gate_kept(v1: VerifierOutput) -> list[Finding]:
                     "gate_verdict": f"{g.verdict} at the gate, matched {g.match}",
                 },
                 candidate_id=f"v1-{n}",
+                impact=f.impact,
             )
         )
     return out
@@ -3510,7 +3520,10 @@ def _stand12(
 
 def _carried12(ctx: RunContext, issues: dict[str, ledger.Issue]) -> list[Finding]:
     stand = _stand12(ctx, issues, _thread_outcomes(ctx))
-    return rules.carried(stand, lambda i: _issue_url(ctx, i))
+    return [
+        dataclasses.replace(f, impact=_thread_impact(ctx, f.prior_hash or f.hash))
+        for f in rules.carried(stand, lambda i: _issue_url(ctx, i))
+    ]
 
 
 def _late_split(ctx: RunContext, new: list[Finding]) -> tuple[list[Finding], list[Finding]]:
@@ -3823,6 +3836,17 @@ def _publish_review(
         rereview=rereview or ctx.has_prior_review,
         batch=batch,
     )
+    uncounted = publish.lead_count_mismatch(model)
+    if uncounted:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "review.lead_uncounted",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"{phase}: {uncounted}",
+            )
     if rereview:
         # the artifact goes first, as on the normal path: a failed write after the post would
         # fail the run and its retry would post the COMMENT again
@@ -4200,6 +4224,7 @@ def _build_review(
     )
     model.fix_forward = ctx.cfg.policy.pipeline is None
     model.disputed = _newly_disputed(ctx, verified)
+    model.disputed_blockers = ctx.disputed_blockers
     model.stepback = ctx.stepback
     model.bot_login = ctx.cfg.bot_login
     if ctx.approval_withheld:

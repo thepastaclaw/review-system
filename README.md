@@ -389,10 +389,55 @@ failed, the run was cancelled) is recorded as stopped: no correction, retry or l
 
 ### Review body layout
 
-The body leads with what the developer needs: title, verifier summary, severity
+The body leads with what the developer needs: title (and the degraded banner),
+then a generated list of what blocks this verdict, the verifier summary, severity
 counts, then every finding that could not be posted inline (line outside the
 PR's diff, or GitHub refused the diff) rendered in full with its location,
-body and suggestion. Provenance (the Source line, triage, per-lane models and
+body and suggestion.
+
+The lead (`publish._blocker_lead`, under a `thepastaclaw-review-lead` marker) is
+built from the same final findings as the counts line and the review event, after
+late gating, the comment budget and dedupe, never from the verifier's prose (which
+is written before those steps):
+
+```
+**Changes requested: 2 blockers**
+- **A group member with a locked wallet can't see a proposal's amount, recipient or note** — `src/ui/tokens/token_action_screen.rs:553-574` (new)
+  Impact: Group members only: with the wallet locked, the proposal screen shows blanks, so they vote without seeing what they approve.
+- **Invalidate token confirmations when a cache refresh replaces the signer** — `src/ui/tokens/token_action_screen.rs:472-483` ([thread](…), carried)
+Not counted: 1 disputed blocking finding(s) left to maintainers.
+
+**New on this head:** <the verifier's summary>
+
+🔴 2 blocking | 🟡 1 suggestion(s)
+```
+
+Each entry is a finding that counts toward the verdict: new on this head (posted
+inline, "not shown inline, see below", or collapsed into another finding's comment
+on the same root), still open from an earlier round (`carried`, with its thread),
+or a deferral held until its tracking issue is linked (which says so). A same-root
+cluster is posted as its most severe member, keeping the cluster's root id. The
+heading's number is the verdict's blocker count, the same one the counts line
+shows; should the list ever disagree with it, the heading drops the number and the
+run records a `review.lead_uncounted` event. Disputed blockers are left out and
+counted in one "Not counted" line, from the same count that withholds an approval. A non-approving review with no blocker leads
+with "**Nothing blocks:**"; an approval has no lead and keeps its "Approved: nothing
+here blocks the merge" line. On a re-review the verifier's summary is labelled
+"New on this head". When a discussion lifts a finding, `with_lifted_findings`
+strikes its lead entry (and its impact line) and recounts the heading as it
+recounts the counts line ("~~1~~ 0 blockers: none remains" once all are lifted).
+
+Every finding carries an optional one-sentence `impact` (who hits it, when, and
+what they see or lose), cut to 400 characters at a word boundary. It is shown as `**Impact:**` directly under the title of
+the inline comment and of a body-only finding, under the title in the lead and in
+the agent prompt; it is not part of the finding hash or the dedupe key, and dedupe
+strips the line before comparing a posted comment's text. Output without it parses
+as before. A finding carried from an earlier round gets its impact back from its
+thread's root comment when the verifier does not write a new one. The lanes are
+asked for problem-first titles (what goes wrong and when, not the fix) on new
+findings only: a carried finding keeps its title byte-for-byte.
+
+Provenance (the Source line, triage, per-lane models and
 efforts, the Phase-1 ladder choice) follows inside a collapsed `<details>`
 block, as do the agent prompt and out-of-scope notes. `parse_diff` strips the
 tab git appends after paths containing spaces; without it every finding in

@@ -6,6 +6,7 @@ Pure functions; GitHub records are passed in as plain dicts.
 
 from __future__ import annotations
 
+import dataclasses
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -23,6 +24,12 @@ FINDING_MARKER_RE = re.compile(
 # thread stays open (see publish.with_thread_status); never part of the finding's text
 THREAD_STATUS_MARKER = "<!-- thepastaclaw-thread-status v1 -->"
 THREAD_STATUS_RE = re.compile(re.escape(THREAD_STATUS_MARKER) + r"\n[^\n]*\n\n?")
+# the impact line directly under a finding's bold headline (publish.comment_body); never part
+# of the finding's text
+IMPACT_PREFIX = "**Impact:** "
+IMPACT_LINE_RE = re.compile(
+    rf"^(\*\*[^\n]*\*\*)\n{re.escape(IMPACT_PREFIX.strip())} ?([^\n]*)$", re.MULTILINE
+)
 _STOPWORDS = frozenset(
     {
         "a",
@@ -165,11 +172,14 @@ def _clusters(findings: list[Finding]) -> list[list[int]]:
 
 
 def _representative(members: list[int], findings: list[Finding]) -> int:
+    """The finding a same-root cluster is posted as: its most severe member (the cluster must
+    count at the severity it has), then one carrying the root id, then the longest body."""
+
     def key(i: int) -> tuple[int, int, int, str, int]:
         f = findings[i]
         return (
-            0 if normalize_root_id(f.root_id) is not None else 1,
             -_SEVERITY_RANK.get(f.severity, 0),
+            0 if normalize_root_id(f.root_id) is not None else 1,
             -len(f.body),
             f.dedupe_key,
             i,
@@ -195,7 +205,12 @@ def collapse_same_root(findings: list[Finding]) -> tuple[list[Finding], list[Sup
     collapsed: list[Suppressed] = []
     for members in _clusters(findings):
         rep = _representative(members, findings)
-        kept.append(findings[rep])
+        root = next((r for i in members if (r := normalize_root_id(findings[i].root_id))), None)
+        if root and normalize_root_id(findings[rep].root_id) is None:
+            # the cluster's root id stays on the comment it is posted as
+            kept.append(dataclasses.replace(findings[rep], root_id=root))
+        else:
+            kept.append(findings[rep])
         for i in members:
             if i != rep:
                 collapsed.append(
@@ -224,10 +239,13 @@ class ExistingComment:
     norm_title: str
     norm_body: str
     html_url: str
+    impact: str | None = None
 
     @classmethod
     def from_github(cls, c: dict[str, Any]) -> ExistingComment:
         body = THREAD_STATUS_RE.sub("", str(c.get("body") or ""), count=1)
+        impact = impact_of(body)
+        body = IMPACT_LINE_RE.sub(r"\1", body, count=1)
         m = FINDING_MARKER_RE.search(body)
         title = ""
         for line in body.splitlines():
@@ -250,7 +268,14 @@ class ExistingComment:
             norm_title=normalize_finding_text(title),
             norm_body=normalize_finding_text(body),
             html_url=str(c.get("html_url") or ""),
+            impact=impact,
         )
+
+
+def impact_of(body: str | None) -> str | None:
+    """The `**Impact:**` sentence of a posted finding comment, or None when it has none."""
+    m = IMPACT_LINE_RE.search(str(body or ""))
+    return (m.group(2).strip() or None) if m else None
 
 
 def _content_tokens(text: str) -> set[str]:
@@ -337,6 +362,7 @@ __all__ = [
     "finding_dedupe_key",
     "finding_hash",
     "has_same_root_duplicates",
+    "impact_of",
     "normalize_root_id",
     "thread_has_resolution_reply",
 ]

@@ -6,7 +6,8 @@ posts may differ from production's. Everything but `ledger` was written by main 
 before its review behavior landed (feat/review-quality-v12 @736cab9). The review bodies were
 then changed on purpose: the round-1 body when the first full review gained its second Phase-2
 pass, and the carried findings listed compactly with their threads plus guidance for author
-agents in the agent prompt (feat/settle-disputes)."""
+agents in the agent prompt (feat/settle-disputes), and the generated lead listing what blocks
+with the verifier's prose labelled below it on a re-review (feat/blocker-list-impact)."""
 
 from __future__ import annotations
 

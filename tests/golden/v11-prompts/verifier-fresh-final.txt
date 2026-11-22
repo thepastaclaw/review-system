@@ -40,6 +40,12 @@ budget 10
 - Every reconciliation row must include a one- or two-sentence `reason` addressed to the PR author; it is posted verbatim as a reply on that finding's thread, so it must answer the newest human message, not summarise the finding.
 - This is the first PastaClaw automated review round for this PR. No prior PastaClaw review or findings exist to reconcile.
 - Prior-finding revalidation is complete with no statuses because the prior finding set is empty.
+- Your `summary` describes what the change does (on a re-review, what changed on this head) and the CI state. The review opens with its own list of what blocks, built from your `findings`: the summary must not present findings as the reason for the verdict, and must not mention any finding that is not in `findings`.
+- Write each new finding problem-first:
+  - `title`: what goes wrong and when, in plain words a maintainer understands without reading the body. It is not an instruction and does not name the fix; the fix belongs in the body. Bad: "Pass the provisioning alias as a JSON string". Good: "`--alias 123` is rejected as a number and `--alias null` silently uses the default name".
+  - `impact`: one sentence saying who hits the problem, under what condition, and what they then see or lose, e.g. "Devnet only: wiping identities while one is being edited can leave it listed with its keys deleted."
+  - `body`: the consequence first, then the mechanism, then the fix.
+  The title rule applies to new findings only: a carried (STILL_VALID) prior finding keeps its `original_title` byte-for-byte. You may write or refresh a carried finding's `impact`.
 - Independently verify every supplied reviewer claim against the exact source range and the PR evidence below.
 - This is a static review. Do not build, compile, or run tests, benchmarks, or the project's build scripts, even where the project notes describe how: compilers and build tools are blocked in this lane ("Operation not permitted"), and there is no workaround to look for. For build and test evidence use the PR's CI: the `ci` snapshot in the evidence below (taken at `fetched_at`), or the current state with `gh pr checks 7 --repo dashpay/platform` (it exits non-zero while checks are pending or failing; that is its answer, not a block) and a failed GitHub Actions job's log with `gh run view <run-id> --repo dashpay/platform --log-failed`. Do not wait or poll for CI that is still running; say what is pending instead.
 ```json

@@ -82,6 +82,24 @@ def finding_dedupe_key(file: str, category: str, title: str, body: str) -> str:
     return hashlib.sha256(norm.encode()).hexdigest()[:16]
 
 
+# an impact is one sentence, repeated in the inline comment, the body and the agent prompt
+MAX_IMPACT_CHARS = 400
+
+
+def clean_impact(value: Any) -> str | None:
+    """A finding's `impact` as one line of at most MAX_IMPACT_CHARS (a longer one is cut at a
+    word boundary and ends in an ellipsis), or None when it is missing, empty or not text."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    if len(text) > MAX_IMPACT_CHARS:
+        cut = text[: MAX_IMPACT_CHARS - 1]
+        if text[len(cut)] != " " and " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        text = cut.rstrip(" ,;:.") + "…"
+    return text or None
+
+
 @dataclass(slots=True)
 class Finding:
     file: str
@@ -100,6 +118,9 @@ class Finding:
     # policy v12: the harness-assigned id of the finder candidate (`p2-general-3`), or of the
     # first member of the verifier group it was composed from; never a model's
     candidate_id: str | None = None
+    # one sentence: who hits the problem, when, and what they see or lose; optional (older
+    # outputs and models that omit it), never part of the hash or the dedupe key
+    impact: str | None = None
 
     @property
     def hash(self) -> str:
@@ -128,6 +149,8 @@ class Finding:
             d["root_id"] = self.root_id
         if self.candidate_id:
             d["candidate_id"] = self.candidate_id
+        if self.impact:
+            d["impact"] = self.impact
         d.update(self.extra)
         return d
 
@@ -163,6 +186,7 @@ class Finding:
             "source",
             "finding_hash",
             "root_id",
+            "impact",
         }
         extra = {k: v for k, v in raw.items() if k not in known}
         # a hash or nothing: the marker is looked up in sets of hashes downstream
@@ -182,6 +206,7 @@ class Finding:
             prior_hash=str(raw["finding_hash"]) if raw.get("finding_hash") else None,
             root_id=str(raw["root_id"]) if raw.get("root_id") else None,
             extra=extra,
+            impact=clean_impact(raw.get("impact")),
         )
 
 

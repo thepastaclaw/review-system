@@ -25,6 +25,7 @@ from .contract import (
     Finding,
     ReviewerOutput,
     _expand,
+    clean_impact,
 )
 from .ledger import Issue
 from .models import FailKind, ReviewError
@@ -120,6 +121,7 @@ def parse_finder_output(
                 source=source,
                 extra={FAILURE_SCENARIO: _str(r.get(FAILURE_SCENARIO))},
                 candidate_id=f"{id_prefix}-{i}",
+                impact=clean_impact(r.get("impact")),
             )
         )
     if problems:
@@ -154,6 +156,8 @@ def brief(f: Finding) -> dict[str, Any]:
         FAILURE_SCENARIO: f.extra.get(FAILURE_SCENARIO) or "",
         "body": f.body,
     }
+    if f.impact:
+        out["impact"] = f.impact
     if f.suggestion:
         out["suggestion"] = f.suggestion
     gate = f.extra.get("gate_verdict")
@@ -219,6 +223,7 @@ class Group:
     title: str
     body: str
     suggestion: str | None
+    impact: str | None = None
 
     @property
     def match(self) -> str:
@@ -369,6 +374,7 @@ def parse_verify(
                 title=title,
                 body=_str(r.get("body")),
                 suggestion=_str(r.get("suggestion")) or None,
+                impact=clean_impact(r.get("impact")),
             )
         )
     missing = [c for c in candidate_ids if c not in placed]
@@ -500,6 +506,7 @@ def apply_rules(
             source=source_of(members),
             extra={"verdict": g.verdict, "evidence": g.evidence, "members": g.members},
             candidate_id=g.members[0],
+            impact=g.impact or (rep.impact if rep else None),
         )
         out.kept.append((g, f))
         kind, target = g.kind, g.target

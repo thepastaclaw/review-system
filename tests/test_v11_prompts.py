@@ -1,7 +1,8 @@
 """Under a v11 policy every lane prompt must stay exactly what production's v11 pipeline
 sends. The expected text under golden/v11-prompts/ was generated with main's prompts.py at
 v0.28.0 (4e75920fe) from the cases below and is compared as copied text, never re-derived
-from today's code."""
+from today's code. Changed on purpose since: the reviewer and verifier prompts gained the
+problem-first finding text rules and the verifier its summary rule (feat/blocker-list-impact)."""
 
 from __future__ import annotations
 

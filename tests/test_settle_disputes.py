@@ -454,7 +454,13 @@ def test_a_blocker_deferred_without_a_link_is_asked_once_then_listed_compactly(
         "issue on its thread, or ask there and PastaClaw files it."
     ) in body
     assert "Still open from earlier rounds" not in body
-    assert body.count(blocker["title"]) == 2  # the line above and the agent-prompt entry
+    assert (
+        f"**Changes requested: 1 blocker**\n- **{blocker['title']}** — `f.rs:11-12` "
+        f"([thread]({URL}), carried; accepted as a deferral; lifts when a tracking issue is "
+        "linked on its thread)"
+    ) in body
+    # the lead, the line above and the agent-prompt entry
+    assert body.count(blocker["title"]) == 3
     assert "Estimation must be >= actual." not in body
 
 
