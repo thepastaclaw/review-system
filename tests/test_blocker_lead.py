@@ -11,8 +11,10 @@ import pytest
 
 from reviewsys import audit, ci, dedupe, github, publish, rules, worker
 from reviewsys.contract import (
+    MAX_IMPACT_CHARS,
     Finding,
     VerifierOutput,
+    clean_impact,
     normalize_finding_text,
     parse_verifier_output,
 )
@@ -176,14 +178,59 @@ def test_entries_are_ordered_new_then_carried_then_awaiting_and_skip_non_blocker
 # ---- count parity, disputes, nothing blocking, the preliminary gate ----
 
 
-def test_a_list_that_disagrees_with_the_verdict_count_is_not_numbered():
-    """Two findings collapsed onto one root count twice in the verdict but are one entry."""
-    rep, alias = finding("Same root"), finding("Same root, again")
-    m = model(
-        verified([rep, alias]),
-        kept=[rep],
-        suppressed=[Suppressed(alias, "deduped_same_batch_root", detail=rep.title)],
+def test_a_blocker_collapsed_under_a_root_id_suggestion_still_leads(monkeypatch):
+    """A suggestion carrying a root id and a blocker on the same lines (sharing a carry-forward
+    token) collapse into one comment: it is posted as the blocker, keeping the root id, and the
+    lead lists every blocker the verdict counts."""
+    monkeypatch.setattr(publish.github, "inline_comments", lambda *a: [])
+    sugg = finding("Cache the lookup (prior-7)", severity="suggestion", root_id="r-1")
+    blocker = finding("Lookup races the refresh, see prior-7", body="a longer body here")
+    second = finding("Lookup races the refresh again, see prior-7")
+    v = verified([sugg, blocker, second])
+    m = publish.build(
+        None,
+        repo="dashpay/platform",
+        number=1,
+        head_sha=HEAD,
+        phase="final",
+        verified=v,
+        provenance=model(v).provenance,
+        bot_login="thepastaclaw",
+        diff_text="",
+        dry_run=True,
     )
+    (posted,) = m.kept
+    assert (posted.title, posted.severity, posted.root_id) == (blocker.title, "blocking", "r-1")
+    assert publish.lead_count_mismatch(m) is None
+    body = publish.render(m)
+    assert m.canonical_event == "REQUEST_CHANGES" and counted_blockers(body) == 2
+    assert lead(body) == [
+        "**Changes requested: 2 blockers**",
+        f"- **{blocker.title}** — `src/ui/tokens/token_action_screen.rs:553-574` "
+        "(new; not shown inline, see below)",
+        f"- **{second.title}** — `src/ui/tokens/token_action_screen.rs:553-574` "
+        "(new; same root as another finding here, posted in its comment)",
+    ]
+
+
+def test_a_blocker_whose_comment_went_to_a_lesser_finding_still_has_an_entry():
+    sugg, blocker = finding("Cache it", severity="suggestion"), finding("Races the refresh")
+    m = model(
+        verified([sugg, blocker]),
+        kept=[sugg],
+        suppressed=[Suppressed(blocker, "deduped_same_batch_root", detail=sugg.title)],
+    )
+    assert lead(publish.render(m))[:2] == [
+        "**Changes requested: 1 blocker**",
+        f"- **{blocker.title}** — `src/ui/tokens/token_action_screen.rs:553-574` "
+        "(new; same root as another finding here, posted in its comment)",
+    ]
+
+
+def test_a_list_that_disagrees_with_the_verdict_count_is_not_numbered():
+    """A guard: a blocker the verdict counts that no final set holds."""
+    shown, lost = finding("Shown"), finding("Lost")
+    m = model(verified([shown, lost]), kept=[shown])
     assert publish.lead_count_mismatch(m) == (
         "the lead lists 1 blocking finding(s), the verdict counts 2"
     )
@@ -194,12 +241,8 @@ def test_a_list_that_disagrees_with_the_verdict_count_is_not_numbered():
 
 
 def test_the_publish_step_records_an_unnumbered_lead(cfg, conn, monkeypatch, tmp_path):
-    rep, alias = finding("Same root"), finding("Same root, again")
-    m = model(
-        verified([rep, alias]),
-        kept=[rep],
-        suppressed=[Suppressed(alias, "deduped_same_batch_root", detail=rep.title)],
-    )
+    shown, lost = finding("Shown"), finding("Lost")
+    m = model(verified([shown, lost]), kept=[shown])
     monkeypatch.setattr(worker, "_build_review", lambda ctx, **kw: m)
     monkeypatch.setattr(
         worker.publish,
@@ -243,6 +286,17 @@ def test_disputed_blockers_are_counted_out_in_one_line():
         "Not counted: 1 disputed blocking finding(s) left to maintainers.",
     ]
     assert "Argued away" not in "\n".join(lead(body))
+
+
+def test_blockers_disputed_on_an_earlier_head_explain_a_withheld_approval():
+    """The head after a dispute settled: nothing new is disputed, but the approval is still
+    withheld on it, so the lead says why the verdict is not an approval."""
+    sugg = finding("Cache the lookup", severity="suggestion")
+    m = model(verified([sugg], action="COMMENT"), kept=[sugg], disputed_blockers=2)
+    assert lead(publish.render(m)) == [
+        "**Nothing blocks:** no blocking finding stands on this head.",
+        "Not counted: 2 disputed blocking finding(s) left to maintainers.",
+    ]
 
 
 def test_a_comment_with_no_blocker_says_nothing_blocks():
@@ -346,12 +400,15 @@ def test_a_lifted_blocker_is_struck_in_the_lead_and_the_heading_recounted():
         f"- ~~**{STALE}** — `src/ui/tokens/token_action_screen.rs:472-483` "
         f"([thread]({THREAD.format(5)}), carried)~~ — **settled:** ✅ Withdrawn",
     ]
+    assert publish.with_lifted_findings(edited, [lifted(old)]) == edited
     assert counted_blockers(edited) == 1
     assert "1 blocking finding(s) still stand" in edited
     both = publish.with_lifted_findings(edited, [lifted(old), lifted(new, "DISPUTED")])
-    assert lead(both)[0] == "**Changes requested: ~~2~~ 0 blockers**"
+    assert lead(both)[0] == "**Changes requested: ~~2~~ 0 blockers: none remains**"
     assert lead(both)[1].startswith(f"- ~~**{LOCKED}**")
     assert lead(both)[1].endswith("~~ — **settled:** ⚖️ Disputed (left to the maintainers)")
+    assert lead(both)[2] == f"  ~~Impact: {LOCKED_IMPACT}~~"
+    assert publish.with_lifted_findings(both, [lifted(old), lifted(new, "DISPUTED")]) == both
     assert counted_blockers(both) == 0
     assert not audit.BLOCKING_COUNT_RE.search(both)
     assert publish.with_lifted_findings(both, []) == body
@@ -402,6 +459,18 @@ def test_impact_is_parsed_and_kept_out_of_identity():
     assert "impact" not in plain.to_dict() and plain.impact is None
     assert (with_impact.hash, with_impact.dedupe_key) == (plain.hash, plain.dedupe_key)
     assert Finding.from_dict(with_impact.to_dict()).impact == with_impact.impact
+
+
+def test_a_long_impact_is_cut_at_a_word_boundary():
+    words = " ".join(f"word{i}" for i in range(200))
+    cut = clean_impact(words)
+    assert cut and len(cut) <= MAX_IMPACT_CHARS and cut.endswith("…")
+    assert words.startswith(cut[:-1]) and words[len(cut) - 1] == " "
+    assert clean_impact("x" * 1000) == "x" * (MAX_IMPACT_CHARS - 1) + "…"
+    exact = "y" * MAX_IMPACT_CHARS
+    assert clean_impact(exact) == exact
+    long = {"file": "f.rs", "title": "T", "body": "B", "impact": words}
+    assert Finding.from_dict(long).impact == cut
 
 
 @pytest.mark.parametrize("impact", [None, "", 42, ["x"], {"a": 1}])

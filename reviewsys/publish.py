@@ -188,9 +188,13 @@ def comment_body(f: Finding) -> str:
     return "\n".join(parts)
 
 
-def _impact_lines(f: Finding) -> list[str]:
-    """The `**Impact:**` line that goes directly under a finding's headline, when it has one."""
-    return [IMPACT_PREFIX + _block_text(f.impact)] if f.impact else []
+LEAD_IMPACT = "  Impact: "  # a list entry's impact line, in the lead and the agent prompt
+
+
+def _impact_lines(f: Finding, prefix: str = IMPACT_PREFIX) -> list[str]:
+    """The impact line that goes directly under a finding's title, when it has one: by default
+    the `**Impact:**` line of a finding's comment or block."""
+    return [prefix + _block_text(f.impact)] if f.impact else []
 
 
 def map_comment(f: Finding, parsed: dict[str, list[dict[str, int]]]) -> dict[str, Any] | None:
@@ -275,6 +279,9 @@ class ReviewModel:
     # re-review, to settle the decision first)
     stepback: stepback.Outcome | None = None
     bot_login: str = ""
+    # every blocking finding left to the maintainers as disputed (not only this head's): the
+    # count that withholds an approval (`worker._settle_discussions`)
+    disputed_blockers: int = 0
 
     @property
     def canonical_event(self) -> str:
@@ -341,8 +348,7 @@ def _ai_prompt(
             elif thread is not None:
                 lines.append(f"  (carried{link})")
             else:
-                if f.impact:
-                    lines.append(f"  Impact: {_block_text(f.impact)}")
+                lines += _impact_lines(f, LEAD_IMPACT)
                 if f.extra.get("thread_url"):
                     lines.append(f"  (existing thread: {f.extra['thread_url']})")
                 if f.body:
@@ -654,9 +660,11 @@ _LEAD_HOW = {
     "carried": "carried",
     "awaiting": "carried; accepted as a deferral; lifts when a tracking issue is linked on its "
     "thread",
+    "alias": "new; same root as another finding here, posted in its comment",
 }
 _LEAD_ORDER = tuple(_LEAD_HOW)
-# the lead's heading when its list and the verdict's blocker count disagree
+# the lead's heading when its list and the verdict's blocker count disagree (a guard: every
+# finding the verdict counts has an entry)
 LEAD_UNCOUNTED = "**Changes requested: these findings block the merge**"
 _LEAD_NOTHING = "**Nothing blocks:** no blocking finding stands on this head."
 
@@ -665,8 +673,9 @@ def lead_entries(m: ReviewModel) -> list[tuple[Finding, str]]:
     """The findings that count as blocking toward this review's verdict, as the lead lists
     them, each with how it stands (a `_LEAD_HOW` key): new on this head (posted inline, or
     `not_inline`), still open from an earlier round (`carried`), or held until its deferral's
-    tracking issue is linked (`awaiting`). Drawn from the same final sets the body's lower
-    sections show; a same-batch alias is listed once, through the finding it folded onto."""
+    tracking issue is linked (`awaiting`), or collapsed into another finding's comment on the
+    same root (`alias`). Drawn from the same final sets the body's lower sections show, so
+    every blocker the verdict counts has an entry."""
     out: list[tuple[Finding, str]] = []
     for f in m.kept:
         if _awaiting(f):
@@ -675,8 +684,9 @@ def lead_entries(m: ReviewModel) -> list[tuple[Finding, str]]:
             out.append((f, "carried"))
         else:
             out.append((f, "not_inline" if any(f is s for s in m.skipped) else "new"))
-    folded = [_folded(s) for s in m.suppressed if s.action not in _BATCH_ALIASES]
+    folded = [_folded(s) for s in m.suppressed if s.action != "deduped_same_batch_root"]
     out += [(f, "awaiting" if _awaiting(f) else "carried") for f in (*folded, *m.verified.carried)]
+    out += [(s.finding, "alias") for s in m.suppressed if s.action == "deduped_same_batch_root"]
     out = [(f, how) for f, how in out if f.severity == "blocking"]
     return sorted(out, key=lambda e: _LEAD_ORDER.index(e[1]))
 
@@ -690,36 +700,42 @@ def lead_count_mismatch(m: ReviewModel) -> str | None:
     return f"the lead lists {listed} blocking finding(s), the verdict counts {counted}"
 
 
+def _struck(orig: int, now: int) -> str:
+    """A count with its original struck through when it changed: `~~2~~ 1`."""
+    return f"~~{orig}~~ {now}" if now != orig else str(orig)
+
+
 def _lead_heading(count: int, lifted: int = 0) -> str:
     """`**Changes requested: N blockers**`, with `lifted` of them struck off the number."""
     now = max(count - lifted, 0)
-    shown = f"~~{count}~~ {now}" if now != count else str(count)
-    return f"**Changes requested: {shown} blocker{'' if now == 1 else 's'}**"
+    rest = ": none remains" if count and not now else ""
+    return f"**Changes requested: {_struck(count, now)} blocker{'' if now == 1 else 's'}{rest}**"
 
 
 def _lead_entry(f: Finding, how: str | None = None) -> list[str]:
     url = f.extra.get("thread_url")
     notes = ([f"[thread]({url})"] if url else []) + ([_LEAD_HOW[how]] if how else [])
     tail = f" ({', '.join(notes)})" if notes else ""
-    lines = [f"- **{_block_text(f.title)}** — `{_location(f)}`{tail}"]
-    if f.impact:
-        lines.append(f"  Impact: {_block_text(f.impact)}")
-    return lines
+    return [
+        f"- **{_block_text(f.title)}** — `{_location(f)}`{tail}",
+        *_impact_lines(f, LEAD_IMPACT),
+    ]
 
 
 def _blocker_lead(m: ReviewModel) -> list[str]:
     """The body's lead: what blocks this review's verdict, generated from the final findings
     (never the verifier's prose), or one line saying nothing does; and how many disputed
-    blockers it leaves out. Nothing on an approval, which says so itself further down."""
+    blockers it leaves out (the count that withholds an approval). Nothing on an approval,
+    which says so itself further down."""
     entries = lead_entries(m)
     lines: list[str] = []
     if entries or m.verified.blocker_count:
-        numbered = lead_count_mismatch(m) is None
+        numbered = len(entries) == m.verified.blocker_count
         lines.append(_lead_heading(m.verified.blocker_count) if numbered else LEAD_UNCOUNTED)
         lines += [line for f, how in entries for line in _lead_entry(f, how)]
     elif m.canonical_event != "APPROVE":
         lines.append(_LEAD_NOTHING)
-    disputed = sum(1 for f in m.disputed if f.severity == "blocking")
+    disputed = m.disputed_blockers or sum(1 for f in m.disputed if f.severity == "blocking")
     if disputed:
         lines.append(f"Not counted: {disputed} disputed blocking finding(s) left to maintainers.")
     return [LEAD_MARKER, *lines, ""] if lines else []
@@ -2129,7 +2145,10 @@ _CARRIED_ITEM_RE = re.compile(
 )
 # the lead's heading and one of its entries (`_lead_heading`, `_lead_entry`), less the strike
 # and settled note `with_lifted_findings` may have added
-_LEAD_HEADING_RE = re.compile(r"^\*\*Changes requested: (?:~~(\d+)~~ )?(\d+) blockers?\*\*$")
+_LEAD_HEADING_RE = re.compile(
+    r"^\*\*Changes requested: (?:~~(\d+)~~ )?(\d+) blockers?(?:: none remains)?\*\*$"
+)
+_LEAD_IMPACT_RE = re.compile(r"^  (?:~~)?(Impact: .*?)(?:~~)?$")
 _LEAD_ITEM_RE = re.compile(
     r"^- (?:~~)?(\*\*(.+?)\*\* — `([^`]*)`.*?)(?:~~)?(?: — \*\*settled:\*\* .*)?$"
 )
@@ -2172,7 +2191,7 @@ def _recount(line: str, lifted: list[LiftedFinding]) -> tuple[str, int | None]:
         now = max(orig - by_sev.get(_COUNT_LABELS[label], 0), 0)
         if label == "blocking":
             blocking = now
-        return f"{icon} ~~{orig}~~ {now} {label}" if now != orig else f"{icon} {orig} {label}"
+        return f"{icon} {_struck(orig, now)} {label}"
 
     return _COUNT_SEGMENT_RE.sub(seg, line), blocking
 
@@ -2227,20 +2246,8 @@ def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
     if counts:
         lines[counts[-1]], left = _recount(lines[counts[-1]], matched)
     for i in range(details):  # the compact list of findings carried from earlier rounds
-        c = _CARRIED_ITEM_RE.match(lines[i])
-        if not c:
-            continue
-        hit = next(
-            (
-                f
-                for f in matched
-                if f.title == c.group(2) and _is_location(c.group(3), f.file or "(no file)")
-            ),
-            None,
-        )
-        lines[i] = c.group(1) + (
-            f" — **settled:** {_LIFTED_LABEL.get(hit.status, _LIFTED_DEFAULT)[0]}" if hit else ""
-        )
+        if c := _CARRIED_ITEM_RE.match(lines[i]):
+            lines[i] = c.group(1) + _settled_note(matched, c.group(2), c.group(3))
     _relead(lines, details, matched)
     if not matched:
         return "\n".join(lines)
@@ -2279,27 +2286,33 @@ def _relead(lines: list[str], end: int, matched: list[LiftedFinding]) -> None:
     if start is None:
         return
     lifted = sum(1 for f in matched if f.severity == "blocking")
+    struck = False  # the entry above was struck, so its impact line is too
     for i in range(start + 1, end):
         if not lines[i].strip():
             return
         if h := _LEAD_HEADING_RE.match(lines[i]):
             lines[i] = _lead_heading(int(h.group(1) or h.group(2)), lifted)
         elif e := _LEAD_ITEM_RE.match(lines[i]):
-            hit = next(
-                (
-                    f
-                    for f in matched
-                    if _block_text(f.title) == e.group(2)
-                    and _is_location(e.group(3), f.file or "(no file)")
-                ),
-                None,
-            )
-            lines[i] = (
-                f"- ~~{e.group(1)}~~ — **settled:** "
-                f"{_LIFTED_LABEL.get(hit.status, _LIFTED_DEFAULT)[0]}"
-                if hit
-                else f"- {e.group(1)}"
-            )
+            note = _settled_note(matched, e.group(2), e.group(3))
+            struck = bool(note)
+            lines[i] = f"- ~~{e.group(1)}~~{note}" if struck else f"- {e.group(1)}"
+        elif im := _LEAD_IMPACT_RE.match(lines[i]):
+            lines[i] = f"  ~~{im.group(1)}~~" if struck else f"  {im.group(1)}"
+
+
+def _settled_note(matched: list[LiftedFinding], title: str, loc: str) -> str:
+    """` — **settled:** <label>` for the lifted finding a listed line names (by title and
+    location), or "" when it names none."""
+    hit = next(
+        (
+            f
+            for f in matched
+            if _block_text(f.title) == _block_text(title)
+            and _is_location(loc, f.file or "(no file)")
+        ),
+        None,
+    )
+    return f" — **settled:** {_LIFTED_LABEL.get(hit.status, _LIFTED_DEFAULT)[0]}" if hit else ""
 
 
 def _is_location(loc: str, path: str) -> bool:

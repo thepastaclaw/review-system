@@ -413,20 +413,22 @@ Not counted: 1 disputed blocking finding(s) left to maintainers.
 ```
 
 Each entry is a finding that counts toward the verdict: new on this head (posted
-inline, or "not shown inline, see below"), still open from an earlier round
-(`carried`, with its thread), or a deferral held until its tracking issue is
-linked (which says so). The heading's number is the verdict's blocker count, the
-same one the counts line shows; when the list and the count disagree (two findings
-on one root count twice but are listed once) the heading drops the number and the
+inline, "not shown inline, see below", or collapsed into another finding's comment
+on the same root), still open from an earlier round (`carried`, with its thread),
+or a deferral held until its tracking issue is linked (which says so). A same-root
+cluster is posted as its most severe member, keeping the cluster's root id. The
+heading's number is the verdict's blocker count, the same one the counts line
+shows; should the list ever disagree with it, the heading drops the number and the
 run records a `review.lead_uncounted` event. Disputed blockers are left out and
-counted in one "Not counted" line. A non-approving review with no blocker leads
+counted in one "Not counted" line, from the same count that withholds an approval. A non-approving review with no blocker leads
 with "**Nothing blocks:**"; an approval has no lead and keeps its "Approved: nothing
 here blocks the merge" line. On a re-review the verifier's summary is labelled
 "New on this head". When a discussion lifts a finding, `with_lifted_findings`
-strikes its lead entry and recounts the heading as it recounts the counts line.
+strikes its lead entry (and its impact line) and recounts the heading as it
+recounts the counts line ("~~1~~ 0 blockers: none remains" once all are lifted).
 
 Every finding carries an optional one-sentence `impact` (who hits it, when, and
-what they see or lose). It is shown as `**Impact:**` directly under the title of
+what they see or lose), cut to 400 characters at a word boundary. It is shown as `**Impact:**` directly under the title of
 the inline comment and of a body-only finding, under the title in the lead and in
 the agent prompt; it is not part of the finding hash or the dedupe key, and dedupe
 strips the line before comparing a posted comment's text. Output without it parses

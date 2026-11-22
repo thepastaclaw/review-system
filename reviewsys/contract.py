@@ -82,11 +82,22 @@ def finding_dedupe_key(file: str, category: str, title: str, body: str) -> str:
     return hashlib.sha256(norm.encode()).hexdigest()[:16]
 
 
+# an impact is one sentence, repeated in the inline comment, the body and the agent prompt
+MAX_IMPACT_CHARS = 400
+
+
 def clean_impact(value: Any) -> str | None:
-    """A finding's `impact` as one line, or None when it is missing, empty or not text."""
+    """A finding's `impact` as one line of at most MAX_IMPACT_CHARS (a longer one is cut at a
+    word boundary and ends in an ellipsis), or None when it is missing, empty or not text."""
     if not isinstance(value, str):
         return None
-    return " ".join(value.split()) or None
+    text = " ".join(value.split())
+    if len(text) > MAX_IMPACT_CHARS:
+        cut = text[: MAX_IMPACT_CHARS - 1]
+        if text[len(cut)] != " " and " " in cut:
+            cut = cut.rsplit(" ", 1)[0]
+        text = cut.rstrip(" ,;:.") + "…"
+    return text or None
 
 
 @dataclass(slots=True)

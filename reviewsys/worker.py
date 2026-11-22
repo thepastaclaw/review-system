@@ -1339,7 +1339,7 @@ def step_context(ctx: RunContext) -> None:
                 line_end=t.get("line"),
                 prior_hash=h,
                 extra=_prior_extra(ctx, h, t),
-                impact=impact_of(t["body"]),
+                impact=_thread_impact(ctx, h),
             )
         )
     ctx.prior = prior_for_prompt(prior, ctx.prior_sha or "")
@@ -4224,6 +4224,7 @@ def _build_review(
     )
     model.fix_forward = ctx.cfg.policy.pipeline is None
     model.disputed = _newly_disputed(ctx, verified)
+    model.disputed_blockers = ctx.disputed_blockers
     model.stepback = ctx.stepback
     model.bot_login = ctx.cfg.bot_login
     if ctx.approval_withheld:
