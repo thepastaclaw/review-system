@@ -14,7 +14,7 @@ tested, one daemon, one SQLite file, no lock files.
 |---|---|
 | `daemon.py` | single-threaded tick loop: ingest, notify, route, supersede, reap, schedule, watchdog, gc |
 | `ingest.py` | GitHub GraphQL poll → `prs`/`heads`; notifications and inline-comment replies → `inbox` |
-| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding on a reviewed commit) or own-PR comment batches → OpenClaw wake |
+| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding on a reviewed commit) or own-PR comment batches → OpenClaw wake. A review request or a trusted human's `@thepastaclaw review` on a commit already reviewed starts a fresh review of it: once per request (the bot is still among the requested reviewers, at most 3 per commit) and once per mention comment |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
 | `worker.py` | one run: worktree → (unchanged diff: carry the earlier review, done) → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |

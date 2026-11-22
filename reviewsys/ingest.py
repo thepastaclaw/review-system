@@ -167,6 +167,7 @@ def enqueue_head(
     trigger: Trigger,
     *,
     ts: str | None = None,
+    rereview: bool = False,
 ) -> str:
     """Create a queued head for (repo, number, sha), superseding any older active head.
 
@@ -178,6 +179,11 @@ def enqueue_head(
     a finished head for the light CI-check run: it never creates a head or takes one over.
     A person asking for anything on a head whose CI check is waiting gets their run instead
     (the CI check is re-queued by its watch if still needed), or, while it runs, right after.
+
+    `rereview`: a mention or review request (`ASKING`) that the router found to be a fresh,
+    explicit ask re-opens a commit that was already reviewed, as the gate-comment boxes do.
+    Without it such a trigger on a reviewed commit is a no-op: GitHub repeats those
+    notifications for every later update of the pull request.
     """
     ts = ts or now()
     labelled = _has_skip_label(conn, repo, number)
@@ -244,7 +250,8 @@ def enqueue_head(
             priority=priority,
             eligible=eligible,
         )
-    if existing and existing["trigger"] == Trigger.CI_FAILED.value and trigger in REOPENING:
+    reopens = trigger in REOPENING or (rereview and trigger in ASKING)
+    if existing and existing["trigger"] == Trigger.CI_FAILED.value and reopens:
         taken = _take_over_ci_check(conn, existing, trigger, ts)
         if taken:
             return taken
@@ -276,7 +283,7 @@ def enqueue_head(
                 (trigger.value, ts, existing["id"]),
             )
             return "promoted"
-        if trigger in REOPENING and existing["status"] in (
+        if reopens and existing["status"] in (
             HeadStatus.DONE,
             HeadStatus.FAILED,
             HeadStatus.CLOSED,

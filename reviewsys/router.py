@@ -3,6 +3,9 @@
 - `review_requested` on a watched repo  -> priority head at the live PR head
 - `mention` whose comment says `@<bot> review` -> priority head (any repo the bot can
   read: repos without a skills entry get an ad hoc review)
+- either of those on a commit already reviewed -> a fresh review of it, when the ask is
+  explicit and new: the bot is still among the requested reviewers (`_review_awaited`), or a
+  trusted human's mention comment is routed for the first time
 - `review_reply` from a trusted human under one of the bot's finding threads: on a reviewed
   live head, the head re-opens at priority so the reply is answered on its thread (a
   conversation when a final review stands); after a push nothing has reviewed yet ("fixed in
@@ -39,6 +42,8 @@ log = logging.getLogger(__name__)
 API_ROOT = "https://api.github.com/"
 BATCH_DELAY = timedelta(minutes=5)
 BATCH_RETRY = timedelta(minutes=15)
+# re-reviews of one commit that pending review requests may start
+MAX_REQUESTED_REREVIEWS = 3
 DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
 ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
@@ -47,6 +52,16 @@ _MARKUP_RE = re.compile(r"[`*_]")
 
 def _mention_re(bot: str) -> re.Pattern[str]:
     return re.compile(rf"@{re.escape(bot)}\b[^\n]{{0,40}}\breview\b", re.IGNORECASE)
+
+
+def _rereview_re(bot: str) -> re.Pattern[str]:
+    """A mention that asks for a review in so many words ("@bot review", "@bot please
+    re-review", "@bot can you review again"), unlike one that only talks about a review
+    ("@bot thanks for the review"), which `_mention_re` also matches."""
+    return re.compile(
+        rf"@{re.escape(bot)}[\s,:]+(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:re-?)?review\b",
+        re.IGNORECASE,
+    )
 
 
 def _fetch(gh: Gh, endpoint: str, what: str) -> dict[str, Any] | None:
@@ -127,7 +142,16 @@ def _route_row(
 
     if kind == "review_requested" and watched and is_open and head and not own_pr:
         with tx(conn):
-            enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REQUESTED, ts=ts)
+            enqueue_head(
+                conn,
+                cfg,
+                repo,
+                number,
+                head,
+                Trigger.REVIEW_REQUESTED,
+                ts=ts,
+                rereview=_review_awaited(conn, cfg, meta, repo, number, head),
+            )
             _handled(conn, row["id"], "review_requested", ts)
         return "review_requested"
 
@@ -156,7 +180,8 @@ def _route_row(
         and (watched or adhoc_ok)
     ):
         with tx(conn):
-            enqueue_head(conn, cfg, repo, number, head, Trigger.MENTION, ts=ts)
+            first = _asks_again(conn, cfg, row, comment or {}, actor, body)
+            enqueue_head(conn, cfg, repo, number, head, Trigger.MENTION, ts=ts, rereview=first)
             _handled(conn, row["id"], "mention", ts)
         return "mention"
 
@@ -202,7 +227,7 @@ def _route_row(
         and not actor.lower().endswith("[bot]")
         and _trusted(cfg, comment, actor)
         and _quotes_bot_finding(conn, repo, number, body)
-        and not _already_routed(conn, row)
+        and not _already_routed(conn, row, "discussion_reply%")
     ):
         return _queue_reply(
             conn,
@@ -292,16 +317,62 @@ def _quotes_bot_finding(conn: sqlite3.Connection, repo: str, number: int, body: 
     return any(t and t in quoted for t in (_plain(str(r[0] or "")) for r in rows))
 
 
-def _already_routed(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
-    """GitHub re-notifies for the same comment (an edit, a later mention): route it once."""
+def _already_routed(conn: sqlite3.Connection, row: sqlite3.Row, action: str) -> bool:
+    """GitHub re-notifies for the same comment (an edit, a later mention): route it once.
+    `action`: a LIKE pattern for the inbox action that routing it leaves."""
     return (
         conn.execute(
-            "SELECT 1 FROM inbox WHERE body=? AND id<>? AND action LIKE 'discussion_reply%' "
+            "SELECT 1 FROM inbox WHERE body=? AND id<>? AND action LIKE ? "
             "AND action NOT LIKE '%_expired' LIMIT 1",
-            (row["body"], row["id"]),
+            (row["body"], row["id"], action),
         ).fetchone()
         is not None
     )
+
+
+def _asks_again(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    row: sqlite3.Row,
+    comment: dict[str, Any],
+    actor: str,
+    body: str,
+) -> bool:
+    """A mention that re-reviews a commit already reviewed: a trusted human's top-level
+    comment asking for a review outright, routed for the first time. A bot's comment never
+    does (the bot's own gate comment and CodeRabbit both write "@bot review"), nor a reply
+    under a finding, which is answered as a conversation."""
+    login = actor.lower()
+    return (
+        "/issues/comments/" in str(row["body"])
+        and login not in (cfg.bot_login.lower(), *ALLOWED_BOTS)
+        and not login.endswith("[bot]")
+        and _trusted(cfg, comment, actor)
+        and bool(_rereview_re(cfg.bot_login).search(body))
+        and not _already_routed(conn, row, "mention")
+    )
+
+
+def _review_awaited(
+    conn: sqlite3.Connection, cfg: Config, meta: dict[str, Any], repo: str, number: int, head: str
+) -> bool:
+    """Someone asked the bot for a review that it has not given yet: it is among the pull
+    request's requested reviewers, which GitHub clears when the bot next submits a review.
+    Every later update of the pull request repeats the `review_requested` notification, so
+    the notification alone says nothing. Bounded per commit in case a re-review ends without
+    submitting one."""
+    asked = any(
+        str((r or {}).get("login") or "").lower() == cfg.bot_login.lower()
+        for r in meta.get("requested_reviewers") or []
+    )
+    if not asked:
+        return False
+    done = conn.execute(
+        "SELECT COUNT(*) FROM events WHERE kind='head.requeued' AND repo=? AND number=? "
+        "AND detail=?",
+        (repo, number, f"{head[:8]} re-opened by {Trigger.REVIEW_REQUESTED.value}"),
+    ).fetchone()[0]
+    return bool(done < MAX_REQUESTED_REREVIEWS)
 
 
 def _reply_after_push(
