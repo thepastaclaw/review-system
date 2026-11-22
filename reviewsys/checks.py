@@ -63,6 +63,8 @@ log = logging.getLogger(__name__)
 # writes per pass: the first pass after enabling backfills every open PR, spread over passes
 MAX_WRITES_PER_PASS = 20
 MAX_READS_PER_PASS = 20
+# a failing check's undismissed review is read again no sooner than this
+REREAD_AFTER = timedelta(minutes=10)
 # after a transient GitHub failure the pass stops and the next one waits this long
 RETRY_BACKOFF = timedelta(minutes=2)
 STATUS_PAGE = "https://thepastaclaw.github.io/review-system/"
@@ -487,8 +489,8 @@ class Reconciler:
     def reconcile(self, conn: sqlite3.Connection) -> dict[str, int]:
         """Write every candidate check that differs from what GitHub was last told. A check
         about to say (or saying) `failure` whose backing review isn't settled is first read
-        live, at most MAX_READS_PER_PASS per pass, least recently read first; only such a
-        write waits for the read budget."""
+        live, at most MAX_READS_PER_PASS per pass, least recently read first, and each no more
+        often than REREAD_AFTER; only a write that has never been read waits for the budget."""
         stats = dict.fromkeys(("created", "updated", "unchanged", "deferred", "failed"), 0)
         if now_dt() < self.retry_at:
             return stats
@@ -510,6 +512,8 @@ class Reconciler:
             unsettled = _unsettled(conn, repo, number, sha, want)
             if unsettled is None:
                 self.checked.pop(key, None)
+            elif key in self.checked and now_dt() - parse_ts(self.checked[key]) < REREAD_AFTER:
+                pass
             elif reads >= MAX_READS_PER_PASS:
                 stats["deferred"] += 1
                 continue
@@ -579,7 +583,8 @@ class Reconciler:
         A dismissal is final, so its timeline is read once: a review dismissed without a
         qualifying event is persisted as settled too. Steady state, per pass: no reads for a
         check that doesn't say `failure` or whose review is settled; one (the review) for each
-        failing check whose review stands undismissed, at most MAX_READS_PER_PASS, rotating;
+        failing check whose review stands undismissed, at most MAX_READS_PER_PASS, rotating,
+        and each no more often than REREAD_AFTER (F such checks cost about 6F reads an hour);
         the review plus the timeline's pages once when a review is first seen dismissed.
         """
         review = self.review_gh.api(f"repos/{repo}/pulls/{number}/reviews/{review_id}", timeout=30)

@@ -21,6 +21,11 @@ from reviewsys.ghapp import AppAuth, AppAuthError
 
 REPO = "dashpay/platform"
 SHA = "a" * 40
+
+
+@pytest.fixture(autouse=True)
+def _reread_every_pass(monkeypatch):
+    monkeypatch.setattr(checks, "REREAD_AFTER", timedelta(0))
 OLD = "b" * 40
 T0 = "2026-11-01T00:00:00Z"
 FUTURE = "2999-01-01T00:00:00Z"
@@ -1189,6 +1194,24 @@ def test_transient_read_failure_stops_reads_for_the_pass(conn, rec, github, revi
     rec.reconcile(conn)
     assert len(github.runs) == 2
     assert {r["conclusion"] for r in github.runs.values()} == {"failure"}
+
+
+def test_standing_review_is_reread_no_sooner_than_the_interval(
+    conn, rec, github, review_api, monkeypatch
+):
+    monkeypatch.setattr(checks, "REREAD_AFTER", timedelta(minutes=10))
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    assert rec.reconcile(conn)["created"] == 1
+    review_api.dismiss()
+    stats = rec.reconcile(conn)
+    assert len(review_api.calls) == 1 and stats["deferred"] == 0, "not read again yet"
+    assert github.runs[100]["conclusion"] == "failure"
+    key = (REPO, 1, SHA)
+    rec.checked[key] = fmt_ts(now_dt() - checks.REREAD_AFTER)
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "neutral"
 
 
 def test_live_dismissal_reads_are_bounded_and_rotate(conn, rec, github, review_api, monkeypatch):

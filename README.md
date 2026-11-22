@@ -1514,7 +1514,9 @@ live: an APPROVE, COMMENT or unfinished review costs no reads. A dismissal is fi
 that does not qualify (a push, a bot) is stored under the same key with no actor (event
 `check.dismissal_ignored`) and its timeline is never read again. A failing check whose
 review still stands costs one read (the review) per visit: at most 20 per pass, least
-recently checked first, and only those failing checks wait for that budget. Timeline reads
+recently checked first, and each no more often than every 10 minutes, so a maintainer's
+dismissal shows on the check within about that long and F standing failures cost about 6F
+reads an hour. Only a failing check that has never been read waits for that budget. Timeline reads
 are paginated; both reads use the daemon's normal GitHub client with a 30 s timeout, leaving
 the App's installation permissions limited to Checks. A failed read leaves the database
 verdict standing for that pass (`failure` stays `failure`), is recorded once per check as
