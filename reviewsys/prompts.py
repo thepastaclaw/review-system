@@ -41,6 +41,38 @@ STATIC_REVIEW = (
     "still running; say what is pending instead.\n"
 )
 
+# How a new finding's text is written, for every lane that writes findings and the verifier:
+# the review opens with a list of its blocking findings by title and impact (publish._blocker_lead).
+TITLE_RULE = (
+    "`title`: what goes wrong and when, in plain words a maintainer understands without "
+    "reading the body. It is not an instruction and does not name the fix; the fix belongs in "
+    'the body. Bad: "Pass the provisioning alias as a JSON string". Good: "`--alias 123` is '
+    'rejected as a number and `--alias null` silently uses the default name".'
+)
+IMPACT_RULE = (
+    "`impact`: one sentence saying who hits the problem, under what condition, and what they "
+    'then see or lose, e.g. "Devnet only: wiping identities while one is being edited can '
+    'leave it listed with its keys deleted."'
+)
+BODY_RULE = "`body`: the consequence first, then the mechanism, then the fix."
+FINDING_TEXT = (
+    "- Write each new finding problem-first:\n"
+    f"  - {TITLE_RULE}\n"
+    f"  - {IMPACT_RULE}\n"
+    f"  - {BODY_RULE}\n"
+    "  The title rule applies to new findings only: a carried (STILL_VALID) prior finding keeps "
+    "its `original_title` byte-for-byte. You may write or refresh a carried finding's "
+    "`impact`.\n"
+)
+# the verifier's `summary`: the review leads with a list of what blocks, generated from the
+# final findings, so the prose must not compete with it
+SUMMARY_RULE = (
+    "- Your `summary` describes what the change does (on a re-review, what changed on this "
+    "head) and the CI state. The review opens with its own list of what blocks, built from "
+    "your `findings`: the summary must not present findings as the reason for the verdict, "
+    "and must not mention any finding that is not in `findings`.\n"
+)
+
 # Context the context step gathered beyond the PR (sister.py, drift.py): each paragraph is only
 # given when its evidence is there.
 SISTER_REPOS_NOTE = (
@@ -276,6 +308,7 @@ def reviewer_prompt(
         f"- Exact review range: `{coverage_from}..{head_sha}`\n"
         f"- Review command range: `git diff {coverage_from}..{head_sha}`.\n"
         + prior_findings_block(review_prior, review_prior_sha)
+        + FINDING_TEXT
         + "- Review the full stated range and surrounding code needed to verify behavior.\n"
         + STATIC_REVIEW.format(number=number, repo=repo)
         + context_notes(evidence)
@@ -381,6 +414,8 @@ def verifier_prompt(
             if prior
             else ""
         )
+        + SUMMARY_RULE
+        + FINDING_TEXT
         + "- Independently verify every supplied reviewer claim against the exact source range and the PR evidence below.\n"
         + STATIC_REVIEW.format(number=number, repo=repo)
         + context_notes(evidence)
@@ -814,10 +849,12 @@ FINDER_OUTPUT = (
     "reviewed head (omit `line_end` for a single line);\n"
     f"- `severity`: exactly one of {' | '.join(SEVERITIES)};\n"
     f"- `category`: exactly one of {' | '.join(CATEGORIES)};\n"
-    "- `title`: one line naming the problem;\n"
+    f"- {TITLE_RULE}\n"
+    f"- {IMPACT_RULE}\n"
     "- `failure_scenario`: the concrete input, state or sequence that makes the code go wrong, "
     "and what then happens (for a test-coverage or design candidate, its concrete cost);\n"
-    "- `body`: the reasoning a maintainer reads, citing the specific lines;\n"
+    "- `body`: the reasoning a maintainer reads, citing the specific lines: the consequence "
+    "first, then the mechanism, then the fix;\n"
     "- `suggestion`: replacement code for the selected lines when you have an exact fix; omit "
     "it otherwise, and never put prose there.\n"
     "`candidates` is `[]` when your method finds nothing. No ids, hashes, confidence, "
@@ -842,8 +879,13 @@ VERIFY_OUTPUT = (
     "an exact code fix, `suggestion` (replacement code for the selected lines, never prose): the "
     "final finding in one voice, as a maintainer reads it; a REFUTED group needs none of them, "
     "except one whose `evidence` starts with `Out of scope:` (an important adjacent problem "
-    "published as a follow-up suggestion), which needs a `title`.\n"
-    "`summary` is the review summary a maintainer reads first. No `review_action`, "
+    "published as a follow-up suggestion), which needs a `title`;\n"
+    f"- {TITLE_RULE} {IMPACT_RULE} {BODY_RULE} Give every group with a `body` an `impact`.\n"
+    "`summary` is the review summary a maintainer reads first: what the change does (on a "
+    "later round, what changed on this head) and the CI state. The review opens with its own "
+    "list of what blocks, so the summary never presents findings as the reason for the "
+    "verdict and never mentions a problem that is not one of your groups other than REFUTED. "
+    "No `review_action`, "
     "`finding_hash`, reconciliation or `review_phase`: the orchestrator decides the verdict from "
     "the ledger and your verdicts.\n"
 )

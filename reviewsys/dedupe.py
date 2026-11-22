@@ -23,6 +23,10 @@ FINDING_MARKER_RE = re.compile(
 # thread stays open (see publish.with_thread_status); never part of the finding's text
 THREAD_STATUS_MARKER = "<!-- thepastaclaw-thread-status v1 -->"
 THREAD_STATUS_RE = re.compile(re.escape(THREAD_STATUS_MARKER) + r"\n[^\n]*\n\n?")
+# the impact line directly under a finding's bold headline (publish.comment_body); never part
+# of the finding's text
+IMPACT_PREFIX = "**Impact:** "
+IMPACT_LINE_RE = re.compile(r"^(\*\*[^\n]*\*\*)\n\*\*Impact:\*\* ?([^\n]*)$", re.MULTILINE)
 _STOPWORDS = frozenset(
     {
         "a",
@@ -224,10 +228,13 @@ class ExistingComment:
     norm_title: str
     norm_body: str
     html_url: str
+    impact: str | None = None
 
     @classmethod
     def from_github(cls, c: dict[str, Any]) -> ExistingComment:
         body = THREAD_STATUS_RE.sub("", str(c.get("body") or ""), count=1)
+        impact = impact_of(body)
+        body = IMPACT_LINE_RE.sub(r"\1", body, count=1)
         m = FINDING_MARKER_RE.search(body)
         title = ""
         for line in body.splitlines():
@@ -250,7 +257,14 @@ class ExistingComment:
             norm_title=normalize_finding_text(title),
             norm_body=normalize_finding_text(body),
             html_url=str(c.get("html_url") or ""),
+            impact=impact,
         )
+
+
+def impact_of(body: str | None) -> str | None:
+    """The `**Impact:**` sentence of a posted finding comment, or None when it has none."""
+    m = IMPACT_LINE_RE.search(str(body or ""))
+    return (m.group(2).strip() or None) if m else None
 
 
 def _content_tokens(text: str) -> set[str]:
@@ -337,6 +351,7 @@ __all__ = [
     "finding_dedupe_key",
     "finding_hash",
     "has_same_root_duplicates",
+    "impact_of",
     "normalize_root_id",
     "thread_has_resolution_reply",
 ]
