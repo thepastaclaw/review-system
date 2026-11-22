@@ -166,7 +166,10 @@ def _follow_up(dropped: dict[str, Any]) -> bool:
     v12 marks it (`follow_up`, rules.py); the v11 verifier's drops go by their reason's wording."""
     if "follow_up" in dropped:
         return bool(dropped["follow_up"])
-    return any(k in str(dropped.get("reason", "")).lower() for k in ("out of scope", "outside"))
+    reason = str(dropped.get("reason", ""))
+    if reason.startswith("ALREADY_REVIEWED"):  # a later round's finding on reviewed code
+        return False
+    return any(k in reason.lower() for k in ("out of scope", "outside"))
 
 
 def comment_body(f: Finding) -> str:
@@ -439,7 +442,8 @@ def _phase1_choice_line(c: dict[str, Any]) -> str:
 
 
 def _late_line(d: dict[str, Any]) -> str:
-    """What a later round did with new findings on code unchanged since the last final review."""
+    """What a later round did with its new blockers, and with its other new findings on code
+    unchanged since the last final review."""
     parts: list[str] = []
     n = d.get("candidates", 0)
     if n and d.get("failed"):
@@ -451,7 +455,7 @@ def _late_line(d: dict[str, Any]) -> str:
             f"{d[k]} {label}"
             for k, label in (
                 ("confirmed", "confirmed"),
-                ("unconfirmed", "not confirmed (now follow-up candidates)"),
+                ("unconfirmed", "not confirmed (no longer blocking)"),
                 ("invalid", "judged invalid (dropped)"),
             )
             if d.get(k)
@@ -466,13 +470,13 @@ def _late_line(d: dict[str, Any]) -> str:
             f"verifier's model in a fresh session, without its reasoning): {outcome}{earlier}"
         )
     for key, label in (
-        ("nits", "new nitpick(s) dropped"),
-        ("followups", "new suggestion(s) listed as follow-up candidates, not posted inline"),
+        ("nits", "nitpick(s) on unchanged code dropped"),
+        ("followups", "suggestion(s) on unchanged code listed as follow-up candidates"),
         ("repeats", "follow-up candidate(s) already listed by an earlier review, not repeated"),
     ):
         if d.get(key):
             parts.append(f"{d[key]} {label}")
-    return f"- Code unchanged since the last final review (`{d.get('since', '')}`): " + (
+    return f"- New since the last final review (`{d.get('since', '')}`): " + (
         "; ".join(parts) or "nothing new"
     )
 

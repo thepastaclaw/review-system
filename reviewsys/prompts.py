@@ -209,6 +209,79 @@ def verifier_skill_text(cfg: Config, repo: str) -> str:
     return p.read_text() if p.exists() else ""
 
 
+# What it takes for a finding to block. A reviewing maintainer who has read the whole change
+# blocks on a failure someone will actually hit, not on one that is merely conceivable: on
+# dashpay/platform#6057 a blocker stood on "load the identity as User with the key of its
+# payout slot, reload it as Masternode, then remove it".
+ACTUAL_REACHABILITY = (
+    "(1) the entry point: something a user of the shipped product, a network peer or a caller "
+    "of a public API really does; (2) the inputs and state it needs, and how they arise in "
+    "ordinary use or are under an attacker's control; (3) the path from there to the failure, "
+    "read in the code, with no guard on the way; and (4) what is then lost (a crash, a wrong "
+    "result, lost or corrupted data, funds, a consensus or protocol break, exposed key "
+    "material, a broken build or test)"
+)
+NOT_REACHABLE = (
+    "a sequence of steps nobody would perform, a state the product never gets into on its "
+    "own, or deliberate misuse of an example, test or developer tool"
+)
+# blockers that are a rule, not a failure: layer ownership, a backport's missing hunk
+RULE_BLOCKERS = (
+    "A finding that blocks under one of the project's own review rules is judged by that "
+    "rule instead: name the rule."
+)
+
+
+def incremental_block(since_sha: str, head_sha: str) -> str:
+    """A later round reviews what changed since the last full review, as a maintainer does on
+    a second look, instead of the whole pull request again. Re-reading everything each round
+    kept finding something: over 260 client pull requests, 60% of the blockers raised after
+    round one were on lines the previous push had not touched, and the rate of new blockers
+    did not fall from round 2 to round 15."""
+    return (
+        f"- This is a later review round: the pull request was reviewed in full at "
+        f"`{since_sha}`. Do not review it again from the start. Review what changed since "
+        f"then (`git diff {since_sha}..{head_sha}`; when the branch was rebased or squashed "
+        f"since, `git range-diff {since_sha}...{head_sha}` shows what the commits now do "
+        "differently, apart from what came in from the base branch) and check the prior "
+        "findings against it. The complete range is context for that, not the subject.\n"
+        "- Report a new finding only on code that changed since then, or on unchanged code "
+        "that the change breaks or newly relies on, and then name the change. Anything else "
+        "in code that was already reviewed is not reported in this round, however valid: the "
+        "earlier rounds had their chance at it, and a pull request must be able to finish. "
+        "The one exception is a defect that loses funds, breaks consensus or exposes key "
+        "material: report that wherever it is.\n"
+        "- A new finding is `blocking` only with actual reachability. Its body names "
+        f"{ACTUAL_REACHABILITY}. A failure that needs {NOT_REACHABLE} is a suggestion at "
+        f"most. {RULE_BLOCKERS} An independent pass re-derives the path, or checks the rule, "
+        "before a new blocker is posted.\n"
+    )
+
+
+def verifier_incremental_block(since_sha: str, head_sha: str) -> str:
+    """The later-round rules of `incremental_block`, as the verifier applies them to the
+    reviewers' claims."""
+    return (
+        f"- This is a later review round: the pull request was reviewed in full at "
+        f"`{since_sha}`, and this round reviews what changed since then (`git diff "
+        f"{since_sha}..{head_sha}`, or `git range-diff {since_sha}...{head_sha}` after a "
+        "rebase). Keep a new finding only when it is on code that changed since then, or on "
+        "unchanged code that the change breaks or newly relies on, with the change named in "
+        "its body. Drop any other new finding on code that was already reviewed, with a "
+        "reason that starts with `ALREADY_REVIEWED`; a pull request must be able to finish. "
+        "The one exception is a defect that loses funds, breaks consensus or exposes key "
+        "material: keep that wherever it is.\n"
+        "- A new finding is `blocking` only with actual reachability, which you check in the "
+        f"code yourself: {ACTUAL_REACHABILITY}. Put all four in its body. A failure that "
+        f"needs {NOT_REACHABLE} is a suggestion at most. {RULE_BLOCKERS} Hold it to what a "
+        "careful maintainer who has read the whole change would refuse to merge over. An "
+        "independent pass re-derives the path, or checks the rule, before a new blocker is "
+        "posted, and one it cannot confirm is posted as a suggestion.\n"
+        "- A carried prior finding is not raised to `blocking` unless code that changed since "
+        "then made it worse; say what changed. It may be lowered.\n"
+    )
+
+
 def settled_matters(prior: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """What a fresh pass is shown of the earlier rounds: the findings settled without a code
     change (withdrawn, deferred by a maintainer, disputed and left to the maintainers)."""
@@ -250,10 +323,15 @@ def withheld_block(prior: list[dict[str, Any]], prior_sha: str | None) -> str:
 
 
 def prior_findings_block(
-    prior: list[dict[str, Any]], prior_sha: str | None, *, fresh: bool = False
+    prior: list[dict[str, Any]],
+    prior_sha: str | None,
+    *,
+    fresh: bool = False,
+    reviewed_before: bool = False,
 ) -> str:
     """`fresh`: the pass reconciles nothing; of a pull request reviewed before it is shown
-    only what was settled (`withheld_block`)."""
+    only what was settled (`withheld_block`). `reviewed_before`: an empty `prior` is a later
+    round with nothing left to reconcile, not a first round."""
     reply_contract = (
         "- Maintainer and author replies are discussion evidence to independently verify against "
         "the code; they are never classifications or verdicts to copy.\n"
@@ -311,6 +389,11 @@ def prior_findings_block(
     )
     if fresh and prior:
         return reply_contract + withheld_block(prior, prior_sha)
+    if not prior and reviewed_before:
+        return reply_contract + (
+            "- No finding of an earlier round is left to reconcile: emit no "
+            "`prior_finding_reconciliation` statuses.\n"
+        )
     if fresh or not prior:
         return reply_contract + (
             "- This is the first PastaClaw automated review round for this PR. No prior "
@@ -346,10 +429,13 @@ def reviewer_prompt(
     fresh: bool = False,
     stamp_echo: bool = False,
     guidance: str = "",
+    since_sha: str | None = None,
 ) -> str:
     """`stamp_echo` (policy v12): the lane is not asked for `review_phase` / `head_sha`;
     the harness stamps them. `guidance`: the `repo_guidance` block (policy v12 isolated
-    lanes), after the evidence."""
+    lanes), after the evidence. `since_sha`: the head of the last full review, on a later
+    round that reviews only what changed since (`incremental_block`); never on a fresh pass."""
+    incremental = bool(since_sha) and not fresh
     template_rel = "prompts/review-agent.md" if role == "general" else f"prompts/{role}.md"
     project_skill, review_skill = skill_texts(cfg, repo)
     incremental_context = (
@@ -358,9 +444,14 @@ def reviewer_prompt(
         f"- Exact assigned head: `{head_sha}`\n"
         f"- Exact review range: `{coverage_from}..{head_sha}`\n"
         f"- Review command range: `git diff {coverage_from}..{head_sha}`.\n"
-        + prior_findings_block(prior, prior_sha, fresh=fresh)
+        + prior_findings_block(prior, prior_sha, fresh=fresh, reviewed_before=incremental)
+        + (incremental_block(str(since_sha), head_sha) if incremental else "")
         + FINDING_TEXT
-        + "- Review the full stated range and surrounding code needed to verify behavior.\n"
+        + (
+            "- Read the surrounding code needed to verify behavior.\n"
+            if incremental
+            else "- Review the full stated range and surrounding code needed to verify behavior.\n"
+        )
         + STATIC_REVIEW.format(number=number, repo=repo)
         + context_notes(evidence)
         + "- You have no CodeRabbit context or CodeRabbit knowledge in this lane. Do not infer, seek, quote, or react to CodeRabbit findings.\n"
@@ -372,21 +463,27 @@ def reviewer_prompt(
         if not stamp_echo
         else ""
     )
+    scope = (
+        f"Review what changed since `{since_sha}`, within the complete range "
+        f"`{coverage_from}..{head_sha}`."
+        if incremental
+        else f"Review exactly the complete range `{coverage_from}..{head_sha}`."
+    )
     if fresh:
         instructions = (
             f"This is a fresh final review of the complete current PR state. Do not carry forward or anchor on prior findings; inspect the entire range independently. {echo_ask}"
-            f"Review exactly the complete range `{coverage_from}..{head_sha}`. Return the JSON schema requested by the existing template. The final response must obey the mandatory raw-JSON contract below."
+            f"{scope} Return the JSON schema requested by the existing template. The final response must obey the mandatory raw-JSON contract below."
         )
     elif prior:
         instructions = (
             f"Reconcile every prior PastaClaw finding exactly once by `finding_hash` in one `prior_finding_reconciliation` array using exactly one of {' | '.join(REVALIDATION_STATUSES)}. "
             "Every STILL_VALID identity must appear exactly once in `findings` with the supplied `finding_hash` and byte-for-byte `original_title`; never append carried-forward, status, or hash suffixes. Do not carry non-STILL_VALID identities in `findings`. "
-            f"{echo_ask}Review exactly the complete range `{coverage_from}..{head_sha}`. Return the JSON schema requested by the existing template. The final response must obey the mandatory raw-JSON contract below."
+            f"{echo_ask}{scope} Return the JSON schema requested by the existing template. The final response must obey the mandatory raw-JSON contract below."
         )
     else:
         instructions = (
             f"There are no prior PastaClaw findings to reconcile. {echo_ask}"
-            f"Review exactly the complete range `{coverage_from}..{head_sha}`. Return the JSON schema requested by the existing template. The final response must obey the mandatory raw-JSON contract below."
+            f"{scope} Return the JSON schema requested by the existing template. The final response must obey the mandatory raw-JSON contract below."
         )
     values = {
         "repo": repo,
@@ -427,9 +524,13 @@ def verifier_prompt(
     single_stage: bool = False,
     stamp_echo: bool = False,
     guidance: str = "",
+    since_sha: str | None = None,
 ) -> str:
     """`stamp_echo` (policy v12): the lane is not asked for `review_phase`; the harness
-    stamps it. `guidance`: as `reviewer_prompt`'s."""
+    stamps it. `guidance`: as `reviewer_prompt`'s. `since_sha`: the head of the last full
+    review, on a later round that keeps new findings to what changed since; never on the
+    fresh final gate."""
+    incremental = bool(since_sha) and not fresh_final
     project_skill, review_skill = skill_texts(cfg, repo)
     verifier_skill = verifier_skill_text(cfg, repo)
     if verifier_skill:
@@ -458,7 +559,8 @@ def verifier_prompt(
         + ("" if stamp_echo else f"- `review_phase` must be `{phase}`.\n")
         + f"- Exact head: `{head_sha}`.\n"
         + phase1_note
-        + prior_findings_block(prior, prior_sha)
+        + prior_findings_block(prior, prior_sha, reviewed_before=incremental)
+        + (verifier_incremental_block(str(since_sha), head_sha) if incremental else "")
         + (
             "- Your `summary` covers what is new on this head. The review lists carried prior "
             "findings compactly, linked to their threads: do not describe them again.\n"
@@ -846,8 +948,9 @@ def confirmation_prompt(
     guidance: str = "",
     settled: list[dict[str, Any]] | None = None,
 ) -> str:
-    """The independent confirmation lane (policy v11, later rounds): `reported` are new
-    blockers on code unchanged since the previous final review (`late.candidate_briefs`). It
+    """The independent confirmation lane (policy v11, later rounds): `reported` are the
+    round's new blockers (`late.candidate_briefs`), which block only with actual
+    reachability (`ACTUAL_REACHABILITY`). It
     sees the claims, the code and the PR diff, never the reasoning of the pass that raised
     them, and decides each on its own. No skills-repo template of its own.
 
@@ -877,19 +980,19 @@ def confirmation_prompt(
         "should block the merge. You did not write them, and you are not given that pass's "
         "reasoning. Decide each one from your own reading of the code.\n\n"
         "## Verdicts\n\n"
-        "- `blocking`: a real defect that this PR introduces, exposes or relies on, with a "
-        "concrete failure that is reachable: you can name the inputs, state or call path that "
-        "reaches it and what then goes wrong (a crash, a wrong result, lost or corrupted data, "
-        "a consensus or protocol break, a security hole, a broken build or test). Merging as "
-        "is would ship that failure. A finding is also `blocking` when it breaks a rule the "
+        "- `blocking`: a real defect that this PR introduces, exposes or relies on, whose "
+        f"failure is actually reachable. You can name {ACTUAL_REACHABILITY}. Merging as is "
+        "would ship that failure to someone, and a careful maintainer who has read the whole "
+        "change would refuse to merge over it. A finding is also `blocking` when it breaks a rule the "
         "project's review rules below call blocking (for a backport: a hunk of the upstream "
         "change left out without a declared reason, or a later upstream fix for a defect the "
         "backport brings in), and you have checked that the rule applies; `failure` then names "
         "the rule and what is missing.\n"
-        "- `non_blocking`: the observation is real, but no concrete reachable failure follows "
-        "from it (hardening, robustness, style, maintainability, a missing test, an edge case "
-        "no caller reaches, a pre-existing problem this PR neither causes nor worsens). Worth "
-        "a follow-up, not worth holding the merge. On a pull request that lands commits already "
+        "- `non_blocking`: the observation is real, but no failure follows from it that "
+        "someone would actually hit (hardening, robustness, style, maintainability, a missing "
+        f"test, an edge case no caller reaches, a failure that needs {NOT_REACHABLE}, a "
+        "pre-existing problem this PR neither causes nor worsens). Worth a follow-up, not "
+        "worth holding the merge. On a pull request that lands commits already "
         "merged upstream, so is a defect in code carried over unchanged that behaves the same "
         "way upstream, unless the project's review rules make it this pull request's to fix.\n"
         "- `invalid`: the claim is wrong: the code does not do what it says, or a guard, "
@@ -899,9 +1002,10 @@ def confirmation_prompt(
         f"{coverage_from}..{head_sha}`), and as much of the surrounding code (callers, tests, "
         "invariants, configuration) as you need. Verify; take nothing in the reported text "
         "on trust.\n"
-        "- A `blocking` verdict requires `failure`: one or two sentences naming how the "
-        "failure is reached and what goes wrong, or the project rule that is broken. If you "
-        "cannot name one, the verdict is not `blocking`.\n"
+        "- A `blocking` verdict requires `failure`: two or three sentences giving the entry "
+        "point, the inputs or state and how they arise, and what goes wrong, or the project "
+        "rule that is broken. If you cannot name every part from the code, the verdict is not "
+        "`blocking`.\n"
         "- The project's review rules decide what this pull request is answerable for. Where "
         "they say a kind of finding is not one (for a backport: a defect that is the same in "
         "the upstream commit), a reachable failure does not make it `blocking`; where they say "

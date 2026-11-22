@@ -724,17 +724,11 @@ def _reply(conn, at="2031-01-01T00:00:00Z"):
         )
 
 
-def test_a_review_nobody_asked_for_leaves_the_pause_unless_it_is_final_and_answered(
+def test_a_review_nobody_asked_for_leaves_the_pause_unless_its_step_back_is_answered(
     cfg, conn, gh, lanes
 ):
     _paused(conn, cfg, gh, lanes)
     _reply(conn)
-    gate = {**_blocking("Phase 1 finds a new one"), "line_start": 40, "line_end": 40}
-    _push(conn, cfg, gh, lanes, E, Trigger.NEW_PUSH, gate=[gate])  # stopped at the Phase-1 gate
-    assert "Preliminary review" in gh.posted_reviews[-1]["body"]
-    rec = stepback.load(conn, REPO, 1)
-    assert rec is not None and rec.hold and rec.sha == D and not _events(conn, "stepback.released")
-
     lanes.stepback = "no JSON here"  # F: a full review whose step-back lane fails
     _push(conn, cfg, gh, lanes, F, Trigger.NEW_PUSH, [THIRD])
     rec = stepback.load(conn, REPO, 1)

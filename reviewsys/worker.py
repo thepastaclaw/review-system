@@ -2470,6 +2470,7 @@ def _lane_prompts(
             fresh=fresh,
             stamp_echo=pol.stamps_echo_fields,
             guidance=guidance,
+            since_sha=_since(ctx),
         )
         for role in roles
     }
@@ -2772,6 +2773,7 @@ def _verifier_lane(
         single_stage=ctx.single_stage,
         stamp_echo=stamp,
         guidance=repo_guidance(ctx.worktree) if ctx.cfg.policy.isolates_lane_env else "",
+        since_sha=_since(ctx),
     )
     prior_hashes = {str(p["finding_hash"]) for p in ctx.prior}
 
@@ -4885,12 +4887,13 @@ def _verify2(ctx: RunContext, effort: TierEffort) -> VerifierOutput:
 
     - A second Phase-2 pass, so a PR gets as much as possible in one round: on the first full
       review every Phase-2 reviewer runs a second, independent time before the final verifier,
-      which weighs both sets (`_fresh_first_due`; best effort: `_fresh_first`). On a later
-      round the fresh final gate runs after the verifier (`_fresh_final_due`), and only once
-      the blockers of the previous final review are gone, since they may have hidden others.
-    - On a later round, new findings on code unchanged since the previous final review leave
-      the normal path (`_gate_late`): nitpicks are dropped, suggestions become follow-up
-      candidates, and blockers need an independent confirmation.
+      which weighs both sets (`_fresh_first_due`; best effort: `_fresh_first`). A later
+      round of a new head is incremental (`_since`) and has no second pass; a re-review of
+      a head already reviewed with blockers gets the fresh final gate (`_fresh_final_due`).
+    - On a later round every blocker no earlier round posted as one needs an independent
+      confirmation, and the other new findings on code unchanged since the previous final
+      review leave the normal path (`_gate_late`): nitpicks are dropped, suggestions become
+      follow-up candidates.
     - With nothing blocking, the verdict is an approval (`_approve_when_clear`)."""
     pol = ctx.cfg.policy
     combined = _fresh_first(ctx, effort) if _fresh_first_due(ctx, effort) else None
@@ -4957,6 +4960,14 @@ def _fresh_final(ctx: RunContext, effort: TierEffort, first: VerifierOutput) -> 
     )
 
 
+def _since(ctx: RunContext) -> str | None:
+    """The head of the pull request's last full review, when this round reviews only what
+    changed since: a converging review of another head. A re-review of the same head, asked
+    for by someone, reads everything again."""
+    since = ctx.prev_final_sha
+    return since if since and since != ctx.sha and _converges(ctx) else None
+
+
 def _converges(ctx: RunContext) -> bool:
     """The round-converging rules of `_verify2` apply: a policy v11 review. An audit (nobody
     acts on a merged PR's review rounds) and a partial policy v12 pipeline keep the earlier
@@ -5015,17 +5026,18 @@ def _fresh_first(ctx: RunContext, effort: TierEffort) -> dict[str, ReviewerOutpu
 
 
 def _fresh_final_due(ctx: RunContext, verified: VerifierOutput, effort: TierEffort) -> bool:
-    """The fresh final gate on a later round: when the previous final review had blockers and
-    none stands now, so what they masked gets an unanchored look. Never after a clean
-    approval, and not while any blocker stands (a new one on unchanged code included: it goes
-    to its confirmation instead). Without `_converges`, the earlier rule: any re-review
-    without blockers."""
+    """The fresh final gate, a second unanchored review of the whole pull request, when no
+    blocker stands. A converging review runs it only on a re-review of a head it already
+    reviewed in full with blockers (someone asked for a second look): its rounds on a new
+    head are incremental (`_since`). The first full review reads everything twice, and
+    reading everything again each time the blockers cleared kept a pull request from ever
+    finishing. Without `_converges`, the earlier rule: any re-review without blockers."""
     pol = ctx.cfg.policy
     if not pol.phase2_enabled or effort.phase2 is None or verified.blocker_count:
         return False
     if not _converges(ctx):
         return ctx.has_prior_review
-    return ctx.prev_final_sha is not None and ctx.prev_final_blockers
+    return ctx.prev_final_sha == ctx.sha and ctx.prev_final_blockers
 
 
 def _classify_late(ctx: RunContext, verified: VerifierOutput) -> late.Split | None:
@@ -5033,7 +5045,9 @@ def _classify_late(ctx: RunContext, verified: VerifierOutput) -> late.Split | No
     a later round's findings; None on a first full review (or without `_converges`)."""
     if not _code_statuses(ctx, verified):
         return None
-    return late.split(verified.findings, is_new=_new_test(ctx), listed=_listed_followups(ctx))
+    return late.split(
+        verified.findings, posted=_posted_severity(ctx), listed=_listed_followups(ctx)
+    )
 
 
 def _code_statuses(ctx: RunContext, verified: VerifierOutput) -> bool:
@@ -5060,6 +5074,14 @@ def _code_statuses(ctx: RunContext, verified: VerifierOutput) -> bool:
 def _new_test(ctx: RunContext) -> Callable[[Finding], bool]:
     """Whether a finding of this round is new to the PR: not carried from an earlier round,
     never posted on it, and no restatement of one that was."""
+    posted = _posted_severity(ctx)
+    return lambda f: posted(f) is None
+
+
+def _posted_severity(ctx: RunContext) -> Callable[[Finding], str | None]:
+    """The severity an earlier round posted a finding of this round with (carried by hash,
+    posted under its own hash, or restating a posted one), or None when it is new to the PR.
+    One whose earlier severity is not on record counts as posted blocking."""
     records = _raised_records(ctx)
     raised = {
         str(r["hash"])
@@ -5069,12 +5091,18 @@ def _new_test(ctx: RunContext) -> Callable[[Finding], bool]:
     }
     raised |= set(ctx.prior_findings) | set(ctx.open_threads)
 
-    def is_new(f: Finding) -> bool:
-        if f.prior_hash or f.hash in raised:
-            return False
-        return find_duplicate(f, records)[0] is None
+    def was(h: str) -> str:
+        prior = ctx.prior_findings.get(h)
+        thread = ctx.open_threads.get(h) or {}
+        return str((prior.severity if prior else thread.get("severity")) or "blocking")
 
-    return is_new
+    def posted(f: Finding) -> str | None:
+        if f.prior_hash or f.hash in raised:
+            return was(f.prior_hash or f.hash)
+        match = find_duplicate(f, records)[0]
+        return was(match.finding_hash) if match else None
+
+    return posted
 
 
 def _raised_record(
@@ -5135,10 +5163,12 @@ def _gate_late(
     stage: str,
     known: dict[str, late.Decision] | None = None,
 ) -> dict[str, late.Decision]:
-    """A later round's new findings on code unchanged since the previous final review: nits
-    dropped, suggestions listed once as follow-up candidates (`verified.followups`), blockers
-    kept only when the confirmation lane finds a concrete reachable failure (unconfirmed ones
-    become follow-up candidates, invalid ones are dropped; a failed lane keeps them as raised).
+    """A later round's new findings. On code unchanged since the previous final review: nits
+    dropped, suggestions listed once as follow-up candidates (`verified.followups`). New
+    blockers, wherever they are, are kept only when the confirmation lane finds a failure
+    that is actually reachable; an unconfirmed one becomes a suggestion (a follow-up
+    candidate on unchanged code), an invalid one is dropped, and a failed lane keeps them as
+    raised.
     The run's final verifier rows (`stage`) are rewritten to what stands, with every finding's
     code status, each gated finding is kept under its `late-*` stage, and the step's counts
     are updated to match. `known`: this run's decisions so far, by hash; returns them with
@@ -5154,12 +5184,26 @@ def _gate_late(
     confirmed, unconfirmed, invalid = _apply_decisions(split.candidates, decisions)
     listed = _listed_followups(ctx)
     demoted = [
-        dataclasses.replace(f, severity="suggestion", extra={**f.extra, "demoted_from": "blocking"})
+        dataclasses.replace(
+            f,
+            severity=f.extra.get("posted_severity") or "suggestion",
+            extra={**f.extra, "demoted_from": "blocking"},
+        )
         for f in unconfirmed
     ]
+    # a demoted blocker stays in the review, with its thread, when this round changed its
+    # code or an earlier round posted it; only a new one on unchanged code is a follow-up
+    posted = [f for f in demoted if f.extra.get("posted_severity") or not late.on_unchanged(f)]
+    for f in posted:
+        reason = f.extra["confirmation"]["reason"]
+        f.body += (
+            "\n\n_Raised as blocking. An independent pass did not find a failure someone "
+            f"would actually hit, so it does not block: {reason}_"
+        )
+    demoted = [f for f in demoted if not any(f is p for p in posted)]
     repeats = split.repeats + [f for f in demoted if late.is_listed(f, listed)]
     stands = {id(f) for f in (*split.keep, *confirmed, *unchecked)}
-    verified.findings = [f for f in verified.findings if id(f) in stands]
+    verified.findings = [f for f in verified.findings if id(f) in stands] + posted
     verified.followups = split.followups + [f for f in demoted if not late.is_listed(f, listed)]
     since = ctx.prev_final_sha or ""
     report: dict[str, Any] = {
@@ -5234,7 +5278,8 @@ def _apply_decisions(
     candidates: list[Finding], decisions: dict[int, late.Decision]
 ) -> tuple[list[Finding], list[Finding], list[Finding]]:
     """(confirmed, unconfirmed, invalid) candidates by their confirmation verdicts (keyed by
-    `id(finding)`); a confirmed one's body says so. A candidate without one is in none."""
+    `id(finding)`); a confirmed one's body says so. A candidate without one is in none. One an
+    earlier round posted is never dropped as invalid: it goes back to its posted severity."""
     confirmed: list[Finding] = []
     unconfirmed: list[Finding] = []
     invalid: list[Finding] = []
@@ -5244,12 +5289,14 @@ def _apply_decisions(
             continue
         f.extra["confirmation"] = {"verdict": d.verdict, "failure": d.failure, "reason": d.reason}
         if d.verdict == "blocking":
-            f.body += (
-                "\n\n_Raised on code unchanged since the last review, and confirmed by an "
-                f"independent pass: {d.failure}_"
+            where = (
+                "Raised on code unchanged since the last review, and confirmed"
+                if late.on_unchanged(f)
+                else "Confirmed"
             )
+            f.body += f"\n\n_{where} by an independent pass: {d.failure}_"
             confirmed.append(f)
-        elif d.verdict == "invalid":
+        elif d.verdict == "invalid" and not f.extra.get("posted_severity"):
             invalid.append(f)
         else:
             unconfirmed.append(f)
@@ -5279,7 +5326,7 @@ def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[in
 
 
 def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision] | None:
-    """One confirmation lane for all new blockers on unchanged code of this round: the final
+    """One confirmation lane for all the blockers of this round to confirm: the final
     verifier's model and effort in a fresh session, shown the claims, the code and the PR
     diff, never the verifier's reasoning. Decisions by `id(finding)`. None when the lane
     failed for good: the blockers then stand as raised, so a failure never costs a real one.
@@ -7877,11 +7924,14 @@ def _review(ctx: RunContext, effort: TierEffort) -> RunStatus:
     tier_allows = effort.phase2 is not None
     # the gate only defers a Phase 2 that would run; a head whose final review already stands
     # (a same-sha re-review) is never held back, nor its verdict retracted, by suggestions alone
+    # nor is a later round (`_since`): its new blockers block only once the final review's
+    # confirmation finds them actually reachable, which a preliminary review never asks
     blocks = (
         pol.phase2_enabled
         and tier_allows
         and phase1_blocks(ctx.verify1, pol.phase1_gate)
         and not (ctx.verify1.blocker_count == 0 and _final_review_stands(ctx))
+        and _since(ctx) is None
     )
     admit = pol.phase2_enabled and tier_allows and not blocks
     if ctx.audit and ctx.audit["mode"] != audit.MODE_LIGHT:

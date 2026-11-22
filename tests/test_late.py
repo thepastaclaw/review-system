@@ -48,7 +48,7 @@ def _lines(n, prefix="line"):
     ]
 
 
-def test_status_is_by_file_and_follows_renames(repo):
+def test_status_is_by_the_findings_lines_and_follows_renames(repo):
     files = {
         "a.rs": "\n".join(_lines(20, "a")) + "\n",
         "b.rs": "\n".join(_lines(20, "b")) + "\n",
@@ -64,18 +64,21 @@ def test_status_is_by_file_and_follows_renames(repo):
     _commit(repo, {"new.rs": "brand new\n", "sp ace.rs": "y\n"})
     head = _git(repo, "rev-parse", "HEAD")
     hist = late.CodeHistory(repo, head, prev, first)
-    # any change to the file since the previous final review: the file's findings are new code
-    assert hist.status(_f("a.rs", 18)) == late.CHANGED
+    # the lines under the finding changed since the previous final review: new code
+    assert hist.status(_f("a.rs", 1)) == late.CHANGED
+    # the rest of a file the author keeps editing is as reviewed as it was
+    assert hist.status(_f("a.rs", 18)) == late.SINCE_FIRST
+    assert hist.status(_f("b.rs", 21)) == late.IN_REVIEW  # the line added during the review
     assert hist.status(_f("new.rs", 1)) == late.CHANGED  # did not exist then
     assert hist.status(_f("sp ace.rs", 1)) == late.CHANGED
-    assert hist.status(_f("b.rs", 3)) == late.IN_REVIEW  # changed during review, not since
+    assert hist.status(_f("b.rs", 3)) == late.SINCE_FIRST  # round-1 lines of that file
     assert hist.status(_f("c.rs", 3)) == late.SINCE_FIRST  # round-1 code, never changed
     assert hist.status(_f("h.rs", 5)) == late.SINCE_FIRST  # renamed, content unchanged
     assert hist.status(_f("c.rs", None)) == late.UNKNOWN  # no anchor
     assert hist.status(_f("", 3)) == late.UNKNOWN
     assert hist.status(_f("gone.rs", 3)) == late.UNKNOWN  # not in the head
     # the same head as the previous final review (a same-sha re-review): nothing changed
-    assert late.CodeHistory(repo, prev, prev, first).status(_f("b.rs", 3)) == late.IN_REVIEW
+    assert late.CodeHistory(repo, prev, prev, first).status(_f("b.rs", 21)) == late.IN_REVIEW
     # a commit git does not have: cannot tell
     assert late.CodeHistory(repo, head, "0" * 40).status(_f("c.rs", 3)) == late.UNKNOWN
 
@@ -94,7 +97,7 @@ def _with(f, status):
     return f
 
 
-def test_split_sends_only_new_findings_on_unchanged_code_off_the_normal_path():
+def test_split_confirms_every_new_blocker_and_gates_the_rest_on_unchanged_code():
     nit = _with(_f("f.rs", 1, title="nit", severity="nitpick"), late.SINCE_FIRST)
     sugg = _with(_f("f.rs", 2, title="sugg", severity="suggestion"), late.IN_REVIEW)
     listed = _with(_f("f.rs", 3, title="listed", severity="suggestion"), late.SINCE_FIRST)
@@ -102,15 +105,21 @@ def test_split_sends_only_new_findings_on_unchanged_code_off_the_normal_path():
     old = _with(_f("f.rs", 5, title="old", severity="blocking"), late.SINCE_FIRST)
     changed = _with(_f("f.rs", 6, title="changed", severity="nitpick"), late.CHANGED)
     unknown = _with(_f("f.rs", 7, title="unknown", severity="blocking"), late.UNKNOWN)
+    fix = _with(_f("f.rs", 8, title="in the fix", severity="blocking"), late.CHANGED)
     split = late.split(
-        [nit, sugg, listed, blocker, old, changed, unknown],
-        is_new=lambda f: f.title != "old",
+        [nit, sugg, listed, blocker, old, changed, unknown, fix],
+        posted=lambda f: "blocking" if f.title == "old" else None,
         listed={listed.dedupe_key},
     )
     assert split.nits == [nit] and split.followups == [sugg] and split.repeats == [listed]
-    assert split.candidates == [blocker] and split.keep == [old, changed, unknown]
+    # a new blocker is confirmed wherever it is; a carried one and new code's nits are not
+    assert split.candidates == [blocker, unknown, fix] and split.keep == [old, changed]
     assert split.changed
-    assert not late.split([old, changed], is_new=lambda f: False, listed=set()).changed
+    assert not late.split([old, changed], posted=lambda f: f.severity, listed=set()).changed
+    # one an earlier round posted below blocking is confirmed before it blocks
+    raised = _with(_f("f.rs", 9, title="raised", severity="blocking"), late.CHANGED)
+    again = late.split([raised], posted=lambda f: "suggestion", listed=set())
+    assert again.candidates == [raised] and raised.extra["posted_severity"] == "suggestion"
 
 
 def test_parse_decisions_needs_one_known_verdict_per_id_and_a_failure_to_block():
@@ -222,8 +231,8 @@ def test_an_approval_with_suggestions_says_they_are_optional_and_lists_follow_up
         "🟡 1 suggestion(s)"
     )
     assert (
-        "- Code unchanged since the last final review (`abcd1234`): 1 new nitpick(s) dropped; "
-        "1 new suggestion(s) listed as follow-up candidates" in body
+        "- New since the last final review (`abcd1234`): 1 nitpick(s) on unchanged code dropped; "
+        "1 suggestion(s) on unchanged code listed as follow-up candidates" in body
     )
     # the follow-up is not counted, nor in the prompt for agents
     assert "🟡 1 suggestion(s)" in body and "[SUGGESTION] f.rs:12: Name the constant" not in body
@@ -237,7 +246,7 @@ def test_the_confirmation_outcome_is_disclosed():
         {"since": "abcd1234", "candidates": 3, "confirmed": 1, "unconfirmed": 1, "invalid": 1}
     )
     assert "3 new blocker(s) went to an independent confirmation pass" in line
-    assert "1 confirmed, 1 not confirmed (now follow-up candidates), 1 judged invalid" in line
+    assert "1 confirmed, 1 not confirmed (no longer blocking), 1 judged invalid" in line
     failed = publish._late_line({"since": "abcd1234", "candidates": 2, "failed": True})
     assert "2 new blocker(s) stand as raised: the independent confirmation pass failed" in failed
 
@@ -333,8 +342,8 @@ def test_a_later_round_gates_new_findings_on_unchanged_code(cfg, conn, gh, lanes
     assert "🔴 1 blocking | 🟡 1 suggestion(s)" in body
     assert "2 new blocker(s) went to an independent confirmation pass" in body
     assert (
-        "1 confirmed, 1 not confirmed (now follow-up candidates); 1 new nitpick(s) dropped; "
-        "1 new suggestion(s) listed as follow-up candidates, not posted inline" in body
+        "1 confirmed, 1 not confirmed (no longer blocking); 1 nitpick(s) on unchanged code dropped; "
+        "1 suggestion(s) on unchanged code listed as follow-up candidates" in body
     )
     assert _stages(conn, rid) == {
         ("verified", REAL["title"]): ("blocking", "C"),
@@ -440,12 +449,12 @@ def test_a_new_blocker_on_unchanged_code_holds_the_fresh_gate_and_is_confirmed(
     assert ("verified", PANIC["title"]) in _stages(conn, rid)
 
 
-def test_a_carried_suggestion_raised_on_unchanged_code_stays_one_and_holds_no_gate(
+def test_a_carried_suggestion_raised_on_unchanged_code_stays_a_suggestion(
     cfg, conn, gh, lanes, statuses, monkeypatch
 ):
     """dashpay/dash#8158: a suggestion open for five rounds came back as a blocker from a pass
     that was not shown its thread. On code nobody touched it keeps the severity it was posted
-    with, and counts as no blocker when the fresh gate is decided."""
+    with."""
     monkeypatch.setitem(STATUS, FRESH_SUGG["title"], late.IN_REVIEW)
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["preliminary"] = _verifier([])
@@ -459,16 +468,57 @@ def test_a_carried_suggestion_raised_on_unchanged_code_stays_one_and_holds_no_ga
     raised = {**FRESH_SUGG, "severity": "blocking", "finding_hash": sugg}
     rid = _round(cfg, conn, gh, lanes, C, [raised], recon)
     steps = {r["name"] for r in conn.execute("SELECT name FROM steps WHERE run_id=?", (rid,))}
-    assert "fresh_phase2" in steps and "confirm" not in steps
+    assert "confirm" not in steps
     assert gh.posted_reviews[-1]["event"] != "REQUEST_CHANGES"
     stages = _stages(conn, rid)
-    assert stages[("verified-fresh", FRESH_SUGG["title"])] == ("suggestion", late.IN_REVIEW)
+    assert stages[("verified", FRESH_SUGG["title"])] == ("suggestion", late.IN_REVIEW)
     assert (
         conn.execute(
             "SELECT detail FROM events WHERE kind='late.severity_held' AND run_id=?", (rid,)
         ).fetchone()["detail"]
         == sugg
     )
+
+
+def test_a_later_round_is_not_stopped_at_the_phase_1_gate(cfg, conn, gh, lanes, statuses):
+    """A preliminary review never asks for confirmation, so what Phase 1 finds on a later
+    round goes on to the final review, where a new blocker must be actually reachable."""
+    _first_round(cfg, conn, gh, lanes)
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([PANIC])
+    lanes.verifier["final"] = _verifier([PANIC])
+    lanes.confirm = {PANIC["title"]: "non_blocking"}
+    rid = _queue_new_head(cfg, conn, gh, C, lanes)
+    assert worker_mod.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == (
+        RunStatus.DONE
+    )
+    review = gh.posted_reviews[-1]
+    assert "phase=final" in review["body"] and review["event"] != "REQUEST_CHANGES"
+    assert [s.role for s in lanes.calls if s.role == "confirm"] == ["confirm"]
+
+
+def test_a_blocker_the_confirmation_demoted_does_not_come_back_unconfirmed(
+    cfg, conn, gh, lanes, statuses, monkeypatch
+):
+    """Posted as a suggestion because no reachable failure was found, then carried as a
+    blocker a round later: it goes to confirmation again instead of blocking unasked, and
+    without a reachable failure it stays the suggestion it was posted as."""
+    _first_round(cfg, conn, gh, lanes)
+    monkeypatch.setitem(STATUS, PANIC["title"], late.CHANGED)
+    lanes.confirm = {PANIC["title"]: "non_blocking"}
+    _round(cfg, conn, gh, lanes, C, [PANIC])
+    assert gh.posted_reviews[-1]["event"] != "REQUEST_CHANGES"
+    (posted,) = gh.posted_reviews[-1]["comments"]
+    assert "🟡 Suggestion" in posted["body"] and "does not block" in posted["body"]
+
+    h = Finding.from_dict(PANIC).hash
+    carried = {**PANIC, "finding_hash": h}
+    recon = [{"finding_hash": h, "status": "STILL_VALID", "reason": "still"}]
+    rid = _round(cfg, conn, gh, lanes, D, [carried], recon)
+    # the fixture's file is unchanged since that verdict, so it is reused, not asked again
+    assert len([s for s in lanes.calls if s.role == "confirm"]) == 1
+    assert gh.posted_reviews[-1]["event"] != "REQUEST_CHANGES"
+    assert _stages(conn, rid)[("verified", PANIC["title"])][0] == "suggestion"
 
 
 def test_a_degraded_final_review_is_no_basis_for_unchanged_code(cfg, conn, gh, lanes, statuses):
@@ -547,12 +597,9 @@ def test_a_verdict_update_lists_the_follow_ups():
     assert "Name the constant" in body
 
 
-def test_fixed_blockers_and_an_unconfirmed_new_one_still_get_the_fresh_gate(
-    cfg, conn, gh, lanes, statuses
-):
-    """The new blocker that held the fresh gate back is not confirmed: nothing blocks, so the
-    gate the fixed blockers called for runs after all, and its verifier's re-raise of the same
-    blocker reuses this run's decision instead of asking again."""
+def test_a_later_round_never_reads_the_whole_pull_request_again(cfg, conn, gh, lanes, statuses):
+    """Its blockers fixed and the one new blocker unconfirmed, the review approves. The second
+    unanchored pass over everything that used to run at this point kept finding something."""
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["preliminary"] = _verifier([])
     lanes.verifier["final"] = _verifier([_blocking()])
@@ -565,11 +612,42 @@ def test_fixed_blockers_and_an_unconfirmed_new_one_still_get_the_fresh_gate(
     steps = {
         r["name"]: r["status"] for r in conn.execute("SELECT * FROM steps WHERE run_id=?", (rid,))
     }
-    assert steps["fresh_phase2"] == steps["fresh_verify2"] == steps["confirm"] == "ok"
-    assert len([s for s in lanes.calls if s.role == "confirm"]) == 1
+    assert steps["confirm"] == "ok" and "fresh_phase2" not in steps
     review = gh.posted_reviews[-1]
     assert review["event"] == "APPROVE" and PANIC["title"] in review["body"]
     assert ("late-unconfirmed", PANIC["title"]) in _stages(conn, rid)
+    # the round's lanes were asked for what changed since the last full review
+    prompts = [s.prompt for s in lanes.calls if s.prompt and "later review round" in s.prompt]
+    roles = {s.role for s in lanes.calls if s.prompt and "later review round" in s.prompt}
+    assert roles >= {"general", "verifier"}
+    assert all(f"reviewed in full at `{HEAD}`" in p for p in prompts)
+    assert all(f"git range-diff {HEAD}...{C}" in p for p in prompts)
+
+
+def test_a_new_blocker_in_the_fix_is_confirmed_too(cfg, conn, gh, lanes, statuses, monkeypatch):
+    """A blocker on code this round changed blocks only with a failure someone would actually
+    hit. One the confirmation does not find it for is posted as the suggestion it is, on its
+    own thread, not hidden among the follow-up candidates."""
+    _first_round(cfg, conn, gh, lanes)
+    in_fix = {**PANIC, "title": "Replacement ignores the access group"}
+    stands = REAL
+    monkeypatch.setitem(STATUS, in_fix["title"], late.CHANGED)
+    monkeypatch.setitem(STATUS, stands["title"], late.CHANGED)
+    lanes.confirm = {in_fix["title"]: "non_blocking"}
+    rid = _round(cfg, conn, gh, lanes, C, [in_fix, stands])
+    (confirm,) = [s for s in lanes.calls if s.role == "confirm"]
+    assert in_fix["title"] in confirm.prompt and stands["title"] in confirm.prompt
+    assert "the entry point: something a user of the shipped product" in confirm.prompt
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "REQUEST_CHANGES"
+    inline = {c["body"].split("**")[1] for c in review["comments"]}
+    assert inline == {f"🔴 Blocking: {stands['title']}", f"🟡 Suggestion: {in_fix['title']}"}
+    kept = next(c["body"] for c in review["comments"] if stands["title"] in c["body"])
+    assert "_Confirmed by an independent pass: a reachable failure" in kept
+    assert "Follow-up candidates" not in review["body"]
+    stages = _stages(conn, rid)
+    assert stages[("verified", in_fix["title"])][0] == "suggestion"
+    assert ("late-unconfirmed", in_fix["title"]) in stages
 
 
 def test_a_degraded_run_never_demotes_a_blocker(cfg, conn, gh, lanes, statuses, monkeypatch):
