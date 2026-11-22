@@ -1295,3 +1295,121 @@ def test_priority_author_promotes_head_queued_before_the_knob(cfg, conn, gh):
         conn.execute("UPDATE heads SET status='running', priority=0")
     assert ingest_prs(conn, cfg, gh)["dashpay/platform"]["noop"] == 1
     assert conn.execute("SELECT priority FROM heads").fetchone()["priority"] == 0
+
+
+FINDING_TITLE = "Accept CRLF in the embedded reference vectors"
+DISPUTE = (
+    f"> 🔴 Blocking: {FINDING_TITLE}\r\n> src/test/bls_reference_tests.cpp:46\r\n\r\n"
+    "Not changing this: native MSVC builds are unsupported."
+)
+
+
+def _posted_summary_finding(conn, number=7, sha="f" * 40):
+    """A finding published in the review body only (no inline thread to reply under)."""
+    with tx(conn):
+        hid = conn.execute(
+            "SELECT id FROM heads WHERE repo='dashpay/platform' AND number=? AND sha=?",
+            (number, sha),
+        ).fetchone()[0]
+        rid = conn.execute(
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
+            "VALUES (?, 1, 'done', 't', '2026-09-08T00:00:00Z', '2026-09-08T00:00:00Z')",
+            (hid,),
+        ).lastrowid
+        conn.execute(
+            "INSERT INTO findings (run_id, phase, stage, hash, severity, title, body) "
+            "VALUES (?, 'final', 'posted', 'crlf', 'blocking', ?, 'b')",
+            (rid, FINDING_TITLE),
+        )
+        conn.execute(
+            "INSERT INTO posted_findings (repo, number, hash, sha, review_id, posted_at) "
+            "VALUES ('dashpay/platform', ?, 'crlf', ?, 1, '2026-09-08T00:00:00Z')",
+            (number, sha),
+        )
+
+
+def _issue_comment_row(conn, gh, source_id, cid, *, kind="comment", body=DISPUTE, **comment):
+    url = f"https://api.github.com/repos/dashpay/platform/issues/comments/{cid}"
+    gh.routes[f"repos/dashpay/platform/issues/comments/{cid}"] = {
+        "id": cid,
+        "body": body,
+        "user": {"login": "knst"},
+        "author_association": "MEMBER",
+        **comment,
+    }
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) "
+            "VALUES (?,?,'dashpay/platform',7,NULL,?,'2026-09-08T12:00:00Z','2026-09-08T12:00:00Z')",
+            (source_id, kind, url),
+        )
+
+
+def _action(conn, source_id):
+    return conn.execute("SELECT action FROM inbox WHERE source_id=?", (source_id,)).fetchone()[0]
+
+
+def test_top_level_dispute_of_a_summary_finding_reopens_the_reviewed_head(cfg, conn, gh, notifier):
+    """A maintainer quotes a finding the review published only in its body and disputes it in
+    a top-level comment: the reviewed head re-opens for a full same-sha re-review (the
+    conversation lane answers threads only), once per comment."""
+    sha = "f" * 40
+    _reviewed(conn, cfg, 7, sha)
+    _posted_summary_finding(conn)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    _issue_comment_row(conn, gh, "n:1", 100)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "review_reply"
+    assert _action(conn, "n:1") == "discussion_reply"
+    head = conn.execute("SELECT status, trigger, priority FROM heads WHERE sha=?", (sha,))
+    assert tuple(head.fetchone()) == ("queued", "manual", 1)
+    ev = conn.execute("SELECT detail FROM events WHERE kind='head.review_reply'").fetchone()
+    assert "knst answered a finding in PR comment 100" in ev["detail"]
+
+    # GitHub notifies again for the same comment (an edit added an @mention): routed once
+    _issue_comment_row(conn, gh, "n:2", 100, kind="mention")
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:02:00Z", "n:2") == "ignored"
+
+
+def test_a_hand_typed_quote_of_a_title_with_markup_still_matches(cfg, conn, gh, notifier):
+    sha = "f" * 40
+    _reviewed(conn, cfg, 7, sha)
+    _posted_summary_finding(conn)
+    with tx(conn):
+        conn.execute("UPDATE findings SET title='Accept `CRLF` in the  reference vectors'")
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    _issue_comment_row(conn, gh, "n:1", 100, body="> accept CRLF in the reference vectors\n\nno")
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "review_reply"
+
+
+def test_top_level_dispute_after_a_push_leaves_that_push_to_its_own_review(cfg, conn, gh, notifier):
+    old, new = "e" * 40, "f" * 40
+    _reviewed(conn, cfg, 7, old)
+    _posted_summary_finding(conn, sha=old)
+    gh.pr = {**gh.pr, "head": {"sha": new}}
+    _issue_comment_row(conn, gh, "n:1", 100)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "review_reply"
+    assert _action(conn, "n:1") == "discussion_reply_queued"
+    head = conn.execute("SELECT trigger, priority FROM heads WHERE sha=?", (new,)).fetchone()
+    assert tuple(head) == ("new_push", 0)
+
+
+def test_top_level_comments_that_answer_no_finding_are_ignored(cfg, conn, gh, notifier):
+    sha = "f" * 40
+    _reviewed(conn, cfg, 7, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    # no finding posted on the PR yet: a quote answers nothing
+    _issue_comment_row(conn, gh, "n:0", 99)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:0") == "ignored"
+    _posted_summary_finding(conn)
+    cases = {
+        "n:1": dict(body="utACK, LGTM"),
+        "n:6": dict(body="thanks @thepastaclaw"),
+        "n:2": dict(body="> some other quote\n\nagreed"),
+        "n:3": dict(author_association="NONE", user={"login": "stranger"}),
+        "n:4": dict(user={"login": "thepastaclaw"}, author_association="COLLABORATOR"),
+        "n:5": dict(user={"login": "coderabbitai[bot]"}, author_association="NONE"),
+    }
+    for i, (source_id, kw) in enumerate(cases.items()):
+        _issue_comment_row(conn, gh, source_id, 101 + i, **kw)
+        assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", source_id) == "ignored"
+    assert conn.execute("SELECT status FROM heads WHERE sha=?", (sha,)).fetchone()[0] == "done"

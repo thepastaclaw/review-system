@@ -938,8 +938,9 @@ def _unread_reply(ctx: RunContext) -> bool:
     since = fmt_ts(parse_ts(str(last)) - REPLY_READ_LAG) if last else ""
     return (
         ctx.conn.execute(
-            "SELECT 1 FROM inbox WHERE kind='review_reply' AND repo=? AND number=? "
-            "AND occurred_at>=? AND (action IS NULL OR action NOT LIKE 'ignored%') LIMIT 1",
+            "SELECT 1 FROM inbox WHERE repo=? AND number=? AND occurred_at>=? AND ("
+            "(kind='review_reply' AND (action IS NULL OR action NOT LIKE 'ignored%')) "
+            "OR action IN ('discussion_reply', 'discussion_reply_queued')) LIMIT 1",
             (ctx.repo, ctx.number, since),
         ).fetchone()
         is not None

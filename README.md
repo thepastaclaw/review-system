@@ -1066,6 +1066,17 @@ bounded by `DEFER_MAX` (6 h), after which the row is marked
 draft PRs, or on the bot's own PRs are not review triggers (the last go to the own-PR
 comment batch).
 
+A finding published only in the review body has no thread to reply under, so people
+answer it in a top-level PR comment. On a watched repo, a top-level comment (a
+notification's `latest_comment_url`) from a trusted human that quotes (`> ...`) the title
+of one of the bot's posted findings on the PR is routed as above, once per comment however
+often GitHub re-notifies for it (`discussion_reply` / `discussion_reply_queued` /
+`discussion_reply_expired`), except that a reviewed commit re-opens with trigger `manual`:
+the conversation lane answers finding threads only, so the commit gets a full same-sha
+re-review, which reads the comment in the discussion and judges the dispute. A routed
+comment also keeps a push from being carried past it. Known gap: a notification names only
+the PR's latest comment, so a comment followed by another before the next poll gets no row.
+
 The re-review carries the thread: prior findings that were replied to go into the
 prompt with their original `body` and `thread_replies`, the evidence bundle keeps the
 bot's own root comment in those threads (it is stripped everywhere else), and findings

@@ -8,6 +8,10 @@
   conversation when a final review stands); after a push nothing has reviewed yet ("fixed in
   ..."), the push is reviewed like any other (debounced, in line, carried when its diff did
   not change) and that review reads and answers the reply
+- a top-level PR comment from a trusted human quoting one of the bot's posted findings (one
+  published only in the review body has no thread to reply under; the conversation lane
+  answers threads only): routed as a `review_reply` is, except that a reviewed head re-opens
+  as a full same-sha re-review, which reads the comment in the discussion
 - comments/reviews on the bot's own PRs from trusted humans or CodeRabbit ->
   batched per (repo, pr) and delivered to the OpenClaw agent as one wake event
 
@@ -38,6 +42,7 @@ BATCH_RETRY = timedelta(minutes=15)
 DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
 ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
+_MARKUP_RE = re.compile(r"[`*_]")
 
 
 def _mention_re(bot: str) -> re.Pattern[str]:
@@ -127,7 +132,10 @@ def _route_row(
         return "review_requested"
 
     comment = _comment(gh, str(row["body"] or "")) if row["body"] else None
-    if row["body"] and comment is None and kind in {"mention", "review_reply"}:
+    retry = kind in {"mention", "review_reply"} or (
+        kind == "comment" and watched and is_open and "/issues/comments/" in str(row["body"])
+    )
+    if row["body"] and comment is None and retry:
         if _too_old(row, ts):
             with tx(conn):
                 _handled(conn, row["id"], "ignored_unfetchable", ts)
@@ -170,28 +178,43 @@ def _route_row(
             with tx(conn):
                 _handled(conn, row["id"], "ignored", ts)
             return "ignored"
-        with tx(conn):
-            # only a watched repo reviews its pushes on its own; elsewhere a reply still asks
-            res = _reply_after_push(conn, cfg, repo, number, head, ts) if watched else None
-            if res is None:
-                res = enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REPLY, ts=ts)
-            if res == "running" or (res == "noop" and _head_running(conn, repo, number, head)):
-                # the same head is mid-review and its context may predate this reply: leave the
-                # row unhandled so it re-opens the head once that run finishes (bounded)
-                if _too_old(row, ts):
-                    _handled(conn, row["id"], "review_reply_expired", ts)
-                    return "ignored"
-                return "review_reply_deferred"
-            action = "review_reply_queued" if res == "queued" else "review_reply"
-            _handled(conn, row["id"], action, ts)
-            event(
-                conn,
-                "head.review_reply",
-                repo=repo,
-                number=number,
-                detail=f"{actor} replied on comment {comment.get('in_reply_to_id')} -> {res} {head[:8]}",
-            )
-        return "review_reply"
+        return _queue_reply(
+            conn,
+            cfg,
+            row,
+            head=head,
+            watched=watched,
+            ts=ts,
+            trigger=Trigger.REVIEW_REPLY,
+            action="review_reply",
+            detail=f"{actor} replied on comment {comment.get('in_reply_to_id')}",
+        )
+
+    if (
+        kind != "review_reply"
+        and comment
+        and watched
+        and is_open
+        and head
+        and not own_pr
+        and "/issues/comments/" in str(row["body"])
+        and actor.lower() not in (cfg.bot_login.lower(), *ALLOWED_BOTS)
+        and not actor.lower().endswith("[bot]")
+        and _trusted(cfg, comment, actor)
+        and _quotes_bot_finding(conn, repo, number, body)
+        and not _already_routed(conn, row)
+    ):
+        return _queue_reply(
+            conn,
+            cfg,
+            row,
+            head=head,
+            watched=True,
+            ts=ts,
+            trigger=Trigger.MANUAL,
+            action="discussion_reply",
+            detail=f"{actor} answered a finding in PR comment {comment.get('id')}",
+        )
 
     if (
         own_pr
@@ -211,6 +234,74 @@ def _route_row(
     with tx(conn):
         _handled(conn, row["id"], "ignored", ts)
     return "ignored"
+
+
+def _queue_reply(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    row: sqlite3.Row,
+    *,
+    head: str,
+    watched: bool,
+    ts: str,
+    trigger: Trigger,
+    action: str,
+    detail: str,
+) -> str:
+    """Re-open the live head so a human's answer to a finding is read: a push nothing has
+    reviewed yet keeps its own review (`_reply_after_push`), a reviewed head re-opens at
+    priority with `trigger`. Returns the stats key."""
+    repo, number = row["repo"], row["number"]
+    with tx(conn):
+        # only a watched repo reviews its pushes on its own; elsewhere a reply still asks
+        res = _reply_after_push(conn, cfg, repo, number, head, ts) if watched else None
+        if res is None:
+            res = enqueue_head(conn, cfg, repo, number, head, trigger, ts=ts)
+        if res == "running" or (res == "noop" and _head_running(conn, repo, number, head)):
+            # the same head is mid-review and its context may predate this reply: leave the
+            # row unhandled so it re-opens the head once that run finishes (bounded)
+            if _too_old(row, ts):
+                _handled(conn, row["id"], f"{action}_expired", ts)
+                return "ignored"
+            return "review_reply_deferred"
+        _handled(conn, row["id"], f"{action}_queued" if res == "queued" else action, ts)
+        event(
+            conn,
+            "head.review_reply",
+            repo=repo,
+            number=number,
+            detail=f"{detail} -> {res} {head[:8]}",
+        )
+    return "review_reply"
+
+
+def _plain(text: str) -> str:
+    return " ".join(_MARKUP_RE.sub("", text).split()).lower()
+
+
+def _quotes_bot_finding(conn: sqlite3.Connection, repo: str, number: int, body: str) -> bool:
+    """The comment quotes ("> ...") the title of one of the bot's posted findings on this PR."""
+    quoted = _plain(" ".join(ln.lstrip()[1:] for ln in body.splitlines() if ln.lstrip()[:1] == ">"))
+    if not quoted:
+        return False
+    rows = conn.execute(
+        "SELECT DISTINCT f.title FROM posted_findings pf JOIN findings f "
+        "ON f.hash=pf.hash AND f.stage='posted' WHERE pf.repo=? AND pf.number=?",
+        (repo, number),
+    )
+    return any(t and t in quoted for t in (_plain(str(r[0] or "")) for r in rows))
+
+
+def _already_routed(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
+    """GitHub re-notifies for the same comment (an edit, a later mention): route it once."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM inbox WHERE body=? AND id<>? AND action LIKE 'discussion_reply%' "
+            "AND action NOT LIKE '%_expired' LIMIT 1",
+            (row["body"], row["id"]),
+        ).fetchone()
+        is not None
+    )
 
 
 def _reply_after_push(
