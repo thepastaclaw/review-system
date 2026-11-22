@@ -2008,6 +2008,13 @@ def _has_answer_for_status(thread: dict[str, Any], status: str) -> bool:
     return False
 
 
+# what a full review says once on an open thread nobody is waiting on: the finding left the
+# list, and the thread's last word must not go on saying it stands
+_STATED_ON_OPEN_THREADS = frozenset(
+    {"WITHDRAWN", "FIXED", "OUTDATED", "DISPUTED", "INTENTIONALLY_DEFERRED"}
+)
+
+
 def answer_replied_threads(
     gh: Gh,
     repo: str,
@@ -2024,7 +2031,8 @@ def answer_replied_threads(
     reconciliation outcome, and resolve threads whose finding a reviewer explicitly withdrew,
     fixed or marked outdated. Other open bot threads (`open_threads`, nobody replied) get the
     same note and resolution when a reviewer explicitly withdrew their finding, so a dropped
-    finding never lingers as an open comment; likewise, once, a finding settled as DISPUTED,
+    finding never lingers as an open comment; likewise, once, a finding settled as DISPUTED
+    or deferred (the thread may last have said it still applies),
     a deferral held for want of tracking (`needs_tracking`: the ask to link or have the bot
     file it), one the orchestrator settled without a reply to answer (`announce`) and a
     finding that still stands with something new to say (`update`: its code changed, or the
@@ -2045,7 +2053,7 @@ def answer_replied_threads(
         if h in todo or t.get("resolved") or (h in kept_hashes and not says):
             continue
         stated = str(row.get("status") or "")
-        if stated in {"WITHDRAWN", "FIXED", "OUTDATED", "DISPUTED"} or says or row.get("announce"):
+        if stated in _STATED_ON_OPEN_THREADS or says or row.get("announce"):
             todo[h] = {**t, "latest_reply_id": None}
     # A malformed/legacy thread index can contain the same GitHub thread under more than
     # one finding identity (for example after a marker migration).  Replies are addressed to
