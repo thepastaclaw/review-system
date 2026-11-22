@@ -4,7 +4,9 @@ v0.28.0 (4e75920fe) from the cases below and is compared as copied text, never r
 from today's code. Changed on purpose since: the reviewer and verifier prompts gained the
 problem-first finding text rules and the verifier its summary rule (feat/blocker-list-impact);
 a backport's upstream follow-up is a maintainer's to defer without a tracking issue, and a
-later round's fresh pass is told the PR was reviewed before (fix/backport-followup-deferral)."""
+later round's fresh pass is told the PR was reviewed before (fix/backport-followup-deferral);
+a later upstream fix found on a later round in a backport already reviewed is an optional
+follow-up rather than a maintainer's call (fix/rebase-aware-later-rounds)."""
 
 from __future__ import annotations
 

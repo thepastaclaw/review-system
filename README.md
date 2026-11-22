@@ -884,6 +884,18 @@ pipeline keep the earlier behaviour.
   one were on lines the previous push had not touched, and the rate of new blockers did not
   fall from round 2 to round 15. A re-review of the same head, which someone asked for,
   still reads everything.
+- **A rebase is detected.** When the last fully reviewed head is not an ancestor of this one
+  (`late.rewrite_since`), the lanes, the verifier, the confirmation lane and the step-back
+  lane are given the pull request's own commits before and after, `git range-diff
+  <old_base>..<since> <new_base>..<head>` (each base the merge base of that head with the
+  base branch), and `git diff <new_base>..<head>` for the PR as it stands, and are told that
+  `git diff <since>..<head>` would mostly show the base branch's changes, which are not under
+  review except where they change the behaviour of code the PR adds or relies on, and that a
+  commit the range-diff shows as unchanged was already reviewed. On
+  dashpay/dash#8158 one rebase made that diff 374 files for an 11-commit PR. Without merge
+  bases they get today's commands and a warning. Code status needs nothing new: hunks are
+  read on the head side, so a base-branch edit marks a PR line changed only within the
+  ±3-line margin.
 - **Code status per finding.** On a later round every final finding gets a mechanical
   status by its own lines, from git in the run's worktree (`late.CodeHistory`: one `git
   diff --name-status -M -z` per base, then `ledger.lines_changed` on the finding's lines
@@ -918,9 +930,27 @@ pipeline keep the earlier behaviour.
   saying an independent pass confirmed them; unconfirmed ones become follow-up candidates;
   invalid ones are dropped. Its answer never goes to the context-free repair lane, and a lane
   that fails for good keeps every blocker as raised (`late.confirm_failed`). A verdict is
-  remembered by finding hash: a blocker an earlier round judged `non_blocking` or `invalid`
-  is not sent again while its file is unchanged since that round and nobody replied on its
-  thread since; a re-review of the last fully reviewed head asks again. Disclosed in the
+  remembered: a blocker an earlier round judged `non_blocking` or `invalid` is not sent
+  again, matched by hash while its file is unchanged since that round, or (a `non_blocking`
+  verdict only) by place whatever its wording: a candidate on unchanged lines within the
+  range of that finding, re-located and unchanged since (`late.within`, at most 3 lines
+  wider); nobody may have replied on either thread since, and a re-review of the last fully
+  reviewed head asks again. On an incremental round the lane is told the round, each
+  finding's code status in words and how many full reviews read its lines, and the rule
+  that a finding on already reviewed lines blocks only if it names the change since that
+  breaks them (in the PR, or in the base branch it was rebased onto), or loses funds, breaks
+  consensus or exposes key material, or is a backport's missing hunk (and meets the
+  reachability or project-rule test); otherwise it is `non_blocking`, "already reviewed,
+  nothing in the change affects it". The reviewers and verifier get the same exceptions.
+- **A backport's missing upstream follow-ups are enumerated once.** In a repository with
+  `upstream_repos`, a new finding asking for one (`upstream_followup: true` on the finding,
+  or a title starting `Missing follow-up:`, as the backport rules require) that names a
+  change in one of those repositories (`bitcoin#N`, `bitcoin/bitcoin#N` or a link), on lines
+  unchanged since the previous full review that the PR wrote (not base-branch lines), while
+  none of the PR's commits was added or changed since that review (`late.Commits`: no new
+  commit in `since..head` but merges of the base; after a rebase, no `>` or `!` row in the
+  range-diff), is listed once as a follow-up candidate, unasked, saying it can be backported
+  in its turn. Anything else, and every one in a first full review, blocks as before. Disclosed in the
   provenance ("New since the last final review").
 - **Every new blocker of a later round is confirmed**, on changed code as well, and so is
   one an earlier round posted below blocking (carried or restated): it blocks only with
