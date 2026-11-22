@@ -15,7 +15,12 @@ A file renamed without a content change is unchanged. New findings on B/C code (
 nitpicks are dropped, suggestions are listed once in the review body as follow-up candidates
 (never an inline thread, never restated), and blockers stand only when an independent
 confirmation lane (`parse_decisions`) finds a concrete reachable failure. Findings already
-raised on the PR, and everything on A code, take the normal path."""
+raised on the PR, and everything on A code, take the normal path.
+
+A finding an earlier full review judged FIXED or OUTDATED (`STAGE_FIXED`) and that this round
+raises again on lines unchanged since that judgement (`split`'s `revived`) is a new blocker
+for the gate: it stands only when the confirmation lane confirms it, and otherwise stays
+settled. A non-blocking one stays settled without asking."""
 
 from __future__ import annotations
 
@@ -26,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from .contract import Finding
-from .ledger import _git, git_has, lines_changed
+from .ledger import _git, git_has, lines_changed, map_lines
 from .models import FailKind, ReviewError
 
 CHANGED, IN_REVIEW, SINCE_FIRST, UNKNOWN = "A", "B", "C", "U"
@@ -40,10 +45,19 @@ STAGE_FOLLOWUP = "late-followup"
 STAGE_REPEAT = "late-repeat"
 STAGE_UNCONFIRMED = "late-unconfirmed"
 STAGE_INVALID = "late-invalid"
+STAGE_SETTLED = "late-settled"  # judged fixed earlier, raised again on unchanged lines
 # a follow-up candidate a published review listed: what later rounds never restate
 STAGE_LISTED = "followup"
 # a confirmation verdict that is remembered for the finding: (stage, verdict)
 REMEMBERED = {STAGE_UNCONFIRMED: "non_blocking", STAGE_INVALID: "invalid"}
+# a prior finding a full review judged fixed, its body the status and the head it was judged
+# at (two lines); later rounds read it until a review carries or posts the finding again
+STAGE_FIXED = "judged-fixed"
+JUDGED_FIXED = frozenset({"FIXED", "OUTDATED"})
+# lines around a listed follow-up candidate that still count as its place
+LISTED_MARGIN = 3
+
+Spot = tuple[str, int, int]  # (file, line_start, line_end)
 
 
 def changed_paths(name_status: str) -> set[str]:
@@ -126,10 +140,11 @@ class Split:
     followups: list[Finding] = field(default_factory=list)  # new B/C suggestions, first listing
     repeats: list[Finding] = field(default_factory=list)  # ... already listed by a review
     candidates: list[Finding] = field(default_factory=list)  # new blockers: to confirm
+    settled: list[Finding] = field(default_factory=list)  # revived below blocking: dropped
 
     @property
     def changed(self) -> bool:
-        return bool(self.nits or self.followups or self.repeats or self.candidates)
+        return bool(self.nits or self.followups or self.repeats or self.candidates or self.settled)
 
 
 def hold_severity(findings: Iterable[Finding], posted: Mapping[str, str]) -> list[Finding]:
@@ -147,9 +162,43 @@ def hold_severity(findings: Iterable[Finding], posted: Mapping[str, str]) -> lis
     return held
 
 
-def is_listed(f: Finding, listed: set[str]) -> bool:
-    """`f` was listed as a follow-up candidate: `listed` holds hashes and dedupe keys."""
-    return f.hash in listed or f.dedupe_key in listed
+def is_listed(f: Finding, listed: set[str], spots: Iterable[Spot] = ()) -> bool:
+    """`f` was listed as a follow-up candidate: `listed` holds hashes and dedupe keys, `spots`
+    where the listed ones are at this head (`listed_spots`). One on an overlapping or adjoining
+    range of the same file is that candidate again, whatever its title or severity."""
+    if f.hash in listed or f.dedupe_key in listed:
+        return True
+    if not f.file or not f.line_start:
+        return False
+    start, end = f.line_start, f.line_end or f.line_start
+    return any(
+        path == f.file and start <= e + LISTED_MARGIN and end >= s - LISTED_MARGIN
+        for path, s, e in spots
+    )
+
+
+def listed_spots(
+    repo: Path, head: str, listed: Iterable[tuple[str, int | None, int | None, str]]
+) -> list[Spot]:
+    """Where each listed follow-up candidate (file, lines, the head it was listed at) is at
+    `head`: one whose lines have not changed since, re-located by the diff between the two
+    heads. One git cannot place, or whose code changed, has no place."""
+    out: list[Spot] = []
+    for path, start, end, sha in listed:
+        if not path or not start or lines_changed(repo, sha, head, path, start, end) is not False:
+            continue
+        mapped = map_lines(repo, sha, head, path, start, end)
+        if mapped and mapped[0]:
+            out.append((path, mapped[0], mapped[1] or mapped[0]))
+    return out
+
+
+def revived_sentence(judged: Mapping[str, str], failure: str) -> str:
+    """What a confirmed revival of a finding judged fixed says on its thread."""
+    return (
+        f"Judged fixed at `{judged['sha'][:8]}`; raised again and confirmed by an independent "
+        f"pass: {failure}"
+    )
 
 
 def on_unchanged(f: Finding) -> bool:
@@ -158,7 +207,12 @@ def on_unchanged(f: Finding) -> bool:
 
 
 def split(
-    findings: Iterable[Finding], *, posted: Callable[[Finding], str | None], listed: set[str]
+    findings: Iterable[Finding],
+    *,
+    posted: Callable[[Finding], str | None],
+    listed: set[str],
+    spots: Iterable[Spot] = (),
+    revived: Callable[[Finding], dict[str, str] | None] = lambda f: None,
 ) -> Split:
     """`findings` (each with `extra["code_status"]` set) by what happens to them. `posted`:
     the severity an earlier round posted the finding with, None when it is new to the PR.
@@ -167,9 +221,21 @@ def split(
     blocks, wherever it is: a new finding, or one carried or restated from below blocking
     (`extra["posted_severity"]`), which would otherwise undo an earlier confirmation's
     verdict a round later. The other new findings leave the normal path only on code
-    unchanged since the previous final review."""
+    unchanged since the previous final review.
+
+    `revived`: the judgement (`hash`, `status`, `sha`) of a finding an earlier review judged
+    fixed that `f` raises again on lines unchanged since, else None. Such a blocker is
+    confirmed like a new one (`extra["judged_fixed"]`); one below blocking stays settled."""
     out = Split()
+    spots = list(spots)
     for f in findings:
+        f.extra.pop("revived_note", None)
+        judged = revived(f)
+        if judged:
+            f.extra["judged_fixed"] = judged
+            (out.candidates if f.severity == "blocking" else out.settled).append(f)
+            continue
+        f.extra.pop("judged_fixed", None)
         was = posted(f)
         if f.severity == "blocking" and was != "blocking":
             if was:
@@ -179,7 +245,7 @@ def split(
             out.keep.append(f)
         elif f.severity == "nitpick":
             out.nits.append(f)
-        elif is_listed(f, listed):
+        elif is_listed(f, listed, spots):
             out.repeats.append(f)
         else:
             out.followups.append(f)
@@ -210,6 +276,11 @@ def candidate_briefs(findings: list[Finding]) -> list[dict[str, Any]]:
             "title": f.title,
             "body": f.body,
             **({"suggested_fix": f.suggestion} if f.suggestion else {}),
+            **(
+                {"judged_fixed_at": judged["sha"], "lines_unchanged_since": True}
+                if (judged := f.extra.get("judged_fixed"))
+                else {}
+            ),
         }
         for cid, f in zip(candidate_ids(len(findings)), findings, strict=True)
     ]

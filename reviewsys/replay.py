@@ -99,6 +99,7 @@ SEED_STAGES = (
     "followup",
     "late-unconfirmed",
     "late-invalid",
+    "judged-fixed",
 )
 # events the worker reads about an earlier run (besides each PR's `thread.answered`): what
 # makes the standing review strong enough to approve over under v12 (`worker._strength_row`)
