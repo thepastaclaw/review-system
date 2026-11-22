@@ -15,7 +15,7 @@ import pytest
 from reviewsys import checks
 from reviewsys import config as cfg_mod
 from reviewsys.daemon import Daemon
-from reviewsys.db import kv_set, now_dt, parse_ts, tx
+from reviewsys.db import fmt_ts, kv_set, now_dt, parse_ts, tx
 from reviewsys.gh import Gh
 from reviewsys.ghapp import AppAuth, AppAuthError
 
@@ -26,6 +26,8 @@ SHA = "a" * 40
 @pytest.fixture(autouse=True)
 def _reread_every_pass(monkeypatch):
     monkeypatch.setattr(checks, "REREAD_AFTER", timedelta(0))
+
+
 OLD = "b" * 40
 T0 = "2026-11-01T00:00:00Z"
 FUTURE = "2999-01-01T00:00:00Z"
