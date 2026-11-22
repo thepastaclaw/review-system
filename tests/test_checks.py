@@ -14,7 +14,7 @@ import pytest
 
 from reviewsys import checks
 from reviewsys import config as cfg_mod
-from reviewsys.daemon import Daemon
+from reviewsys.daemon import Daemon, Task
 from reviewsys.db import fmt_ts, kv_set, now_dt, parse_ts, tx
 from reviewsys.gh import Gh
 from reviewsys.ghapp import AppAuth, AppAuthError
@@ -522,6 +522,19 @@ def test_daemon_runs_the_task_only_when_enabled(cfg, conn):
     on = _with_checks(cfg, enabled=True, app_id="123")
     assert "checks" in names(Daemon(on, conn, gh=Gh(), spawn=True))
     assert "checks" not in names(Daemon(on, conn, gh=Gh(), spawn=False)), "never from shadow"
+
+
+def test_a_stop_request_ends_the_pass_after_the_current_task(cfg, conn):
+    d = Daemon(cfg, conn, gh=Gh(), spawn=False)
+    ran = []
+
+    def first():
+        ran.append("first")
+        d.stop = True
+
+    d.tasks = [Task("first", 0, first), Task("second", 0, lambda: ran.append("second"))]
+    assert d.tick() == {"first": None}
+    assert ran == ["first"]
 
 
 def test_config_parses_and_requires_app_id(tmp_path):

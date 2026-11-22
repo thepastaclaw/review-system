@@ -276,6 +276,8 @@ class Daemon:
         results: dict[str, object] = {}
         t = time.monotonic()
         for task in self.tasks:
+            if self.stop:
+                break
             if not force and task.last and t - task.last < task.interval_s:
                 continue
             try:

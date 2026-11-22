@@ -71,20 +71,26 @@ WD="* * * * * $BASE/src/deploy/reviewsys-watchdog.sh >/dev/null 2>&1"
 { crontab -l 2>/dev/null | grep -v reviewsys-watchdog || true; echo "$WD"; } | crontab -
 # restart: stop the old daemon (tick loop finishes its current task first), then start detached.
 # launchctl load is attempted for the day `claw` gets a GUI session; the singleton lock makes
-# a launchd-started twin exit immediately.
-PID=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
-if [ -n "$PID" ]; then
-  kill "$PID"
-  for _ in $(seq 1 60); do kill -0 "$PID" 2>/dev/null || break; sleep 1; done
-  kill -0 "$PID" 2>/dev/null && kill -9 "$PID"
+# a launchd-started twin exit immediately. Every match is signalled: on a loaded host a hung
+# lookup from the watchdog can sit first in the list and take the signal meant for the daemon.
+MATCH="venv/bin/reviewsys daemon"
+OLD=$(pgrep -f "$MATCH" || true)
+if [ -n "$OLD" ]; then
+  kill $OLD 2>/dev/null || true
+  for _ in $(seq 1 60); do pgrep -f "$MATCH" >/dev/null || break; sleep 1; done
+  LEFT=$(pgrep -f "$MATCH" || true)
+  if [ -n "$LEFT" ]; then kill -9 $LEFT 2>/dev/null || true; fi
 fi
 launchctl unload "$PLIST" 2>/dev/null || true
 launchctl load -w "$PLIST" 2>/dev/null || true
 sleep 2
 "$SRC/deploy/start-daemon.sh" ${SHADOW:+--shadow}
 sleep 3
-NEW=$(pgrep -f "venv/bin/reviewsys daemon" | head -1 || true)
+NEW=$(pgrep -f "$MATCH" | head -1 || true)
 if [ -z "$NEW" ]; then echo "daemon NOT RUNNING after deploy; see $BASE/daemon.stderr.log" >&2; exit 1; fi
+for p in $OLD; do
+  if [ "$p" = "$NEW" ]; then echo "daemon NOT RESTARTED: pid $NEW predates this deploy and still runs the old code" >&2; exit 1; fi
+done
 echo "daemon pid: $NEW"
 "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" status
 # the v12 shadow runner (deploy/shadow.sh): its own label and root; a failure here is reported,
