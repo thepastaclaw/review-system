@@ -42,7 +42,7 @@ log = logging.getLogger(__name__)
 API_ROOT = "https://api.github.com/"
 BATCH_DELAY = timedelta(minutes=5)
 BATCH_RETRY = timedelta(minutes=15)
-# re-reviews of one already-reviewed commit that review requests and mentions may start
+# re-reviews of one already-reviewed commit that review requests, and mentions, may each start
 MAX_ASKED_REREVIEWS = 3
 DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
@@ -332,14 +332,20 @@ def _already_routed(conn: sqlite3.Connection, row: sqlite3.Row, action: str) -> 
 
 def _own_words(body: str) -> str:
     """A comment without what it quotes or shows as code: a quoted "> @bot review" or a
-    command in backticks is not the commenter asking."""
+    command in backticks is not the commenter asking. A quote runs to the next blank line,
+    as Markdown reads it: the lines after a ">" line continue it without a marker."""
     kept: list[str] = []
-    fenced = False
+    fenced = quoted = False
     for line in body.splitlines():
-        if line.lstrip().startswith(("```", "~~~")):
+        text = line.strip()
+        if text.startswith(("```", "~~~")):
             fenced = not fenced
+            quoted = False
             continue
-        if not fenced and not line.lstrip().startswith(">"):
+        if fenced:
+            continue
+        quoted = text.startswith(">") or (quoted and bool(text))
+        if not quoted:
             kept.append(re.sub(r"`[^`\n]*`", " ", line))
     return "\n".join(kept)
 
@@ -390,21 +396,26 @@ def _ask(
     rereview: bool,
 ) -> None:
     """Queue `head` for someone asking. A fresh explicit ask (`rereview`) also re-reviews a
-    commit that has its own review, at most MAX_ASKED_REREVIEWS times per commit across
-    requests and mentions: a re-review that ends without submitting a review leaves the
-    request standing, and each new comment is a new ask. Caller holds the transaction."""
-    key = f"router.asked_rereviews:{repo}#{number}:{head}"
+    commit that has its own review, at most MAX_ASKED_REREVIEWS times per commit and route
+    (requests and mentions are counted apart, so comments cannot use up what a review
+    request may start): a re-review that ends without submitting a review leaves the
+    request standing, and each new comment is a new ask. Only an ask that starts a review
+    is counted: re-opening the finished commit, or turning its queued CI check into one.
+    Caller holds the transaction."""
+    key = f"router.asked_rereviews:{trigger.value}:{repo}#{number}:{head}"
     done = int(kv_get(conn, key) or 0)
     allowed = rereview and done < MAX_ASKED_REREVIEWS
-    reviewed = (
-        conn.execute(
-            "SELECT 1 FROM reviews WHERE repo=? AND number=? AND sha=? LIMIT 1",
-            (repo, number, head),
-        ).fetchone()
-        is not None
-    )
+    before = conn.execute(
+        "SELECT h.trigger, EXISTS(SELECT 1 FROM reviews r WHERE r.repo=h.repo "
+        "AND r.number=h.number AND r.sha=h.sha) AS reviewed FROM heads h "
+        "WHERE h.repo=? AND h.number=? AND h.sha=?",
+        (repo, number, head),
+    ).fetchone()
     res = enqueue_head(conn, cfg, repo, number, head, trigger, ts=ts, rereview=allowed)
-    if allowed and reviewed and res in ("requeued", "promoted"):
+    started = res == "requeued" or (
+        res == "promoted" and before is not None and before["trigger"] == Trigger.CI_FAILED.value
+    )
+    if allowed and started and before is not None and before["reviewed"]:
         kv_set(conn, key, str(done + 1))
 
 

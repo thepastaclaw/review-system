@@ -1613,11 +1613,15 @@ def test_a_quoted_or_code_command_is_not_the_commenter_asking(cfg, conn, gh, not
     assert _mention(conn, cfg, gh, notifier, 62, 621, code, "knst") == 0
     fenced = "```\n@thepastaclaw review\n```\n@thepastaclaw fyi"
     assert _mention(conn, cfg, gh, notifier, 63, 631, fenced, "knst") == 0
+    lazy = "> @thepastaclaw\nreview it again\n\nNo need, @thepastaclaw, it is fine."
+    assert _mention(conn, cfg, gh, notifier, 66, 661, lazy, "knst") == 0
+    carried = "> as I said\n@thepastaclaw review\n\nSee above, @thepastaclaw."
+    assert _mention(conn, cfg, gh, notifier, 67, 671, carried, "knst") == 0
     own = "> the guard is there\n\n@thepastaclaw please re-review"
     assert _mention(conn, cfg, gh, notifier, 64, 641, own, "knst") == 1
 
 
-def test_mentions_and_requests_share_the_per_commit_bound(cfg, conn, gh, notifier):
+def test_mentions_are_bounded_per_commit_and_leave_requests_their_own(cfg, conn, gh, notifier):
     from reviewsys import router
 
     sha = "9" * 40
@@ -1635,3 +1639,24 @@ def test_mentions_and_requests_share_the_per_commit_bound(cfg, conn, gh, notifie
         route_inbox(conn, cfg, gh, notifier)
         _finish(conn, 65)
     assert _requeues(conn, 65) == router.MAX_ASKED_REREVIEWS
+    gh.pr = {**gh.pr, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    _ask(conn, "n1", "review_requested", 65)
+    route_inbox(conn, cfg, gh, notifier)
+    assert _requeues(conn, 65) == router.MAX_ASKED_REREVIEWS + 1, "a request has its own"
+
+
+def test_promoting_an_already_queued_review_spends_nothing(cfg, conn, gh, notifier):
+    sha = "8" * 40
+    _reviewed(conn, cfg, 68, sha)
+    with tx(conn):
+        conn.execute(
+            "UPDATE heads SET status='queued', priority=0, trigger=? WHERE number=68",
+            (Trigger.NORMAL_REQUEST.value,),
+        )
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    _ask(conn, "n1", "review_requested", 68)
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT priority FROM heads WHERE number=68").fetchone()[0] == 1
+    assert (
+        kv_get(conn, f"router.asked_rereviews:review_requested:dashpay/platform#68:{sha}") is None
+    )
