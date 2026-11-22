@@ -209,6 +209,7 @@ class FakeGh(Gh):
         self.comment_edits: list[tuple[int, str]] = []  # (comment id, new body) via PATCH
         self.review_edits: list[tuple[int, str]] = []  # (review id, new body) via PUT
         self.open_issues: list[dict[str, Any]] = []  # what `gh issue list` finds
+        self.closed_issues: list[dict[str, Any]] = []  # ... with `--state closed` or `all`
         self.created_issues: list[dict[str, Any]] = []  # `gh issue create` calls
         self.issue_create_error = ""  # set: `gh issue create` fails with this message
 
@@ -248,7 +249,10 @@ class FakeGh(Gh):
         if args[:2] == ["pr", "diff"]:
             return self.diff
         if args[:2] == ["issue", "list"]:
-            return self.open_issues
+            state = args[args.index("--state") + 1] if "--state" in args else "open"
+            opened = [{"state": "OPEN", **i} for i in self.open_issues]
+            closed = [{"state": "CLOSED", **i} for i in self.closed_issues]
+            return {"open": opened, "closed": closed, "all": opened + closed}[state]
         if args[:2] == ["issue", "create"]:
             if self.issue_create_error:
                 raise _GhFailure(self.issue_create_error)

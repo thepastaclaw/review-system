@@ -467,11 +467,28 @@ def _deferral(**kw):
     return converse.ThreadOutcome("aaa", "INTENTIONALLY_DEFERRED", "Fine as a follow-up.", **kw)
 
 
-def _vet(outcome, transcript, *, severity="blocking", pr_text="", settled=frozenset()):
-    threads = {"aaa": {"severity": severity, "transcript": transcript}}
+def _vet(
+    outcome,
+    transcript,
+    *,
+    severity="blocking",
+    pr_text="",
+    settled=frozenset(),
+    can_file=True,
+    asked=False,
+    author="",
+):
+    threads = {"aaa": {"severity": severity, "transcript": transcript, "tracking_asked": asked}}
     out = converse.ConversationOutput(outcomes={"aaa": outcome})
     vetted = converse.accept_deferrals(
-        out, threads, settled=settled, repo="dashpay/platform", number=5258, pr_text=pr_text
+        out,
+        threads,
+        settled=settled,
+        repo="dashpay/platform",
+        number=5258,
+        pr_text=pr_text,
+        can_file=can_file,
+        author=author,
     )
     return vetted.outcomes["aaa"]
 
@@ -523,13 +540,90 @@ def test_malformed_tracking_is_dropped_not_a_failed_run(tracking):
     assert out.outcomes["aaa"].tracking_url == ""
 
 
-def test_an_untracked_maintainer_deferral_asks_for_tracking_instead():
-    got = _vet(_deferral(), [{**MEMBER, "body": "deferred by decision, to a change of its own"}])
-    assert got.status == converse.DEFERRAL_NEEDS_TRACKING
-    assert got.reply == (
-        "Before I mark this deferred it needs a tracking issue for the follow-up. Link one, "
-        "or say so and I'll file it in `dashpay/platform`."
+def test_an_untracked_maintainer_deferral_has_the_worker_file_its_issue():
+    """dash-evo-tool#1210: the lane agreed the deferral was reasonable and asked for a link;
+    the blocker stood for three more rounds. The worker now finds or files the issue."""
+    said = [{**MEMBER, "body": "deferred by decision, to a change of its own"}]
+    got = _vet(_deferral(), said)
+    assert got.status == "INTENTIONALLY_DEFERRED" and got.auto_file and not got.untracked_ok
+    assert got.reply == "Fine as a follow-up." and got.tracking_url == ""
+    # the lane asking for tracking itself is read as the same deferral, its ask replaced
+    asks = converse.ThreadOutcome("aaa", converse.DEFERRAL_NEEDS_TRACKING, "Link one?")
+    conceded = _vet(asks, said)
+    assert conceded.status == "INTENTIONALLY_DEFERRED" and conceded.auto_file
+    assert conceded.reply == converse.DEFERRAL_REPLY
+    # where the bot cannot file, it asks once
+    ask = _vet(_deferral(), said, can_file=False)
+    assert ask.status == converse.DEFERRAL_NEEDS_TRACKING and not ask.auto_file
+    assert ask.reply == (
+        "Before I mark this deferred it needs a tracking issue for the follow-up. Link one "
+        "here, in the PR description or in a PR comment; or, if it should stay untracked, a "
+        "maintainer can say so here."
     )
+
+
+def test_a_maintainer_answering_the_one_ask_defers_untracked_where_nothing_can_be_filed():
+    """dash-evo-tool#1210: "Rejected as out of scope, with no tracking." had no way out."""
+    said = [{"is_bot": True}, {**MEMBER, "body": "Rejected as out of scope, with no tracking."}]
+    got = _vet(_deferral(), said, can_file=False, asked=True)
+    assert got.status == "INTENTIONALLY_DEFERRED" and not got.auto_file
+    assert got.reply == converse.UNTRACKED_BLOCKER_REPLY
+    # where it can, the worker still tries to file first, and accepts it untracked otherwise
+    tried = _vet(_deferral(), said, asked=True)
+    assert tried.auto_file and tried.untracked_ok
+    # silence is never agreement, whatever a maintainer wrote after the ask
+    silent = converse.ThreadOutcome("aaa", "NO_REPLY", "")
+    assert _vet(silent, said, can_file=False, asked=True).status == "NO_REPLY"
+    assert _vet(silent, said, asked=True).status == "NO_REPLY"
+    outsider = [{"is_bot": True}, {"is_bot": False, "association": "CONTRIBUTOR", "body": "no"}]
+    assert _vet(silent, outsider, can_file=False, asked=True).status == "NO_REPLY"
+    assert _vet(_deferral(), outsider, asked=True).status == converse.DEFERRAL_PENDING
+    # a blocker asked about, with no maintainer reply since the ask, is asked nothing again
+    # and lifts nothing
+    quiet = [{**MEMBER, "body": "later"}, {"is_bot": True}]
+    assert _vet(_deferral(), quiet, asked=True).status == converse.DEFERRAL_PENDING
+
+
+def test_only_a_maintainer_has_the_bot_file_and_an_upstream_claim_is_not_filed():
+    author = {"is_bot": False, "association": "CONTRIBUTOR", "author": "dev", "body": "later"}
+    sugg = _vet(_deferral(), [author], severity="suggestion", author="dev")
+    assert sugg.status == converse.DEFERRAL_NEEDS_TRACKING and not sugg.auto_file
+    upstream = _vet(_deferral(upstream="bitcoin/bitcoin#1"), [{**MEMBER, "body": "later"}])
+    assert upstream.status == converse.DEFERRAL_NEEDS_TRACKING and not upstream.auto_file
+
+
+@pytest.mark.parametrize("can_file", [True, False])
+@pytest.mark.parametrize(
+    "said",
+    [
+        "Looking again, this PR introduced it, please fix here",
+        "@bob thoughts?",
+        "thanks",
+    ],
+)
+def test_a_maintainers_other_reply_after_the_ask_leaves_the_blocker_standing(can_file, said):
+    """The lane answers these NO_REPLY (or STILL_VALID): only its own judgement that the
+    deferral is reasonable may lift a blocker, never its silence."""
+    thread = [{**MEMBER, "body": "later"}, {"is_bot": True}, {**MEMBER, "body": said}]
+    for outcome in (
+        converse.ThreadOutcome("aaa", "NO_REPLY", ""),
+        converse.ThreadOutcome("aaa", "STILL_VALID", "It still widens the race."),
+    ):
+        got = _vet(outcome, thread, can_file=can_file, asked=True)
+        assert got.status == outcome.status and not got.auto_file
+
+
+def test_a_blocker_deferred_to_an_upstream_change_that_does_not_qualify_keeps_asking():
+    """The backport path as it was: an upstream deferral that did not qualify is asked for
+    tracking, and no answer to that ask lifts the blocker untracked."""
+    upstream = _deferral(upstream="tokio-rs/tokio#28051")
+    said = [{**MEMBER, "body": "later"}, {"is_bot": True}, {**MEMBER, "body": "no issue"}]
+    for can_file in (True, False):
+        got = _vet(upstream, said, can_file=can_file, asked=True)
+        assert got.status == converse.DEFERRAL_NEEDS_TRACKING and not got.auto_file
+    # a non-blocking one is accepted untracked after the ask, as before
+    sugg = _vet(upstream, said, severity="suggestion", can_file=False, asked=True)
+    assert sugg.status == "INTENTIONALLY_DEFERRED"
 
 
 @pytest.mark.parametrize(
@@ -555,10 +649,15 @@ def test_a_cited_reference_counts_when_a_reader_of_the_pr_can_see_it(cited, wher
 
 
 def test_a_reference_nobody_posted_or_the_pr_itself_does_not_count():
-    unseen = _vet(_deferral(tracking_url="#9999"), [{**MEMBER, "body": "it came in with #5300"}])
+    said = [{**MEMBER, "body": "it came in with #5300"}]
+    unseen = _vet(_deferral(tracking_url="#9999"), said, can_file=False)
     assert unseen.status == converse.DEFERRAL_NEEDS_TRACKING
     assert "I could not find `#9999` linked in this thread" in unseen.reply
-    itself = _vet(_deferral(tracking_url="#5258"), [{**MEMBER, "body": "see #5258"}])
+    filed = _vet(_deferral(tracking_url="#9999"), said)
+    assert filed.auto_file and filed.tracking_url == ""
+    itself = _vet(
+        _deferral(tracking_url="#5258"), [{**MEMBER, "body": "see #5258"}], can_file=False
+    )
     assert itself.status == converse.DEFERRAL_NEEDS_TRACKING
     assert "`#5258` is this pull request itself" in itself.reply
 

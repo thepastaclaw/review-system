@@ -668,19 +668,22 @@ def submit_pending_review(
     }
 
 
-def open_issues_matching(gh: Gh, repo: str, terms: str) -> list[dict[str, Any]]:
-    """Open issues in `repo` whose title matches the search `terms`: [{number, title, url}]."""
+def open_issues_matching(
+    gh: Gh, repo: str, terms: str, *, state: str = "open"
+) -> list[dict[str, Any]]:
+    """Issues in `repo` (`state`: open, closed or all) whose title matches the search
+    `terms`: [{number, title, url, state, stateReason}]."""
     rows = gh.json(
         "issue",
         "list",
         "-R",
         repo,
         "--state",
-        "open",
+        state,
         "--search",
         f"{terms} in:title",
         "--json",
-        "number,title,url",
+        "number,title,url,state,stateReason",
         "--limit",
         "20",
     )

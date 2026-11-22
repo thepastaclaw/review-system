@@ -1153,14 +1153,35 @@ point to as tracking (on a line with a cue: "tracked", "follow-up", "filed", "op
 "deferred to"; "it came in with #N" does not count, nor do commit links or the PR
 itself), else a link already on record for it (kv `defer.issue:…`, or an earlier
 conversation's `conceded` row). The PR description and comments count only when the row
-cites the reference. Without one
-the worker overrides the verifier (`_hold_untracked_deferrals`, after every verifier lane):
+cites the reference. Without one, where the newest human reply on the finding's thread is a
+maintainer's (by association; the PR author's own word is not enough), the worker finds or
+files the tracking issue itself (`_auto_tracking`, the same filing path as the conversation
+lane's, below) and the deferral stands with that link: its thread is answered
+"**Deferred**: This moves to a follow-up: I filed <url> to track it, so it no longer blocks
+this pull request." (or "already tracked in <url>"), and its root's Deferred line names the
+issue. A row the verifier keeps STILL_VALID is never filed for or lifted this way, whatever
+an earlier conversation conceded: the verifier did not judge it deferrable. A thread left
+"Needs a tracking issue" before the bot filed unasked is unstuck on the next round only
+when the verifier reconciles it INTENTIONALLY_DEFERRED, which needs the skills repo's
+verifier template wording for a reasonable untracked deferral; a reply on the thread
+unsticks it through the conversation lane. A row
+that claims a backport's upstream follow-up which does not qualify is never filed for. Where
+no issue can be had (no maintainer reply, the repo is not allowed, the per-run cap, a failed
+search or create, a dry run), the worker overrides the verifier
+(`_hold_untracked_deferrals`, after every verifier lane):
 the finding is carried again as it was and keeps counting (a verifier's APPROVE becomes
 COMMENT: it approved with the finding lifted, so no CI watch is kept for it either), its
 thread is answered
 "**Still applies**: Deferring this needs a tracking issue …", the review body ends with
 "⏸️ Needs a tracking issue before it can be deferred (n): <titles>", and event
-`defer.needs_tracking` names the held hashes. Post-merge audits skip this. Deferrals
+`defer.needs_tracking` names the held hashes. That ask is made once (an ask posted before
+asks were recorded in kv is read off the thread): where the bot cannot file here at all
+(the repo is not allowed, or GitHub refused the create as it will keep refusing) and a
+maintainer then
+replies on the thread without a link, a blocking finding is deferred untracked
+("Deferring this without a tracking issue, at the maintainers' decision …", event
+`defer.accepted_untracked`), as a non-blocking one already was after one ask by anyone with
+standing. Post-merge audits skip this. Deferrals
 accepted under the old rule are grandfathered, so no existing PR flips to REQUEST_CHANGES:
 the rule took effect at `[deferral] tracking_required_since` (ISO-8601, normalized to UTC,
 whole seconds), or, unset, at the first start of a scheduling daemon or a live (not
@@ -1244,19 +1265,51 @@ verifier lanes):
   for) **and tracked**. Its rules: a relevant issue or PR linked in the thread, the PR
   description or a PR comment counts (complete or not; an unrelated link does not) →
   `INTENTIONALLY_DEFERRED` with `tracking: {"url": …}`; reasonable but untracked →
-  `DEFERRAL_NEEDS_TRACKING`, whose reply asks for a link or for permission to file one in
-  the repo that owns the follow-up (the PR's, or a sister repo such as
-  dashpay/rust-dashcore); a maintainer answering "file it" → `INTENTIONALLY_DEFERRED` with
-  `tracking: {"file": {repo, title, body}}`. Code enforces it (`converse.accept_deferrals`),
+  `INTENTIONALLY_DEFERRED` without `tracking` and a one-sentence acknowledgement, with no
+  ask for a link (the system supplies it); a maintainer asking outright to "file it" →
+  `INTENTIONALLY_DEFERRED` with `tracking: {"file": {repo, title, body}}` in the repo that
+  owns the follow-up (the PR's, or a sister repo such as dashpay/rust-dashcore). A thread
+  that already had the ask for a link is shown `tracking_asked`, and a maintainer answering
+  it without one ("no tracking issue") keeps the deferral. Code enforces it (`converse.accept_deferrals`),
   for anything above a nitpick: a cited reference (URL, `owner/repo#N` or `#N`) must
   actually appear in the thread, the PR description or a PR comment, and must not be the
   PR itself; a lane that cites nothing is covered by a reference the maintainer's own
   latest reply points to as tracking (same cues as above); a malformed `tracking` is
-  dropped, not a failed run. Otherwise the outcome becomes `DEFERRAL_NEEDS_TRACKING` with a system-written
-  ask ("Before I mark this deferred it needs a tracking issue for the follow-up. Link one,
-  or say so and I'll file it in `<repo>`."). The maintainer-spoke-last rule still applies
-  first. `DEFERRAL_NEEDS_TRACKING` lifts nothing; its note says the finding stands, and the
-  root gets ``> ⏸️ **Needs a tracking issue** (not yet deferred)``.
+  dropped, not a failed run. Otherwise a maintainer's deferral is `auto_file`: the worker
+  finds or files its tracking issue unasked (dashpay/dash-evo-tool#1210 and #1161: a
+  COLLABORATOR declined blockers as out of scope, the lane agreed and asked for a link, and
+  the blockers stood for rounds after "no tracking issue", while a decline the bot disagreed
+  with stopped blocking as DISPUTED after one answer). A lane that agreed but answered
+  `DEFERRAL_NEEDS_TRACKING` is read as the same deferral, its reply replaced by "Agreed,
+  this can follow in a change of its own, so I'm deferring it here." Silence never is: the
+  lane is also silent when it holds the PR must not merge as it stands. A maintainer who
+  declines to link one after the ask has the lane judge the deferral again on the current
+  code, and only its renewed `INTENTIONALLY_DEFERRED` keeps it. Filed or found, the reply's note links
+  the issue and the finding is lifted as any tracked deferral (thread status, the standing
+  review's "Updated after discussion" block, counts, lead, verdict, check run). Where no
+  issue can be had (see Filing below), the outcome becomes `DEFERRAL_NEEDS_TRACKING` with a
+  system-written ask, made once per thread (kv `defer.asked:…`): "… Link one, or say so and
+  I'll file it in `<repo>`." after the per-run cap, "I tried to file the tracking issue …
+  could not confirm it was filed …" after a create that failed or may have gone through,
+  and, where the bot may not file, "… Link one here, in the PR description or in a PR
+  comment; or, if it should stay untracked, a maintainer can say so here." Where the bot
+  cannot file here at all (`worker.CANNOT_FILE`: not allowed, or a create GitHub refused as
+  it will keep refusing: issues disabled (410), "Resource not accessible by …" (403), no such
+  repository (404); bad credentials, abuse detection or a deadline count as temporary), a
+  maintainer's next deferral without a link then defers it untracked (`untracked_ok`;
+  a search that failed, a cap, or a create that may have gone through keeps it held for a
+  later run to file instead; "Deferring this
+  without a tracking issue, at the maintainers' decision …", event
+  `defer.accepted_untracked`): an explicit "no tracking" is an exit, never a dead end. An
+  blocker deferred to an upstream change that did not qualify is asked for tracking and never
+  lifted untracked, as before. An
+  outside contributor's decline of a blocker is still `DEFERRAL_PENDING`, and only a
+  maintainer (by association) has the bot file unasked; a non-blocking finding the PR author
+  defers keeps the one-ask-then-untracked rule. The policy v12 thread lane cannot file: it
+  asks once (recorded the same way) and accepts a maintainer's answer untracked. The
+  maintainer-spoke-last rule still applies first. `DEFERRAL_NEEDS_TRACKING` lifts nothing;
+  its note says the finding stands, and the root gets
+  ``> ⏸️ **Needs a tracking issue** (not yet deferred)``.
 - A backport's missing upstream follow-up is the exception. It is raised as blocking, and a
   maintainer may defer it to a later backport without a tracking issue, because the project
   tracks the upstream changes it has not taken: the conversation lane answers
@@ -1273,20 +1326,39 @@ verifier lanes):
   after the code under it changed gets the review's reason once per such push, and a reply
   first answered with a tracking ask that the review reads as a dispute gets that answer
   once and is then left to the maintainers as any dispute is.
-- Filing (`worker._file_tracking_issues`; lanes stay read-only): only in a repo allowed by
-  `[deferral] file_owners` (default `["dashpay"]`) or `file_repos`; elsewhere the reply
-  asks the maintainer to file it. A retry never files twice: kv
-  `defer.issue:<repo>#<n>:<finding_hash>` holds the issue URL and is checked first; it
-  reads `pending` from just before `gh issue create` until the URL is known, so a create
-  that may have gone through (timeout, server error, no URL printed, a dead worker) is
-  never repeated (later attempts ask the maintainer to check and link it); a clean refusal
-  (permissions, validation) clears it. Then
-  `gh issue list -R <repo> --state open --search "<3 title terms> in:title"` (a failed
-  search files nothing): an open issue
-  whose title overlaps the proposed one by at least 0.6 (content-word Jaccard) is linked
-  instead (`defer.issue_linked`); otherwise `gh issue create` files it (`defer.issue_filed`)
-  with the lane's description plus the PR, the thread comment URL, the maintainer who asked
-  (no `@`) and a short quote of the finding, posted as the bot with no attribution footer.
+- Filing (`worker._file_tracking_issues`, `worker._tracking_issue`; lanes stay read-only):
+  only in a repo allowed by `[deferral] file_owners` (default `["dashpay"]`) or
+  `file_repos`; elsewhere the reply asks the maintainer to file it. Never in a dry run
+  (`--dry-run`, replays and so the v12 shadow runner, whose `gh` also refuses writes). A
+  retry never files twice: kv `defer.issue:<repo>#<n>:<finding_hash>`, and
+  `defer.issue_thread:<repo>#<n>:<root comment id>` for a re-hashed or retitled carry on the
+  same thread, hold the issue URL and are checked first (two findings that only share a file
+  and title never share an issue: one on record for another finding of the PR is never
+  matched); they read `pending <claimed at>` from just before `gh issue create` until the
+  URL is known, claimed in one write transaction (so two runs racing on the same finding
+  cannot both create it), so a create that may have gone through (timeout, server error, no
+  URL printed, a dead worker) is not repeated (later attempts ask the maintainer to check
+  and link it) until the claim is an hour old: then it counts as abandoned
+  (`defer.issue_pending_expired`), and the search below finds the issue the lost create made
+  or it is filed again. A clean refusal (permissions, validation) clears them.
+  Then `gh issue list -R <repo> --state all --search "<3 title terms> in:title"` (a failed
+  search files nothing): an open issue whose title overlaps the proposed one by at least
+  0.6 (content-word Jaccard; 0.8 when the bot files unasked, since nobody checks the
+  match), else one closed as not planned (a follow-up a maintainer declined) by at least
+  0.8, is linked instead (`defer.issue_linked`); one closed as completed is no tracking;
+  otherwise `gh issue
+  create` files it (`defer.issue_filed`) with the lane's description plus the PR, the
+  thread comment URL, the maintainer who asked (no `@`) and a short quote of the finding,
+  posted as the bot with no attribution footer. Unasked (`auto`), the issue is titled after
+  the finding and its body stands on its own (`publish.auto_tracking_issue_body`: that it
+  was found while reviewing the PR and deferred there, the finding's impact line, its file
+  and lines with a permalink at the commit it was posted on, a quote of the finding, the
+  PR and thread links, and that the bot filed it when it accepted the deferral; it claims
+  no maintainer asked; its title is one line with `@` defused). At most 3 unasked issues are
+  created per run (`AUTO_FILE_LIMIT`) and 10 per repository a day
+  (`AUTO_FILE_DAILY_LIMIT`); the deferrals past them stay held and are asked for a link. Unasked filings record
+  `defer.issue_auto_filed` / `defer.issue_auto_linked`, and every fallback
+  `defer.issue_auto_fallback` with the reason.
   The reply's note links it ("Filed <url> for the follow-up. Deferred on a maintainer's
   call …") and the finding is lifted as any deferral. On failure (permissions, network):
   event `defer.file_failed`, the reply asks the maintainer to file and link it, and the
