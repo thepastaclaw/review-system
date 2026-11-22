@@ -462,3 +462,15 @@ def test_a_reply_the_router_ignored_does_not_stop_the_carry(cfg, conn, gh, revie
         conn.execute("UPDATE inbox SET action='ignored'")
     _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
     assert carried_from(conn, REPO, 1, B) == A
+
+
+def test_a_routed_top_level_reply_stops_the_carry(cfg, conn, gh, reviewed, prints):
+    """A top-level PR comment quoting a finding (router `discussion_reply_queued`) counts like a
+    thread reply: the push is reviewed, and its review reads the comment."""
+    prints.update({A: "p1", B: "p1"})
+    _review(cfg, conn, gh, reviewed, A)
+    _reply_after_review(conn, gh, fmt_ts(now_dt() + timedelta(minutes=5)))
+    with tx(conn):
+        conn.execute("UPDATE inbox SET kind='comment', action='discussion_reply_queued'")
+    rid, _ = _review(cfg, conn, gh, reviewed, B, Trigger.NEW_PUSH)
+    assert _reviewed_itself(conn, rid) and carried_from(conn, REPO, 1, B) is None
