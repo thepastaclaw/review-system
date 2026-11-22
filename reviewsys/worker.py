@@ -1177,18 +1177,18 @@ def _judged_fixed(ctx: RunContext, finding_hash: str) -> dict[str, str] | None:
 
 def _settling_row(ctx: RunContext, finding_hash: str) -> sqlite3.Row | None:
     """The newest record of how a finding stands on this PR: a settlement (`conceded`,
-    `late.STAGE_FIXED`), or a final review of a finished run that carried or published it
-    again (its final verifier set, or a publication). A run that was superseded, failed or
-    cancelled before it published, and a Phase-1 pass whose final review did not keep the
-    finding, re-keep nothing."""
+    `late.STAGE_FIXED`), a publication, or the final verifier set of a finished run that
+    carried it again. The verifier set of a run that was superseded, failed or cancelled
+    before it published, and a Phase-1 pass whose final review did not keep the finding,
+    re-keep nothing."""
     return cast(
         "sqlite3.Row | None",
         ctx.conn.execute(
             "SELECT f.stage, f.body, h.sha, r.started_at FROM findings f "
             "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
             "WHERE h.repo=? AND h.number=? AND h.queue='live' AND f.hash=? "
-            "AND (f.stage IN ('conceded', ?) OR (r.status='done' AND (f.stage='posted' "
-            "OR (f.stage IN ('verified','verified-fresh') AND f.phase='verify2')))) "
+            "AND (f.stage IN ('conceded', 'posted', ?) OR (r.status='done' "
+            "AND f.stage IN ('verified','verified-fresh') AND f.phase='verify2')) "
             "ORDER BY r.id DESC, f.id DESC LIMIT 1",
             (ctx.repo, ctx.number, finding_hash, late.STAGE_FIXED),
         ).fetchone(),
@@ -2858,6 +2858,9 @@ def _verifier_lane(
         ctx.reviewers,
         lane_findings,
     )
+    for f in out.findings:
+        for key in late.ROUTING_KEYS:
+            f.extra.pop(key, None)
     _hold_untracked_deferrals(ctx, out, expected_phase)
     _settle_discussions(ctx, out, expected_phase)
     _record_findings(ctx, phase, "verified-fresh" if fresh_final else "verified", out.findings)
@@ -3782,7 +3785,8 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
     A final review's FIXED or OUTDATED is kept too (`late.STAGE_FIXED`, with the head it was
     judged at), so a later round that raises the finding again on unchanged lines has it
     confirmed first (`_revived_test`). A degraded review's judgement is not kept, nor one the
-    finding already has with the same status and head, nor the one a revival kept settled.
+    finding already has with the same status and head; a revival kept settled is written
+    again with the head it was judged at, since this run's raw verifier rows carried it.
     """
     kept = _kept_hashes(verified)
     rows = []
@@ -3797,8 +3801,11 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
         ends_dispute = status in late.JUDGED_FIXED and settlement == converse.DISPUTED
         if status in late.JUDGED_FIXED and phase == "final" and settlement is None:
             was = prior.extra.get("judged_fixed") or {}
-            same = (was.get("status"), was.get("sha")) == (status, ctx.sha)
-            if ctx.is_degraded or same or outcome.get("kept_settled"):
+            revival = bool(outcome.get("kept_settled") and was.get("sha"))
+            sha = str(was["sha"]) if revival else ctx.sha
+            if not revival and (
+                ctx.is_degraded or (was.get("status"), was.get("sha")) == (status, sha)
+            ):
                 continue
             rows.append(
                 (
@@ -3813,7 +3820,7 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
                     None,
                     prior.category,
                     prior.title,
-                    f"{status}\n{ctx.sha}",
+                    f"{status}\n{sha}",
                     None,
                 )
             )
@@ -5456,8 +5463,8 @@ def _settle_revived(
     earlier that this round raised again on unchanged lines (`extra["judged_fixed"]`). A
     `confirmed` one stands, its row's reason led by its `extra["revived_note"]`. One that does
     not stand (`settled`) keeps its judgement and the head it was made at (its row is marked
-    `kept_settled`, so publishing writes no new one, and a gated finding re-keeps nothing:
-    `_settling_row`). Returns how many stay settled."""
+    `kept_settled`, which publishing records again with that head). Returns how many stay
+    settled."""
     rows = {str(r.get("finding_hash") or ""): r for r in verified.prior_reconciliation}
     merged = _reconciliation(ctx, "final", verified)
     for f in confirmed:
@@ -5557,9 +5564,16 @@ def _remembered_decisions(ctx: RunContext, candidates: list[Finding]) -> dict[in
 
 
 def _human_replies_since(ctx: RunContext, h: str, since: str) -> list[dict[str, Any]]:
-    """The human replies on finding `h`'s thread posted after `since` (a stored timestamp)."""
+    """The human replies on finding `h`'s thread posted after `since` (a stored timestamp): not
+    ours, nor another bot's."""
     transcript = (ctx.open_threads.get(h) or {}).get("transcript") or []
-    return [c for c in transcript if not c.get("is_bot") and str(c.get("created_at") or "") > since]
+    return [
+        c
+        for c in transcript
+        if not c.get("is_bot")
+        and not github._is_other_bot(c)
+        and str(c.get("created_at") or "") > since
+    ]
 
 
 def _confirm_late(ctx: RunContext, candidates: list[Finding]) -> dict[int, late.Decision] | None:

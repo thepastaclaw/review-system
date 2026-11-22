@@ -58,6 +58,8 @@ JUDGED_FIXED = frozenset({"FIXED", "OUTDATED"})
 LISTED_MARGIN = 3
 
 Spot = tuple[str, int, int]  # (file, line_start, line_end)
+# what the gate sets on a finding, stripped from a verifier's output so only the gate does
+ROUTING_KEYS = ("posted_severity", "raised_as")
 
 
 def changed_paths(name_status: str) -> set[str]:

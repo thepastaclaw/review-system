@@ -143,8 +143,8 @@ def test_raised_again_on_unchanged_lines_it_needs_confirmation_and_stays_settled
     stages = _stages(conn, rid)
     assert ("verified", B["title"]) not in stages
     assert ("late-unconfirmed", B["title"]) in stages and ("followup", B["title"]) in stages
-    # it stays judged fixed at C, and nothing new is written for it
-    assert [b for _, b in _judged_rows(conn, h)] == [f"FIXED\n{C}"]
+    # it stays judged fixed at C, written again with C by this run
+    assert _judged_rows(conn, h)[-1] == (rid, f"FIXED\n{C}")
     assert _judged(conn, h) == {"status": "FIXED", "sha": C}
 
     # raised again at E: the earlier verdict stands, it is not listed again, nothing blocks
@@ -636,3 +636,93 @@ def test_listed_places_read_one_diff_per_head_and_file(repo, monkeypatch):  # no
         ("m.rs", 50, 50),
     ]
     assert len(calls) == 1
+
+
+def test_a_run_that_published_and_then_failed_still_supersedes_a_settlement(conn):
+    """A publication happened whatever came after it: a reintroduced finding it posted stands
+    over an older withdrawal."""
+    h = _seed_withdrawn_prior(conn, B)
+    rid = _unfinished_run_keeping(conn, B, D, status="failed")
+    with tx(conn):
+        conn.execute(
+            "UPDATE findings SET stage='posted' WHERE run_id=? AND phase='verify2'", (rid,)
+        )
+    ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1)
+    assert worker._latest_settlement(ctx, h) is None
+
+
+def test_a_revival_kept_settled_on_a_same_head_re_review_keeps_its_judgement(
+    cfg, conn, gh, lanes, unchanged
+):
+    """FIXED at C while a blocker stands; a re-review of C asked for runs the fresh final gate
+    before the late gate, so its raw verifier rows carry the revived suggestion. Kept settled,
+    its judgement is written again with C, and the next round still sees it."""
+    x = {**_blocking("Fee sum overflows"), "line_start": 30, "line_end": 31}
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([S, x])
+    _run(cfg, conn, gh, lanes)
+    hs, hx = Finding.from_dict(S).hash, Finding.from_dict(x).hash
+    carried_x = {**x, "finding_hash": hx}
+    _round(
+        cfg,
+        conn,
+        gh,
+        lanes,
+        C,
+        [carried_x],
+        [
+            {"finding_hash": hs, "status": "FIXED", "reason": "ok"},
+            {"finding_hash": hx, "status": "STILL_VALID", "reason": "still"},
+        ],
+    )
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    rid = _round(
+        cfg,
+        conn,
+        gh,
+        lanes,
+        C,
+        [{**S, "finding_hash": hs}],
+        [
+            {"finding_hash": hs, "status": "STILL_VALID", "reason": "still"},
+            {"finding_hash": hx, "status": "WITHDRAWN", "reason": "wrong"},
+        ],
+    )
+    steps = {r["name"] for r in conn.execute("SELECT name FROM steps WHERE run_id=?", (rid,))}
+    assert "fresh_phase2" in steps
+    assert conn.execute(
+        "SELECT 1 FROM findings WHERE run_id=? AND phase='verify2' AND stage='verified' AND hash=?",
+        (rid, hs),
+    ).fetchone()
+    assert _judged_rows(conn, hs)[-1] == (rid, f"FIXED\n{C}")
+    assert _judged(conn, hs) == {"status": "FIXED", "sha": C}
+
+
+def test_another_bots_reply_is_not_a_human_reply():
+    thread = {
+        "transcript": [
+            {"author": "coderabbitai[bot]", "is_bot": False, "created_at": "z", "body": "nit"},
+            {"author": "coderabbitai", "is_bot": False, "created_at": "z", "body": "nit"},
+            {"author": "thepastaclaw", "is_bot": True, "created_at": "z", "body": "ours"},
+            {"author": "knst", "is_bot": False, "created_at": "z", "body": "repro"},
+            {"author": "knst", "is_bot": False, "created_at": "a", "body": "older"},
+        ]
+    }
+    ctx = SimpleNamespace(open_threads={"h": thread})
+    assert [c["body"] for c in worker._human_replies_since(ctx, "h", "m")] == ["repro"]
+
+
+def test_a_verifier_cannot_set_the_gates_routing_keys(cfg, conn, gh, lanes, statuses):  # noqa: F811
+    """A new blocker on unchanged code whose verifier finding claims `posted_severity:
+    blocking` is not "demoted" to blocking when the confirmation lane does not confirm it."""
+    from tests.test_late import FALSE, _first_round
+
+    _first_round(cfg, conn, gh, lanes)
+    lanes.confirm = {FALSE["title"]: "non_blocking"}
+    rid = _round(
+        cfg, conn, gh, lanes, C, [{**FALSE, "posted_severity": "blocking", "raised_as": "x"}]
+    )
+    assert gh.posted_reviews[-1]["event"] == "APPROVE"
+    assert ("verified", FALSE["title"]) not in _stages(conn, rid)
+    assert ("followup", FALSE["title"]) in _stages(conn, rid)
