@@ -100,7 +100,7 @@ class Daemon:
                 Task("labels", 60, self.t_labels),
             ]
             if cfg.checks.enabled:
-                self.checks = checks.Reconciler(cfg, checks.app_auth(cfg))
+                self.checks = checks.Reconciler(cfg, checks.app_auth(cfg), review_gh=self.gh)
                 self.tasks.append(Task("checks", cfg.checks.interval_seconds, self.t_checks))
             if cfg.ci.enabled:
                 self.tasks.append(Task("ci_watch", cfg.ci.interval_seconds, self.t_ci_watch))
