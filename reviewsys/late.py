@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from .contract import Finding
-from .ledger import _git, git_has, lines_changed, map_lines
+from .ledger import _git, _hunks, _map_line, diff_touches, git_diff_u0, git_has, lines_changed
 from .models import FailKind, ReviewError
 
 CHANGED, IN_REVIEW, SINCE_FIRST, UNKNOWN = "A", "B", "C", "U"
@@ -152,12 +152,14 @@ def hold_severity(findings: Iterable[Finding], posted: Mapping[str, str]) -> lis
     blocking: nothing under it changed, its thread still states the severity it was posted
     with (`posted`, by prior hash), and no confirmation lane looks at a carried finding. On
     dashpay/dash#8158 a suggestion open for five rounds came back as a blocker from a pass
-    that was not shown its thread. Returns the findings held at their posted severity."""
+    that was not shown its thread. Returns the findings held at their posted severity, each
+    marked `extra["raised_as"]` (it runs twice in a round: the mark stays)."""
     held = []
     for f in findings:
         was = posted.get(f.prior_hash or "")
         if was and was != "blocking" and f.severity == "blocking" and on_unchanged(f):
             f.severity = was
+            f.extra["raised_as"] = "blocking"
             held.append(f)
     return held
 
@@ -182,18 +184,32 @@ def listed_spots(
 ) -> list[Spot]:
     """Where each listed follow-up candidate (file, lines, the head it was listed at) is at
     `head`: one whose lines have not changed since, re-located by the diff between the two
-    heads. One git cannot place, or whose code changed, has no place."""
+    heads (`ledger.lines_changed` and `ledger.map_lines` on one diff per head and file). One
+    git cannot place, or whose code changed, has no place."""
     out: list[Spot] = []
+    diffs: dict[tuple[str, str], str | None] = {}
     for path, start, end, sha in listed:
-        if not path or not start or lines_changed(repo, sha, head, path, start, end) is not False:
+        if not path or not start:
             continue
-        mapped = map_lines(repo, sha, head, path, start, end)
-        if mapped and mapped[0]:
-            out.append((path, mapped[0], mapped[1] or mapped[0]))
+        if (sha, path) not in diffs:
+            diffs[sha, path] = git_diff_u0(repo, sha, head, path) if sha != head else ""
+        diff = diffs[sha, path]
+        if diff is None or "+++ /dev/null" in diff.splitlines():
+            continue
+        if not diff.strip():
+            if sha == head or git_has(repo, head, path):
+                out.append((path, start, end or start))
+            continue
+        hunks = _hunks(diff)
+        if diff_touches(diff, start, end) or hunks is None:
+            continue
+        out.append(
+            (path, _map_line(hunks, start, end=False), _map_line(hunks, end or start, end=True))
+        )
     return out
 
 
-def revived_sentence(judged: Mapping[str, str], failure: str) -> str:
+def revived_sentence(judged: Mapping[str, Any], failure: str) -> str:
     """What a confirmed revival of a finding judged fixed says on its thread."""
     return (
         f"Judged fixed at `{judged['sha'][:8]}`; raised again and confirmed by an independent "
@@ -212,7 +228,7 @@ def split(
     posted: Callable[[Finding], str | None],
     listed: set[str],
     spots: Iterable[Spot] = (),
-    revived: Callable[[Finding], dict[str, str] | None] = lambda f: None,
+    revived: Callable[[Finding], dict[str, Any] | None] = lambda f: None,
 ) -> Split:
     """`findings` (each with `extra["code_status"]` set) by what happens to them. `posted`:
     the severity an earlier round posted the finding with, None when it is new to the PR.
@@ -225,7 +241,9 @@ def split(
 
     `revived`: the judgement (`hash`, `status`, `sha`) of a finding an earlier review judged
     fixed that `f` raises again on lines unchanged since, else None. Such a blocker is
-    confirmed like a new one (`extra["judged_fixed"]`); one below blocking stays settled."""
+    confirmed like a new one (`extra["judged_fixed"]`), and so is one held at the severity it
+    was posted with (`hold_severity`): unconfirmed, it is that carried finding again
+    (`extra["posted_severity"]`). One the round raises below blocking stays settled."""
     out = Split()
     spots = list(spots)
     for f in findings:
@@ -233,6 +251,9 @@ def split(
         judged = revived(f)
         if judged:
             f.extra["judged_fixed"] = judged
+            f.extra.pop("posted_severity", None)
+            if f.extra.get("raised_as") == "blocking":
+                f.extra["posted_severity"], f.severity = f.severity, "blocking"
             (out.candidates if f.severity == "blocking" else out.settled).append(f)
             continue
         f.extra.pop("judged_fixed", None)
@@ -277,7 +298,11 @@ def candidate_briefs(findings: list[Finding]) -> list[dict[str, Any]]:
             "body": f.body,
             **({"suggested_fix": f.suggestion} if f.suggestion else {}),
             **(
-                {"judged_fixed_at": judged["sha"], "lines_unchanged_since": True}
+                {
+                    "judged_fixed_at": judged["sha"],
+                    "lines_unchanged_since": True,
+                    **({"replies_since": judged["replies"]} if judged.get("replies") else {}),
+                }
                 if (judged := f.extra.get("judged_fixed"))
                 else {}
             ),

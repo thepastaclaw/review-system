@@ -322,6 +322,7 @@ def withheld_block(prior: list[dict[str, Any]], prior_sha: str | None) -> str:
     )
 
 
+JUDGED_FIXED_EXCERPT = 400  # of a judged-fixed prior's body, beside its title and location
 JUDGED_FIXED_RULE = (
     "- A prior entry with `judged_fixed` was reconciled FIXED or OUTDATED by an earlier review "
     "at the commit `judged_fixed.at`. Reconcile it that way again unless the current head "
@@ -782,8 +783,10 @@ def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
             d["prior_status"] = prior_status
         if judged:
             d["judged_fixed"] = {"status": judged["status"], "at": judged["sha"]}
-        if replies or prior_status or judged:
+        if replies or prior_status:
             d["body"] = f.body[:4000]
+        elif judged:
+            d["body"] = f.body[:JUDGED_FIXED_EXCERPT]
         if f.extra.get("tracking"):
             d["tracking"] = f.extra["tracking"]
         if replies:
@@ -978,7 +981,9 @@ def confirmation_prompt(
         "- A finding with `judged_fixed_at` raises again one that an earlier review of this "
         "pull request judged fixed at that commit, and the lines it cites have not changed "
         "since (`lines_unchanged_since`). It is `blocking` only if you can name the reachable "
-        "failure in the code as it stands, which that review missed.\n"
+        "failure in the code as it stands, whether that review missed it or code around it has "
+        "changed since. `replies_since` holds what people replied on its thread since then (a "
+        "reproduction someone posted, for one): check it against the code.\n"
         if any(r.get("judged_fixed_at") for r in reported)
         else ""
     )

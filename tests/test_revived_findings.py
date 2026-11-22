@@ -16,6 +16,7 @@ import pytest
 from reviewsys import late, prompts, publish, worker
 from reviewsys.contract import Finding
 from reviewsys.db import kv_set, tx
+from reviewsys.models import RunStatus
 from tests.test_late import _f, _lines, _round, _stages, _with, repo, statuses  # noqa: F401
 from tests.test_ledger import _commit, _git
 from tests.test_settle_disputes import _thread
@@ -23,6 +24,7 @@ from tests.test_worker_e2e import (  # fake_git: autouse, fakes the mirror and w
     KNST,
     _blocking,
     _gql_comment,
+    _queue_new_head,
     _reviewer_calls,
     _run,
     _seed_prior,
@@ -43,7 +45,14 @@ def unchanged(monkeypatch, statuses):  # noqa: F811
     """The lines under every finding unchanged since any earlier head (a flag flips it)."""
     moved = {"value": False}
     monkeypatch.setattr(late.CodeHistory, "moved", lambda self, since, f: moved["value"])
+    monkeypatch.setattr(late.CodeHistory, "changed_since", lambda self, since, path: moved["value"])
     return moved
+
+
+def _judged(conn, h):
+    ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1)
+    judged = worker._judged_fixed(ctx, h)
+    return judged and {k: v for k, v in judged.items() if k != "since"}
 
 
 def _fixed(cfg, conn, gh, lanes, finding=B, *, thread=True):
@@ -85,7 +94,7 @@ def test_a_fixed_judgement_is_kept_and_shown_to_the_next_round(cfg, conn, gh, la
     # an old reader (the previous code) sees no settlement in it
     ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1)
     assert worker._latest_settlement(ctx, h) is None
-    assert worker._judged_fixed(ctx, h) == {"status": "FIXED", "sha": C}
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
 
     calls = len(lanes.calls)
     _round(cfg, conn, gh, lanes, D, [], [{"finding_hash": h, "status": "FIXED", "reason": "ok"}])
@@ -95,6 +104,20 @@ def test_a_fixed_judgement_is_kept_and_shown_to_the_next_round(cfg, conn, gh, la
         assert prompts.JUDGED_FIXED_RULE.replace("\n", "") in p.replace("\n", "")
     # judged again at D: the newer head is the one it was judged at
     assert _judged_rows(conn, h)[-1][1] == f"FIXED\n{D}"
+    # judged again on the same head: nothing new to write
+    rows = len(_judged_rows(conn, h))
+    _round(cfg, conn, gh, lanes, D, [], [{"finding_hash": h, "status": "FIXED", "reason": "ok"}])
+    assert len(_judged_rows(conn, h)) == rows
+
+
+def test_a_judged_fixed_prior_is_shown_by_an_excerpt():
+    f = Finding.from_dict({**B, "body": "x" * 5000})
+    f.extra["judged_fixed"] = {"status": "FIXED", "sha": C, "since": "t"}
+    (d,) = prompts.prior_for_prompt([f], C)
+    assert d["judged_fixed"] == {"status": "FIXED", "at": C}
+    assert len(d["body"]) == prompts.JUDGED_FIXED_EXCERPT
+    f.extra["thread_replies"] = [{"author": "knst", "body": "no"}]
+    assert len(prompts.prior_for_prompt([f], C)[0]["body"]) == 4000
 
 
 def test_raised_again_on_unchanged_lines_it_needs_confirmation_and_stays_settled_without(
@@ -120,8 +143,9 @@ def test_raised_again_on_unchanged_lines_it_needs_confirmation_and_stays_settled
     stages = _stages(conn, rid)
     assert ("verified", B["title"]) not in stages
     assert ("late-unconfirmed", B["title"]) in stages and ("followup", B["title"]) in stages
-    # it stays judged fixed at C, recorded again by this run
-    assert _judged_rows(conn, h)[-1] == (rid, f"FIXED\n{C}")
+    # it stays judged fixed at C, and nothing new is written for it
+    assert [b for _, b in _judged_rows(conn, h)] == [f"FIXED\n{C}"]
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
 
     # raised again at E: the earlier verdict stands, it is not listed again, nothing blocks
     calls = len(lanes.calls)
@@ -131,7 +155,7 @@ def test_raised_again_on_unchanged_lines_it_needs_confirmation_and_stays_settled
     review = gh.posted_reviews[-1]
     assert review["event"] == "APPROVE" and "Follow-up candidates" not in review["body"]
     assert "1 follow-up candidate(s) already listed by an earlier review" in review["body"]
-    assert _judged_rows(conn, h)[-1] == (rid, f"FIXED\n{C}")
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
 
 
 def test_confirmed_it_stands_and_its_thread_says_why(cfg, conn, gh, lanes, unchanged):
@@ -151,8 +175,7 @@ def test_confirmed_it_stands_and_its_thread_says_why(cfg, conn, gh, lanes, uncha
         "SELECT body FROM findings WHERE run_id=? AND stage='verified' AND hash=?", (rid, h)
     ).fetchone()["body"]
     assert body.endswith(f"_{sentence}_")
-    ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1)
-    assert worker._judged_fixed(ctx, h) is None  # standing again: an ordinary prior finding
+    assert _judged(conn, h) is None  # standing again: an ordinary prior finding
 
 
 def test_on_lines_changed_since_it_takes_the_normal_path(cfg, conn, gh, lanes, unchanged):
@@ -209,30 +232,52 @@ def test_a_reply_on_its_resolved_thread_is_answered_and_reopens_nothing_unconfir
     ).fetchone()
 
 
-def test_the_conversation_lane_answers_a_fixed_finding_as_settled(cfg, conn, gh, lanes, unchanged):
-    """A reply on the resolved thread of a finding judged fixed, answered on the same commit:
-    the answer neither re-counts it nor takes its resolved status off the thread."""
+def test_a_reply_saying_it_is_not_fixed_gets_it_checked_again(cfg, conn, gh, lanes, unchanged):
+    """A wrong FIXED, and a revival the confirmation lane did not confirm: a human replies on
+    the resolved thread with a reproduction. The conversation lane's answer keeps it resolved
+    and says the next full review re-checks it; that review asks the lane afresh instead of
+    reusing its earlier verdict, and shows it the reply."""
     from tests.test_settle_disputes import _run_conversation
 
     h = _fixed(cfg, conn, gh, lanes)
+    lanes.confirm = {B["title"]: "non_blocking"}
+    _raised_again(cfg, conn, gh, lanes, h, D)
+    assert len(_prompts(lanes, "confirm")) == 1
     root = gh.threads[0]["comments"]["nodes"][0]
     root["body"] = publish.with_thread_status(root["body"], status="FIXED", head_sha=C)
     gh.inline[0]["body"] = root["body"]
-    reviews = len(gh.posted_reviews)
     gh.threads[0]["isResolved"] = True
-    gh.threads[0]["comments"]["nodes"].append(
-        _gql_comment({**KNST, "body": "Per maintainer decision, not changing this."})
-    )
-    lanes.calls.clear()
+    repro = "Not fixed: run `det-cli refresh & det-cli lock` twice and the wallet deadlocks."
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment({**KNST, "body": repro}))
+    reviews = len(gh.posted_reviews)
     still = {"finding_hash": h, "status": "STILL_VALID", "reply": "The race is still there."}
-    _run_conversation(cfg, conn, gh, lanes, C, [still])
-    (prompt,) = _prompts(lanes, "conversation")
+    calls = len(lanes.calls)
+    _run_conversation(cfg, conn, gh, lanes, D, [still])
+    (prompt,) = [c.prompt for c in lanes.calls[calls:] if c.role == "conversation"]
     assert '"already_settled_as": "FIXED"' in prompt
-    assert "The race is still there." in gh.replies[-1]["body"]
+    answer = gh.replies[-1]["body"]
+    assert answer.rstrip().endswith(worker.STAYS_RESOLVED)
+    assert "The race is still there." in answer
     assert "✅ **Resolved**" in root["body"]
     assert len(gh.posted_reviews) == reviews  # no verdict moved
-    ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1)
-    assert worker._judged_fixed(ctx, h) == {"status": "FIXED", "sha": C}
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
+
+    lanes.confirm = {}
+    calls = len(lanes.calls)
+    _raised_again(cfg, conn, gh, lanes, h, E)
+    (confirm,) = [c.prompt for c in lanes.calls[calls:] if c.role == "confirm"]
+    assert "replies_since" in confirm and "det-cli refresh" in confirm
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+
+
+def test_a_same_head_re_review_asks_the_confirmation_lane_again(cfg, conn, gh, lanes, unchanged):
+    h = _fixed(cfg, conn, gh, lanes)
+    lanes.confirm = {B["title"]: "non_blocking"}
+    _raised_again(cfg, conn, gh, lanes, h, D)
+    _raised_again(cfg, conn, gh, lanes, h, E)
+    assert len(_prompts(lanes, "confirm")) == 1  # a new head, nothing said since: reused
+    _raised_again(cfg, conn, gh, lanes, h, E)
+    assert len(_prompts(lanes, "confirm")) == 2
 
 
 def test_a_non_blocking_finding_raised_again_is_not_carried(cfg, conn, gh, lanes, unchanged):
@@ -242,7 +287,7 @@ def test_a_non_blocking_finding_raised_again_is_not_carried(cfg, conn, gh, lanes
     review = gh.posted_reviews[-1]
     assert review["event"] == "APPROVE" and S["title"] not in review["body"]
     assert ("late-settled", S["title"]) in _stages(conn, rid)
-    assert _judged_rows(conn, h)[-1] == (rid, f"FIXED\n{C}")
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
 
 
 def test_without_a_fixed_judgement_on_record_nothing_changes(cfg, conn, gh, lanes, unchanged):
@@ -364,3 +409,230 @@ def test_a_listed_suggestion_raised_again_as_a_blocker_goes_to_confirmation():
     assert late.is_listed(demoted, set(), spots)
     sugg = _with(_f("f.rs", 12, title="Reworded again", severity="suggestion"), late.SINCE_FIRST)
     assert late.split([sugg], posted=lambda f: None, listed=set(), spots=spots).repeats == [sugg]
+
+
+# ---- what may supersede the memory ----
+
+
+def _unfinished_run_keeping(conn, finding, sha, status="cancelled"):
+    """A run of a later head that wrote its final verifier set (carrying `finding`) and then
+    ended `status` without publishing: a push superseded it during the confirmation lane."""
+    f = Finding.from_dict(finding)
+    with tx(conn):
+        hid = conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, "
+            "eligible_at) VALUES ('dashpay/platform', 1, ?, 'push', 0, 'superseded', 't', 't')",
+            (sha,),
+        ).lastrowid
+        rid = conn.execute(
+            "INSERT INTO runs (head_id, attempt, status, token, started_at, deadline_at) "
+            "VALUES (?, 1, ?, 't', '2099-01-01T00:00:00Z', 't')",
+            (hid, status),
+        ).lastrowid
+        for phase in ("verify1", "verify2"):
+            conn.execute(
+                "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, "
+                "severity, category, title, body) VALUES (?,?,'verified',?,?,?,?,?,?,?,'b')",
+                (rid, phase, f.hash, f.file, 11, 12, f.severity, f.category, f.title),
+            )
+    return rid
+
+
+def test_a_run_that_never_finished_does_not_erase_a_fixed_judgement(
+    cfg, conn, gh, lanes, unchanged
+):
+    """#1112 again otherwise: a run writes its verifier set before the confirmation lane, and
+    a push that supersedes it there would leave a STILL_VALID carry as the newest record."""
+    h = _fixed(cfg, conn, gh, lanes)
+    _unfinished_run_keeping(conn, B, D)
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
+    lanes.confirm = {B["title"]: "non_blocking"}
+    _raised_again(cfg, conn, gh, lanes, h, E)
+    assert len(_prompts(lanes, "confirm")) == 1
+    assert gh.posted_reviews[-1]["event"] == "APPROVE"
+
+
+def test_a_run_that_never_finished_does_not_lift_a_withdrawal(conn):
+    h = _seed_withdrawn_prior(conn, B)
+    ctx = SimpleNamespace(conn=conn, repo="dashpay/platform", number=1)
+    _unfinished_run_keeping(conn, B, D, status="failed")
+    assert worker._latest_settlement(ctx, h) == "WITHDRAWN"
+    # a finished run's Phase-1 pass whose final review dropped it re-keeps nothing either
+    rid = _unfinished_run_keeping(conn, B, E, status="done")
+    with tx(conn):
+        conn.execute("DELETE FROM findings WHERE run_id=? AND phase='verify2'", (rid,))
+    assert worker._latest_settlement(ctx, h) == "WITHDRAWN"
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO findings (run_id, phase, stage, hash, severity, title, body) "
+            "VALUES (?, 'verify2', 'verified', ?, 'blocking', 't', 'b')",
+            (rid, h),
+        )
+    assert worker._latest_settlement(ctx, h) is None  # a finished final review kept it
+
+
+# ---- severity, phases, modes ----
+
+
+def test_a_suggestion_judged_fixed_and_raised_as_a_blocker_is_confirmed_or_stays_visible(
+    cfg, conn, gh, lanes, unchanged, monkeypatch
+):
+    """`late.hold_severity` holds a carried suggestion raised to blocking on unchanged code at
+    its posted severity; judged fixed earlier, it still goes to the confirmation lane, and
+    unconfirmed it is the carried suggestion it was, not dropped."""
+    from tests import test_late
+
+    monkeypatch.setitem(test_late.STATUS, S["title"], late.SINCE_FIRST)
+    h = _fixed(cfg, conn, gh, lanes, S)
+    lanes.confirm = {S["title"]: "non_blocking"}
+    rid = _raised_again(cfg, conn, gh, lanes, h, D, {**S, "severity": "blocking"})
+    assert len(_prompts(lanes, "confirm")) == 1
+    review = gh.posted_reviews[-1]
+    assert review["event"] != "REQUEST_CHANGES" and S["title"] in review["body"]
+    assert _stages(conn, rid)[("verified", S["title"])][0] == "suggestion"
+    assert _judged(conn, h) is None  # standing again, as the suggestion it was
+
+
+def test_a_suggestion_judged_fixed_and_confirmed_as_a_blocker_blocks(
+    cfg, conn, gh, lanes, unchanged, monkeypatch
+):
+    from tests import test_late
+
+    monkeypatch.setitem(test_late.STATUS, S["title"], late.SINCE_FIRST)
+    h = _fixed(cfg, conn, gh, lanes, S)
+    rid = _raised_again(cfg, conn, gh, lanes, h, D, {**S, "severity": "blocking"})
+    assert len(_prompts(lanes, "confirm")) == 1
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert _stages(conn, rid)[("verified", S["title"])][0] == "blocking"
+
+
+def test_a_preliminary_review_still_settles_an_answered_dispute(cfg, conn, gh, lanes, unchanged):
+    """The Phase-1 verifier has no confirmation gate after it: a carried finding judged fixed
+    whose dispute was already answered still becomes DISPUTED there, instead of being posted
+    as an unconfirmed blocker by a preliminary review."""
+    h = _fixed(cfg, conn, gh, lanes)
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment({**KNST, "body": "Not a bug."}))
+    with tx(conn):
+        memo = {"reply": "901", "standing": True, "sha": C}
+        kv_set(conn, f"dispute.answered:dashpay/platform#1:{h}", json.dumps(memo))
+    row = {"finding_hash": h, "status": "STILL_VALID", "reason": STILL, "disputed": True}
+    carried = {**B, "finding_hash": h}
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [carried],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [row],
+    }
+    lanes.verifier["preliminary"] = {
+        **_verifier([carried]),
+        "prior_finding_reconciliation": [row],
+    }
+    lanes.verifier["final"] = {**_verifier([carried]), "prior_finding_reconciliation": [row]}
+    lanes.confirm = {B["title"]: "non_blocking"}
+    rid = _queue_new_head(cfg, conn, gh, C, lanes)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == (
+        RunStatus.DONE
+    )
+    phases = [r["phase"] for r in conn.execute("SELECT phase FROM reviews WHERE run_id=?", (rid,))]
+    assert "preliminary" not in phases
+    assert all(r["event"] != "REQUEST_CHANGES" for r in gh.posted_reviews[-1:])
+
+
+def test_in_degraded_mode_it_stands_as_raised(cfg, conn, gh, lanes, unchanged, monkeypatch):
+    h = _fixed(cfg, conn, gh, lanes)
+    monkeypatch.setattr(worker.RunContext, "is_degraded", property(lambda self: True))
+    rid = _raised_again(cfg, conn, gh, lanes, h, D)
+    assert not _prompts(lanes, "confirm")
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert ("verified", B["title"]) in _stages(conn, rid)
+    assert conn.execute(
+        "SELECT 1 FROM events WHERE kind='late.confirm_skipped' AND run_id=?", (rid,)
+    ).fetchone()
+
+
+def test_judged_fixed_again_in_between_moves_the_head(cfg, conn, gh, lanes, unchanged):
+    h = _fixed(cfg, conn, gh, lanes)
+    _round(cfg, conn, gh, lanes, D, [], [{"finding_hash": h, "status": "FIXED", "reason": "ok"}])
+    assert _judged(conn, h) == {"status": "FIXED", "sha": D}
+    lanes.confirm = {B["title"]: "non_blocking"}
+    _raised_again(cfg, conn, gh, lanes, h, E)
+    (confirm,) = _prompts(lanes, "confirm")
+    assert f'"judged_fixed_at": "{D}"' in confirm
+
+
+def test_the_confirmation_lane_is_not_told_the_failure_must_be_one_the_review_missed(cfg):
+    f = Finding.from_dict(B)
+    f.extra["judged_fixed"] = {"sha": C, "replies": [{"author": "knst", "body": "repro"}]}
+    p = prompts.confirmation_prompt(
+        cfg,
+        repo="dashpay/platform",
+        number=1,
+        head_sha=D,
+        meta={"title": "t", "body": "b"},
+        coverage_from="b" * 40,
+        reported=late.candidate_briefs([f]),
+    )
+    assert "whether that review missed it or code around it has changed since" in p
+    assert '"replies_since"' in p and '"body": "repro"' in p
+
+
+# ---- on a real repository ----
+
+
+def _later_round(worktree, head, prev):
+    return SimpleNamespace(
+        cfg=SimpleNamespace(policy=SimpleNamespace(pipeline=None)),
+        is_audit=False,
+        sha=head,
+        prev_final_sha=prev,
+        first_reviewed_sha=None,
+        worktree=worktree,
+        code_history=None,
+    )
+
+
+def test_unchanged_lines_as_git_reads_them(repo):  # noqa: F811
+    base = _commit(repo, {"w.rs": "\n".join(_lines(40, "w")) + "\n", "x.rs": "x\n"})
+    _git(repo, "checkout", "-q", "-b", "feature")
+    fixed = _commit(repo, {"w.rs": "\n".join(_lines(40, "w")) + "\nfixed tail\n"})
+    f = _f("w.rs", 10, 12)
+    # lines changed since the head it was judged fixed at: the normal path
+    edited = _lines(40, "w")
+    edited[10] = "edited after the fix"
+    head = _commit(repo, {"w.rs": "\n".join(edited) + "\nfixed tail\n"})
+    assert not worker._unchanged_since(_later_round(repo, head, fixed), fixed, f)
+    # the head it was judged fixed at is gone (a force-push): the normal path
+    assert not worker._unchanged_since(_later_round(repo, head, fixed), "0" * 40, f)
+    _git(repo, "reset", "-q", "--hard", fixed)
+    # renamed without a content change: unchanged, under its new name
+    _git(repo, "mv", "w.rs", "v.rs")
+    _git(repo, "commit", "-q", "-m", "rename")
+    renamed = _git(repo, "rev-parse", "HEAD")
+    assert worker._unchanged_since(_later_round(repo, renamed, fixed), fixed, _f("v.rs", 10, 12))
+    _git(repo, "reset", "-q", "--hard", fixed)
+    # the base branch merged in, touching other files and other lines: unchanged
+    _git(repo, "checkout", "-q", "-")
+    upstream = _lines(40, "w")
+    upstream[35] = "changed on the base branch"
+    _commit(repo, {"w.rs": "\n".join(upstream) + "\n", "x.rs": "y\n"})
+    _git(repo, "checkout", "-q", "feature")
+    _git(repo, "merge", "-q", "--no-edit", "-")
+    merged = _git(repo, "rev-parse", "HEAD")
+    assert merged != fixed and base
+    assert worker._unchanged_since(_later_round(repo, merged, fixed), fixed, f)
+    assert not worker._unchanged_since(_later_round(repo, merged, fixed), fixed, _f("w.rs", 35))
+
+
+def test_listed_places_read_one_diff_per_head_and_file(repo, monkeypatch):  # noqa: F811
+    listed_at = _commit(repo, {"m.rs": "\n".join(_lines(60)) + "\n"})
+    head = _commit(repo, {"m.rs": "\n".join(["new"] * 4 + _lines(60)) + "\n"})
+    calls = []
+    real = late.git_diff_u0
+    monkeypatch.setattr(late, "git_diff_u0", lambda *a: calls.append(a) or real(*a))
+    rows = [("m.rs", 10, 12, listed_at), ("m.rs", 40, 41, listed_at), ("m.rs", 50, 50, head)]
+    assert late.listed_spots(repo, head, rows) == [
+        ("m.rs", 14, 16),
+        ("m.rs", 44, 45),
+        ("m.rs", 50, 50),
+    ]
+    assert len(calls) == 1
