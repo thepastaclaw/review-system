@@ -873,12 +873,25 @@ pipeline keep the earlier behaviour.
   every Phase-2 reviewer), a single-stage tier or a fast tier (`trivial`, `low`). Best
   effort: if its lanes fail, the review goes on with the first pass alone
   (`fresh_first.failed`). Disclosed as "Second Phase-2 pass".
+- **Later rounds are incremental.** On a round after a full-strength final review of
+  another head, every reviewer lane and the verifier are told to review what changed since
+  that head (`git diff <since>..<head>`, or `git range-diff` after a rebase) and to check
+  the prior findings against it, not to review the pull request again from the start
+  (`prompts.incremental_block`, `worker._since`). A new finding is for code that changed, or
+  for unchanged code the change breaks, with the change named; the one exception is a defect
+  that loses funds, breaks consensus or exposes key material. Re-reading everything every
+  round kept finding something: over 260 client PRs, 60% of the blockers raised after round
+  one were on lines the previous push had not touched, and the rate of new blockers did not
+  fall from round 2 to round 15. A re-review of the same head, which someone asked for,
+  still reads everything.
 - **Code status per finding.** On a later round every final finding gets a mechanical
-  status by its file, from git in the run's worktree (`late.CodeHistory`, one `git diff
-  --name-status -M -z` per base): `A` the file changed since the previous final-reviewed
-  head, `B` unchanged since then but changed since the PR's first reviewed head, `C`
-  unchanged since the first review, `U` no anchor, a file the head lacks, or git cannot tell
-  (treated as `A`). A rename without edits is unchanged. The previous final-reviewed head is
+  status by its own lines, from git in the run's worktree (`late.CodeHistory`: one `git
+  diff --name-status -M -z` per base, then `ledger.lines_changed` on the finding's lines
+  when its file changed): `A` the lines changed since the previous final-reviewed head, `B`
+  unchanged since then but changed since the PR's first reviewed head, `C` unchanged since
+  the first review, `U` no anchor, a file the head lacks, or git cannot tell (treated as
+  `A`). By file, a file the author edits in every round was always `A`, and half the late
+  blockers on untouched lines skipped the rules below. A rename without edits is unchanged. The previous final-reviewed head is
   the newest full-strength final review on our record (Phase 2 `ok`, not degraded; not a
   conversation's or a CI update's row; on a same-sha re-review, the head itself): a review on
   stand-ins, a Phase-1-only one or one we have no record of is no basis, and the next
@@ -904,13 +917,22 @@ pipeline keep the earlier behaviour.
   that fails for good keeps every blocker as raised (`late.confirm_failed`). A verdict is
   remembered by finding hash: a blocker an earlier round judged `non_blocking` or `invalid`
   is not sent again while its file is unchanged since that round. Disclosed in the
-  provenance ("Code unchanged since the last final review").
-- **The fresh final gate on later rounds** runs only when the previous final review had
-  blockers and no blocker stands now (they may have masked others), never after a clean
-  approval. A new blocker on unchanged code holds it until its confirmation: if that leaves
-  no blocker standing, the gate runs then, and a re-raise of the same blocker in it reuses
-  the run's decision. A stand-in model's confirmation (degraded mode) never demotes a
-  blocker (`late.confirm_skipped`), and its verdicts are never remembered.
+  provenance ("New since the last final review").
+- **Every new blocker of a later round is confirmed**, on changed code as well, and so is
+  one an earlier round posted below blocking (carried or restated): it blocks only with
+  actual reachability (`prompts.ACTUAL_REACHABILITY`: the entry point a real user,
+  peer or API caller takes, the inputs or state and how they arise, the path in the code,
+  and what is lost). One the confirmation does not find that for is posted as a suggestion
+  on its own thread when its code changed, and listed as a follow-up candidate when it did
+  not; one an earlier round posted goes back to the severity it was posted with. A blocker
+  under one of the project's own rules (layer ownership, a backport's missing hunk) is
+  judged by that rule. A later round is not stopped at the Phase-1 gate, whose preliminary
+  review would post blockers nothing confirmed. A stand-in model's confirmation (degraded
+  mode) never demotes a blocker (`late.confirm_skipped`), and its verdicts are never
+  remembered.
+- **The fresh final gate**, a second unanchored review of the whole PR, no longer runs on a
+  later round of a new head: the first full review already reads everything twice. It runs
+  on a re-review of a head already reviewed in full with blockers, when none stands now.
 
 Record: the run's final verifier rows (`verified` / `verified-fresh`) are rewritten to what
 stands, with code statuses; gated findings keep their original severity under `late-nit`,
@@ -920,8 +942,7 @@ summarize the round.
 
 Cost: round 1 (normal and critical tiers) adds one reviewer lane per Phase-2 role (no
 verifier lane); a later round adds at most one confirmation lane (only when it has new
-blockers on unchanged code not decided before) and runs the fresh gate less often than
-before (only after fixed blockers, no longer after every clean re-review).
+blockers not decided before) and no second pass.
 
 ## Stepping back from a PR that keeps drawing new blockers
 
@@ -1002,10 +1023,10 @@ run's `stepback.json` has the full answer. `enabled = false` under `[stepback]` 
 
 ## Final approval after an iterative review
 
-An incremental review is a reconciliation pass, not by itself a new approval gate. It
-first checks the prior findings, discussion, and replies and stops if any blocker remains.
-When that pass is clear and the previous final review had blockers (above), the worker
-starts a fresh Phase-2 review of the complete current merge-base range. Those reviewer
+A re-review of a head that was already reviewed in full checks the prior findings,
+discussion, and replies first and stops if any blocker remains. When that pass is clear and
+the previous final review had blockers (above), the worker starts a fresh Phase-2 review of
+the complete current merge-base range. Those reviewer
 lanes receive the full diff and evidence without the old finding checklist, which reduces
 anchoring on the previous conclusion. They are told the PR was reviewed before and shown
 only what was settled without a code change (withdrawn, deferred by a maintainer, disputed:

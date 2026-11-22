@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from .contract import Finding
-from .ledger import _git, git_has
+from .ledger import _git, git_has, lines_changed
 from .models import FailKind, ReviewError
 
 CHANGED, IN_REVIEW, SINCE_FIRST, UNKNOWN = "A", "B", "C", "U"
@@ -77,16 +77,27 @@ class CodeHistory:
     _changed: dict[str, set[str] | None] = field(default_factory=dict)
 
     def status(self, f: Finding) -> str:
+        """By the finding's own lines: a file an author keeps editing is changed in every
+        round, which let half the late blockers on untouched lines pass as findings on new
+        code. Lines git cannot place count as changed."""
         if not f.file or not f.line_start or not git_has(self.repo, self.head, f.file):
             return UNKNOWN
         since_prev = self.changed_since(self.prev, f.file)
         if since_prev is None:
             return UNKNOWN
-        if since_prev:
+        if since_prev and self.moved(self.prev, f):
             return CHANGED
         if not self.first or self.first == self.prev:
             return SINCE_FIRST
-        return SINCE_FIRST if self.changed_since(self.first, f.file) is False else IN_REVIEW
+        if self.changed_since(self.first, f.file) is False or not self.moved(self.first, f):
+            return SINCE_FIRST
+        return IN_REVIEW
+
+    def moved(self, since: str, f: Finding) -> bool:
+        """The lines under `f` (as the head reads them) changed since `since`, or git cannot
+        tell."""
+        changed = lines_changed(self.repo, self.head, since, f.file, f.line_start, f.line_end)
+        return changed is not False
 
     def changed_since(self, since: str, path: str) -> bool | None:
         """Whether the head's `path` changed since `since`; None when git cannot tell."""
@@ -114,7 +125,7 @@ class Split:
     nits: list[Finding] = field(default_factory=list)  # new B/C nitpicks: dropped
     followups: list[Finding] = field(default_factory=list)  # new B/C suggestions, first listing
     repeats: list[Finding] = field(default_factory=list)  # ... already listed by a review
-    candidates: list[Finding] = field(default_factory=list)  # new B/C blockers: to confirm
+    candidates: list[Finding] = field(default_factory=list)  # new blockers: to confirm
 
     @property
     def changed(self) -> bool:
@@ -130,8 +141,7 @@ def hold_severity(findings: Iterable[Finding], posted: Mapping[str, str]) -> lis
     held = []
     for f in findings:
         was = posted.get(f.prior_hash or "")
-        unchanged = f.extra.get("code_status") in UNCHANGED
-        if was and was != "blocking" and f.severity == "blocking" and unchanged:
+        if was and was != "blocking" and f.severity == "blocking" and on_unchanged(f):
             f.severity = was
             held.append(f)
     return held
@@ -142,19 +152,33 @@ def is_listed(f: Finding, listed: set[str]) -> bool:
     return f.hash in listed or f.dedupe_key in listed
 
 
+def on_unchanged(f: Finding) -> bool:
+    """`f` is on code unchanged since the previous final review."""
+    return f.extra.get("code_status") in UNCHANGED
+
+
 def split(
-    findings: Iterable[Finding], *, is_new: Callable[[Finding], bool], listed: set[str]
+    findings: Iterable[Finding], *, posted: Callable[[Finding], str | None], listed: set[str]
 ) -> Split:
-    """`findings` (each with `extra["code_status"]` set) by what happens to them: only new
-    findings on code unchanged since the previous final review leave the normal path."""
+    """`findings` (each with `extra["code_status"]` set) by what happens to them. `posted`:
+    the severity an earlier round posted the finding with, None when it is new to the PR.
+
+    A later round's blocker that no earlier round posted as one is confirmed before it
+    blocks, wherever it is: a new finding, or one carried or restated from below blocking
+    (`extra["posted_severity"]`), which would otherwise undo an earlier confirmation's
+    verdict a round later. The other new findings leave the normal path only on code
+    unchanged since the previous final review."""
     out = Split()
     for f in findings:
-        if f.extra.get("code_status") not in UNCHANGED or not is_new(f):
+        was = posted(f)
+        if f.severity == "blocking" and was != "blocking":
+            if was:
+                f.extra["posted_severity"] = was
+            out.candidates.append(f)
+        elif was is not None or not on_unchanged(f):
             out.keep.append(f)
         elif f.severity == "nitpick":
             out.nits.append(f)
-        elif f.severity == "blocking":
-            out.candidates.append(f)
         elif is_listed(f, listed):
             out.repeats.append(f)
         else:
