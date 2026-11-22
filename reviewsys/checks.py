@@ -24,10 +24,13 @@ ends on its preliminary review, which stands the same way once the run is over.
 
 This is reconciliation, not an event hook: every pass derives the wanted check of every open
 PR's head (and of every commit whose check is still open) and writes only what differs from
-what was last written. Bounded live reads of the exact backing review observe explicit human
-dismissals even when the original database verdict hasn't changed. Confirmed dismissal
-identity, head, actor, reason and time are persisted separately from that publication record,
-so a restart, retry or stale API snapshot cannot reassert it. GitHub only accepts check runs
+what was last written. A check that would say `failure` is the only one that can be dismissed
+into an override, so only those get bounded live reads of the exact backing review, which
+observe an explicit human dismissal even when the database verdict hasn't changed. Once that
+review is dismissed the answer is final either way: a confirmed dismissal (identity, head,
+actor, reason and time) or a dismissal that does not qualify (a push, a bot) is persisted
+separately from the publication record, so a restart, retry or stale API snapshot cannot
+reassert it and the timeline is read once per dismissed review. GitHub only accepts check runs
 from a GitHub App, so writes go through the App's installation (ghapp.py); a repository without
 it is skipped.
 
@@ -165,9 +168,31 @@ def _dismissal_key(repo: str, number: int, review_id: int) -> str:
 def _dismissal(
     conn: sqlite3.Connection, repo: str, number: int, target: str, review_id: int
 ) -> dict[str, Any] | None:
+    data = _settled(conn, repo, number, target, review_id)
+    return data if data and data.get("actor") else None
+
+
+def _settled(
+    conn: sqlite3.Connection, repo: str, number: int, target: str, review_id: int
+) -> dict[str, Any] | None:
+    """What a dismissed review's timeline showed: the qualifying human dismissal (`actor`
+    set) or, with `actor` None, a dismissal that is no override. None until it was read."""
     raw = kv_get(conn, _dismissal_key(repo, number, review_id))
     data = json.loads(raw) if raw else None
     return data if data and data.get("sha") == target else None
+
+
+def _unsettled(
+    conn: sqlite3.Connection, repo: str, number: int, sha: str, want: Want
+) -> tuple[str, int] | None:
+    """(reviewed sha, review id) of a failing check whose backing review may yet be dismissed
+    into an override; None for any other check, which needs no live read."""
+    if want.conclusion != "failure":
+        return None
+    target, _, review_id = _standing(conn, repo, number, sha)
+    if not review_id or _settled(conn, repo, number, target, review_id):
+        return None
+    return target, review_id
 
 
 def _verdict(
@@ -450,7 +475,9 @@ class Reconciler:
         # Installation tokens deliberately have only checks:write. Review/timeline reads use
         # the daemon's normal client, not broader installation permissions.
         self.review_gh = review_gh or Gh(cfg.gh_bin, default_timeout=30)
+        # failing checks whose backing review is unsettled -> when it was last read live
         self.checked: dict[tuple[str, int, str], str] = {}
+        self.read_failed: set[tuple[str, int, str]] = set()  # recorded as an event this process
         # (repo, number, sha) -> digest GitHub refused (a contract error); not retried until
         # the wanted check changes or the daemon restarts
         self.refused: dict[tuple[str, int, str], str] = {}
@@ -458,6 +485,10 @@ class Reconciler:
         self.reported: set[str] = set()  # errors already recorded as events
 
     def reconcile(self, conn: sqlite3.Connection) -> dict[str, int]:
+        """Write every candidate check that differs from what GitHub was last told. A check
+        about to say (or saying) `failure` whose backing review isn't settled is first read
+        live, at most MAX_READS_PER_PASS per pass, least recently read first; only such a
+        write waits for the read budget."""
         stats = dict.fromkeys(("created", "updated", "unchanged", "deferred", "failed"), 0)
         if now_dt() < self.retry_at:
             return stats
@@ -465,36 +496,44 @@ class Reconciler:
         reads = 0
         clients: dict[str, Gh | None] = {}
         disabled = _disabled_repos(conn, self.cfg)
-        # Rotate bounded live reads, including checks whose database digest hasn't changed.
-        for key in sorted(_candidates(conn, self.cfg), key=lambda k: self.checked.get(k, "")):
+        keys = _candidates(conn, self.cfg)
+        live = set(keys)
+        self.checked = {k: t for k, t in self.checked.items() if k in live}
+        self.read_failed &= live
+        for key in sorted(keys, key=lambda k: self.checked.get(k, "")):
             repo, number, sha = key
             if clients.get(repo, False) is None:
                 continue  # not installed there, this pass
-            want = None
+            want, row = _target(conn, repo, number, sha, disabled)
+            if want is None:
+                continue
+            unsettled = _unsettled(conn, repo, number, sha, want)
+            if unsettled is None:
+                self.checked.pop(key, None)
+            elif reads >= MAX_READS_PER_PASS:
+                stats["deferred"] += 1
+                continue
+            else:
+                reads += 1
+                self.checked[key] = now()
+                try:
+                    self._observe_dismissal(conn, repo, number, *unsettled)
+                except ReviewError as exc:
+                    self._read_failed(conn, key, exc)
+                    if exc.kind is FailKind.INFRA:
+                        reads = MAX_READS_PER_PASS
+                else:
+                    want, row = _target(conn, repo, number, sha, disabled)
+                    assert want is not None
+            if row is not None and row["digest"] == want.digest:
+                stats["unchanged"] += 1
+                continue
+            if self.refused.get(key) == want.digest:
+                continue
+            if writes >= MAX_WRITES_PER_PASS:
+                stats["deferred"] += 1
+                continue
             try:
-                target, _, review_id = _standing(conn, repo, number, sha)
-                if (
-                    repo not in disabled
-                    and review_id
-                    and not _dismissal(conn, repo, number, target, review_id)
-                ):
-                    if reads >= MAX_READS_PER_PASS:
-                        stats["deferred"] += 1
-                        continue  # don't write an unchecked, possibly dismissed verdict
-                    reads += 1
-                    self.checked[key] = now()
-                    self._observe_dismissal(conn, repo, number, target, review_id)
-                want, row = _target(conn, repo, number, sha, disabled)
-                if want is None:
-                    continue
-                if row is not None and row["digest"] == want.digest:
-                    stats["unchanged"] += 1
-                    continue
-                if self.refused.get(key) == want.digest:
-                    continue
-                if writes >= MAX_WRITES_PER_PASS:
-                    stats["deferred"] += 1
-                    continue
                 if repo not in clients:
                     clients[repo] = self._client(conn, repo)
                 gh = clients[repo]
@@ -514,8 +553,7 @@ class Reconciler:
                     stats["deferred"] += 1
                     break  # a hung GitHub must not hold the tick loop for a whole pass
                 stats["failed"] += 1
-                if want is not None:
-                    self.refused[key] = want.digest
+                self.refused[key] = want.digest
                 if any(f"HTTP {c}" in exc.message for c in (401, 403, 404)):
                     # installation removed, or this repo dropped from it: look it up again
                     self.app.forget(repo)
@@ -524,7 +562,6 @@ class Reconciler:
                 with tx(conn):
                     event(conn, "check.failed", repo=repo, number=number, detail=str(exc)[:300])
                 continue
-            assert want is not None
             self._record(conn, repo, number, sha, want, row, check_id)
             stats["created" if row is None or check_id != row["check_id"] else "updated"] += 1
         stats["skipped_repos"] = sum(c is None for c in clients.values())
@@ -538,6 +575,12 @@ class Reconciler:
         are not maintainer overrides. GitHub enforces permission to dismiss another user's
         review; the timeline supplies the actor and unmodified reason, absent from /reviews.
         Persist the evidence before publishing, so a retry/restart cannot resurrect it.
+
+        A dismissal is final, so its timeline is read once: a review dismissed without a
+        qualifying event is persisted as settled too. Steady state, per pass: no reads for a
+        check that doesn't say `failure` or whose review is settled; one (the review) for each
+        failing check whose review stands undismissed, at most MAX_READS_PER_PASS, rotating;
+        the review plus the timeline's pages once when a review is first seen dismissed.
         """
         review = self.review_gh.api(f"repos/{repo}/pulls/{number}/reviews/{review_id}", timeout=30)
         if not isinstance(review, dict) or not (
@@ -551,14 +594,16 @@ class Reconciler:
         timeline = self.review_gh.api(
             f"repos/{repo}/issues/{number}/timeline?per_page=100", paginate=True, timeout=30
         )
+        seen = None
         for item in timeline or []:
             dismissed = item.get("dismissed_review") or {}
+            if item.get("event") != "review_dismissed" or dismissed.get("review_id") != review_id:
+                continue
+            seen = item
             actor = item.get("actor") or {}
             login = actor.get("login")
             if not (
-                item.get("event") == "review_dismissed"
-                and dismissed.get("review_id") == review_id
-                and not dismissed.get("dismissal_commit_id")
+                not dismissed.get("dismissal_commit_id")
                 and not item.get("performed_via_github_app")
                 and actor.get("type") == "User"
                 and login
@@ -574,16 +619,41 @@ class Reconciler:
                 "dismissed_at": item["created_at"],
                 "timeline_event_id": item.get("id"),
             }
+            self._settle(conn, repo, number, "check.review_dismissed", evidence)
+            return
+        if seen is not None:
+            ignored = {
+                "sha": target,
+                "review_id": review_id,
+                "actor": None,
+                "timeline_event_id": seen.get("id"),
+            }
+            self._settle(conn, repo, number, "check.dismissal_ignored", ignored)
+
+    def _settle(
+        self, conn: sqlite3.Connection, repo: str, number: int, kind: str, data: dict[str, Any]
+    ) -> None:
+        with tx(conn):
+            kv_set(conn, _dismissal_key(repo, number, data["review_id"]), json.dumps(data))
+            event(conn, kind, repo=repo, number=number, detail=json.dumps(data))
+
+    def _read_failed(
+        self, conn: sqlite3.Connection, key: tuple[str, int, str], exc: ReviewError
+    ) -> None:
+        """A failed dismissal read leaves the database verdict standing for this pass; the
+        App installation and other writes are untouched. Recorded once per check."""
+        repo, number, sha = key
+        log.warning("check for %s#%s: dismissal read failed: %s", repo, number, exc)
+        if key not in self.read_failed:
+            self.read_failed.add(key)
             with tx(conn):
-                kv_set(conn, _dismissal_key(repo, number, review_id), json.dumps(evidence))
                 event(
                     conn,
-                    "check.review_dismissed",
+                    "check.dismissal_read_failed",
                     repo=repo,
                     number=number,
-                    detail=json.dumps(evidence),
+                    detail=f"{sha[:8]} {exc}"[:300],
                 )
-            return
 
     def _client(self, conn: sqlite3.Connection, repo: str) -> Gh | None:
         """The installation client for `repo`; None when the App is not installed there or its

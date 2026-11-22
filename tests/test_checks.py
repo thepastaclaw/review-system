@@ -1077,27 +1077,141 @@ def test_canonical_only_verdict_update_keeps_exact_review_binding(conn, rec, git
     assert github.runs[100]["details_url"].endswith("#pullrequestreview-555")
 
 
-def test_read_failure_never_reasserts_cached_failure(conn, rec, github, review_api):
+def _events(conn, kind):
+    return conn.execute("SELECT COUNT(*) FROM events WHERE kind=?", (kind,)).fetchone()[0]
+
+
+def _run_of(github, sha):
+    return next(r for r in github.runs.values() if r["head_sha"] == sha)
+
+
+@pytest.mark.parametrize(
+    ("event", "phase", "status", "shown"),
+    [
+        ("APPROVE", "final", "done", "success"),
+        ("COMMENT", "final", "done", "neutral"),
+        ("COMMENT", "preliminary", "done", "neutral"),
+        ("REQUEST_CHANGES", "preliminary", "running", None),
+    ],
+)
+def test_no_dismissal_read_unless_the_check_says_failure(
+    conn, rec, github, review_api, event, phase, status, shown
+):
+    _pr(conn)
+    _head(conn, status=status)
+    _review(conn, event, phase=phase)
+    review_api.dismiss()
+    for _ in range(3):
+        rec.reconcile(conn)
+    assert review_api.calls == []
+    run = github.runs[100]
+    assert run["conclusion" if shown else "status"] == (shown or "in_progress")
+    assert "override" not in run["output"]["title"]
+
+
+def test_dismissal_without_human_event_reads_timeline_once(conn, cfg, rec, github, review_api):
     _pr(conn)
     _head(conn, status="done")
     _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    review_api.timeline[0]["dismissed_review"]["dismissal_commit_id"] = OLD  # a push did it
+    for _ in range(5):
+        rec.reconcile(conn)
+    assert sum("/timeline" in c for c in review_api.calls) == 1
+    assert len(review_api.calls) == 2
+    assert github.runs[100]["conclusion"] == "failure"
+    assert _events(conn, "check.dismissal_ignored") == 1
+    assert _events(conn, "check.review_dismissed") == 0
+    restarted = checks.Reconciler(cfg, rec.app, review_gh=ScriptedGh(review_api))
+    restarted.reconcile(conn)
+    assert len(review_api.calls) == 2, "the answer is persisted, not per process"
+
+
+def test_dismissed_review_missing_from_timeline_is_not_settled(conn, rec, github, review_api):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    review_api.dismiss()
+    event = review_api.timeline.pop()
     rec.reconcile(conn)
-    previous = dict(github.runs[100])
-    review_api.fail = RuntimeError("HTTP 502 timeout")
-    assert rec.reconcile(conn)["deferred"] == 1
-    assert github.runs[100] == previous
+    assert github.runs[100]["conclusion"] == "failure"
+    review_api.timeline = [event]  # the timeline caught up
+    rec.reconcile(conn)
+    assert github.runs[100]["conclusion"] == "neutral"
 
 
-def test_live_dismissal_reads_are_bounded_and_rotate(conn, rec, review_api, monkeypatch):
+@pytest.mark.parametrize(
+    "error",
+    [
+        "gh: Forbidden (HTTP 403)",
+        "gh: Not Found (HTTP 404)",
+        "gh: API rate limit exceeded (HTTP 403)",
+        "gh api timed out",
+    ],
+)
+def test_dismissal_read_failure_is_contained(conn, rec, github, review_api, error):
+    _pr(conn)
+    _head(conn, status="done")
+    _review(conn, "REQUEST_CHANGES")
+    _pr(conn, sha=OLD, number=2)
+    _head(conn, sha=OLD, status="done", number=2)
+    _review(conn, "APPROVE", sha=OLD, number=2, review_id=556)
+    review_api.fail = RuntimeError(error)
+    stats = rec.reconcile(conn)
+    assert stats["created"] == 2 and stats["failed"] == 0
+    assert _run_of(github, SHA)["conclusion"] == "failure"
+    assert _run_of(github, OLD)["conclusion"] == "success"
+    assert rec.retry_at <= now_dt(), "check writes are not paused"
+    previous = dict(_run_of(github, SHA))
+    for _ in range(3):
+        assert rec.reconcile(conn)["unchanged"] == 2
+    assert _run_of(github, SHA) == previous
+    assert rec.app.forgotten == []
+    assert len(review_api.calls) == 4, "retried every pass"
+    assert _events(conn, "check.dismissal_read_failed") == 1
+    assert _events(conn, "check.failed") == 0
+    review_api.fail = None
+    review_api.dismiss()
+    rec.reconcile(conn)
+    assert _run_of(github, SHA)["conclusion"] == "neutral"
+
+
+def test_transient_read_failure_stops_reads_for_the_pass(conn, rec, github, review_api):
+    for n, sha in ((1, SHA), (2, OLD)):
+        _pr(conn, sha=sha, number=n)
+        _head(conn, sha=sha, status="done", number=n)
+        _review(conn, "REQUEST_CHANGES", sha=sha, number=n)
+    review_api.fail = RuntimeError("gh: API rate limit exceeded (HTTP 403)")
+    stats = rec.reconcile(conn)
+    assert len(review_api.calls) == 1
+    assert (stats["created"], stats["deferred"]) == (1, 1)
+    review_api.fail = None
+    rec.reconcile(conn)
+    assert len(github.runs) == 2
+    assert {r["conclusion"] for r in github.runs.values()} == {"failure"}
+
+
+def test_live_dismissal_reads_are_bounded_and_rotate(conn, rec, github, review_api, monkeypatch):
     monkeypatch.setattr(checks, "MAX_READS_PER_PASS", 1)
-    for n in (1, 2):
-        _pr(conn, number=n)
-        _head(conn, status="done", number=n)
-        _review(conn, "REQUEST_CHANGES", number=n)
-    assert rec.reconcile(conn)["deferred"] == 1
+    shas = {n: str(n) * 40 for n in (1, 2, 3)}
+    for n, sha in shas.items():
+        _pr(conn, sha=sha, number=n)
+        _head(conn, sha=sha, status="done", number=n)
+        _review(conn, "APPROVE" if n == 3 else "REQUEST_CHANGES", sha=sha, number=n)
+    stats = rec.reconcile(conn)
+    assert (stats["created"], stats["deferred"]) == (2, 1), "only a failing write waits"
+    assert _run_of(github, shas[3])["conclusion"] == "success"
     assert len(review_api.calls) == 1 and "/pulls/1/" in review_api.calls[0]
     rec.reconcile(conn)
     assert len(review_api.calls) == 2 and "/pulls/2/" in review_api.calls[1]
+    rec.reconcile(conn)
+    assert len(review_api.calls) == 3 and "/pulls/1/" in review_api.calls[2]
+    assert not any("/timeline" in c or "/pulls/3/" in c for c in review_api.calls)
+    assert set(rec.checked) == {(REPO, n, shas[n]) for n in (1, 2)}
+    with tx(conn):
+        conn.execute("UPDATE prs SET state='closed' WHERE number=1")
+    rec.reconcile(conn)
+    assert set(rec.checked) == {(REPO, 2, shas[2])}, "bounded by the candidates"
 
 
 def test_dismissal_timeline_is_paginated(conn, rec, github, review_api):

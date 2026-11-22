@@ -1509,11 +1509,17 @@ labels are untouched, and no review is enqueued or posted.
 Confirmed evidence is stored in `kv` (`checks.dismissal:<repo>#<number>:<review_id>`) and
 recorded as `check.review_dismissed`; the original `reviews.event` is retained as publication
 history. Persistence precedes the App write so retries, restarts and stale API snapshots
-cannot restore the dismissed verdict. At most 20 backing reviews are checked live per pass,
-least recently checked first, **before** comparing check digests. Timeline reads are
-paginated; both reads use the daemon's normal GitHub client with a 30 s timeout, leaving the
-App's installation permissions limited to Checks. A failed read defers publication rather
-than reasserting the unverified database verdict.
+cannot restore the dismissed verdict. Only a check that would say `failure` is looked up
+live: an APPROVE, COMMENT or unfinished review costs no reads. A dismissal is final, so one
+that does not qualify (a push, a bot) is stored under the same key with no actor (event
+`check.dismissal_ignored`) and its timeline is never read again. A failing check whose
+review still stands costs one read (the review) per visit: at most 20 per pass, least
+recently checked first, and only those failing checks wait for that budget. Timeline reads
+are paginated; both reads use the daemon's normal GitHub client with a 30 s timeout, leaving
+the App's installation permissions limited to Checks. A failed read leaves the database
+verdict standing for that pass (`failure` stays `failure`), is recorded once per check as
+`check.dismissal_read_failed`, and never pauses check writes or drops the App installation;
+a rate limit or timeout ends that pass's reads.
 
 The `checks` daemon task (every `interval_seconds`, live daemon only) reconciles from the
 database plus these live dismissal observations, without a cursor: each pass derives the wanted check
