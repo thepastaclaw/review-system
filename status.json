@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-23T07:11:04Z",
-  "generated_at": "2026-11-23T07:11:05Z",
+  "data_as_of": "2026-11-23T07:12:07Z",
+  "generated_at": "2026-11-23T07:12:08Z",
   "history": {
     "daily": [
       {
@@ -446,6 +446,30 @@
     "recent_events": [
       {
         "detail": null,
+        "kind": "head.review_reply",
+        "number": 8229,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-23T07:11:36Z"
+      },
+      {
+        "detail": null,
+        "kind": "head.review_reply",
+        "number": 8229,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-23T07:11:35Z"
+      },
+      {
+        "detail": "bcc9fb06 trigger=new_push priority=0",
+        "kind": "head.queued",
+        "number": 8229,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-23T07:11:35Z"
+      },
+      {
+        "detail": null,
         "kind": "ci.watch_green",
         "number": 8229,
         "repo": "dashpay/dash",
@@ -739,30 +763,6 @@
         "repo": "dashpay/dash-wallet",
         "run_id": null,
         "ts": "2026-11-23T06:50:01Z"
-      },
-      {
-        "detail": null,
-        "kind": "run.cancel_requested",
-        "number": null,
-        "repo": null,
-        "run_id": 13251,
-        "ts": "2026-11-23T06:50:00Z"
-      },
-      {
-        "detail": "pr_closed",
-        "kind": "head.closed",
-        "number": 6089,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-23T06:49:53Z"
-      },
-      {
-        "detail": "ok in 1181s",
-        "kind": "run.done",
-        "number": 1721,
-        "repo": "dashpay/dash-wallet",
-        "run_id": 13247,
-        "ts": "2026-11-23T06:48:11Z"
       }
     ],
     "tokens_by_effort": [
@@ -1433,6 +1433,7 @@
       "closed": 880,
       "done": 11458,
       "failed": 100,
+      "queued": 1,
       "superseded": 3904
     },
     "ingest_error_streak": 0,
@@ -1472,10 +1473,30 @@
     "last_run_done_at": "2026-11-23T07:03:46Z",
     "last_run_started_at": "2026-11-23T06:54:30Z",
     "median_run_minutes": 16.233333333333334,
-    "notify_last_at": "2026-11-23T07:09:01Z",
-    "oldest_queued_at": null,
+    "notify_last_at": "2026-11-23T07:11:27Z",
+    "oldest_queued_at": "2026-11-23T07:11:33Z",
     "priority_queued": 0,
-    "queued": [],
+    "queued": [
+      {
+        "age_seconds": 34,
+        "attempts": 0,
+        "author": "PastaPastaPasta",
+        "eligible": false,
+        "eligible_at": "2026-11-23T07:41:33Z",
+        "eligible_in_seconds": 1766,
+        "number": 8229,
+        "position": 1,
+        "pr_url": "https://github.com/dashpay/dash/pull/8229",
+        "prioritize_url": "https://github.com/dashpay/dash/issues/8229#issuecomment-7093182422",
+        "priority": false,
+        "queued_at": "2026-11-23T07:11:33Z",
+        "reason": "debounce (more pushes may follow)",
+        "repo": "dashpay/dash",
+        "sha": "bcc9fb0683e1e5e1c9db6ef9c7748cc413e0e0dc",
+        "title": "fix: refuse superblock payments over the limit without overflowing",
+        "trigger": "new_push"
+      }
+    ],
     "today": {
       "day": "2026-11-23",
       "failed": 0,
@@ -1483,7 +1504,7 @@
       "reviews": 110,
       "tokens": 628259644
     },
-    "ts": "2026-11-23T07:11:04Z",
+    "ts": "2026-11-23T07:12:07Z",
     "typical_minutes_by_tier": {
       "critical": 29.0,
       "low": 22.5,
@@ -1494,7 +1515,7 @@
     "watchdog": {
       "active": 0,
       "eligible": 0,
-      "idle_minutes": 16.566666666666666,
+      "idle_minutes": 17.616666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1502,7 +1523,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-23T07:11:04Z",
+    "generated_at": "2026-11-23T07:12:07Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
