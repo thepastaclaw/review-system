@@ -9,9 +9,12 @@ sends an arbitrary request signed with one of its stored credentials. Each provi
 quota endpoint is called that way, so the credentials never leave the proxy:
 
 - antigravity: `v1internal:retrieveUserQuotaSummary` (what the Antigravity IDE shows): groups
-  ("Gemini Models", "Claude and GPT models") of 5h + weekly buckets with a `remainingFraction`.
-  Asked of `daily-cloudcode-pa` first, as the Antigravity client and the proxy do: the prod
-  host answers too, but with every bucket full while the daily host reports real usage.
+  of 5h + weekly buckets with a `remainingFraction`. Since about 2026-10-22 it lists only
+  "Claude and GPT models"; Gemini quota is per model in `v1internal:fetchAvailableModels`
+  (`quotaInfo`), read for a group the summary lacks (`ANTIGRAVITY_GROUP_MODELS`). Each host is
+  asked for both before the next, `daily-cloudcode-pa` first, as the Antigravity client and the
+  proxy do: the prod host answers too, but with every bucket full while the daily host reports
+  real usage.
 - zai: `api.z.ai/api/monitor/usage/quota/limit` (what the Z.AI console shows): a 5h and a
   weekly `CREDIT_LIMIT` with `percentage` used.
 
@@ -56,7 +59,14 @@ ANTIGRAVITY_QUOTA_URLS = (
     "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
     "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
 )
-# the endpoint answers 403 "no valid license" to anything but an Antigravity client UA
+# same hosts and order; the prod host may share the summary's "always full" fault
+ANTIGRAVITY_MODELS_URLS = (
+    "https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+    "https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+)
+# a quota group the summary no longer lists -> (`apiProvider`, model-key prefix) of its models
+ANTIGRAVITY_GROUP_MODELS = {"gemini models": ("API_PROVIDER_GOOGLE_GEMINI", "gemini-")}
+# the endpoints answer 403 "no valid license" to anything but an Antigravity client UA
 ANTIGRAVITY_USER_AGENT = "antigravity/cli/1.0.13 (aidev_client; os_type=darwin; arch=arm64)"
 ZAI_QUOTA_URL = "https://api.z.ai/api/monitor/usage/quota/limit"
 ZAI_HOST = "api.z.ai"
@@ -211,12 +221,29 @@ def _collect[C](
 def _antigravity_windows(
     mgmt: Management, source: QuotaSource, credential: tuple[str, str]
 ) -> tuple[Window, ...]:
-    """The first endpoint in `ANTIGRAVITY_QUOTA_URLS` that answers with the group wins."""
+    """The first endpoint that answers with the group wins: per host, daily first, the
+    summary and then (for a group in `ANTIGRAVITY_GROUP_MODELS`) the per-model quota."""
     auth_index, project = credential
     if not auth_index or not project:
         raise QuotaError("credential has no auth_index/project_id")
     errors: list[str] = []
-    for url in ANTIGRAVITY_QUOTA_URLS:
+    models = ANTIGRAVITY_GROUP_MODELS.get((source.group or "").lower())
+
+    def summary(data: Any) -> tuple[Window, ...]:
+        return _summary_windows(data, source.group)
+
+    def per_model(data: Any) -> tuple[Window, ...]:
+        return _model_windows(data, *models) if models else ()
+
+    attempts: list[tuple[str, str, Callable[[Any], tuple[Window, ...]]]] = []
+    for summary_url, models_url in zip(
+        ANTIGRAVITY_QUOTA_URLS, ANTIGRAVITY_MODELS_URLS, strict=True
+    ):
+        attempts.append((summary_url, "summary", summary))
+        if models:
+            attempts.append((models_url, "models", per_model))
+    for url, kind, parse in attempts:
+        where = f"{url.split('/')[2].split('.')[0]} {kind}"
         try:
             _, data = mgmt.api_call(
                 auth_index,
@@ -226,22 +253,52 @@ def _antigravity_windows(
                 headers={"User-Agent": ANTIGRAVITY_USER_AGENT},
             )
         except QuotaError as exc:
-            errors.append(str(exc))
+            errors.append(f"{where}: {str(exc).removeprefix(f'api-call {url}: ')}")
             continue
-        windows = tuple(
-            Window(
-                name=str(bucket.get("window") or bucket.get("bucketId") or "?"),
-                remaining=_fraction_left(bucket.get("remainingFraction")),
-                reset_at=str(bucket["resetTime"]) if bucket.get("resetTime") else None,
-            )
-            for group in _dicts(data, "groups")
-            if not source.group or str(group.get("displayName", "")).lower() == source.group.lower()
-            for bucket in _dicts(group, "buckets")
-        )
+        windows = parse(data)
         if windows:
             return windows
-        errors.append(f"no quota group {source.group!r} in response")
+        errors.append(f"{where}: no quota group {source.group!r} in response")
     raise QuotaError("; ".join(errors))
+
+
+def _summary_windows(data: Any, group: str | None) -> tuple[Window, ...]:
+    return tuple(
+        Window(
+            name=str(bucket.get("window") or bucket.get("bucketId") or "?"),
+            remaining=_fraction_left(bucket.get("remainingFraction")),
+            reset_at=str(bucket["resetTime"]) if bucket.get("resetTime") else None,
+        )
+        for g in _dicts(data, "groups")
+        if not group or str(g.get("displayName", "")).lower() == group.lower()
+        for bucket in _dicts(g, "buckets")
+    )
+
+
+def _model_windows(data: Any, provider: str, prefix: str) -> tuple[Window, ...]:
+    """The tightest `quotaInfo` among the group's chat models (`apiProvider` and key prefix;
+    the editor's tab-completion models report their own, untouched quota). The chat models
+    have shown one shared fraction, so the lowest is what a lane will meet."""
+    models = data.get("models") if isinstance(data, dict) else None
+    infos = [
+        m["quotaInfo"]
+        for key, m in (models.items() if isinstance(models, dict) else ())
+        if str(key).startswith(prefix)
+        and isinstance(m, dict)
+        and m.get("apiProvider") == provider
+        and isinstance(m.get("quotaInfo"), dict)
+    ]
+    if not infos:
+        return ()
+    tightest = min(infos, key=lambda info: _fraction_left(info.get("remainingFraction")))
+    reset = tightest.get("resetTime")
+    return (
+        Window(
+            name="models",
+            remaining=_fraction_left(tightest.get("remainingFraction")),
+            reset_at=str(reset) if reset else None,
+        ),
+    )
 
 
 def _antigravity(mgmt: Management, source: QuotaSource) -> list[QuotaStatus]:
