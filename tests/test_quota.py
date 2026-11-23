@@ -17,6 +17,7 @@ GLM = LaneModel("phase1-reviewer", "glm-5.3-flash", "max", QuotaSource("zai"))
 MUSE = LaneModel("phase1-reviewer", "muse-spark-1.3-contributor", "xhigh")
 LADDER = (GEMINI, GLM, MUSE)
 DAILY, PROD = quota.ANTIGRAVITY_QUOTA_URLS
+DAILY_MODELS, PROD_MODELS = quota.ANTIGRAVITY_MODELS_URLS
 
 
 def _status(*remaining: float) -> quota.QuotaStatus:
@@ -229,7 +230,7 @@ def test_antigravity_falls_back_to_prod_when_daily_fails_or_lacks_the_group():
         )
         st = quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
         assert st.remaining == pytest.approx(0.2)
-        assert [c["url"] for c in mgmt.api_calls] == [DAILY, PROD]
+        assert [c["url"] for c in mgmt.api_calls] == [DAILY, DAILY_MODELS, PROD]
     mgmt = FakeManagement({("GET", "auth-files"): AG_FILES}, {})
     with pytest.raises(quota.QuotaError, match=r"HTTP 404.*HTTP 404"):
         quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
@@ -242,6 +243,114 @@ def test_antigravity_missing_group_or_credential_is_an_error():
     mgmt = FakeManagement({("GET", "auth-files"): {"files": []}}, {})
     with pytest.raises(quota.QuotaError, match="no usable credential"):
         quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
+
+
+# the summary as Antigravity answers it since 2026-10-22: no Gemini group at all
+AG_SUMMARY_NO_GEMINI = {
+    "groups": [
+        {
+            "displayName": "Claude and GPT models",
+            "buckets": [{"bucketId": "3p-5h", "window": "5h", "remainingFraction": 1}],
+        }
+    ]
+}
+GEMINI_API = "API_PROVIDER_GOOGLE_GEMINI"
+AG_MODELS = {
+    "models": {
+        "gemini-3.8-flash-tiered": {
+            "apiProvider": GEMINI_API,
+            "quotaInfo": {"remainingFraction": 0.0009689667, "resetTime": "2026-11-29T17:20:14Z"},
+        },
+        "gemini-3-flash": {
+            "apiProvider": GEMINI_API,
+            "quotaInfo": {"remainingFraction": 0.4, "resetTime": "2026-11-29T17:20:14Z"},
+        },
+        "tab_flash_lite_preview": {
+            "apiProvider": GEMINI_API,
+            "quotaInfo": {"remainingFraction": 1},
+        },
+        "gpt-oss-120b-medium": {
+            "apiProvider": "API_PROVIDER_OPENAI_VERTEX",
+            "quotaInfo": {"remainingFraction": 0.0},
+        },
+        "no-quota-info": {"apiProvider": GEMINI_API},
+    }
+}
+
+
+def test_gemini_quota_falls_back_to_the_per_model_endpoint():
+    mgmt = FakeManagement(
+        {("GET", "auth-files"): AG_FILES},
+        {
+            DAILY: (200, AG_SUMMARY_NO_GEMINI),
+            PROD: (200, AG_SUMMARY_NO_GEMINI),
+            DAILY_MODELS: (200, AG_MODELS),
+        },
+    )
+    st = quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
+    assert st.account == "a@g" and st.remaining == pytest.approx(0.0009689667)
+    assert st.windows == (
+        quota.Window("models", pytest.approx(0.0009689667), "2026-11-29T17:20:14Z"),
+    )
+    assert [c["url"] for c in mgmt.api_calls] == [DAILY, DAILY_MODELS]
+    assert all(c["header"]["User-Agent"] == quota.ANTIGRAVITY_USER_AGENT for c in mgmt.api_calls)
+    assert json.loads(mgmt.api_calls[-1]["data"]) == {"project": "proj-1"}
+
+
+def test_gemini_per_model_quota_uses_prod_when_daily_fails_and_absent_fraction_is_zero():
+    exhausted = {"models": {"gemini-3-flash": {"apiProvider": GEMINI_API, "quotaInfo": {}}}}
+    mgmt = FakeManagement(
+        {("GET", "auth-files"): AG_FILES},
+        {DAILY_MODELS: (403, "no valid license"), PROD_MODELS: (200, exhausted)},
+    )
+    assert quota.read(mgmt, QuotaSource("antigravity", "Gemini Models")).remaining == 0.0
+    assert [c["url"] for c in mgmt.api_calls] == [DAILY, DAILY_MODELS, PROD, PROD_MODELS]
+
+
+def test_summary_group_still_wins_and_unmapped_groups_skip_the_model_endpoint():
+    mgmt = FakeManagement(
+        {("GET", "auth-files"): AG_FILES},
+        {DAILY: (200, AG_SUMMARY), DAILY_MODELS: (200, AG_MODELS)},
+    )
+    assert quota.read(mgmt, QuotaSource("antigravity", "Gemini Models")).remaining == pytest.approx(
+        0.2
+    )
+    assert [c["url"] for c in mgmt.api_calls] == [DAILY]
+    mgmt = FakeManagement(
+        {("GET", "auth-files"): AG_FILES},
+        {DAILY: (200, AG_SUMMARY_NO_GEMINI), DAILY_MODELS: (200, AG_MODELS)},
+    )
+    with pytest.raises(quota.QuotaError, match="no quota group 'Other'"):
+        quota.read(mgmt, QuotaSource("antigravity", "Other"))
+    assert [c["url"] for c in mgmt.api_calls] == [DAILY, PROD]
+    mgmt = FakeManagement(
+        {("GET", "auth-files"): AG_FILES},
+        {DAILY: (200, AG_SUMMARY_NO_GEMINI), DAILY_MODELS: (200, {"models": None})},
+    )
+    with pytest.raises(quota.QuotaError, match="no quota group 'Gemini Models'"):
+        quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
+
+
+def test_gemini_per_model_quota_ignores_tab_models_and_names_each_failing_endpoint():
+    tab_only = {
+        "models": {
+            "tab_flash_lite_preview": {"apiProvider": GEMINI_API, "quotaInfo": {}},
+            "gemini-3-flash": {"apiProvider": GEMINI_API, "quotaInfo": {"remainingFraction": 0.6}},
+        }
+    }
+    mgmt = FakeManagement(
+        {("GET", "auth-files"): AG_FILES},
+        {DAILY: (200, AG_SUMMARY_NO_GEMINI), DAILY_MODELS: (200, tab_only)},
+    )
+    assert quota.read(mgmt, QuotaSource("antigravity", "Gemini Models")).remaining == 0.6
+    mgmt = FakeManagement({("GET", "auth-files"): AG_FILES}, {DAILY: (200, AG_SUMMARY_NO_GEMINI)})
+    with pytest.raises(quota.QuotaError) as err:
+        quota.read(mgmt, QuotaSource("antigravity", "Gemini Models"))
+    msg = str(err.value)
+    assert "daily-cloudcode-pa summary: no quota group 'Gemini Models'" in msg
+    assert "daily-cloudcode-pa models: HTTP 404" in msg
+    assert "cloudcode-pa summary: HTTP 404" in msg and "cloudcode-pa models: HTTP 404" in msg
+    assert "googleapis.com" not in msg
 
 
 def test_go_null_slices_are_quota_errors_not_crashes():
