@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
-# Deploy reviewsys to the Mac Studio as user `claw`.
+# Deploy reviewsys to the production host named by REVIEWSYS_HOST (user@host), as that user.
+# There is no default host: production has moved before, and a deploy to a retired host
+# starts a second daemon on a stale database. REVIEWSYS_SSH_KEY names an identity file.
+#
+# A Linux host runs the daemon as the systemd unit `reviewsys.service`, restarted with
+# `sudo -n systemctl restart`; a macOS host runs it detached, with a cron watchdog.
 #
 # Refuses to deploy a ref without a green CI run, so the OpenClaw agent (which
 # may edit this repo) cannot push untested code into production by editing
@@ -21,7 +26,7 @@ FORCE=""; SHADOW=""; WITH_SHADOW=""
 for a in "$@"; do case "$a" in --force) FORCE=1;; --shadow) SHADOW=1;; --with-v12-shadow) WITH_SHADOW=1;;
   --with-shadow) echo "unknown flag --with-shadow: --with-v12-shadow installs the v12 shadow runner; --shadow puts the daemon in no-spawn mode" >&2; exit 2;; esac; done
 REPO="thepastaclaw/review-system"
-HOST="${REVIEWSYS_HOST:-claw@100.81.48.28}"
+HOST="${REVIEWSYS_HOST:?set REVIEWSYS_HOST to the production host (user@host); there is no default}"
 LABEL="ai.thepastaclaw.reviewsys"
 
 SHA=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
@@ -34,10 +39,17 @@ if [ -z "$FORCE" ]; then
 fi
 
 echo "deploying $REF ($SHA) to $HOST"
-ssh -o BatchMode=yes "$HOST" bash -s -- "$REF" "$SHA" "$LABEL" "$SHADOW" "$WITH_SHADOW" <<'REMOTE'
+ssh -o BatchMode=yes ${REVIEWSYS_SSH_KEY:+-i "$REVIEWSYS_SSH_KEY"} "$HOST" \
+  bash -s -- "$REF" "$SHA" "$LABEL" "$SHADOW" "$WITH_SHADOW" <<'REMOTE'
 set -euo pipefail
 REF="$1"; SHA="$2"; LABEL="$3"; SHADOW="${4:-}"; WITH_SHADOW="${5:-}"
-export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin
+OS=$(uname -s)
+if [ "$OS" = Linux ]; then
+  if [ -n "$SHADOW$WITH_SHADOW" ]; then echo "--shadow and --with-v12-shadow are not set up for a systemd host" >&2; exit 2; fi
+  export PATH=$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
+else
+  export PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$HOME/.npm-global/bin
+fi
 BASE=$HOME/.reviewsys
 SRC=$BASE/src
 mkdir -p "$BASE"
@@ -56,6 +68,24 @@ if [ ! -x "$BASE/venv/bin/python" ]; then uv venv -q --python 3.14 "$BASE/venv";
 uv pip install -q --python "$BASE/venv/bin/python" "$SRC"
 [ -f "$BASE/config.toml" ] || "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" init-config
 "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" doctor --no-models
+if [ "$OS" = Linux ]; then
+  # systemd owns the daemon: restarting the unit is the only way to replace it, and the
+  # unit's main pid, not a process search, says whether it was replaced
+  UNIT=reviewsys.service
+  OLD=$(systemctl show "$UNIT" -p MainPID --value)
+  echo live > "$BASE/mode"; echo "mode: LIVE"
+  echo "$REF $SHA $(date -u +%FT%TZ)" >> "$BASE/deployed.log"
+  sudo -n systemctl restart "$UNIT"
+  sleep 3
+  NEW=$(systemctl show "$UNIT" -p MainPID --value)
+  if [ -z "$NEW" ] || [ "$NEW" = 0 ] || ! systemctl is-active -q "$UNIT"; then
+    echo "daemon NOT RUNNING after deploy; see journalctl -u $UNIT and $BASE/daemon.log" >&2; exit 1
+  fi
+  if [ "$NEW" = "$OLD" ]; then echo "daemon NOT RESTARTED: pid $NEW predates this deploy and still runs the old code" >&2; exit 1; fi
+  echo "daemon pid: $NEW"
+  "$BASE/venv/bin/reviewsys" --config "$BASE/config.toml" status
+  exit 0
+fi
 PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
 if [ -n "$SHADOW" ]; then
   sed 's#<string>daemon</string>#<string>daemon</string><string>--no-spawn</string><string>--no-wake</string>#' "$SRC/deploy/ai.thepastaclaw.reviewsys.plist" > "$PLIST"

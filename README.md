@@ -2102,18 +2102,25 @@ review body for the reference two-phase run.
 
 ## Deploy
 
+    export REVIEWSYS_HOST=user@host    # the production host; there is no default
     deploy/deploy.sh                   # live, latest green main commit
-    deploy/deploy.sh main --shadow     # ingest + route only, latest green main commit
     deploy/deploy.sh v0.14.0           # optional immutable tag/ref rollback
+    deploy/deploy.sh main --shadow     # ingest + route only (macOS host only)
 
 Deploys a ref (by default `main`) only when its CI `check` run is green, into
-`~/.reviewsys` on the Mac Studio (`claw@100.81.48.28`), and restarts the daemon.
+`~/.reviewsys` on `REVIEWSYS_HOST`, and restarts the daemon. The host has no default on
+purpose: production has moved before, and a deploy to a retired host starts a second
+daemon on a stale database. `REVIEWSYS_SSH_KEY` names an identity file when ssh needs one.
 The resolved commit is checked out detached, so each deployment remains
 reproducible and can be rolled back to a tag or commit ref.
-`claw` has no GUI session so launchd never supervises it; the daemon runs
-detached (`deploy/start-daemon.sh`) and a one-line cron watchdog
-(`deploy/reviewsys-watchdog.sh`, installed by `deploy.sh`) restarts it within a
-minute if it dies. `~/.reviewsys/mode` records live/shadow for the watchdog.
+
+On a Linux host the daemon is the systemd unit `reviewsys.service` (`Restart=always`,
+`KillMode=process`, so running reviews survive a restart). The script restarts it with
+`sudo -n systemctl restart` and fails unless the unit's main pid changed. On a macOS host
+without a GUI session launchd never supervises the user; the daemon runs detached
+(`deploy/start-daemon.sh`) and a one-line cron watchdog (`deploy/reviewsys-watchdog.sh`,
+installed by `deploy.sh`) restarts it within a minute if it dies. `~/.reviewsys/mode`
+records live/shadow for the watchdog.
 
 ## Operations (on the box)
 
