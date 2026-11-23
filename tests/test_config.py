@@ -36,7 +36,7 @@ def test_scaling_and_paging_defaults(tmp_path, skills_dir):
     assert c.account_scale_max == 3
     assert c.account_reserves == {}
     assert c.page_target == "channel:C0AEQ5D7SJ3"
-    assert c.page_mentions == ("UCW1VE04T", "U02CNG35EGG")
+    assert c.page_mentions == ("UCW1VE04T",)
 
 
 def test_a_box_config_without_the_new_keys_still_scales_and_pages(tmp_path, skills_dir):
@@ -50,15 +50,13 @@ def test_a_box_config_without_the_new_keys_still_scales_and_pages(tmp_path, skil
     p.write_text(text)
     c = cfg_mod.load(p)
     assert (c.account_scale_max, c.page_target) == (3, "channel:C0AEQ5D7SJ3")
-    assert c.page_mentions == ("UCW1VE04T", "U02CNG35EGG")
+    assert c.page_mentions == ("UCW1VE04T",)
 
 
 def test_a_single_mention_string_is_one_mention(tmp_path, skills_dir):
     p = _write(tmp_path, skills_dir, "max_concurrent = 2")
     p.write_text(
-        p.read_text().replace(
-            'page_mentions = ["UCW1VE04T", "U02CNG35EGG"]', 'page_mentions = "UCW1VE04T"'
-        )
+        p.read_text().replace('page_mentions = ["UCW1VE04T"]', 'page_mentions = "UCW1VE04T"')
     )
     assert cfg_mod.load(p).page_mentions == ("UCW1VE04T",)
 

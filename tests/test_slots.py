@@ -241,7 +241,7 @@ def test_page_mentions_on_call_in_the_channel_and_dms_the_operator(cfg):
     (channel, dm) = sent
     assert channel[channel.index("--target") + 1] == "channel:C0AEQ5D7SJ3"
     body = channel[channel.index("-m") + 1]
-    assert body.startswith("<@UCW1VE04T> <@U02CNG35EGG> :rotating_light:")
+    assert body.startswith("<@UCW1VE04T> :rotating_light:")
     assert "entering DEGRADED mode: x" in body
     assert dm[dm.index("--target") + 1] == "user:UCW1VE04T"
     assert "<@" not in dm[dm.index("-m") + 1]

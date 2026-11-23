@@ -633,10 +633,10 @@ class Config:
         return self.work_dir / "logs"
 
 
-# #claw and pasta + latte: the people who can add or re-enable an OpenAI account. Code
+# #claw and pasta: the person who can add or re-enable an OpenAI account. Code
 # defaults as well as TOML ones, so a box config.toml predating them still pages.
 DEFAULT_PAGE_TARGET = "channel:C0AEQ5D7SJ3"
-DEFAULT_PAGE_MENTIONS = ("UCW1VE04T", "U02CNG35EGG")
+DEFAULT_PAGE_MENTIONS = ("UCW1VE04T",)
 
 # box config.toml files predating parallel lanes get the same caps as a fresh one
 DEFAULT_LANE_POOLS = {"muse": 8, "glm": 6, "gemini": 6}
@@ -784,9 +784,9 @@ correction_turns = 2
 bot_login = "thepastaclaw"
 slack_target = "user:UCW1VE04T"
 slack_account = "default"
-# degraded mode pages this channel (#claw) and @-mentions these users (pasta, latte)
+# degraded mode pages this channel (#claw) and @-mentions these users (pasta)
 page_target = "channel:C0AEQ5D7SJ3"
-page_mentions = ["UCW1VE04T", "U02CNG35EGG"]
+page_mentions = ["UCW1VE04T"]
 agent_session_key = "agent:main:main"
 trusted_reviewers = ["PastaPastaPasta", "QuantumExplorer", "shumkov", "lklimek", "dustinface", "thephez", "knst", "pauldelucia", "UdjinM6"]
 

@@ -2077,7 +2077,7 @@ Everything else is in `events` and `reviewsys status`.
 
 Degraded mode is a page, not an alert: only a person can add or re-enable an
 OpenAI account. Entering it posts to `page_target` (#claw) with `page_mentions`
-(pasta, latte) @-mentioned, and copies the operator DM. The page lists every
+(pasta) @-mentioned, and copies the operator DM. The page lists every
 account as usable, out, or parked for its reserve, with its reset time. At most
 one @-mention page goes out per hour: it re-pages hourly until the mode clears,
 and if the probe flaps back into the mode within the hour, only the DM hears about
