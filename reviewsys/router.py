@@ -3,6 +3,9 @@
 - `review_requested` on a watched repo  -> priority head at the live PR head
 - `mention` whose comment says `@<bot> review` -> priority head (any repo the bot can
   read: repos without a skills entry get an ad hoc review)
+- either of those on a commit already reviewed -> a fresh review of it, when the ask is
+  explicit and new: the bot is still among the requested reviewers (`_review_awaited`), or a
+  trusted human's mention comment is routed for the first time
 - `review_reply` from a trusted human under one of the bot's finding threads: on a reviewed
   live head, the head re-opens at priority so the reply is answered on its thread (a
   conversation when a final review stands); after a push nothing has reviewed yet ("fixed in
@@ -39,6 +42,8 @@ log = logging.getLogger(__name__)
 API_ROOT = "https://api.github.com/"
 BATCH_DELAY = timedelta(minutes=5)
 BATCH_RETRY = timedelta(minutes=15)
+# re-reviews of one already-reviewed commit that review requests, and mentions, may each start
+MAX_ASKED_REREVIEWS = 3
 DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
 ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
@@ -47,6 +52,16 @@ _MARKUP_RE = re.compile(r"[`*_]")
 
 def _mention_re(bot: str) -> re.Pattern[str]:
     return re.compile(rf"@{re.escape(bot)}\b[^\n]{{0,40}}\breview\b", re.IGNORECASE)
+
+
+def _rereview_re(bot: str) -> re.Pattern[str]:
+    """A mention that asks for a review in so many words ("@bot review", "@bot please
+    re-review", "@bot can you review again"), unlike one that only talks about a review
+    ("@bot thanks for the review"), which `_mention_re` also matches."""
+    return re.compile(
+        rf"@{re.escape(bot)}[\s,:]+(?:(?:can|could|would)\s+you\s+)?(?:please\s+)?(?:re-?)?review\b",
+        re.IGNORECASE,
+    )
 
 
 def _fetch(gh: Gh, endpoint: str, what: str) -> dict[str, Any] | None:
@@ -127,7 +142,16 @@ def _route_row(
 
     if kind == "review_requested" and watched and is_open and head and not own_pr:
         with tx(conn):
-            enqueue_head(conn, cfg, repo, number, head, Trigger.REVIEW_REQUESTED, ts=ts)
+            _ask(
+                conn,
+                cfg,
+                repo,
+                number,
+                head,
+                Trigger.REVIEW_REQUESTED,
+                ts,
+                rereview=_review_awaited(cfg, meta),
+            )
             _handled(conn, row["id"], "review_requested", ts)
         return "review_requested"
 
@@ -156,7 +180,8 @@ def _route_row(
         and (watched or adhoc_ok)
     ):
         with tx(conn):
-            enqueue_head(conn, cfg, repo, number, head, Trigger.MENTION, ts=ts)
+            first = _asks_again(conn, cfg, row, comment or {}, actor, body)
+            _ask(conn, cfg, repo, number, head, Trigger.MENTION, ts, rereview=first)
             _handled(conn, row["id"], "mention", ts)
         return "mention"
 
@@ -202,7 +227,7 @@ def _route_row(
         and not actor.lower().endswith("[bot]")
         and _trusted(cfg, comment, actor)
         and _quotes_bot_finding(conn, repo, number, body)
-        and not _already_routed(conn, row)
+        and not _already_routed(conn, row, "discussion_reply%")
     ):
         return _queue_reply(
             conn,
@@ -292,16 +317,106 @@ def _quotes_bot_finding(conn: sqlite3.Connection, repo: str, number: int, body: 
     return any(t and t in quoted for t in (_plain(str(r[0] or "")) for r in rows))
 
 
-def _already_routed(conn: sqlite3.Connection, row: sqlite3.Row) -> bool:
-    """GitHub re-notifies for the same comment (an edit, a later mention): route it once."""
+def _already_routed(conn: sqlite3.Connection, row: sqlite3.Row, action: str) -> bool:
+    """GitHub re-notifies for the same comment (an edit, a later mention): route it once.
+    `action`: a LIKE pattern for the inbox action that routing it leaves."""
     return (
         conn.execute(
-            "SELECT 1 FROM inbox WHERE body=? AND id<>? AND action LIKE 'discussion_reply%' "
+            "SELECT 1 FROM inbox WHERE body=? AND id<>? AND action LIKE ? "
             "AND action NOT LIKE '%_expired' LIMIT 1",
-            (row["body"], row["id"]),
+            (row["body"], row["id"], action),
         ).fetchone()
         is not None
     )
+
+
+def _own_words(body: str) -> str:
+    """A comment without what it quotes or shows as code: a quoted "> @bot review" or a
+    command in backticks is not the commenter asking. A quote runs to the next blank line,
+    as Markdown reads it: the lines after a ">" line continue it without a marker."""
+    kept: list[str] = []
+    fenced = quoted = False
+    for line in body.splitlines():
+        text = line.strip()
+        if text.startswith(("```", "~~~")):
+            fenced = not fenced
+            quoted = False
+            continue
+        if fenced:
+            continue
+        quoted = text.startswith(">") or (quoted and bool(text))
+        if not quoted:
+            kept.append(re.sub(r"`[^`\n]*`", " ", line))
+    return "\n".join(kept)
+
+
+def _asks_again(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    row: sqlite3.Row,
+    comment: dict[str, Any],
+    actor: str,
+    body: str,
+) -> bool:
+    """A mention that re-reviews a commit already reviewed: a trusted human's top-level
+    comment asking for a review outright, routed for the first time. A bot's comment never
+    does (the bot's own gate comment and CodeRabbit both write "@bot review"), nor a reply
+    under a finding, which is answered as a conversation."""
+    login = actor.lower()
+    return (
+        "/issues/comments/" in str(row["body"])
+        and login not in (cfg.bot_login.lower(), *ALLOWED_BOTS)
+        and not login.endswith("[bot]")
+        and _trusted(cfg, comment, actor)
+        and bool(_rereview_re(cfg.bot_login).search(_own_words(body)))
+        and not _already_routed(conn, row, "mention")
+    )
+
+
+def _review_awaited(cfg: Config, meta: dict[str, Any]) -> bool:
+    """Someone asked the bot for a review that it has not given yet: it is among the pull
+    request's requested reviewers, which GitHub clears when the bot next submits a review.
+    Every later update of the pull request repeats the `review_requested` notification, so
+    the notification alone says nothing."""
+    return any(
+        str((r or {}).get("login") or "").lower() == cfg.bot_login.lower()
+        for r in meta.get("requested_reviewers") or []
+    )
+
+
+def _ask(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    repo: str,
+    number: int,
+    head: str,
+    trigger: Trigger,
+    ts: str,
+    *,
+    rereview: bool,
+) -> None:
+    """Queue `head` for someone asking. A fresh explicit ask (`rereview`) also re-reviews a
+    commit that has its own review, at most MAX_ASKED_REREVIEWS times per commit and route
+    (requests and mentions are counted apart, so comments cannot use up what a review
+    request may start): a re-review that ends without submitting a review leaves the
+    request standing, and each new comment is a new ask. Only an ask that starts a review
+    is counted: re-opening the finished commit, or turning its queued CI check into one.
+    Caller holds the transaction."""
+    key = f"router.asked_rereviews:{trigger.value}:{repo}#{number}:{head}"
+    done = int(kv_get(conn, key) or 0)
+    allowed = rereview and done < MAX_ASKED_REREVIEWS
+    before = conn.execute(
+        "SELECT h.trigger, EXISTS(SELECT 1 FROM reviews r WHERE r.repo=h.repo "
+        "AND r.number=h.number AND r.sha=h.sha) AS reviewed FROM heads h "
+        "WHERE h.repo=? AND h.number=? AND h.sha=?",
+        (repo, number, head),
+    ).fetchone()
+    res = enqueue_head(conn, cfg, repo, number, head, trigger, ts=ts, rereview=allowed)
+    started = res == "requeued" or (
+        res == "promoted" and before is not None and before["trigger"] == Trigger.CI_FAILED.value
+    )
+    if allowed and started and before is not None and before["reviewed"]:
+        kv_set(conn, key, str(done + 1))
 
 
 def _reply_after_push(

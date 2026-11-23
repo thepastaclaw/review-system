@@ -14,7 +14,7 @@ tested, one daemon, one SQLite file, no lock files.
 |---|---|
 | `daemon.py` | single-threaded tick loop: ingest, notify, route, supersede, reap, schedule, watchdog, gc |
 | `ingest.py` | GitHub GraphQL poll → `prs`/`heads`; notifications and inline-comment replies → `inbox` |
-| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding on a reviewed commit) or own-PR comment batches → OpenClaw wake |
+| `router.py` | inbox → priority heads (`@thepastaclaw review`, review_requested, replies under a bot finding on a reviewed commit) or own-PR comment batches → OpenClaw wake. A review request or a trusted human's `@thepastaclaw review` on a commit already reviewed starts a fresh review of it: once per request (the bot is still among the requested reviewers) and once per mention comment that asks in the commenter's own words, at most 3 per commit for each of the two |
 | `scheduler.py` | starts every eligible head (priority first; `max_runs` safety cap), debounce, single-flight per PR, retries with backoff, supersede/cancel |
 | `reaper.py` | heartbeat + deadline enforcement; kills process groups; no run can be ghosted |
 | `worker.py` | one run: worktree → (unchanged diff: carry the earlier review, done) → select + triage → context → phase1 → verify1 → gate → phase2 → verify2 → publish (deep backlog: context → phase2 → verify2 → publish) |
@@ -1649,7 +1649,8 @@ Then:
   watches anew if it approves. A carried commit whose own review failed for good is never
   re-opened by its watch.
 - A person asking always gets a review. `@thepastaclaw review` or a review request on a
-  carried commit re-opens it, unlike on a commit reviewed itself. A head promoted by a
+  carried commit re-opens it; on a commit reviewed itself only a fresh explicit ask does
+  (a request still pending on GitHub, or a trusted person's new comment asking outright). A head promoted by a
   mention, while queued or while its run checks out, is not carried: the run re-reads the
   trigger in the transaction that would carry. One that lands after the carry, while the
   run finishes, queues a review for when it ends. A head superseded during checkout
@@ -1858,7 +1859,8 @@ verdict is handled by `ci.py`:
   reply on a finding, the priority box, `enqueue`) while it waits takes the head over, and
   the watch queues the CI check again afterwards if the APPROVE still stands and the check
   still fails (a new review that approves registers a fresh watch instead); a mention or
-  review request changes nothing, as on any reviewed commit. While it runs, the head is
+  review request does the same when it is a fresh explicit ask, and otherwise changes
+  nothing, as on any reviewed commit. While it runs, the head is
   handed over too (a retry is their run) and a re-review is queued for right after it; a
   reply waits for the run to end as usual, then becomes a conversation.
 - `reviewsys status` shows `ci watches: watching=N ci_check_queued=M`.

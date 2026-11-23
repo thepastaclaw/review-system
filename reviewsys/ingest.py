@@ -107,8 +107,9 @@ def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
     return bool(row and row["skip_label"])
 
 
-# what re-opens an already-reviewed commit: a reply under a finding, an operator, either
-# gate-comment box (a mention or review request on a reviewed commit changes nothing)
+# what always re-opens an already-reviewed commit: a reply under a finding, an operator,
+# either gate-comment box. A mention or review request (`ASKING`) does so only when the
+# router found it a fresh, explicit ask (`rereview`); otherwise it changes nothing there
 REOPENING = frozenset(
     {Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST}
 )
@@ -167,6 +168,7 @@ def enqueue_head(
     trigger: Trigger,
     *,
     ts: str | None = None,
+    rereview: bool = False,
 ) -> str:
     """Create a queued head for (repo, number, sha), superseding any older active head.
 
@@ -178,6 +180,11 @@ def enqueue_head(
     a finished head for the light CI-check run: it never creates a head or takes one over.
     A person asking for anything on a head whose CI check is waiting gets their run instead
     (the CI check is re-queued by its watch if still needed), or, while it runs, right after.
+
+    `rereview`: a mention or review request (`ASKING`) that the router found to be a fresh,
+    explicit ask re-opens a commit that was already reviewed, as the gate-comment boxes do.
+    Without it such a trigger on a reviewed commit is a no-op: GitHub repeats those
+    notifications for every later update of the pull request.
     """
     ts = ts or now()
     labelled = _has_skip_label(conn, repo, number)
@@ -244,7 +251,8 @@ def enqueue_head(
             priority=priority,
             eligible=eligible,
         )
-    if existing and existing["trigger"] == Trigger.CI_FAILED.value and trigger in REOPENING:
+    reopens = trigger in REOPENING or (rereview and trigger in ASKING)
+    if existing and existing["trigger"] == Trigger.CI_FAILED.value and reopens:
         taken = _take_over_ci_check(conn, existing, trigger, ts)
         if taken:
             return taken
@@ -276,7 +284,7 @@ def enqueue_head(
                 (trigger.value, ts, existing["id"]),
             )
             return "promoted"
-        if trigger in REOPENING and existing["status"] in (
+        if reopens and existing["status"] in (
             HeadStatus.DONE,
             HeadStatus.FAILED,
             HeadStatus.CLOSED,
@@ -285,18 +293,14 @@ def enqueue_head(
             # so review it again with the threads in context and answer on them; the normal
             # box re-opens it at the back of the line, everything else at the front
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts, priority=priority)
-        if trigger in ASKING and (
-            existing["status"] == HeadStatus.FAILED
-            or (
-                existing["status"] == HeadStatus.DONE
-                and (
-                    carried_from(conn, repo, number, sha)
-                    or not _has_review(conn, repo, number, sha)
-                )
-            )
+        if (
+            trigger in ASKING
+            and existing["status"] in (HeadStatus.FAILED, HeadStatus.DONE)
+            and (carried_from(conn, repo, number, sha) or not _has_review(conn, repo, number, sha))
         ):
             # nothing reviewed this commit itself (its review is carried, or the review gave
-            # up): someone asking gets a review
+            # up): someone asking gets a review. A commit with its own review, failed
+            # re-review or not, takes a fresh explicit ask (`rereview`) above
             return _requeue(conn, existing["id"], repo, number, sha, trigger, ts)
         return "noop"
     supersede_other_heads(conn, repo, number, sha, ts)

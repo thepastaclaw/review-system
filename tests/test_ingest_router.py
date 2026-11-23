@@ -1413,3 +1413,250 @@ def test_top_level_comments_that_answer_no_finding_are_ignored(cfg, conn, gh, no
         _issue_comment_row(conn, gh, source_id, 101 + i, **kw)
         assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", source_id) == "ignored"
     assert conn.execute("SELECT status FROM heads WHERE sha=?", (sha,)).fetchone()[0] == "done"
+
+
+def _ask(conn, source, kind, number, body=None):
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) "
+            "VALUES (?,?,?,?,?,?,?,?)",
+            (source, kind, "dashpay/platform", number, None, body, now(), now()),
+        )
+
+
+def _requeues(conn, number):
+    return conn.execute(
+        "SELECT COUNT(*) FROM events WHERE kind='head.requeued' AND number=?", (number,)
+    ).fetchone()[0]
+
+
+def _finish(conn, number):
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE number=?", (number,))
+
+
+def test_a_pending_review_request_rereviews_a_reviewed_commit(cfg, conn, gh, notifier):
+    """dashpay/dash#8192 (2026-11-19): a maintainer requested a review from the bot on a commit
+    it had reviewed a day earlier, and nothing happened."""
+    sha = "8" * 40
+    _reviewed(conn, cfg, 8192, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "ThePastaClaw"}]}
+    _ask(conn, "n1", "review_requested", 8192)
+    assert route_inbox(conn, cfg, gh, notifier)["review_requested"] == 1
+    head = conn.execute("SELECT status, trigger, priority FROM heads WHERE number=8192").fetchone()
+    assert tuple(head) == ("queued", "review_requested", 1)
+    assert _requeues(conn, 8192) == 1
+
+
+def test_a_repeated_request_notification_rereviews_nothing(cfg, conn, gh, notifier):
+    """GitHub keeps the `review_requested` reason on every later update of the pull request.
+    Once the bot's review cleared the request, those notifications ask for nothing."""
+    sha = "8" * 40
+    _reviewed(conn, cfg, 8135, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "UdjinM6"}]}
+    for i in range(3):
+        _ask(conn, f"n{i}", "review_requested", 8135)
+    assert route_inbox(conn, cfg, gh, notifier)["review_requested"] == 3
+    assert conn.execute("SELECT status FROM heads WHERE number=8135").fetchone()[0] == "done"
+    assert _requeues(conn, 8135) == 0
+
+
+def test_requested_rereviews_of_one_commit_are_bounded(cfg, conn, gh, notifier):
+    from reviewsys import router
+
+    sha = "8" * 40
+    _reviewed(conn, cfg, 77, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    for i in range(router.MAX_ASKED_REREVIEWS + 2):
+        _ask(conn, f"n{i}", "review_requested", 77)
+        route_inbox(conn, cfg, gh, notifier)
+        _finish(conn, 77)
+    assert _requeues(conn, 77) == router.MAX_ASKED_REREVIEWS
+
+
+def test_a_trusted_mention_rereviews_a_reviewed_commit_once(cfg, conn, gh, notifier):
+    sha = "9" * 40
+    _reviewed(conn, cfg, 90, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    url = "https://api.github.com/repos/dashpay/platform/issues/comments/901"
+    gh.routes["repos/dashpay/platform/issues/comments/901"] = {
+        "id": 901,
+        "body": "@thepastaclaw review again please",
+        "user": {"login": "knst"},
+        "author_association": "MEMBER",
+    }
+    _ask(conn, "m1", "mention", 90, url)
+    assert route_inbox(conn, cfg, gh, notifier)["mention"] == 1
+    assert _requeues(conn, 90) == 1
+    _finish(conn, 90)
+    _ask(conn, "m2", "mention", 90, url)
+    route_inbox(conn, cfg, gh, notifier)
+    assert _requeues(conn, 90) == 1, "the same comment, notified again, asks once"
+
+
+def test_an_untrusted_mention_does_not_rereview(cfg, conn, gh, notifier):
+    sha = "9" * 40
+    _reviewed(conn, cfg, 91, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    gh.routes["repos/dashpay/platform/issues/comments/911"] = {
+        "id": 911,
+        "body": "@thepastaclaw review",
+        "user": {"login": "passerby"},
+        "author_association": "NONE",
+    }
+    _ask(
+        conn,
+        "m1",
+        "mention",
+        91,
+        "https://api.github.com/repos/dashpay/platform/issues/comments/911",
+    )
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT status FROM heads WHERE number=91").fetchone()[0] == "done"
+    assert _requeues(conn, 91) == 0
+
+
+def _mention(
+    conn, cfg, gh, notifier, number, cid, body, login, association="MEMBER", kind="issues"
+):
+    sha = "9" * 40
+    _reviewed(conn, cfg, number, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    path = f"repos/dashpay/platform/{kind}/comments/{cid}"
+    gh.routes[path] = {
+        "id": cid,
+        "body": body,
+        "user": {"login": login},
+        "author_association": association,
+    }
+    _ask(conn, f"m{cid}", "mention", number, f"https://api.github.com/{path}")
+    route_inbox(conn, cfg, gh, notifier)
+    return _requeues(conn, number)
+
+
+def test_a_bot_mentioning_the_reviewer_does_not_rereview(cfg, conn, gh, notifier):
+    """The bot's own gate comment and CodeRabbit both write "@thepastaclaw review"."""
+    assert _mention(conn, cfg, gh, notifier, 92, 921, "@thepastaclaw review", "coderabbitai") == 0
+    assert (
+        _mention(
+            conn, cfg, gh, notifier, 93, 931, "@thepastaclaw review", "thepastaclaw", "COLLABORATOR"
+        )
+        == 0
+    )
+    assert _mention(conn, cfg, gh, notifier, 94, 941, "@thepastaclaw review", "helper[bot]") == 0
+
+
+def test_a_mention_that_only_talks_about_a_review_does_not_rereview(cfg, conn, gh, notifier):
+    said = "@thepastaclaw thanks for the review"
+    assert _mention(conn, cfg, gh, notifier, 95, 951, said, "knst") == 0
+    wrong = "@thepastaclaw this review finding is wrong"
+    assert _mention(conn, cfg, gh, notifier, 96, 961, wrong, "knst") == 0
+    asked = "@thepastaclaw, could you please re-review?"
+    assert _mention(conn, cfg, gh, notifier, 97, 971, asked, "knst") == 1
+
+
+def test_a_mention_in_a_finding_thread_does_not_rereview(cfg, conn, gh, notifier):
+    """A reply under a finding is answered as a conversation, not by a full re-review."""
+    said = "@thepastaclaw review this again, the guard is there"
+    assert _mention(conn, cfg, gh, notifier, 98, 981, said, "knst", kind="pulls") == 0
+
+
+def test_a_pending_request_takes_over_a_queued_ci_check(cfg, conn, gh, notifier):
+    sha = "8" * 40
+    _reviewed(conn, cfg, 99, sha)
+    with tx(conn):
+        conn.execute(
+            "UPDATE heads SET status='queued', trigger=? WHERE number=99",
+            (Trigger.CI_FAILED.value,),
+        )
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    _ask(conn, "n1", "review_requested", 99)
+    route_inbox(conn, cfg, gh, notifier)
+    head = conn.execute("SELECT status, trigger FROM heads WHERE number=99").fetchone()
+    assert tuple(head) == ("queued", "review_requested")
+
+
+def test_a_failed_rereview_is_not_restarted_by_later_activity(cfg, conn, gh, notifier):
+    """A re-review that gave up leaves the commit's earlier review standing. The repeated
+    `review_requested` notifications of later comments must not start it again."""
+    sha = "8" * 40
+    _reviewed(conn, cfg, 78, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    _ask(conn, "n0", "review_requested", 78)
+    route_inbox(conn, cfg, gh, notifier)
+    assert _requeues(conn, 78) == 1
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE number=78")
+    gh.pr = {**gh.pr, "requested_reviewers": []}
+    for i in range(1, 4):
+        _ask(conn, f"n{i}", "review_requested", 78)
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT status FROM heads WHERE number=78").fetchone()[0] == "failed"
+    assert _requeues(conn, 78) == 1
+
+
+def test_a_failed_first_review_is_still_restarted_by_someone_asking(cfg, conn, gh, notifier):
+    sha = "7" * 40
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 79, sha, Trigger.NEW_PUSH)
+        conn.execute("UPDATE heads SET status='failed', finished_at='x' WHERE sha=?", (sha,))
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": []}
+    _ask(conn, "n0", "review_requested", 79)
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT status FROM heads WHERE number=79").fetchone()[0] == "queued"
+
+
+def test_a_quoted_or_code_command_is_not_the_commenter_asking(cfg, conn, gh, notifier):
+    quoted = "> @thepastaclaw review\n\nThanks, @thepastaclaw, the existing review is enough."
+    assert _mention(conn, cfg, gh, notifier, 61, 611, quoted, "knst") == 0
+    code = "To ask again, write `@thepastaclaw review`. Not needed here, @thepastaclaw."
+    assert _mention(conn, cfg, gh, notifier, 62, 621, code, "knst") == 0
+    fenced = "```\n@thepastaclaw review\n```\n@thepastaclaw fyi"
+    assert _mention(conn, cfg, gh, notifier, 63, 631, fenced, "knst") == 0
+    lazy = "> @thepastaclaw\nreview it again\n\nNo need, @thepastaclaw, it is fine."
+    assert _mention(conn, cfg, gh, notifier, 66, 661, lazy, "knst") == 0
+    carried = "> as I said\n@thepastaclaw review\n\nSee above, @thepastaclaw."
+    assert _mention(conn, cfg, gh, notifier, 67, 671, carried, "knst") == 0
+    own = "> the guard is there\n\n@thepastaclaw please re-review"
+    assert _mention(conn, cfg, gh, notifier, 64, 641, own, "knst") == 1
+
+
+def test_mentions_are_bounded_per_commit_and_leave_requests_their_own(cfg, conn, gh, notifier):
+    from reviewsys import router
+
+    sha = "9" * 40
+    _reviewed(conn, cfg, 65, sha)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    for i in range(router.MAX_ASKED_REREVIEWS + 2):
+        path = f"repos/dashpay/platform/issues/comments/{650 + i}"
+        gh.routes[path] = {
+            "id": 650 + i,
+            "body": "@thepastaclaw review",
+            "user": {"login": "knst"},
+            "author_association": "CONTRIBUTOR",
+        }
+        _ask(conn, f"m{i}", "mention", 65, f"https://api.github.com/{path}")
+        route_inbox(conn, cfg, gh, notifier)
+        _finish(conn, 65)
+    assert _requeues(conn, 65) == router.MAX_ASKED_REREVIEWS
+    gh.pr = {**gh.pr, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    _ask(conn, "n1", "review_requested", 65)
+    route_inbox(conn, cfg, gh, notifier)
+    assert _requeues(conn, 65) == router.MAX_ASKED_REREVIEWS + 1, "a request has its own"
+
+
+def test_promoting_an_already_queued_review_spends_nothing(cfg, conn, gh, notifier):
+    sha = "8" * 40
+    _reviewed(conn, cfg, 68, sha)
+    with tx(conn):
+        conn.execute(
+            "UPDATE heads SET status='queued', priority=0, trigger=? WHERE number=68",
+            (Trigger.NORMAL_REQUEST.value,),
+        )
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "requested_reviewers": [{"login": "thepastaclaw"}]}
+    _ask(conn, "n1", "review_requested", 68)
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT priority FROM heads WHERE number=68").fetchone()[0] == 1
+    assert (
+        kv_get(conn, f"router.asked_rereviews:review_requested:dashpay/platform#68:{sha}") is None
+    )
