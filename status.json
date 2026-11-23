@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-23T07:13:04Z",
-  "generated_at": "2026-11-23T07:13:05Z",
+  "data_as_of": "2026-11-23T07:14:04Z",
+  "generated_at": "2026-11-23T07:14:05Z",
   "history": {
     "daily": [
       {
@@ -435,8 +435,8 @@
           },
           "wait": {
             "median_seconds": 34,
-            "n": 838,
-            "p90_seconds": 708
+            "n": 839,
+            "p90_seconds": 707
           }
         }
       },
@@ -444,6 +444,46 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 6097,
+        "repo": "dashpay/platform",
+        "run_id": 13253,
+        "ts": "2026-11-23T07:13:51Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 8229,
+        "repo": "dashpay/dash",
+        "run_id": null,
+        "ts": "2026-11-23T07:13:31Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 6097,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-23T07:13:30Z"
+      },
+      {
+        "detail": "attempt 1 sha=4db7ec2c",
+        "kind": "run.spawned",
+        "number": 6097,
+        "repo": "dashpay/platform",
+        "run_id": 13253,
+        "ts": "2026-11-23T07:13:29Z"
+      },
+      {
+        "detail": "4db7ec2c trigger=new_push priority=1",
+        "kind": "head.queued",
+        "number": 6097,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-23T07:13:23Z"
+      },
       {
         "detail": null,
         "kind": "label.synced",
@@ -723,46 +763,6 @@
         "repo": "dashpay/dash",
         "run_id": 13250,
         "ts": "2026-11-23T06:54:41Z"
-      },
-      {
-        "detail": null,
-        "kind": "ci.watch",
-        "number": 8229,
-        "repo": "dashpay/dash",
-        "run_id": 13250,
-        "ts": "2026-11-23T06:54:41Z"
-      },
-      {
-        "detail": null,
-        "kind": "verdict.approve_nonblocking",
-        "number": 8229,
-        "repo": "dashpay/dash",
-        "run_id": 13250,
-        "ts": "2026-11-23T06:54:33Z"
-      },
-      {
-        "detail": "attempt 1 sha=d56aeaf7",
-        "kind": "run.spawned",
-        "number": 1474,
-        "repo": "dashpay/dashwallet-ios",
-        "run_id": 13252,
-        "ts": "2026-11-23T06:54:30Z"
-      },
-      {
-        "detail": null,
-        "kind": "run.cancelled",
-        "number": 6089,
-        "repo": "dashpay/platform",
-        "run_id": 13251,
-        "ts": "2026-11-23T06:50:16Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 6089,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-23T06:50:02Z"
       }
     ],
     "tokens_by_effort": [
@@ -1370,14 +1370,122 @@
       "findings_posted": 13876,
       "reviews": 11606,
       "reviews_imported": 2245,
-      "runs": 13252,
+      "runs": 13253,
       "tokens_in": 141373184710,
       "tokens_out": 1537808680,
       "tokens_total": 142910993390
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "QuantumExplorer",
+        "deadline_at": "2026-11-23T13:13:29Z",
+        "deadline_in_seconds": 21565,
+        "degraded": false,
+        "elapsed_seconds": 35,
+        "findings": null,
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-11-23T07:13:59Z",
+        "id": 13253,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 13,
+            "state": "running"
+          }
+        ],
+        "number": 6097,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/platform/pull/6097",
+        "priority": true,
+        "progress": 0.023,
+        "queue": "live",
+        "queued_at": "2026-11-23T07:13:23Z",
+        "remaining_seconds": 1493,
+        "repo": "dashpay/platform",
+        "sha": "4db7ec2c45c0b566bdd95cf1c330e1cb9acabbba",
+        "started_at": "2026-11-23T07:13:29Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 8,
+            "started_at": "2026-11-23T07:13:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "platform-versioning",
+                "security-auditor"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-11-23T07:13:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "The change is confined to QA tooling but coordinates schema permissions, query indexes, registration, and run migration without changing consensus rules or Platform storage migration code.",
+              "tier": "normal"
+            },
+            "name": "triage",
+            "seconds": 5,
+            "started_at": "2026-11-23T07:13:37Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 8,
+            "started_at": "2026-11-23T07:13:42Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 14,
+            "started_at": "2026-11-23T07:13:50Z",
+            "status": "running"
+          }
+        ],
+        "tier": "normal",
+        "title": "fix(sdk): start an unpinned SDK at protocol version 14 on every network",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 6
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1393,7 +1501,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 4,
       "priority_overflow": 1,
@@ -1434,10 +1542,11 @@
       "done": 11458,
       "failed": 100,
       "queued": 1,
+      "running": 1,
       "superseded": 3904
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-23T07:09:00Z",
+    "ingest_last_at": "2026-11-23T07:13:29Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -1465,25 +1574,25 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-23T07:03:46Z",
-    "last_run_started_at": "2026-11-23T06:54:30Z",
+    "last_run_started_at": "2026-11-23T07:13:29Z",
     "median_run_minutes": 16.233333333333334,
-    "notify_last_at": "2026-11-23T07:11:27Z",
+    "notify_last_at": "2026-11-23T07:14:01Z",
     "oldest_queued_at": "2026-11-23T07:11:33Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 91,
+        "age_seconds": 151,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-23T07:41:33Z",
-        "eligible_in_seconds": 1709,
+        "eligible_in_seconds": 1649,
         "number": 8229,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8229",
@@ -1504,7 +1613,7 @@
       "reviews": 110,
       "tokens": 628259644
     },
-    "ts": "2026-11-23T07:13:04Z",
+    "ts": "2026-11-23T07:14:04Z",
     "typical_minutes_by_tier": {
       "critical": 29.0,
       "low": 22.5,
@@ -1513,9 +1622,9 @@
       "unknown": 0.9
     },
     "watchdog": {
-      "active": 0,
+      "active": 1,
       "eligible": 0,
-      "idle_minutes": 18.566666666666666,
+      "idle_minutes": 0.5833333333333334,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1523,7 +1632,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-23T07:13:04Z",
+    "generated_at": "2026-11-23T07:14:04Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -1531,8 +1640,8 @@
       "approved_n": 707,
       "max": 44,
       "mean": 3.82,
-      "median": 2.0,
-      "n": 1056,
+      "median": 2,
+      "n": 1057,
       "p90": 9,
       "share_over_5": 0.189,
       "to_approve_mean": 2.37,
@@ -1544,12 +1653,12 @@
         "above_target": true,
         "approved_n": 184,
         "max": 44,
-        "mean": 4.96,
-        "median": 3,
-        "n": 295,
+        "mean": 4.94,
+        "median": 3.0,
+        "n": 296,
         "p90": 11,
         "repo": "dashpay/platform",
-        "share_over_5": 0.288,
+        "share_over_5": 0.287,
         "to_approve_mean": 2.79,
         "to_approve_median": 2.0
       },
@@ -1740,8 +1849,8 @@
       "28d": {
         "overall": {
           "mean": 3.82,
-          "median": 2.0,
-          "n": 1056
+          "median": 2,
+          "n": 1057
         },
         "repos": {
           "PastaPastaPasta/dashwallet-desktop": {
@@ -1805,9 +1914,9 @@
             "n": 30
           },
           "dashpay/platform": {
-            "mean": 4.96,
-            "median": 3,
-            "n": 295
+            "mean": 4.94,
+            "median": 3.0,
+            "n": 296
           },
           "dashpay/tenderdash": {
             "mean": 2.3,
@@ -1818,9 +1927,9 @@
       },
       "7d": {
         "overall": {
-          "mean": 3.55,
-          "median": 2.0,
-          "n": 366
+          "mean": 3.54,
+          "median": 2,
+          "n": 367
         },
         "repos": {
           "PastaPastaPasta/dashwallet-desktop": {
@@ -1869,9 +1978,9 @@
             "n": 10
           },
           "dashpay/platform": {
-            "mean": 4.86,
-            "median": 3,
-            "n": 91
+            "mean": 4.82,
+            "median": 3.0,
+            "n": 92
           },
           "dashpay/tenderdash": {
             "mean": 1.29,
@@ -1927,9 +2036,9 @@
           "week": "2026-W47"
         },
         {
-          "mean": 3.5,
-          "median": 4.0,
-          "n": 24,
+          "mean": 3.4,
+          "median": 4,
+          "n": 25,
           "week": "2026-W48"
         }
       ],
@@ -2616,9 +2725,9 @@
               "week": "2026-W47"
             },
             {
-              "mean": 4.07,
-              "median": 4.0,
-              "n": 14,
+              "mean": 3.87,
+              "median": 4,
+              "n": 15,
               "week": "2026-W48"
             }
           ]
@@ -3375,9 +3484,9 @@
           "above_target": false,
           "approved_n": 447,
           "max": 44,
-          "mean": 3.77,
-          "median": 2,
-          "n": 637,
+          "mean": 3.76,
+          "median": 2.0,
+          "n": 638,
           "p90": 9,
           "share_over_5": 0.188,
           "to_approve_mean": 2.26,
@@ -3389,12 +3498,12 @@
             "above_target": true,
             "approved_n": 102,
             "max": 44,
-            "mean": 5.23,
-            "median": 3.0,
-            "n": 162,
+            "mean": 5.21,
+            "median": 3,
+            "n": 163,
             "p90": 11,
             "repo": "dashpay/platform",
-            "share_over_5": 0.309,
+            "share_over_5": 0.307,
             "to_approve_mean": 2.7,
             "to_approve_median": 1.5
           },
@@ -3561,8 +3670,8 @@
           "approved_n": 1523,
           "max": 73,
           "mean": 3.29,
-          "median": 2,
-          "n": 2271,
+          "median": 2.0,
+          "n": 2272,
           "p90": 7,
           "share_over_5": 0.144,
           "to_approve_mean": 2.29,
@@ -3575,8 +3684,8 @@
             "approved_n": 360,
             "max": 44,
             "mean": 3.74,
-            "median": 2.0,
-            "n": 608,
+            "median": 2,
+            "n": 609,
             "p90": 9,
             "repo": "dashpay/platform",
             "share_over_5": 0.186,
@@ -3788,8 +3897,8 @@
           "approved_n": 707,
           "max": 44,
           "mean": 3.82,
-          "median": 2.0,
-          "n": 1056,
+          "median": 2,
+          "n": 1057,
           "p90": 9,
           "share_over_5": 0.189,
           "to_approve_mean": 2.37,
@@ -3801,12 +3910,12 @@
             "above_target": true,
             "approved_n": 184,
             "max": 44,
-            "mean": 4.96,
-            "median": 3,
-            "n": 295,
+            "mean": 4.94,
+            "median": 3.0,
+            "n": 296,
             "p90": 11,
             "repo": "dashpay/platform",
-            "share_over_5": 0.288,
+            "share_over_5": 0.287,
             "to_approve_mean": 2.79,
             "to_approve_median": 2.0
           },
@@ -4001,8 +4110,8 @@
           "approved_n": 1523,
           "max": 73,
           "mean": 3.29,
-          "median": 2,
-          "n": 2271,
+          "median": 2.0,
+          "n": 2272,
           "p90": 7,
           "share_over_5": 0.144,
           "to_approve_mean": 2.29,
@@ -4015,8 +4124,8 @@
             "approved_n": 360,
             "max": 44,
             "mean": 3.74,
-            "median": 2.0,
-            "n": 608,
+            "median": 2,
+            "n": 609,
             "p90": 9,
             "repo": "dashpay/platform",
             "share_over_5": 0.186,
@@ -4228,8 +4337,8 @@
           "approved_n": 1242,
           "max": 73,
           "mean": 3.64,
-          "median": 2.0,
-          "n": 1826,
+          "median": 2,
+          "n": 1827,
           "p90": 8,
           "share_over_5": 0.169,
           "to_approve_mean": 2.46,
@@ -4241,9 +4350,9 @@
             "above_target": true,
             "approved_n": 313,
             "max": 44,
-            "mean": 4.12,
-            "median": 2,
-            "n": 509,
+            "mean": 4.11,
+            "median": 2.0,
+            "n": 510,
             "p90": 10,
             "repo": "dashpay/platform",
             "share_over_5": 0.214,
@@ -4454,11 +4563,11 @@
           "above_target": false,
           "approved_n": 226,
           "max": 44,
-          "mean": 3.55,
-          "median": 2.0,
-          "n": 366,
+          "mean": 3.54,
+          "median": 2,
+          "n": 367,
           "p90": 8,
-          "share_over_5": 0.178,
+          "share_over_5": 0.177,
           "to_approve_mean": 2.22,
           "to_approve_median": 1.0
         },
@@ -4482,12 +4591,12 @@
             "above_target": true,
             "approved_n": 49,
             "max": 44,
-            "mean": 4.86,
-            "median": 3,
-            "n": 91,
+            "mean": 4.82,
+            "median": 3.0,
+            "n": 92,
             "p90": 11,
             "repo": "dashpay/platform",
-            "share_over_5": 0.319,
+            "share_over_5": 0.315,
             "to_approve_mean": 2.98,
             "to_approve_median": 1
           },
@@ -4626,8 +4735,8 @@
           "approved_n": 1523,
           "max": 73,
           "mean": 3.29,
-          "median": 2,
-          "n": 2271,
+          "median": 2.0,
+          "n": 2272,
           "p90": 7,
           "share_over_5": 0.144,
           "to_approve_mean": 2.29,
@@ -4640,8 +4749,8 @@
             "approved_n": 360,
             "max": 44,
             "mean": 3.74,
-            "median": 2.0,
-            "n": 608,
+            "median": 2,
+            "n": 609,
             "p90": 9,
             "repo": "dashpay/platform",
             "share_over_5": 0.186,
