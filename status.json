@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-23T07:59:04Z",
-  "generated_at": "2026-11-23T07:59:05Z",
+  "data_as_of": "2026-11-23T08:00:08Z",
+  "generated_at": "2026-11-23T08:00:08Z",
   "history": {
     "daily": [
       {
@@ -418,7 +418,7 @@
           },
           "wait": {
             "median_seconds": 1814,
-            "n": 1079,
+            "n": 1080,
             "p90_seconds": 1928
           }
         },
@@ -444,6 +444,22 @@
       "window_days": 7
     },
     "recent_events": [
+      {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 8229,
+        "repo": "dashpay/dash",
+        "run_id": 13256,
+        "ts": "2026-11-23T07:59:36Z"
+      },
+      {
+        "detail": "attempt 1 sha=429cdaa4",
+        "kind": "run.spawned",
+        "number": 8229,
+        "repo": "dashpay/dash",
+        "run_id": 13256,
+        "ts": "2026-11-23T07:59:20Z"
+      },
       {
         "detail": null,
         "kind": "check.synced",
@@ -747,22 +763,6 @@
         "repo": "dashpay/platform",
         "run_id": null,
         "ts": "2026-11-23T07:18:44Z"
-      },
-      {
-        "detail": null,
-        "kind": "check.synced",
-        "number": 6097,
-        "repo": "dashpay/platform",
-        "run_id": null,
-        "ts": "2026-11-23T07:18:43Z"
-      },
-      {
-        "detail": "attempt 1 sha=72a09794",
-        "kind": "run.spawned",
-        "number": 6097,
-        "repo": "dashpay/platform",
-        "run_id": 13254,
-        "ts": "2026-11-23T07:18:42Z"
       }
     ],
     "tokens_by_effort": [
@@ -1370,14 +1370,120 @@
       "findings_posted": 13880,
       "reviews": 11607,
       "reviews_imported": 2245,
-      "runs": 13255,
+      "runs": 13256,
       "tokens_in": 141390905857,
       "tokens_out": 1537992133,
       "tokens_total": 142928897990
     }
   },
   "live": {
-    "active": [],
+    "active": [
+      {
+        "attempt": 1,
+        "author": "PastaPastaPasta",
+        "deadline_at": "2026-11-23T13:59:20Z",
+        "deadline_in_seconds": 21552,
+        "degraded": false,
+        "elapsed_seconds": 48,
+        "findings": null,
+        "heartbeat_age_seconds": 2,
+        "heartbeat_at": "2026-11-23T08:00:06Z",
+        "id": 13256,
+        "lanes": [],
+        "live_lanes": [
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 32,
+            "state": "running"
+          }
+        ],
+        "number": 8229,
+        "overdue": false,
+        "phase": "phase1",
+        "pr_url": "https://github.com/dashpay/dash/pull/8229",
+        "priority": false,
+        "progress": 0.047,
+        "queue": "live",
+        "queued_at": "2026-11-23T07:29:00Z",
+        "remaining_seconds": 969,
+        "repo": "dashpay/dash",
+        "sha": "429cdaa40a634b22c5ea8613b067b6e8c3047c98",
+        "started_at": "2026-11-23T07:59:20Z",
+        "status": "running",
+        "steps": [
+          {
+            "info": {},
+            "name": "worktree",
+            "seconds": 4,
+            "started_at": "2026-11-23T07:59:21Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "selection": [
+                "dash-core-commit-history"
+              ]
+            },
+            "name": "select",
+            "seconds": 5,
+            "started_at": "2026-11-23T07:59:25Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "Although IsSuperblockValid is consensus-sensitive, the diff makes a small, localized change that checks each payment against the remaining limit before adding it, with focused regression tests.",
+              "tier": "low"
+            },
+            "name": "triage",
+            "seconds": 4,
+            "started_at": "2026-11-23T07:59:26Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "context",
+            "seconds": 3,
+            "started_at": "2026-11-23T07:59:30Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general"
+            ],
+            "lanes_total": 1,
+            "name": "phase1",
+            "seconds": 35,
+            "started_at": "2026-11-23T07:59:33Z",
+            "status": "running"
+          }
+        ],
+        "tier": "low",
+        "title": "fix: refuse superblock payments over the limit without overflowing",
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "trigger": "new_push",
+        "upcoming": [
+          "verify1",
+          "gate",
+          "phase2",
+          "verify2",
+          "publish"
+        ],
+        "wait_seconds": 1820
+      }
+    ],
     "audit": {
       "audited": 118,
       "enabled": false,
@@ -1393,7 +1499,7 @@
       "would_block": 23
     },
     "capacity": {
-      "live_in_flight": 0,
+      "live_in_flight": 1,
       "max_runs": 30,
       "maximum": 8,
       "priority_overflow": 2,
@@ -1433,7 +1539,8 @@
       "closed": 881,
       "done": 11459,
       "failed": 100,
-      "queued": 7,
+      "queued": 6,
+      "running": 1,
       "superseded": 3907
     },
     "ingest_error_streak": 0,
@@ -1465,46 +1572,27 @@
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 1,
         "slots": 20,
         "waiting": 0
       }
     ],
     "last_run_done_at": "2026-11-23T07:57:06Z",
-    "last_run_started_at": "2026-11-23T07:37:10Z",
+    "last_run_started_at": "2026-11-23T07:59:20Z",
     "median_run_minutes": 19.683333333333334,
     "notify_last_at": "2026-11-23T07:58:52Z",
-    "oldest_queued_at": "2026-11-23T07:29:00Z",
+    "oldest_queued_at": "2026-11-23T07:32:24Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1804,
-        "attempts": 0,
-        "author": "PastaPastaPasta",
-        "eligible": true,
-        "eligible_at": "2026-11-23T07:59:00Z",
-        "eligible_in_seconds": 0,
-        "number": 8229,
-        "position": 1,
-        "pr_url": "https://github.com/dashpay/dash/pull/8229",
-        "prioritize_url": "https://github.com/dashpay/dash/issues/8229#issuecomment-7093182422",
-        "priority": false,
-        "queued_at": "2026-11-23T07:29:00Z",
-        "reason": "waiting for a review slot",
-        "repo": "dashpay/dash",
-        "sha": "429cdaa40a634b22c5ea8613b067b6e8c3047c98",
-        "title": "fix: refuse superblock payments over the limit without overflowing",
-        "trigger": "new_push"
-      },
-      {
-        "age_seconds": 1600,
+        "age_seconds": 1664,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-11-23T08:02:24Z",
-        "eligible_in_seconds": 200,
+        "eligible_in_seconds": 136,
         "number": 8158,
-        "position": 2,
+        "position": 1,
         "pr_url": "https://github.com/dashpay/dash/pull/8158",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8158#issuecomment-6892634019",
         "priority": false,
@@ -1516,14 +1604,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1330,
+        "age_seconds": 1394,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-23T08:06:54Z",
-        "eligible_in_seconds": 470,
+        "eligible_in_seconds": 406,
         "number": 8221,
-        "position": 3,
+        "position": 2,
         "pr_url": "https://github.com/dashpay/dash/pull/8221",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8221#issuecomment-7066845331",
         "priority": false,
@@ -1535,14 +1623,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1330,
+        "age_seconds": 1394,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-11-23T08:06:54Z",
-        "eligible_in_seconds": 470,
+        "eligible_in_seconds": 406,
         "number": 8230,
-        "position": 4,
+        "position": 3,
         "pr_url": "https://github.com/dashpay/dash/pull/8230",
         "prioritize_url": "https://github.com/dashpay/dash/issues/8230#issuecomment-7094593343",
         "priority": false,
@@ -1554,14 +1642,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1031,
+        "age_seconds": 1095,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-23T08:11:53Z",
-        "eligible_in_seconds": 769,
+        "eligible_in_seconds": 705,
         "number": 355,
-        "position": 5,
+        "position": 4,
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/355",
         "prioritize_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/issues/355#issuecomment-7094680190",
         "priority": false,
@@ -1573,14 +1661,14 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 758,
+        "age_seconds": 822,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-23T08:16:26Z",
-        "eligible_in_seconds": 1042,
+        "eligible_in_seconds": 978,
         "number": 6013,
-        "position": 6,
+        "position": 5,
         "pr_url": "https://github.com/dashpay/platform/pull/6013",
         "prioritize_url": "https://github.com/dashpay/platform/issues/6013#issuecomment-7041731147",
         "priority": false,
@@ -1592,14 +1680,14 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 157,
+        "age_seconds": 221,
         "attempts": 0,
         "author": "knst",
         "eligible": false,
         "eligible_at": "2026-11-23T08:26:27Z",
-        "eligible_in_seconds": 1643,
+        "eligible_in_seconds": 1579,
         "number": 8231,
-        "position": 7,
+        "position": 6,
         "pr_url": "https://github.com/dashpay/dash/pull/8231",
         "prioritize_url": "https://github.com/dashpay/dash/pull/8231#issuecomment-new",
         "priority": false,
@@ -1618,7 +1706,7 @@
       "reviews": 111,
       "tokens": 637677825
     },
-    "ts": "2026-11-23T07:59:04Z",
+    "ts": "2026-11-23T08:00:08Z",
     "typical_minutes_by_tier": {
       "critical": 29.0,
       "low": 22.5,
@@ -1627,9 +1715,9 @@
       "unknown": 0.9
     },
     "watchdog": {
-      "active": 0,
-      "eligible": 1,
-      "idle_minutes": 21.9,
+      "active": 1,
+      "eligible": 0,
+      "idle_minutes": 0.8,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1637,7 +1725,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-23T07:59:04Z",
+    "generated_at": "2026-11-23T08:00:08Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
