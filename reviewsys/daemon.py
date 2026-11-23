@@ -218,7 +218,7 @@ class Daemon:
         """Re-probe the sentinel so the mode flips back on its own once quota returns.
 
         Only a person can add or re-enable an OpenAI account, so an outage the probe found
-        pages #claw with pasta and latte mentioned, and re-pages every `DEGRADED_REPAGE_S`
+        pages #claw with `page_mentions` mentioned, and re-pages every `DEGRADED_REPAGE_S`
         until it clears. The same interval bounds a flapping probe: a flip back into the mode
         within it goes to the operator DM only. The all-clear goes to #claw only when #claw
         has an open page and the probe (not an operator override) says the models answer. A
