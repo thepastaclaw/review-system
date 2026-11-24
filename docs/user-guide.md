@@ -6,6 +6,8 @@ For PR authors and clients using **@thepastaclaw**. Defaults below are configura
 
 **`/skip-bots` has no built-in effect on Reviewsys.** Another repository automation may interpret it separately. Use draft state or the default `tag:skip-review` label to opt out of automatic review (explicit-request exceptions below). Reviewsys has no pause/resume/cancel or normal/priority slash commands.
 
+**On a draft, `@thepastaclaw review` does not trigger review—even from a human.** GitHub reviewer requests also require non-draft status. The separate gate-checkbox path supports drafts (see below).
+
 | Exact comment text / placement | Effect and restrictions |
 | --- | --- |
 | `@thepastaclaw review` — top-level PR comment | Requests **priority** review of the live head on an open, non-draft PR. Works in enabled repos; an unlisted repo requires a trusted requester and bot access. Explicitly disabled repos stay off. |
@@ -13,14 +15,16 @@ For PR authors and clients using **@thepastaclaw**. Defaults below are configura
 | Plain reply in the **original bot finding thread**; no command needed | Trusted humans can ask questions, disagree, or give fix evidence. On an already-reviewed live head, normally starts **conversation**, not full review. After an unreviewed automatic push, the normal review reads the reply without bypassing debounce. During a run, routing waits for it to end. Non-draft PRs only; other bots' replies do not trigger discussion. |
 | `> exact finding title` followed by your response — top-level comment | For a finding published only in the review body. Trusted human, enabled non-draft PR: requests a full same-head review, or leaves an unreviewed push's normal timing intact. Prefer the original thread when available. |
 
-**Trusted human:** GitHub association `OWNER`, `MEMBER`, `COLLABORATOR`, or `CONTRIBUTOR`, or a configured trusted reviewer. Initial mentions on watched repos do not use the same-head trust gate. Bot comments, quoted/code examples, thanks mentioning a review, and finding-thread mentions are **not** explicit same-head full-review asks. The bot's own PRs use a separate feedback route.
+**Initial scheduling vs reruns:** initial mention routing on enabled, non-draft PRs has no human-only/trust gate, so a bot actor can request an unreviewed head. Same-head mention reruns require GitHub association `OWNER`, `MEMBER`, `COLLABORATOR`, or `CONTRIBUTOR`, or a configured trusted reviewer; they exclude the configured review bot, `coderabbitai`/`coderabbitai[bot]`, and logins ending `[bot]`. Quoted/code examples, thanks mentioning a review, and finding-thread mentions are not explicit same-head full-review asks. The review bot's own PRs use a separate feedback route.
+
+**Actor identity:** an agent posting through a regular user account is classified by that account's GitHub login/association and configured trust—not an AI attribution footer. “Trusted human” above describes this actor check, not detection of who wrote the text.
 
 ## Other controls (not textual comment commands)
 
 | GitHub action | Effect and restrictions |
 | --- | --- |
 | Tick **Request normal review** in the bot's status comment | Where offered, requests the current head **without debounce or priority** (configured priority authors excepted). Requires permission to edit that comment, normally repository collaborators. Works on drafts. |
-| Tick **Request priority review** in that comment | Same permissions; bypasses debounce and prioritizes scheduling/lane slots. May spend quota faster with configured fast-priority support. Does not interrupt running model calls or bypass an outage pause. |
+| Tick **Request priority review** in that comment | Same permissions; also works on drafts. Bypasses debounce and prioritizes scheduling/lane slots. May spend quota faster with configured fast-priority support. Does not interrupt running model calls or bypass an outage pause. |
 | Request **thepastaclaw** as a GitHub reviewer | Users with GitHub permission to request reviewers; enabled, open, non-draft PR. Priority review; an actual pending request can rerun the same head. Repeated notifications alone are not new requests. |
 | Keep/return PR to **Draft** | No automatic review. A checkbox-requested review of the current draft head survives; a new draft push needs another request or marking ready. Mention/reviewer-request routing requires a non-draft PR. |
 | Add **`tag:skip-review`** label | Default automatic opt-out, case-insensitive; `skip_labels` is configurable/disableable. Stops automatic work, but non-draft explicit mentions/reviewer requests still work. Already-checked boxes may be honoured; labelled gates offer no new boxes. Replies can discuss reviewed commits, not request review of new ones. Removing the label queues normally. |
@@ -52,7 +56,7 @@ For PR authors and clients using **@thepastaclaw**. Defaults below are configura
 
 - Dashboard: **https://thepastaclaw.github.io/review-system/**
 - JSON snapshot: **https://thepastaclaw.github.io/review-system/data/status.json**
-- Public GitHub Pages export, **not an authenticated REST mutation API**. Controls are the GitHub actions above; clients need no service CLI, database, or queue access. Automated actors do not inherit human trust by copying commands.
+- Public GitHub Pages export, **not an authenticated REST mutation API**. Controls are the GitHub actions above; clients need no service CLI, database, or queue access. The actor restrictions above also apply to integrations.
 
 | Export fields (schema version 1) | Meaning |
 | --- | --- |
