@@ -1660,3 +1660,55 @@ def test_promoting_an_already_queued_review_spends_nothing(cfg, conn, gh, notifi
     assert (
         kv_get(conn, f"router.asked_rereviews:review_requested:dashpay/platform#68:{sha}") is None
     )
+
+
+def test_asking_reaches_a_draft_but_pushes_do_not(cfg, conn, gh, notifier):
+    """PastaPastaPasta/govhub#86 (2026-11-24): a draft kept a draft until its review was green,
+    and neither a review request nor a mention could ask for that review."""
+    sha = "d" * 40
+    gh.pr = {**gh.pr, "head": {"sha": sha}, "draft": True}
+    _ask(conn, "n1", "review_requested", 86)
+    assert route_inbox(conn, cfg, gh, notifier)["review_requested"] == 1
+    head = conn.execute("SELECT status, trigger FROM heads WHERE number=86").fetchone()
+    assert tuple(head) == ("queued", "review_requested")
+    gh.open_prs["dashpay/platform"] = [pr(86, sha, isDraft=True)]
+    ingest_prs(conn, cfg, gh)
+    assert conn.execute("SELECT status FROM heads WHERE number=86").fetchone()[0] == "queued"
+
+    gh.open_prs["dashpay/platform"] = [pr(87, "e" * 40, isDraft=True)]
+    ingest_prs(conn, cfg, gh)
+    assert conn.execute("SELECT COUNT(*) FROM heads WHERE number=87").fetchone()[0] == 0
+
+
+def test_a_mention_on_an_unlisted_draft_needs_a_trusted_human(cfg, conn, gh, notifier):
+    gh.pr = {**gh.pr, "head": {"sha": "c" * 40}, "draft": True}
+    with tx(conn):
+        for source, number, comment in (("m1", 85, 1), ("m2", 84, 2)):
+            conn.execute(
+                "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    source,
+                    "mention",
+                    "someone/govhub",
+                    number,
+                    None,
+                    f"https://api.github.com/repos/someone/govhub/issues/comments/{comment}",
+                    now(),
+                    now(),
+                ),
+            )
+    gh.routes["repos/someone/govhub/issues/comments/1"] = {
+        "body": "@thepastaclaw review",
+        "user": {"login": "lklimek"},
+        "author_association": "NONE",
+    }
+    gh.routes["repos/someone/govhub/issues/comments/2"] = {
+        "body": "@thepastaclaw review",
+        "user": {"login": "stranger"},
+        "author_association": "NONE",
+    }
+    stats = route_inbox(conn, cfg, gh, notifier)
+    assert stats["mention"] == 1
+    heads = conn.execute("SELECT number, trigger FROM heads").fetchall()
+    assert [(h["number"], h["trigger"]) for h in heads] == [(85, "mention")]
