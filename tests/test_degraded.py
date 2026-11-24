@@ -111,7 +111,6 @@ def test_degraded_block_is_parsed_and_validated(cfg, skills_dir, tmp_path):
     # bad blocks fail closed at load, not at run time
     for bad in (
         {"substitutes": {"gpt-6-astra": MUSE}},  # no sentinel
-        {"sentinel": "gpt-6-astra", "substitutes": {}},
         {"sentinel": "gpt-6-astra", "substitutes": {"gpt-5.6-sol": MUSE}},  # sentinel unmapped
         {"sentinel": "gpt-6-astra", "substitutes": {"gpt-6-astra": {"model": ""}}},
         {"sentinel": "a", "substitutes": {"a": "b", "b": "c"}},  # chained stand-in

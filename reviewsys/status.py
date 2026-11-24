@@ -93,7 +93,7 @@ def watchdog(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     """True 'stuck' when a live head could start (eligible, its PR has no run in flight, and
     `max_runs` is not reached) yet nothing started recently. Runs are not bounded by a slot
     count any more (lanepool.py), so such a head starts on the next tick unless something is
-    wrong."""
+    wrong, or a pause holds the queue on purpose (`degraded.paused`)."""
     ts = now_dt()
     eligible = conn.execute(
         "SELECT COUNT(*) AS n FROM heads WHERE status='queued' AND queue='live' AND eligible_at<=?",
@@ -121,6 +121,7 @@ def watchdog(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
         bool(startable)
         and (cfg.max_runs == 0 or in_flight < cfg.max_runs)
         and (idle_min is None or idle_min > cfg.watchdog_minutes)
+        and not degraded.paused(conn, cfg)
     )
     ingest_last = kv_get(conn, "ingest.last_at")
     ingest_stale = ingest_last is None or (ts - parse_ts(ingest_last)) > timedelta(
