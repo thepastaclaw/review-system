@@ -1225,9 +1225,21 @@ def _prior_extra(ctx: RunContext, h: str, thread: dict[str, Any] | None) -> dict
         tracking = _known_tracking(ctx, h) if settled == "INTENTIONALLY_DEFERRED" else ""
         if tracking:
             extra["tracking"] = tracking
-    elif judged := _judged_fixed(ctx, h):
+    elif judged := _judged_fixed(ctx, h) or _told_fixed(ctx, h):
         extra["judged_fixed"] = judged
     return extra
+
+
+def _told_fixed(ctx: RunContext, h: str) -> dict[str, str] | None:
+    """The FIXED or OUTDATED finding `h`'s thread still tells its author
+    (`publish.told_settled`), with the head and time of the answer that said so, when no
+    judged-fixed row records it: a degraded review's judgement from before those were kept.
+    What the thread says is what the author was told, so it counts as the judgement."""
+    t = ctx.open_threads.get(h)
+    told = publish.told_settled(t) if t else None
+    if told and told["status"] in late.JUDGED_FIXED and told["sha"]:
+        return told
+    return None
 
 
 # What a finding's thread already got from the bot, kept in kv per finding as
@@ -3878,9 +3890,11 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
 
     A final review's FIXED or OUTDATED is kept too (`late.STAGE_FIXED`, with the head it was
     judged at), so a later round that raises the finding again on unchanged lines has it
-    confirmed first (`_revived_test`). A degraded review's judgement is not kept, nor one the
-    finding already has with the same status and head; a revival kept settled is written
-    again with the head it was judged at, since this run's raw verifier rows carried it.
+    confirmed first (`_revived_test`). A degraded review's is kept as well: a stand-in's
+    judgement is weak evidence that the code is fixed, but its thread was told so all the
+    same. One the finding already has with the same status and head is not written again; a
+    revival kept settled is written again with the head it was judged at, since this run's
+    raw verifier rows carried it.
     """
     kept = _kept_hashes(verified)
     rows = []
@@ -3897,9 +3911,7 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
             was = prior.extra.get("judged_fixed") or {}
             revival = bool(outcome.get("kept_settled") and was.get("sha"))
             sha = str(was["sha"]) if revival else ctx.sha
-            if not revival and (
-                ctx.is_degraded or (was.get("status"), was.get("sha")) == (status, sha)
-            ):
+            if not revival and (was.get("status"), was.get("sha")) == (status, sha):
                 continue
             rows.append(
                 (

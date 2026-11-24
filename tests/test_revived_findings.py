@@ -753,3 +753,155 @@ def test_a_deferral_on_a_finding_judged_fixed_files_no_issue(cfg, conn, gh, lane
     recon = [{"finding_hash": h, "status": "INTENTIONALLY_DEFERRED", "reason": "Later."}]
     _round(cfg, conn, gh, lanes, E, [], recon)
     assert not _issue_calls(gh) and not gh.created_issues
+
+
+# ---- dashpay/platform#6097: what a thread was told it stays, until the thread is told why ----
+
+
+def _told_resolved(cfg, conn, gh, lanes, monkeypatch, *, degraded=True):
+    """Round 1 raises B; round 2 (at C, a degraded review when `degraded`) judges it FIXED on
+    a repository where the bot cannot resolve threads, so its root reads "✅ Resolved", and the
+    author then resolves the thread by hand, as on #6097."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([B])
+    _run(cfg, conn, gh, lanes)
+    h = Finding.from_dict(B).hash
+    _thread(gh, h, B["title"], [])
+    gh.can_resolve = False
+    was = worker.RunContext.is_degraded
+    if degraded:
+        monkeypatch.setattr(worker.RunContext, "is_degraded", property(lambda self: True))
+    recon = [{"finding_hash": h, "status": "FIXED", "reason": "Fixed by the reorder."}]
+    rid = _round(cfg, conn, gh, lanes, C, [], recon)
+    monkeypatch.setattr(worker.RunContext, "is_degraded", was)
+    thread = gh.threads[0]
+    answer = gh.replies[-1]["body"]
+    assert answer.split("\n", 1)[1].startswith("**Resolved** (re-reviewed at `cccccccc`)")
+    thread["comments"]["nodes"].append(
+        _gql_comment(
+            {"id": 960, "author": "thepastaclaw", "body": answer, "created_at": "2026-11-23T09:31Z"}
+        )
+    )
+    thread["isResolved"] = True
+    assert "✅ **Resolved** at `cccccccc`" in _root(gh)
+    return h, rid
+
+
+def _root(gh):
+    return gh.threads[0]["comments"]["nodes"][0]["body"]
+
+
+@pytest.mark.parametrize("row", [True, False], ids=["judged-fixed row", "thread only"])
+def test_a_degraded_reviews_resolved_is_confirmed_before_it_blocks_again(
+    cfg, conn, gh, lanes, unchanged, monkeypatch, row
+):
+    """dashpay/platform#6097: a stand-in review judged a blocker FIXED and its thread was told
+    "Resolved"; the next full review's verifier said STILL_VALID on lines unchanged since. It
+    goes to confirmation as a finding judged fixed; confirmed, its thread is told why it is
+    back and no longer reads Resolved. Without a judged-fixed row (degraded reviews before
+    those were kept), the thread's own answer is the judgement."""
+    h, degraded_run = _told_resolved(cfg, conn, gh, lanes, monkeypatch)
+    assert _judged_rows(conn, h) == [(degraded_run, f"FIXED\n{C}")]
+    if not row:
+        with tx(conn):
+            conn.execute("DELETE FROM findings WHERE stage=?", (late.STAGE_FIXED,))
+    replies = len(gh.replies)
+    _raised_again(cfg, conn, gh, lanes, h, D)
+    (confirm,) = _prompts(lanes, "confirm")
+    assert f'"judged_fixed_at": "{C}"' in confirm
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    (answer,) = gh.replies[replies:]
+    assert (
+        "**Still applies** (re-reviewed at `dddddddd`): Judged fixed at `cccccccc`; raised "
+        "again and confirmed by an independent pass: a reachable failure"
+    ) in answer["body"]
+    assert STILL in answer["body"]
+    assert "thepastaclaw-thread-status" not in _root(gh)
+
+
+def test_a_degraded_reviews_resolved_not_confirmed_stays_settled(
+    cfg, conn, gh, lanes, unchanged, monkeypatch
+):
+    h, _ = _told_resolved(cfg, conn, gh, lanes, monkeypatch)
+    lanes.confirm = {B["title"]: "non_blocking"}
+    replies = len(gh.replies)
+    rid = _raised_again(cfg, conn, gh, lanes, h, D)
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "APPROVE" and "🔴 **Blocking**" not in review["body"]
+    assert ("verified", B["title"]) not in _stages(conn, rid)
+    assert not [r for r in gh.replies[replies:] if "Still applies" in r["body"]]
+    assert "✅ **Resolved** at `cccccccc`" in _root(gh)
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
+
+
+@pytest.mark.parametrize("resolved", [True, False], ids=["resolved by hand", "open"])
+def test_back_on_changed_lines_its_resolved_thread_is_told_why(
+    cfg, conn, gh, lanes, unchanged, monkeypatch, resolved
+):
+    """Judged fixed, then kept again on lines that changed since (no confirmation is due):
+    the review lists it as blocking, so its thread, which read Resolved, gets this review's
+    reason and loses that status line, whether the author resolved it or not."""
+    h, _ = _told_resolved(cfg, conn, gh, lanes, monkeypatch, degraded=False)
+    gh.threads[0]["isResolved"] = resolved
+    unchanged["value"] = True
+    replies = len(gh.replies)
+    _raised_again(cfg, conn, gh, lanes, h, D)
+    assert not _prompts(lanes, "confirm")
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    (answer,) = gh.replies[replies:]
+    assert f"**Still applies** (re-reviewed at `dddddddd`): {STILL}" in answer["body"]
+    assert "thepastaclaw-thread-status" not in _root(gh)
+
+
+def test_told_settled_reads_the_status_line_then_the_newest_answer():
+    marker = publish.THREAD_ANSWER_MARKER
+    fixed = publish.render_thread_answer(
+        marker=marker.format(sha=C, reply=None, finding="h"), status="FIXED", head_sha=C, reply="ok"
+    )
+    still = publish.render_thread_answer(
+        marker=marker.format(sha=D, reply=None, finding="h"),
+        status="STILL_VALID",
+        head_sha=D,
+        reply="no",
+    )
+    root = "<!-- thepastaclaw-review v1 finding=h dedupe=x -->\n**🔴 Blocking: T**\n\nbody"
+    answers = [{"body": fixed, "created_at": "t1"}]
+    told = {"status": "FIXED", "sha": C, "since": "t1"}
+    assert publish.told_settled({"body": root, "bot_answers": answers}) == told
+    marked = publish.with_thread_status(root, status="FIXED", head_sha=C)
+    later = [*answers, {"body": still, "created_at": "t2"}]
+    assert publish.told_settled({"body": marked, "bot_answers": later}) == told
+    assert publish.told_settled({"body": root, "bot_answers": later}) is None
+    disputed = publish.with_thread_status(root, status="DISPUTED", head_sha=C)
+    assert publish.told_settled({"body": disputed, "bot_answers": answers}) is None
+
+
+def test_a_revival_restated_under_another_hash_is_not_answered_as_withdrawn(gh):
+    """A confirmed revival that restates the judged-fixed finding under a new hash keeps that
+    finding: its thread is told it still applies, never that it was withdrawn."""
+    h = "a" * 12
+    f = Finding.from_dict({**B, "title": "The refresh races the wallet lock"})
+    f.extra["judged_fixed"] = {"hash": h, "status": "FIXED", "sha": C}
+    root = f"<!-- thepastaclaw-review v1 finding={h} dedupe=x -->\n**🔴 Blocking: T**\n\nbody"
+    thread = {
+        "comment_id": 900,
+        "thread_id": "PRRT_900",
+        "body": publish.with_thread_status(root, status="FIXED", head_sha=C),
+        "bot_answers": [],
+        "resolved": False,
+        "awaiting_answer": False,
+    }
+    row = {"finding_hash": h, "status": "STILL_VALID", "reason": "Back.", "update": "revived"}
+    (item,) = publish.answer_replied_threads(
+        gh,
+        "dashpay/platform",
+        1,
+        D,
+        threads={},
+        open_threads={h: thread},
+        reconciliation={h: row},
+        verified=SimpleNamespace(findings=[f]),
+    )
+    assert item["status"] == "STILL_VALID" and item["action"] == "replied"
+    assert "**Still applies** (re-reviewed at `dddddddd`): Back." in gh.replies[-1]["body"]
