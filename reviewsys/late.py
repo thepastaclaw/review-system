@@ -17,10 +17,11 @@ nitpicks are dropped, suggestions are listed once in the review body as follow-u
 confirmation lane (`parse_decisions`) finds a concrete reachable failure. Findings already
 raised on the PR, and everything on A code, take the normal path.
 
-A finding an earlier full review judged FIXED or OUTDATED (`STAGE_FIXED`) and that this round
-raises again on lines unchanged since that judgement (`split`'s `revived`) is a new blocker
-for the gate: it stands only when the confirmation lane confirms it, and otherwise stays
-settled. A non-blocking one stays settled without asking."""
+A finding an earlier full review judged FIXED or OUTDATED (`STAGE_FIXED`, a degraded review's
+included; without a row, what its thread still tells the author) and that this round raises
+again on lines unchanged since that judgement (`split`'s `revived`) is a new blocker for the
+gate: it stands only when the confirmation lane confirms it, and otherwise stays settled. A
+non-blocking one stays settled without asking."""
 
 from __future__ import annotations
 
@@ -53,8 +54,10 @@ REMEMBERED = {STAGE_UNCONFIRMED: "non_blocking", STAGE_INVALID: "invalid"}
 # how a `late-unconfirmed` row's body ends: the confirmation's reason follows
 NOT_CONFIRMED = "Not confirmed as blocking by an independent pass: "
 # a prior finding a full review judged fixed, its body the status and the head it was judged
-# at (two lines); later rounds read it until a review carries or posts the finding again
+# at (two lines), and `WEAK` on a third when a degraded review judged it; later rounds read it
+# until a review carries or posts the finding again
 STAGE_FIXED = "judged-fixed"
+WEAK = "weak"
 JUDGED_FIXED = frozenset({"FIXED", "OUTDATED"})
 # lines around a listed follow-up candidate that still count as its place
 LISTED_MARGIN = 3

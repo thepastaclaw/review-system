@@ -1827,6 +1827,59 @@ def shown_status(body: str) -> str:
     return "STILL_VALID"
 
 
+# a thread answer (`THREAD_ANSWER_MARKER`): the head it answered on, and what follows the marker
+_ANSWER_RE = re.compile(
+    re.escape(THREAD_ANSWER_MARKER)
+    .replace(re.escape("{sha}"), "([0-9a-f]+)")
+    .replace(re.escape("{reply}"), r"\S*")
+    .replace(re.escape("{finding}"), r"\S*")
+    + r"\n(.*)",
+    re.DOTALL,
+)
+
+
+def _answered(body: str) -> tuple[str, str] | None:
+    """(status, head sha) of one bot thread answer: its lead on the line right after the
+    marker, else its trailing note, else STILL_VALID; None when it carries no marker. A reason
+    that quotes an earlier answer's lead does not change what this one says."""
+    m = _ANSWER_RE.search(body)
+    if not m:
+        return None
+    after = m.group(2)
+    status = next(
+        (s for s, lead in _ANSWER_LEAD.items() if after.startswith(f"**{lead}** (re-reviewed at")),
+        None,
+    ) or next(
+        (s for s, note in _CONVERSATION_NOTE.items() if body.rstrip().endswith(note.strip())),
+        "STILL_VALID",
+    )
+    return status, m.group(1)
+
+
+def told_settled(thread: dict[str, Any]) -> dict[str, str] | None:
+    """Whether a bot finding thread (`github.finding_threads`) last told its author that the
+    finding is settled (WITHDRAWN, FIXED or OUTDATED), resolved by hand or not. What the thread
+    shows is its root's status line where it has one, else its newest bot answer. Returns the
+    `status`, with the head `sha` and time `since` of the newest answer that said it ("" when
+    none does), or None when the thread does not read as settled."""
+    answers = [
+        (a, read)
+        for a in thread.get("bot_answers") or []
+        if (read := _answered(str(a.get("body") or "")))
+    ]
+    line = THREAD_STATUS_RE.search(str(thread.get("body") or ""))
+    if line:
+        status = next((s for s in _RESOLVING if _THREAD_STATUS_LINE[s] in line.group(0)), "")
+    else:
+        status = answers[-1][1][0] if answers else ""
+    if status not in _RESOLVING:
+        return None
+    for a, (stated, sha) in reversed(answers):
+        if stated == status:
+            return {"status": status, "sha": sha, "since": str(a.get("created_at") or "")}
+    return {"status": status, "sha": "", "since": ""}
+
+
 def answer_thread_lane(
     gh: Gh,
     repo: str,
@@ -2038,11 +2091,23 @@ def answer_replied_threads(
     finding that still stands with something new to say (`update`: its code changed, or the
     reply it follows turned out to be a dispute). A lift
     that leaves the thread open, or a held deferral, is also shown on the thread's root
-    comment. Returns what was done."""
+    comment. A finding this review keeps whose thread last told its author it is settled
+    (`told_settled`), resolved by hand or not, gets this review's reason there once per head
+    and loses that status line: dashpay/platform#6097 listed as blocking a finding whose
+    resolved thread still read "Resolved", with nothing said on it. Returns what was done."""
     # a verifier that echoes the carried finding without its finding_hash must not turn a
     # kept finding into "withdrawn": fall back to the finding's own hash as well
-    kept_hashes = {f.prior_hash for f in verified.findings if f.prior_hash} | {
-        f.hash for f in verified.findings
+    kept_hashes = {
+        h
+        for f in verified.findings
+        for h in (f.prior_hash, f.hash, (f.extra.get("judged_fixed") or {}).get("hash"))
+        if h
+    }
+    # kept findings whose thread last read as settled: told why they are back
+    back = {
+        h
+        for h, t in {**(open_threads or {}), **threads}.items()
+        if h in kept_hashes and told_settled(t) is not None
     }
     posted = [str(c.get("body") or "") for c in github.inline_comments(gh, repo, number)]
     done: list[dict[str, Any]] = []
@@ -2050,10 +2115,10 @@ def answer_replied_threads(
     for h, t in (open_threads or {}).items():
         row = reconciliation.get(h) or {}
         says = row.get("needs_tracking") or row.get("update")
-        if h in todo or t.get("resolved") or (h in kept_hashes and not says):
+        if h in todo or (h not in back and (t.get("resolved") or (h in kept_hashes and not says))):
             continue
         stated = str(row.get("status") or "")
-        if stated in _STATED_ON_OPEN_THREADS or says or row.get("announce"):
+        if stated in _STATED_ON_OPEN_THREADS or says or row.get("announce") or h in back:
             todo[h] = {**t, "latest_reply_id": None}
     # A malformed/legacy thread index can contain the same GitHub thread under more than
     # one finding identity (for example after a marker migration).  Replies are addressed to
@@ -2086,7 +2151,7 @@ def answer_replied_threads(
         # already sufficient.  Do not retry the resolve mutation either: GitHub may leave the
         # thread open when the mutation is rejected or races, and repeating it on every head is
         # noisy and does not change the review state.
-        repeat = not row.get("update") and _has_answer_for_status(t, status)
+        repeat = not (row.get("update") or h in back) and _has_answer_for_status(t, status)
         if not t.get("awaiting_answer") and repeat:
             item["action"] = "already_answered"
             done.append(item)
