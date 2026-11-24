@@ -1170,18 +1170,38 @@ def _latest_settlement(ctx: RunContext, finding_hash: str) -> str | None:
     return status if status in converse.LIFTING_STATUSES else None
 
 
-def _judged_fixed(ctx: RunContext, finding_hash: str) -> dict[str, str] | None:
+def _judged_fixed(
+    ctx: RunContext, finding_hash: str, thread: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """How a full review last judged a finding fixed (`status` FIXED or OUTDATED, the head
     `sha` it was judged at and the time `since` that run started), unless a later review
     carried or posted it again or a judgement lift settled it since. A FIXED row kept from a
-    dispute counts too."""
+    dispute counts too.
+
+    Without such a row, the FIXED or OUTDATED its `thread` still tells the author
+    (`publish.told_settled`, at the head and time of the answer that said so) is the
+    judgement, as long as no record of the finding is newer than that answer: a degraded
+    review's from before its judgements were kept. `weak`: a degraded review's judgement (its
+    row marked `late.WEAK`), or one only the thread records; the prompts do not show it
+    (`prompts.prior_for_prompt`)."""
     row = _settling_row(ctx, finding_hash)
-    if not row or row["stage"] not in (late.STAGE_FIXED, "conceded"):
+    if row and row["stage"] in (late.STAGE_FIXED, "conceded"):
+        status, _, rest = str(row["body"] or "").partition("\n")
+        sha, _, mark = rest.partition("\n")
+        if status not in late.JUDGED_FIXED:
+            return None
+        return {
+            "status": status,
+            "sha": sha.strip() or str(row["sha"]),
+            "since": row["started_at"],
+            **({"weak": True} if mark.strip() == late.WEAK else {}),
+        }
+    told = publish.told_settled(thread) if thread else None
+    if not told or told["status"] not in late.JUDGED_FIXED or not told["sha"]:
         return None
-    status, _, sha = str(row["body"] or "").partition("\n")
-    if status not in late.JUDGED_FIXED:
+    if row and str(row["started_at"]) >= told["since"]:
         return None
-    return {"status": status, "sha": sha.strip() or str(row["sha"]), "since": row["started_at"]}
+    return {**told, "weak": True}
 
 
 def _settling_row(ctx: RunContext, finding_hash: str) -> sqlite3.Row | None:
@@ -1225,21 +1245,9 @@ def _prior_extra(ctx: RunContext, h: str, thread: dict[str, Any] | None) -> dict
         tracking = _known_tracking(ctx, h) if settled == "INTENTIONALLY_DEFERRED" else ""
         if tracking:
             extra["tracking"] = tracking
-    elif judged := _judged_fixed(ctx, h) or _told_fixed(ctx, h):
+    elif judged := _judged_fixed(ctx, h, ctx.open_threads.get(h)):
         extra["judged_fixed"] = judged
     return extra
-
-
-def _told_fixed(ctx: RunContext, h: str) -> dict[str, str] | None:
-    """The FIXED or OUTDATED finding `h`'s thread still tells its author
-    (`publish.told_settled`), with the head and time of the answer that said so, when no
-    judged-fixed row records it: a degraded review's judgement from before those were kept.
-    What the thread says is what the author was told, so it counts as the judgement."""
-    t = ctx.open_threads.get(h)
-    told = publish.told_settled(t) if t else None
-    if told and told["status"] in late.JUDGED_FIXED and told["sha"]:
-        return told
-    return None
 
 
 # What a finding's thread already got from the bot, kept in kv per finding as
@@ -1283,7 +1291,7 @@ def _prior_status(ctx: RunContext, h: str) -> str | None:
     return prior.extra.get("prior_status") if prior else None
 
 
-def _prior_judged_fixed(ctx: RunContext, h: str) -> dict[str, str] | None:
+def _prior_judged_fixed(ctx: RunContext, h: str) -> dict[str, Any] | None:
     """How an earlier full review judged prior finding `h` fixed (`_prior_extra`), if it did."""
     prior = ctx.prior_findings.get(h)
     return prior.extra.get("judged_fixed") if prior else None
@@ -3892,9 +3900,10 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
     judged at), so a later round that raises the finding again on unchanged lines has it
     confirmed first (`_revived_test`). A degraded review's is kept as well: a stand-in's
     judgement is weak evidence that the code is fixed, but its thread was told so all the
-    same. One the finding already has with the same status and head is not written again; a
-    revival kept settled is written again with the head it was judged at, since this run's
-    raw verifier rows carried it.
+    same, and marked weak (`late.WEAK`). One the finding already has with the same status and
+    head is not written again, unless that one is weak and this review is not degraded; a
+    revival kept settled is written again with the head it was judged at, and weak if it was,
+    since this run's raw verifier rows carried it.
     """
     kept = _kept_hashes(verified)
     rows = []
@@ -3911,7 +3920,9 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
             was = prior.extra.get("judged_fixed") or {}
             revival = bool(outcome.get("kept_settled") and was.get("sha"))
             sha = str(was["sha"]) if revival else ctx.sha
-            if not revival and (was.get("status"), was.get("sha")) == (status, sha):
+            weak = ctx.is_degraded or (revival and bool(was.get("weak")))
+            same = (was.get("status"), was.get("sha")) == (status, sha)
+            if not revival and same and (weak or not was.get("weak")):
                 continue
             rows.append(
                 (
@@ -3926,7 +3937,7 @@ def _record_lifted_reconciliations(ctx: RunContext, phase: str, verified: Verifi
                     None,
                     prior.category,
                     prior.title,
-                    f"{status}\n{sha}",
+                    f"{status}\n{sha}" + (f"\n{late.WEAK}" if weak else ""),
                     None,
                 )
             )

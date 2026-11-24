@@ -828,6 +828,9 @@ def correction_prompt(
 
 
 def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
+    """The prior findings as the reviewer and verifier lanes are shown them. A weak judgement
+    that a finding is fixed (a degraded review's, or one only its thread records) is not
+    shown: they judge that finding on its merits, and only the later-round gate holds it."""
     out: list[dict[str, Any]] = []
     for f in findings:
         d: dict[str, Any] = {
@@ -843,6 +846,8 @@ def prior_for_prompt(findings: list[Finding], sha: str) -> list[dict[str, Any]]:
         replies = f.extra.get("thread_replies")
         prior_status = f.extra.get("prior_status")
         judged = f.extra.get("judged_fixed")
+        if judged and judged.get("weak"):
+            judged = None
         if prior_status:
             d["prior_status"] = prior_status
         if judged:

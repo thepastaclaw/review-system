@@ -757,59 +757,98 @@ def test_a_deferral_on_a_finding_judged_fixed_files_no_issue(cfg, conn, gh, lane
 
 # ---- dashpay/platform#6097: what a thread was told it stays, until the thread is told why ----
 
+# when each run started, as GitHub and the runs table write times; the FIXED answer between
+JUDGED_AT, ANSWERED_AT, LATER = (
+    "2026-11-23T08:57:24Z",
+    "2026-11-23T09:31:36Z",
+    "2026-11-23T16:57:51Z",
+)
 
-def _told_resolved(cfg, conn, gh, lanes, monkeypatch, *, degraded=True):
-    """Round 1 raises B; round 2 (at C, a degraded review when `degraded`) judges it FIXED on
-    a repository where the bot cannot resolve threads, so its root reads "✅ Resolved", and the
-    author then resolves the thread by hand, as on #6097."""
+
+def _started(conn, at, *, run=None):
+    with tx(conn):
+        if run is None:
+            conn.execute("UPDATE runs SET started_at=?", (at,))
+        else:
+            conn.execute("UPDATE runs SET started_at=? WHERE id=?", (at, run))
+
+
+def _told_resolved(cfg, conn, gh, lanes, monkeypatch, *, degraded=True, can_resolve=False):
+    """Round 1 raises B; round 2 (at C, a degraded review when `degraded`) judges it FIXED and
+    answers "Resolved" on its thread. Where the bot cannot resolve threads its root reads
+    "✅ Resolved" and the author resolves the thread by hand, as on #6097; where it can, the
+    bot resolved it and the answer is all the thread shows."""
     lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
     lanes.verifier["preliminary"] = _verifier([])
     lanes.verifier["final"] = _verifier([B])
     _run(cfg, conn, gh, lanes)
     h = Finding.from_dict(B).hash
     _thread(gh, h, B["title"], [])
-    gh.can_resolve = False
+    gh.can_resolve = can_resolve
     was = worker.RunContext.is_degraded
     if degraded:
         monkeypatch.setattr(worker.RunContext, "is_degraded", property(lambda self: True))
     recon = [{"finding_hash": h, "status": "FIXED", "reason": "Fixed by the reorder."}]
     rid = _round(cfg, conn, gh, lanes, C, [], recon)
     monkeypatch.setattr(worker.RunContext, "is_degraded", was)
-    thread = gh.threads[0]
+    with tx(conn):
+        conn.execute("UPDATE runs SET degraded=? WHERE id=?", (int(degraded), rid))
+    _started(conn, JUDGED_AT)
     answer = gh.replies[-1]["body"]
     assert answer.split("\n", 1)[1].startswith("**Resolved** (re-reviewed at `cccccccc`)")
-    thread["comments"]["nodes"].append(
-        _gql_comment(
-            {"id": 960, "author": "thepastaclaw", "body": answer, "created_at": "2026-11-23T09:31Z"}
-        )
-    )
-    thread["isResolved"] = True
-    assert "✅ **Resolved** at `cccccccc`" in _root(gh)
+    _on_thread(gh, answer, at=ANSWERED_AT, id=960)
+    gh.threads[0]["isResolved"] = True
+    assert ("✅ **Resolved** at `cccccccc`" in _root(gh)) is not can_resolve
     return h, rid
+
+
+def _on_thread(gh, body, *, at, id):
+    """`body`, a reply the bot posted, as GitHub then shows it on the thread."""
+    comment = {"id": id, "author": "thepastaclaw", "body": body, "created_at": at}
+    gh.threads[0]["comments"]["nodes"].append(_gql_comment(comment))
+    gh.inline.append({**gh.inline[0], "id": id, "body": body})
 
 
 def _root(gh):
     return gh.threads[0]["comments"]["nodes"][0]["body"]
 
 
-@pytest.mark.parametrize("row", [True, False], ids=["judged-fixed row", "thread only"])
-def test_a_degraded_reviews_resolved_is_confirmed_before_it_blocks_again(
-    cfg, conn, gh, lanes, unchanged, monkeypatch, row
+@pytest.mark.parametrize(
+    "origin", ["degraded review", "thread only", "bot resolved", "full review"]
+)
+def test_a_returning_finding_judged_fixed_is_confirmed_and_its_thread_told_why(
+    cfg, conn, gh, lanes, unchanged, monkeypatch, origin
 ):
     """dashpay/platform#6097: a stand-in review judged a blocker FIXED and its thread was told
     "Resolved"; the next full review's verifier said STILL_VALID on lines unchanged since. It
     goes to confirmation as a finding judged fixed; confirmed, its thread is told why it is
     back and no longer reads Resolved. Without a judged-fixed row (degraded reviews before
-    those were kept), the thread's own answer is the judgement."""
-    h, degraded_run = _told_resolved(cfg, conn, gh, lanes, monkeypatch)
-    assert _judged_rows(conn, h) == [(degraded_run, f"FIXED\n{C}")]
-    if not row:
+    those were kept), the thread's own answer is the judgement, whether its root has a status
+    line or the bot resolved it. Only a full review's judgement is shown to the reviewers and
+    the verifier: a weak one leaves them to judge the finding on its merits."""
+    h, judged_run = _told_resolved(
+        cfg,
+        conn,
+        gh,
+        lanes,
+        monkeypatch,
+        degraded=origin != "full review",
+        can_resolve=origin == "bot resolved",
+    )
+    weak = "" if origin == "full review" else f"\n{late.WEAK}"
+    assert _judged_rows(conn, h) == [(judged_run, f"FIXED\n{C}{weak}")]
+    if origin in ("thread only", "bot resolved"):
         with tx(conn):
             conn.execute("DELETE FROM findings WHERE stage=?", (late.STAGE_FIXED,))
-    replies = len(gh.replies)
+    replies, calls = len(gh.replies), len(lanes.calls)
     _raised_again(cfg, conn, gh, lanes, h, D)
     (confirm,) = _prompts(lanes, "confirm")
     assert f'"judged_fixed_at": "{C}"' in confirm
+    reviewer = _reviewer_calls(SimpleNamespace(calls=lanes.calls[calls:]))[0].prompt
+    for p in (reviewer, _prompts(lanes, "verifier")[-1]):
+        assert ('"judged_fixed": {' in p) is (origin == "full review")
+        rule = prompts.JUDGED_FIXED_RULE.replace("\n", "") in p.replace("\n", "")
+        assert rule is (origin == "full review")
     assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
     (answer,) = gh.replies[replies:]
     assert (
@@ -832,7 +871,7 @@ def test_a_degraded_reviews_resolved_not_confirmed_stays_settled(
     assert ("verified", B["title"]) not in _stages(conn, rid)
     assert not [r for r in gh.replies[replies:] if "Still applies" in r["body"]]
     assert "✅ **Resolved** at `cccccccc`" in _root(gh)
-    assert _judged(conn, h) == {"status": "FIXED", "sha": C}
+    assert _judged(conn, h) == {"status": "FIXED", "sha": C, "weak": True}
 
 
 @pytest.mark.parametrize("resolved", [True, False], ids=["resolved by hand", "open"])
@@ -852,6 +891,44 @@ def test_back_on_changed_lines_its_resolved_thread_is_told_why(
     (answer,) = gh.replies[replies:]
     assert f"**Still applies** (re-reviewed at `dddddddd`): {STILL}" in answer["body"]
     assert "thepastaclaw-thread-status" not in _root(gh)
+
+
+def test_its_thread_is_told_once_whatever_reruns_and_heads_follow(
+    cfg, conn, gh, lanes, unchanged, monkeypatch
+):
+    """Once the thread has heard why it is back, a re-review of the same head and the next
+    head post nothing more on it."""
+    h, _ = _told_resolved(cfg, conn, gh, lanes, monkeypatch, degraded=False)
+    unchanged["value"] = True
+    replies = len(gh.replies)
+    _raised_again(cfg, conn, gh, lanes, h, D)
+    (answer,) = gh.replies[replies:]
+    _on_thread(gh, answer["body"], at=LATER, id=961)
+    for sha in (D, E):
+        rid = _raised_again(cfg, conn, gh, lanes, h, sha)
+        assert _stages(conn, rid)[("verified", B["title"])][0] == "blocking"
+    assert len(gh.replies) == replies + 1
+
+
+def test_a_judgement_a_later_review_overrode_does_not_come_back_from_the_thread(
+    cfg, conn, gh, lanes, unchanged, monkeypatch
+):
+    """Judged FIXED at C, its thread told "Resolved"; at D a full review kept it as a blocker
+    on changed lines, but that answer never reached the thread (an older thread, a failed
+    reply). At E, on lines unchanged since C, the thread's Resolved is older than D's record
+    of the finding: it is an ordinary carried blocker, not one judged fixed."""
+    h, _ = _told_resolved(cfg, conn, gh, lanes, monkeypatch, degraded=False)
+    stale = _root(gh)
+    unchanged["value"] = True
+    d_run = _raised_again(cfg, conn, gh, lanes, h, D)
+    _started(conn, LATER, run=d_run)
+    gh.threads[0]["comments"]["nodes"][0]["body"] = stale
+    unchanged["value"] = False
+    calls = len(lanes.calls)
+    _raised_again(cfg, conn, gh, lanes, h, E)
+    assert not [c for c in lanes.calls[calls:] if c.role == "confirm"]
+    assert '"judged_fixed"' not in _prompts(lanes, "verifier")[-1]
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
 
 
 def test_told_settled_reads_the_status_line_then_the_newest_answer():
@@ -905,3 +982,15 @@ def test_a_revival_restated_under_another_hash_is_not_answered_as_withdrawn(gh):
     )
     assert item["status"] == "STILL_VALID" and item["action"] == "replied"
     assert "**Still applies** (re-reviewed at `dddddddd`): Back." in gh.replies[-1]["body"]
+
+
+def test_an_answer_quoting_an_earlier_lead_says_what_its_own_lead_says():
+    marker = publish.THREAD_ANSWER_MARKER.format(sha=D, reply=None, finding="h")
+    quoting = publish.render_thread_answer(
+        marker=marker,
+        status="STILL_VALID",
+        head_sha=D,
+        reply="Not as the earlier **Resolved** (re-reviewed at `cccccccc`) said.",
+    )
+    root = "<!-- thepastaclaw-review v1 finding=h dedupe=x -->\n**🔴 Blocking: T**\n\nbody"
+    assert publish.told_settled({"body": root, "bot_answers": [{"body": quoting}]}) is None

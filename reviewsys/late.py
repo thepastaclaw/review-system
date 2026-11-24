@@ -54,8 +54,10 @@ REMEMBERED = {STAGE_UNCONFIRMED: "non_blocking", STAGE_INVALID: "invalid"}
 # how a `late-unconfirmed` row's body ends: the confirmation's reason follows
 NOT_CONFIRMED = "Not confirmed as blocking by an independent pass: "
 # a prior finding a full review judged fixed, its body the status and the head it was judged
-# at (two lines); later rounds read it until a review carries or posts the finding again
+# at (two lines), and `WEAK` on a third when a degraded review judged it; later rounds read it
+# until a review carries or posts the finding again
 STAGE_FIXED = "judged-fixed"
+WEAK = "weak"
 JUDGED_FIXED = frozenset({"FIXED", "OUTDATED"})
 # lines around a listed follow-up candidate that still count as its place
 LISTED_MARGIN = 3
