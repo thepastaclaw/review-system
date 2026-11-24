@@ -76,8 +76,10 @@ in all, so a line that never moves still ends in a timeout.
 In the degraded policy's pause mode (degraded.py) a lane on the sentinel's model family
 (`held_by_pause`, whatever its pool) waits before it lines up while the system is paused,
 reading the stored state every PAUSE_READ_SECONDS (the daemon re-probes; a worker never
-does). It is marked `waiting` meanwhile and stops within POLL_SECONDS when the run or the
-lane is stopped. The wait counts in the run's `StallClock` like a slot wait, so it is
+does). One that was already in line when the pause began gives its slot back unused when
+it gets one and waits the same way, so a pause holds the lanes queued for a slot too. It
+is marked `waiting` meanwhile and stops within POLL_SECONDS when the run or the lane is
+stopped. The wait counts in the run's `StallClock` like a slot wait, so it is
 credited only while none of the run's lanes runs, and without the stall cap: an outage can
 outlast any multiple of the run timeout, and a run that only waits for the pool must not
 be reaped.
@@ -583,17 +585,20 @@ def gated(
     def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
         pool = spec.pool or pool_of(spec.model)
         try:
-            if not wait_paused(spec, artifact_dir, pool):
-                _mark(artifact_dir, spec, pool, None)
-                return LaneResult(
-                    exit_code=None,
-                    stdout="",
-                    stderr="",
-                    duration_s=0,
-                    cancelled=True,
-                    started=False,
-                )
-            return _run(spec, artifact_dir, worktree, pool)
+            while True:
+                if not wait_paused(spec, artifact_dir, pool):
+                    _mark(artifact_dir, spec, pool, None)
+                    return LaneResult(
+                        exit_code=None,
+                        stdout="",
+                        stderr="",
+                        duration_s=0,
+                        cancelled=True,
+                        started=False,
+                    )
+                res = _run(spec, artifact_dir, worktree, pool)
+                if res is not None:
+                    return res
         except BaseException:
             # a lane that raised never writes lane-meta.json: without this the status page
             # would show it running for the rest of the run
@@ -623,7 +628,9 @@ def gated(
         finally:
             credit(stall.run_ended())
 
-    def _run(spec: LaneSpec, artifact_dir: Path, worktree: Path, pool: str) -> LaneResult:
+    def _run(spec: LaneSpec, artifact_dir: Path, worktree: Path, pool: str) -> LaneResult | None:
+        """The lane in a slot of its pool. None when the pool was paused while the lane stood
+        in line: it gives the slot back unused and the caller waits out the pause again."""
         if limit(conn(), cfg, pool) is None:
             credit(stall.run_started())
             return _running(spec, artifact_dir, worktree, pool)
@@ -655,6 +662,7 @@ def gated(
         stop = spec.should_stop or run_stopped
         credit(stall.wait_started())
         fd: int | None = None
+        again = False  # paused while it stood in line: the slot goes back and the lane waits
         held = {"fd": -1, "index": -1}  # a replay lane's slot, as it may move between turns
 
         def take_replay() -> int | None:
@@ -683,8 +691,13 @@ def gated(
             if fd is not None and stop():
                 release(fd)  # stopped while it waited: a lane no longer wanted must not start
                 fd = None
+            elif fd is not None and held_by_pause(cfg, spec.model) and paused(False):
+                release(fd)
+                fd, again = None, True
         finally:
             credit(stall.wait_ended(started=fd is not None))
+        if again:
+            return None
         if fd is None:
             _mark(artifact_dir, spec, pool, None)
             return LaneResult(

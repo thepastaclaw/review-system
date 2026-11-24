@@ -176,6 +176,46 @@ def test_a_primary_lane_waits_while_paused_and_others_start_at_once(conn, paused
     assert out[0].ok and ran == ["glm-5.3-flash", "gpt-5.6-sol"]
 
 
+def test_a_lane_in_line_when_the_pause_begins_waits_it_out(conn, paused_cfg, tmp_path, monkeypatch):
+    monkeypatch.setattr(lanepool, "limit", lambda *_: 1)
+    ran: list[str] = []
+    first_may_end = threading.Event()
+
+    def runner(spec, a, w):
+        ran.append(a.name)
+        if a.name == "first":
+            first_may_end.wait(10)
+        return _ok()
+
+    gated = lanepool.gated(
+        runner,
+        _conns(paused_cfg),
+        paused_cfg,
+        run_stopped=lambda: False,
+        queue="live",
+        run_id=0,
+    )
+    threads = [
+        threading.Thread(
+            target=lambda n=n: gated(_spec(tmp_path, "gpt-5.6-sol"), tmp_path / n, tmp_path)
+        )
+        for n in ("first", "second")
+    ]
+    threads[0].start()
+    _until(lambda: ran == ["first"])
+    threads[1].start()
+    _until(lambda: _state(tmp_path / "second") == "waiting")
+    time.sleep(0.05)
+    _pause(conn)
+    first_may_end.set()
+    threads[0].join(10)
+    time.sleep(0.2)
+    assert ran == ["first"], "the queued lane took the freed slot during the pause"
+    _resume(conn)
+    threads[1].join(10)
+    assert ran == ["first", "second"]
+
+
 def test_the_pause_wait_stops_on_cancel(conn, paused_cfg, tmp_path):
     stop = threading.Event()
     gated = lanepool.gated(
