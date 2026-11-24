@@ -10,8 +10,8 @@ tested, one daemon, one SQLite file, no lock files.
 
 ## Using reviewsys
 
-**[User guide: get a review, respond to findings, and follow status](docs/user-guide.md)**
-— human workflow first, then a read-only dashboard/JSON integration reference.
+**[User reference: comment commands, review controls, and status](docs/user-guide.md)**
+— compact human reference first, then read-only dashboard/JSON integration details.
 No review-host or administrator access required.
 
 ## Layout
