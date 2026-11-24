@@ -783,7 +783,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("repo")
     s.add_argument("number", type=int)
     s.set_defaults(fn=cmd_retry)
-    s = sub.add_parser("degraded", help="show or force the degraded (stand-in models) mode")
+    s = sub.add_parser(
+        "degraded", help="show or force the degraded mode (stand-in models, or paused reviews)"
+    )
     s.add_argument("mode", nargs="?", choices=["on", "off", "auto"])
     s.add_argument("--probe", action="store_true", help="re-probe the sentinel model now")
     s.set_defaults(fn=cmd_degraded)

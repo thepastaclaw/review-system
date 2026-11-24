@@ -18,8 +18,10 @@ runs on another model instead:
 - a lane on the sentinel's model family waits before it lines up for a slot until the
   pool answers, its run's deadline pushed out by the whole wait (`lanepool.gated`); lanes
   on other families go on, so a run in Phase 1 finishes it and waits at the gate verifier;
-- a primary lane that dies on a quota error mid-run records the hold, so the system
-  pauses, and runs again on the same model once the pool answers;
+- a primary lane that dies on a quota error mid-run records the pool as out, so the
+  system pauses, and runs again on the same model once the pool answers: held for
+  `LANE_HOLD` when the error says the quota is spent, else until the daemon's next probe
+  (a short rate limit must not pause everything for the whole hold);
 - no run is marked degraded and nothing published changes; the status snapshot, doctor
   and a Slack alert on every transition say reviews are paused.
 
@@ -108,6 +110,12 @@ QUOTA_PATTERNS = tuple(
         r"\b(?:http|status|error) 429\b",
     )
 )
+
+
+def says_spent(text: str) -> bool:
+    """An infrastructure error text that says the quota is spent, not just rate-limited for
+    a moment (same caveat as `looks_like_quota_failure`)."""
+    return any(p.search(text) for p in SPENT_PATTERNS)
 
 
 def looks_like_quota_failure(text: str) -> bool:
@@ -202,7 +210,7 @@ def probe(
             text = f"HTTP {exc.code}: {body}"
             if exc.code != 429 and not looks_like_quota_failure(text):
                 return False, f"{model}: {text[:160]} (not a quota failure)"
-            delay = None if any(p.search(text) for p in SPENT_PATTERNS) else next(delays, None)
+            delay = None if says_spent(text) else next(delays, None)
             if delay is None:
                 return True, _publishable(model, exc.code, body)
             log.info("probe of %s rate-limited (%s); asking again in %ss", model, text[:160], delay)
@@ -228,8 +236,10 @@ def _publishable(model: str, code: int, body: str) -> str:
 def _cached_probe(
     conn: sqlite3.Connection, *, max_age: timedelta | None = PROBE_CACHE
 ) -> dict[str, Any] | None:
-    """The stored probe when it is younger than `max_age`, or while a lane-observed hold is
-    in force. `max_age=None` (the daemon's periodic re-probe) only honours the hold."""
+    """The stored probe while a lane-observed hold is in force, or while it is younger than
+    `max_age`, its age counted from the end of its hold when it had one: the daemon cannot
+    re-probe during a hold, so a reading must not lapse before that re-probe can replace it.
+    `max_age=None` (the daemon's periodic re-probe) only honours the hold."""
     raw = kv_get(conn, KV_PROBE)
     if not raw:
         return None
@@ -238,10 +248,14 @@ def _cached_probe(
         if not isinstance(blob, dict):
             return None
         at = now_dt()
+        fresh = parse_ts(str(blob["at"]))
         hold = blob.get("hold_until")
-        if hold and at <= parse_ts(str(hold)):
-            return dict(blob)
-        if max_age is not None and at - parse_ts(str(blob["at"])) <= max_age:
+        if hold:
+            until = parse_ts(str(hold))
+            if at <= until:
+                return dict(blob)
+            fresh = max(fresh, until)
+        if max_age is not None and at - fresh <= max_age:
             return dict(blob)
     except (KeyError, TypeError, ValueError, json.JSONDecodeError):
         pass
@@ -252,7 +266,8 @@ def record_probe(
     conn: sqlite3.Connection, *, quota_exhausted: bool, reason: str, hold: bool = False
 ) -> None:
     """Store a probe result. `hold=True` for a lane's quota failure: the mode then stays on
-    for `LANE_HOLD` regardless of what the sentinel probe says."""
+    for `LANE_HOLD` regardless of what the sentinel probe says. An exhausted reading without
+    a hold keeps a hold still in force: a short rate limit must not cut a spent quota's short."""
     at = now_dt()
     blob: dict[str, Any] = {
         "at": fmt_ts(at),
@@ -262,6 +277,9 @@ def record_probe(
     if hold:
         blob["hold_until"] = fmt_ts(at + LANE_HOLD)
     with tx(conn):
+        held = _cached_probe(conn, max_age=None) if quota_exhausted and not hold else None
+        if held and held.get("hold_until"):
+            blob["hold_until"] = held["hold_until"]
         kv_set(conn, KV_PROBE, json.dumps(blob))
 
 

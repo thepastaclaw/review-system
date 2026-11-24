@@ -2290,14 +2290,14 @@ def _run_checked_lane[T](
                 lane_output(failed_turn)
             except ReviewError as turn_exc:
                 quota_exc = turn_exc
-        pause = lanepool.pauses(ctx.cfg, lm.model)
+        pause = lanepool.held_by_pause(ctx.cfg, lm.model)
         switched = (
             None
             if comparison or (primary_only and not pause)
             else _degrade_on_quota_failure(ctx, lm, quota_exc, quota_turn)
         )
         if switched is not None:
-            lm, budget = switched, budget + 1 if pause else attempt + 2
+            lm, budget = switched, (budget + 1 if pause else attempt + 2)
     raise LaneFailed(
         FailKind.INFRA
         if not off_schema and ("timed out" in last or "exit" in last)
@@ -4621,16 +4621,19 @@ def _pause_on_quota_failure(
     ctx: RunContext, model: str, *, error: str, upstream: str, detail: str
 ) -> bool:
     """Pause mode's `_flip_to_degraded`: a quota failure on the paused family records the
-    hold and an event. False when the operator forced the mode off (the retry would only
-    meet the same 429 at once) or the failure is not one."""
+    pool as out, and an event. Only a spent quota gets the `LANE_HOLD` hold; a short rate
+    limit pauses until the daemon's next probe, which tells the two apart. False when the
+    operator forced the mode off (the retry would only meet the same 429 at once) or the
+    failure is not a quota one."""
     if (
-        not lanepool.pauses(ctx.cfg, model)
+        not lanepool.held_by_pause(ctx.cfg, model)
         or degraded.forced(ctx.conn) == "off"
         or not degraded.looks_like_quota_failure(error)
     ):
         return False
     reason = degraded.publishable_reason(model, upstream)
-    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
+    spent = degraded.says_spent(error)
+    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=spent)
     _lane_event(ctx, "degraded.paused_midrun", detail)
     log.warning("lane on %s hit a quota failure; pausing until the pool answers", model)
     return True
