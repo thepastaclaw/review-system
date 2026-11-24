@@ -1,24 +1,42 @@
-"""Degraded mode: keep reviewing when the primary (OpenAI/Codex) models are out of quota.
+"""Degraded mode: what happens when the primary (OpenAI/Codex) models are out of quota.
 
 `gpt-6-astra` sits on the critical path of every run (triage, gate verifier, Phase-2
 reviewers, final verifier, conversation lane), and the selector/repair models share the
 same Codex pool. When that pool is exhausted every run dies on a 429 and the queue fills
 with silently unreviewed PRs (2026-09-17: 60 failed runs in 8 h). With a
-`review_model_policy.degraded` block the pipeline instead:
+`review_model_policy.degraded` block the pipeline probes the policy's `sentinel` model
+(the daemon every 2 minutes, and in stand-in mode every run too, cached briefly in `kv`),
+treats a lane that dies on a quota error as the same signal (held for `LANE_HOLD`), and
+then acts in one of two modes.
 
-- probes the policy's `sentinel` model before every run (cached briefly in `kv`);
-- while it answers with a quota error, or an operator forced the mode on, runs every lane
-  whose model has a stand-in on that stand-in, caps the Phase-1 tier effort so the
-  included-quota rungs (Gemini, GLM) stay eligible, and keeps both phases running unless
-  the queue is deep enough for the backlog rule, which still sends a run straight to
-  Phase 2 on the stand-in (`backlog_skip_phase1`, on by default: the slow Phase-1 rungs
+Pause mode, a block with no `substitutes` (`DegradedPolicy.pauses`): reviews are paused.
+A stand-in missed nearly everything the primary models found on the same code (2026-11-23:
+two clean stand-in reviews of a PR whose first full review had eight blockers), so nothing
+runs on another model instead:
+
+- the scheduler starts no new run while paused; the heads stay queued (scheduler.py);
+- a lane on the sentinel's model family waits before it lines up for a slot until the
+  pool answers, its run's deadline pushed out by the whole wait (`lanepool.gated`); lanes
+  on other families go on, so a run in Phase 1 finishes it and waits at the gate verifier;
+- a primary lane that dies on a quota error mid-run records the hold, so the system
+  pauses, and runs again on the same model once the pool answers;
+- no run is marked degraded and nothing published changes; the status snapshot, doctor
+  and a Slack alert on every transition say reviews are paused.
+
+Stand-in mode, a block with `substitutes`:
+
+- while the sentinel answers with a quota error, or an operator forced the mode on, runs
+  every lane whose model has a stand-in on that stand-in, caps the Phase-1 tier effort so
+  the included-quota rungs (Gemini, GLM) stay eligible, and keeps both phases running
+  unless the queue is deep enough for the backlog rule, which still sends a run straight
+  to Phase 2 on the stand-in (`backlog_skip_phase1`, on by default: the slow Phase-1 rungs
   are what a backlog can least afford);
 - switches the rest of a run over when a lane on a primary model dies on a quota error
   mid-run, and remembers that so the next run starts degraded;
 - says so everywhere: review title and banner, provenance, gate and queue comments, the
   status snapshot and export, a Slack alert on every transition.
 
-Operator override: `reviewsys degraded on|off|auto` (kv `degraded.force`).
+Operator override, both modes: `reviewsys degraded on|off|auto` (kv `degraded.force`).
 """
 
 from __future__ import annotations
@@ -121,6 +139,7 @@ class State:
     reason: str  # short, safe to publish
     source: str  # "forced" | "probe" | "lane" | "off" | "unconfigured"
     since: str | None = None
+    pause: bool = False  # the policy pauses instead of using stand-ins
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -128,7 +147,7 @@ class State:
     def describe(self) -> str:
         if not self.active:
             return "normal"
-        return f"degraded ({self.reason}; {self.source})"
+        return f"{'paused' if self.pause else 'degraded'} ({self.reason}; {self.source})"
 
 
 # ---- probe ----
@@ -274,20 +293,40 @@ def detect(
     pol = cfg.policy.degraded
     if pol is None:
         return State(False, "no degraded policy configured", "unconfigured")
+    pause = pol.pauses
     override = forced(conn)
     since = _since(conn)
     if override == "on":
-        return State(True, "forced on by operator", "forced", since)
+        return State(True, "forced on by operator", "forced", since, pause)
     if override == "off":
-        return State(False, "forced off by operator", "off")
+        return State(False, "forced off by operator", "off", pause=pause)
     blob = _cached_probe(conn, max_age=None if refresh else PROBE_CACHE)
     if blob is None:
         exhausted, reason = prober(pol.sentinel)
         record_probe(conn, quota_exhausted=exhausted, reason=reason)
         blob = {"quota_exhausted": exhausted, "reason": reason}
     if blob.get("quota_exhausted"):
-        return State(True, str(blob.get("reason") or pol.label), "probe", since)
-    return State(False, str(blob.get("reason") or "primary models answering"), "probe")
+        return State(True, str(blob.get("reason") or pol.label), "probe", since, pause)
+    return State(False, str(blob.get("reason") or "primary models answering"), "probe", pause=pause)
+
+
+def _stored(conn: sqlite3.Connection) -> tuple[bool, dict[str, Any] | None]:
+    """(active, last probe) from what is stored, never probing: the operator override, else
+    the last probe (or a lane's hold) while it is at most `SNAPSHOT_MAX_AGE` old. An older
+    reading only lapses when the daemon itself is down, and is not trusted either way."""
+    override = forced(conn)
+    blob = _cached_probe(conn, max_age=SNAPSHOT_MAX_AGE)
+    if override in {"on", "off"}:
+        return override == "on", blob
+    return bool(blob and blob.get("quota_exhausted")), blob
+
+
+def paused(conn: sqlite3.Connection, cfg: Config) -> bool:
+    """Pause mode only: the primary models are out by the stored state, so no run may start
+    and no lane on their family may begin. Never probes (workers and the scheduler poll it;
+    the daemon re-probes on its own timer)."""
+    pol = cfg.policy.degraded
+    return pol is not None and pol.pauses and _stored(conn)[0]
 
 
 def _since(conn: sqlite3.Connection) -> str | None:
@@ -323,6 +362,10 @@ def transition(conn: sqlite3.Connection, state: State) -> str | None:
             KV_STATE,
             json.dumps({"active": state.active, "reason": state.reason, "since": ts}),
         )
+    if state.pause:
+        if state.active:
+            return f"PAUSING reviews: {state.reason} — reviews are paused until the primary models answer again"
+        return f"resuming reviews: {state.reason}; the primary models answer again"
     if state.active:
         return f"entering DEGRADED mode: {state.reason} — reviews run on stand-in models until the primary models answer again"
     return f"leaving degraded mode: {state.reason}; reviews are back on the primary models"
@@ -331,23 +374,25 @@ def transition(conn: sqlite3.Connection, state: State) -> str | None:
 def snapshot(conn: sqlite3.Connection, cfg: Config) -> dict[str, Any]:
     """For `status`, the export, the queue comments and doctor: the current mode from the
     last probe, never sending one (status must not block on the proxy). Tolerates a probe up
-    to `SNAPSHOT_MAX_AGE` old so the view cannot flap between two daemon re-probes."""
+    to `SNAPSHOT_MAX_AGE` old so the view cannot flap between two daemon re-probes. `mode`
+    is `pause` or `standin` (see the module docstring); only stand-in mode lists stand-ins."""
     pol = cfg.policy.degraded
     if pol is None:
         return {"configured": False, "active": False}
-    override = forced(conn)
-    blob = _cached_probe(conn, max_age=SNAPSHOT_MAX_AGE)
-    if override in {"on", "off"}:
-        active = override == "on"
-    else:
-        active = bool(blob and blob.get("quota_exhausted"))
-    return {
+    active, blob = _stored(conn)
+    common = {
         "configured": True,
         "active": active,
-        "forced": override,
+        "forced": forced(conn),
         "since": _since(conn),
         "sentinel": pol.sentinel,
         "last_probe": blob,
+    }
+    if pol.pauses:
+        return {**common, "mode": "pause"}
+    return {
+        **common,
+        "mode": "standin",
         "substitutes": {k: v.model for k, v in pol.substitutes.items()},
         "phase1_effort_cap": pol.phase1_effort_cap,
     }

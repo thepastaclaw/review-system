@@ -456,9 +456,10 @@ class RunContext:
 
     @property
     def degraded_policy(self) -> DegradedPolicy | None:
-        """The degraded policy while this run is actually running on stand-ins, else None."""
+        """The degraded policy while this run is actually running on stand-ins, else None
+        (always None in pause mode, where no run is ever degraded)."""
         pol = self.cfg.policy.degraded
-        return pol if pol and self.degraded and self.degraded.active else None
+        return pol if pol and not pol.pauses and self.degraded and self.degraded.active else None
 
     @property
     def is_degraded(self) -> bool:
@@ -1062,12 +1063,12 @@ def _prep(ctx: RunContext, lane: LaneModel) -> prep_mod.Prep:
         )
 
     p = attempt()
-    if (
+    while (
         (p.selection.error or p.triage.error)
         and p.infra_error
         and _degrade_on_side_lane_failure(ctx, "prep", lane.model, p.infra_error)
     ):
-        p = attempt(p)  # once more on the stand-in, for the half (or both) that fell back
+        p = attempt(p)  # again on the stand-in (or after a pause), for the half that fell back
     return p
 
 
@@ -1090,10 +1091,10 @@ def _select(ctx: RunContext) -> Selection:
         )
 
     sel = attempt()
-    if sel.error and _degrade_on_side_lane_failure(
+    while sel.error and _degrade_on_side_lane_failure(
         ctx, "select", ctx.cfg.policy.selector_model, sel.error
     ):
-        sel = attempt()  # once more, on the stand-ins
+        sel = attempt()  # again, on the stand-ins (or after a pause)
     return sel
 
 
@@ -1116,8 +1117,8 @@ def _triage(ctx: RunContext, lane: LaneModel) -> Triage:
         )
 
     t = attempt()
-    if t.error and _degrade_on_side_lane_failure(ctx, "triage", lane.model, t.error):
-        t = attempt()  # once more, on the stand-in
+    while t.error and _degrade_on_side_lane_failure(ctx, "triage", lane.model, t.error):
+        t = attempt()  # again, on the stand-in (or after a pause)
     return t
 
 
@@ -2122,7 +2123,9 @@ def _run_checked_lane[T](
 
     A lane on a primary model that dies on a quota failure flips the run into degraded mode
     (when the policy has a stand-in for that model) and gets its two attempts again on the
-    stand-in, so one exhausted pool does not fail the review.
+    stand-in, so one exhausted pool does not fail the review. In pause mode it pauses the
+    system instead and the attempt does not count: the next one, on the same model, waits
+    at the gate (lanepool.py) until the pool answers, a `primary_only` lane's too.
 
     `should_stop` (default: the run was cancelled) is polled while the lane runs; a stopped
     lane raises Cancelled when the run was cancelled, else LaneStopped, its row saying why
@@ -2287,13 +2290,14 @@ def _run_checked_lane[T](
                 lane_output(failed_turn)
             except ReviewError as turn_exc:
                 quota_exc = turn_exc
+        pause = lanepool.pauses(ctx.cfg, lm.model)
         switched = (
             None
-            if comparison or primary_only
+            if comparison or (primary_only and not pause)
             else _degrade_on_quota_failure(ctx, lm, quota_exc, quota_turn)
         )
         if switched is not None:
-            lm, budget = switched, attempt + 2
+            lm, budget = switched, budget + 1 if pause else attempt + 2
     raise LaneFailed(
         FailKind.INFRA
         if not off_schema and ("timed out" in last or "exit" in last)
@@ -4583,10 +4587,15 @@ def _flip_to_degraded(
     mode and record the failure with a hold, so the next runs start degraded too. False when
     the mode is already on, no stand-in applies, or the error is not about quota.
 
+    In pause mode the hold is recorded the same way, which pauses the system, and True says
+    to run the lane again on `model`: that attempt waits at the gate until the pool answers.
+
     The published reason is a sanitised version of `upstream`; the full `detail` only reaches
     the events table. `already_counts`: True as well when a parallel sibling lane flipped the
     run first (this lane was already running on the primary and died on the same dry pool)."""
     pol = ctx.cfg.policy.degraded
+    if pol is not None and pol.pauses:
+        return _pause_on_quota_failure(ctx, model, error=error, upstream=upstream, detail=detail)
     with ctx.state_lock:  # parallel lanes on the same dry pool must flip the run only once
         if (
             pol is None
@@ -4608,12 +4617,31 @@ def _flip_to_degraded(
     return True
 
 
+def _pause_on_quota_failure(
+    ctx: RunContext, model: str, *, error: str, upstream: str, detail: str
+) -> bool:
+    """Pause mode's `_flip_to_degraded`: a quota failure on the paused family records the
+    hold and an event. False when the operator forced the mode off (the retry would only
+    meet the same 429 at once) or the failure is not one."""
+    if (
+        not lanepool.pauses(ctx.cfg, model)
+        or degraded.forced(ctx.conn) == "off"
+        or not degraded.looks_like_quota_failure(error)
+    ):
+        return False
+    reason = degraded.publishable_reason(model, upstream)
+    degraded.record_probe(ctx.conn, quota_exhausted=True, reason=reason, hold=True)
+    _lane_event(ctx, "degraded.paused_midrun", detail)
+    log.warning("lane on %s hit a quota failure; pausing until the pool answers", model)
+    return True
+
+
 def _degrade_on_quota_failure(
     ctx: RunContext, lm: LaneModel, exc: ReviewError, res: LaneResult
 ) -> LaneModel | None:
     """A reviewer/verifier lane died: when it was on a primary model and the failure is a
-    quota/cooldown one, flip the run into degraded mode and return the lane on its stand-in.
-    None otherwise.
+    quota/cooldown one, flip the run into degraded mode and return the lane on its stand-in
+    (in pause mode: the lane itself, to run again once the pool answers). None otherwise.
 
     Only an infrastructure failure whose *stderr* says quota counts. A contract failure is
     the model's own output and may legitimately talk about rate limits (a PR touching quota
@@ -4630,15 +4658,17 @@ def _degrade_on_quota_failure(
         already_counts=True,
     ):
         return None
-    return pol.resolve(lm)
+    return lm if pol.pauses else pol.resolve(lm)
 
 
 def _degrade_on_side_lane_failure(ctx: RunContext, step: str, model: str, error: str) -> bool:
     """The selector/triage lanes fall back on their own (heuristic / fallback tier), which
     hides the earliest sign that the primary pool is dry. A quota-shaped failure there flips
     the run into degraded mode (with the same hold as a reviewer lane) so the caller can try
-    once more on the stand-in and the rest of the run does not walk into the same 429.
-    `error` is the lane's exit status plus its first stderr line (never model output)."""
+    once more on the stand-in and the rest of the run does not walk into the same 429. In
+    pause mode it records the hold and the caller tries again on the same model, after the
+    wait at the gate, for as long as the failures are quota ones; the fallback is for the
+    rest. `error` is the lane's exit status plus its first stderr line (never model output)."""
     return _flip_to_degraded(
         ctx,
         model,
@@ -4649,8 +4679,10 @@ def _degrade_on_side_lane_failure(ctx: RunContext, step: str, model: str, error:
 
 
 def _detect_degraded(ctx: RunContext) -> None:
-    """Decide the run's mode up front (probe cached across runs) and record it."""
-    if ctx.cfg.policy.degraded is None:
+    """Decide the run's mode up front (probe cached across runs) and record it. Nothing to
+    decide in pause mode: a paused pool holds the lanes at the gate (lanepool.py)."""
+    pol = ctx.cfg.policy.degraded
+    if pol is None or pol.pauses:
         return
     state = degraded.detect(ctx.conn, ctx.cfg, prober=ctx.prober or degraded.probe)
     if state.active:
@@ -8565,9 +8597,12 @@ def _ci_judge(ctx: RunContext, text: str, names: list[str]) -> ci.Judgement:
             first_attempt=first,
         )
 
-    j = attempt()
-    if j.infra_error and _degrade_on_side_lane_failure(ctx, "ci_check", lane.model, j.infra_error):
-        j = attempt(3)  # once more, on the stand-in (its artifacts numbered on)
+    j, first = attempt(), 1
+    while j.infra_error and _degrade_on_side_lane_failure(
+        ctx, "ci_check", lane.model, j.infra_error
+    ):
+        first += 2
+        j = attempt(first)  # again, on the stand-in or after a pause (its artifacts numbered on)
     if j.error:
         with tx(ctx.conn):
             event(

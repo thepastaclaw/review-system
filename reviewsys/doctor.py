@@ -257,7 +257,11 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
     if dp is None:
         _ok("degraded mode", True, "not configured: a primary-model outage fails runs")
     else:
-        subs = ", ".join(f"{k}->{v.model}" for k, v in dp.substitutes.items())
+        if dp.pauses:
+            how = "pause mode: reviews pause while the primary models are out"
+        else:
+            subs = ", ".join(f"{k}->{v.model}" for k, v in dp.substitutes.items())
+            how = f"stand-ins {subs}; phase1 effort cap {dp.phase1_effort_cap or 'none'}"
         if probe_models:
             exhausted, reason = degraded.probe(dp.sentinel)
             state = f"{'ACTIVE' if exhausted else 'inactive'} ({reason})"
@@ -266,7 +270,7 @@ def run(cfg: Config, *, probe_models: bool = True) -> bool:
         _ok(
             "degraded mode",
             True,
-            f"{state}; stand-ins {subs}; phase1 effort cap {dp.phase1_effort_cap or 'none'}",
+            f"{state}; {how}",
         )
     if cfg.checks.enabled:
         from .checks import app_auth

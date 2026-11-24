@@ -72,6 +72,13 @@ spends waiting for slots, now that runs are admitted without a model-aware cap: 
 tracks each run's lanes and pushes the deadline forward by every stretch in which at least
 one lane waited and none ran (see `StallClock`), up to STALL_CREDIT_MAX_FACTOR run timeouts
 in all, so a line that never moves still ends in a timeout.
+
+In the degraded policy's pause mode (degraded.py) a lane on the sentinel's model family
+(`pauses`, whatever its pool) waits before it lines up while the system is paused, reading
+the stored state every POLL_SECONDS (the daemon re-probes; a worker never does). It is
+marked `waiting` meanwhile, stops at once when the run or the lane is stopped, and the
+whole wait is credited to the run's deadline without the stall cap: an outage can outlast
+any multiple of the run timeout, and a run that only waits for the pool must not be reaped.
 """
 
 from __future__ import annotations
@@ -87,7 +94,7 @@ from collections.abc import Callable
 from datetime import timedelta
 from pathlib import Path
 
-from . import slots
+from . import degraded, slots
 from .config import Config
 from .db import fmt_ts, now, parse_ts, tx
 from .lane import LaneResult, LaneRunner, LaneSpec, run_with_corrections
@@ -129,6 +136,13 @@ LANE_STATE = "lane-state.json"
 
 def pool_of(model: str) -> str:
     return model.split("-", 1)[0]
+
+
+def pauses(cfg: Config, model: str) -> bool:
+    """A lane on `model` waits out an outage instead of running: the policy is in pause mode
+    and `model` is in its sentinel's family."""
+    pol = cfg.policy.degraded
+    return pol is not None and pol.pauses and pool_of(model) == pool_of(pol.sentinel)
 
 
 def rank_of(queue: str, *, side: bool) -> int:
@@ -463,34 +477,66 @@ def gated(
     connection (lanes run on parallel threads); `queue` (`priority`, `live`, `audit`, or
     `replay` for a policy eval's own wait) and `run_id` are the run's place in every pool's
     line. The run's deadline is pushed past the time its lanes only waited for slots
-    (`StallClock`)."""
+    (`StallClock`), and past every stretch in which one of its lanes waited for a paused
+    pool (see the module docstring), the latter uncapped."""
     slot_dir = cfg.work_dir / "lane-slots"
     stall = StallClock(clock)
-    # stalled seconds not yet written (a write that failed is retried), and the room left
-    # under the cap: a line that never moves (a ticket whose pid was reused) must still end
-    # in a timeout, not keep a run alive forever
-    owed = [0.0]
+    held = StallClock(clock)  # lanes waiting for a paused pool; none ever counts as running
+    # seconds not yet written, by whether they are capped (a write that failed is retried),
+    # and the room left under the cap: a line that never moves (a ticket whose pid was
+    # reused) must still end in a timeout, not keep a run alive forever
+    owed = {True: 0.0, False: 0.0}
     room = [cfg.run_timeout_minutes * 60.0 * STALL_CREDIT_MAX_FACTOR]
     owed_lock = threading.Lock()
 
-    def credit(seconds: float) -> None:
+    def credit(seconds: float, *, capped: bool = True) -> None:
         with owed_lock:
-            owed[0] += seconds
-            if owed[0] < 1 or room[0] < 1:
+            owed[capped] += seconds
+            if owed[capped] < 1 or (capped and room[0] < 1):
                 return
-            due = min(owed[0], room[0])
-            owed[0], room[0] = 0.0, room[0] - due
+            due = min(owed[capped], room[0]) if capped else owed[capped]
+            owed[capped] = 0.0
+            if capped:
+                room[0] -= due
         try:
             extend_deadline(conn(), run_id, due)
         except Exception as exc:  # the deadline is bookkeeping; never fail a lane over it
             log.warning("run %s: could not extend the deadline by %.0fs: %s", run_id, due, exc)
             with owed_lock:
-                owed[0] += due
-                room[0] += due
+                owed[capped] += due
+                if capped:
+                    room[0] += due
+
+    def wait_paused(spec: LaneSpec, artifact_dir: Path, pool: str) -> bool:
+        """Hold a lane on a paused pool until it answers again. False once it was stopped."""
+        if not pauses(cfg, spec.model) or not degraded.paused(conn(), cfg):
+            return True
+        stop = spec.should_stop or run_stopped
+        _mark(artifact_dir, spec, pool, "waiting")
+        credit(held.wait_started(), capped=False)
+        try:
+            while degraded.paused(conn(), cfg):
+                if stop():
+                    return False
+                credit(held.flush(), capped=False)
+                time.sleep(POLL_SECONDS)
+            return not stop()
+        finally:
+            credit(held.wait_ended(started=False), capped=False)
 
     def run(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
         pool = spec.pool or pool_of(spec.model)
         try:
+            if not wait_paused(spec, artifact_dir, pool):
+                _mark(artifact_dir, spec, pool, None)
+                return LaneResult(
+                    exit_code=None,
+                    stdout="",
+                    stderr="",
+                    duration_s=0,
+                    cancelled=True,
+                    started=False,
+                )
             return _run(spec, artifact_dir, worktree, pool)
         except BaseException:
             # a lane that raised never writes lane-meta.json: without this the status page

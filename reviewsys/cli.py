@@ -256,7 +256,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         )
         d = snap["degraded"]
         if d.get("configured"):
-            mode = "DEGRADED" if d["active"] else "normal"
+            mode = ("PAUSED" if d["mode"] == "pause" else "DEGRADED") if d["active"] else "normal"
             probe = d.get("last_probe") or {}
             print(
                 f"mode: {mode} forced={d.get('forced') or 'auto'} sentinel={d['sentinel']} "

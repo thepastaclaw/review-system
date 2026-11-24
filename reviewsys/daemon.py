@@ -245,11 +245,12 @@ class Daemon:
         last = kv_get(self.conn, KV_PAGED_AT)
         due = last is None or (now_dt() - parse_ts(last)).total_seconds() >= DEGRADED_REPAGE_S
         if due:
+            mode = "PAUSED" if state.pause else "in DEGRADED mode"
             text = (
                 alert
                 if alert or not page_open
-                else f"STILL in DEGRADED mode since {state.since or '?'}: {state.reason}"
-            ) or f"in DEGRADED mode: {state.reason}"
+                else f"STILL {mode} since {state.since or '?'}: {state.reason}"
+            ) or f"{mode}: {state.reason}"
             if self.notifier.page(f"{text}\n{self._accounts_summary()}"):
                 with tx(self.conn):
                     kv_set(self.conn, KV_PAGED_AT, now())

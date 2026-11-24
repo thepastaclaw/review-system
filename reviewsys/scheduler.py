@@ -13,13 +13,15 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
-from . import audit, ci, proc, progress
+from . import audit, ci, degraded, proc, progress
 from .config import Config
-from .db import event, fmt_ts, kv_get, now, parse_ts, tx
+from .db import event, fmt_ts, kv_get, kv_set, now, parse_ts, tx
 from .ingest import enqueue_head
 from .models import FailKind, HeadStatus, RunStatus, Trigger
 
 log = logging.getLogger(__name__)
+
+KV_QUEUE_HELD = "schedule.paused_at"  # set while a pause holds eligible heads (one event)
 
 
 def active_runs(conn: sqlite3.Connection) -> list[sqlite3.Row]:
@@ -73,9 +75,16 @@ def schedule(conn: sqlite3.Connection, cfg: Config, *, spawn: bool = True) -> li
     Live heads first, priority heads before the rest (`eligible_heads` order). Audit heads
     then start (up to `audit.concurrency`) only when no live head is left waiting, so a live
     review never queues behind an audit; in every pool an audit's lanes line up behind every
-    live lane."""
+    live lane.
+
+    Nothing starts while the degraded policy's pause mode says the primary models are out
+    (`degraded.paused`, the stored state): every run calls for them, so the heads stay queued
+    and start once the pool answers. Runs in flight go on; their primary lanes wait at the
+    gate (lanepool.py)."""
     ts = now()
     started: list[int] = []
+    if _held(conn, cfg, ts):
+        return started
     active = active_runs(conn)
     active_prs = {(r["repo"], r["number"]) for r in active}
     in_flight = len(active)
@@ -114,6 +123,28 @@ def schedule(conn: sqlite3.Connection, cfg: Config, *, spawn: bool = True) -> li
         audit_used += 1
         in_flight += 1
     return started
+
+
+def _held(conn: sqlite3.Connection, cfg: Config, ts: str) -> bool:
+    """Whether a pause holds the queue now. The first pass that holds an eligible head writes
+    one `schedule.paused` event (`KV_QUEUE_HELD` remembers it until the pause ends)."""
+    if not degraded.paused(conn, cfg):
+        if kv_get(conn, KV_QUEUE_HELD):
+            with tx(conn):
+                conn.execute("DELETE FROM kv WHERE key=?", (KV_QUEUE_HELD,))
+                event(conn, "schedule.resumed", detail="the primary models answer again")
+        return False
+    if not kv_get(conn, KV_QUEUE_HELD):
+        waiting = len(eligible_heads(conn, ts=ts)) + len(eligible_audits(conn, ts=ts))
+        if waiting:
+            with tx(conn):
+                kv_set(conn, KV_QUEUE_HELD, ts)
+                event(
+                    conn,
+                    "schedule.paused",
+                    detail=f"{waiting} head(s) held until the primary models answer again",
+                )
+    return True
 
 
 def _start_run(

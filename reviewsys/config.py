@@ -110,20 +110,32 @@ class Substitute:
 class DegradedPolicy:
     """What the pipeline does when the primary (OpenAI) models are out of quota or down.
 
-    `sentinel` is probed before every run; while it answers 429 (or an operator forces the
-    mode on) every lane whose model is in `substitutes` runs on its stand-in, Phase 1 is
-    capped at `phase1_effort_cap` so the included-quota rungs stay eligible, and everything
-    published says so. A lane that hits a quota failure on a primary model mid-run switches
-    the rest of the run the same way. The backlog rule is unchanged by the mode
-    (`backlog_skip_phase1`): a deep queue still goes straight to Phase 2, because the slow
-    Phase-1 rungs are exactly what a backlog cannot afford. Set it false to trade throughput
-    for the cross-model check."""
+    `sentinel` is probed periodically; while it answers 429 (or an operator forces the mode
+    on) the pipeline acts in one of two modes.
+
+    With `substitutes` (stand-in mode) every lane whose model is in `substitutes` runs on its
+    stand-in, Phase 1 is capped at `phase1_effort_cap` so the included-quota rungs stay
+    eligible, and everything published says so. A lane that hits a quota failure on a
+    primary model mid-run switches the rest of the run the same way. The backlog rule is
+    unchanged by the mode (`backlog_skip_phase1`): a deep queue still goes straight to Phase
+    2, because the slow Phase-1 rungs are exactly what a backlog cannot afford. Set it false
+    to trade throughput for the cross-model check.
+
+    Without them (pause mode, `pauses`) nothing runs on a stand-in: the system is paused.
+    No new run starts, and a lane on the sentinel's model family waits until the primary
+    models answer again, so a review is only ever done by the models its process calls
+    for. `phase1_effort_cap` and `backlog_skip_phase1` have no effect in this mode."""
 
     sentinel: str
     substitutes: dict[str, Substitute]
     phase1_effort_cap: str | None = None
     backlog_skip_phase1: bool = True  # the backlog rule still applies: a deep queue skips Phase 1
     label: str = "degraded"
+
+    @property
+    def pauses(self) -> bool:
+        """Pause mode: no stand-ins, so an outage of the primary models pauses reviewing."""
+        return not self.substitutes
 
     def resolve(self, lm: LaneModel) -> LaneModel:
         """`lm` on its stand-in (effort capped), or unchanged when it has none."""
@@ -947,14 +959,12 @@ def _degraded(node: dict[str, Any] | None) -> DegradedPolicy | None:
         subs[str(primary)] = Substitute(
             model=model, effort_cap=str(cap) if cap is not None else None
         )
-    if not subs:
-        raise ValueError("degraded policy needs at least one substitute")
     for primary, sub in subs.items():
         if sub.model in subs:
             raise ValueError(
                 f"degraded substitute {sub.model!r} (for {primary!r}) is itself substituted; stand-ins must be terminal"
             )
-    if sentinel not in subs:
+    if subs and sentinel not in subs:
         raise ValueError(f"degraded sentinel {sentinel!r} has no substitute")
     cap1 = node.get("phase1_effort_cap")
     if cap1 is not None and str(cap1) not in EFFORT_LEVELS:
@@ -1164,7 +1174,7 @@ def load_skills_config(
     )
     if policy.fallback_tier not in policy.tiers:
         raise ValueError(f"triage.fallback_tier {policy.fallback_tier!r} is not a configured tier")
-    if policy.degraded is not None:
+    if policy.degraded is not None and not policy.degraded.pauses:
         for tier, te in policy.tiers.items():
             if te.phase2_model and te.phase2_model not in policy.degraded.substitutes:
                 raise ValueError(
