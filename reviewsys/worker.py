@@ -614,12 +614,13 @@ def _lane_row(
 
 
 _FINDINGS_INSERT = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body, candidate_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)"
-_FINDINGS_INSERT_STATUS = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body, candidate_id, code_status) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+_FINDINGS_INSERT_STATUS = "INSERT INTO findings (run_id, phase, stage, hash, file, line_start, line_end, severity, confidence, category, title, body, candidate_id, code_status, prior_hash) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
 
 
 def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Finding]) -> None:
-    """Write finding rows (with the policy v12 candidate id and a later round's code status,
-    late.py). The caller must already hold the write transaction."""
+    """Write finding rows (with the policy v12 candidate id, a later round's code status,
+    late.py, and the hash of the prior finding a carried one continues). The caller must
+    already hold the write transaction."""
     ctx.conn.executemany(
         _FINDINGS_INSERT_STATUS,
         [
@@ -638,6 +639,7 @@ def _insert_findings(ctx: RunContext, phase: str, stage: str, findings: list[Fin
                 f.body[:8000],
                 f.candidate_id,
                 f.extra.get("code_status"),
+                f.prior_hash,
             )
             for f in findings
         ],
@@ -3334,7 +3336,8 @@ def _carried_by(
     ctx: RunContext, h: str, where: str, params: tuple[Any, ...], *, pr: bool = False
 ) -> bool:
     """Some run matching `where` (over `runs r`) kept finding `h` in its verifier set or
-    posted it, by hash or, since a carried finding may be re-hashed, by file and title."""
+    posted it: by hash or, since a carried finding may be re-hashed, by the thread it stayed
+    on (`prior_hash`) or by file and title."""
     ident = ctx.conn.execute(
         "SELECT f.file, f.title FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
         "hd.id=r.head_id WHERE hd.repo=? AND hd.number=? AND f.hash=? AND f.stage='posted' "
@@ -3348,9 +3351,10 @@ def _carried_by(
             "SELECT 1 FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads hd ON "
             f"hd.id=r.head_id WHERE {scope}{where} "
             "AND f.stage IN ('verified', 'verified-fresh', 'posted') "
-            "AND (f.hash=? OR (? <> '' AND f.file=? AND lower(trim(f.title))=lower(trim(?)))) "
+            "AND (f.hash=? OR f.prior_hash=? "
+            "OR (? <> '' AND f.file=? AND lower(trim(f.title))=lower(trim(?)))) "
             "LIMIT 1",
-            (*((ctx.repo, ctx.number) if pr else ()), *params, h, title, file, title),
+            (*((ctx.repo, ctx.number) if pr else ()), *params, h, h, title, file, title),
         ).fetchone()
     )
 
@@ -6912,11 +6916,19 @@ class _Standing:
     # blocking findings left DISPUTED by that run or a later discussion: they no longer
     # block, but the review never stopped standing by them, so nothing may approve over them
     disputed_blockers: int = 0
+    # finding hash -> the hash of the thread it was carried on, where the two differ
+    carried: dict[str, str] = field(default_factory=dict)
 
     def settled(self, threads: dict[str, dict[str, Any]]) -> dict[str, str]:
         """thread hash -> the outcome that already lifted its finding on this commit, matched
-        the way concessions are (by hash, or by file and title for a re-hashed carry)."""
-        by_hash = {f.hash: f.status or "SETTLED" for f in self.lifted}
+        the way concessions are (by hash, the hash of the thread a carried finding stays on,
+        or file and title)."""
+        by_hash = {
+            h: f.status or "SETTLED"
+            for f in self.lifted
+            for h in (f.hash, self.carried.get(f.hash))
+            if h
+        }
         by_id = {_identity(f.file, f.title): f.status or "SETTLED" for f in self.lifted}
         out = {}
         for h, t in threads.items():
@@ -6949,15 +6961,19 @@ def _standing_findings(
     thread instead of posting; runs without those rows fall back to their `posted` rows. Plus
     unresolved bot finding threads this database never posted (legacy findings); threads from
     earlier heads were re-adjudicated by that run. Minus: findings a conversation on this sha
-    conceded after that run (`conceded` rows) and those lifted by the current run, matched by
-    hash or by file and title (a carried finding may be re-hashed). A thread a maintainer
+    conceded after that run (`conceded` rows) and those lifted by the current run. A concession
+    names its thread's hash, so it lifts the finding with that hash, the finding that run
+    carried on that thread (`prior_hash`: a verifier that restates a carried finding's file,
+    category or title re-hashes it; dashpay/dash#8159 kept its request for changes after the
+    last blocker was withdrawn, because the finding had moved to another file), or the
+    finding with the same file and title. A thread a maintainer
     resolved by hand, without the bot conceding it, still counts: only an explicit outcome or
     a fresh review lifts a verdict. Scoped to the phase whose verdict is being moved, so a
     preliminary publication stacked on the same sha never leaks into the final accounting.
     """
     rows = ctx.conn.execute(
-        "SELECT f.run_id, f.hash, f.severity, f.stage, f.file, f.title, f.body FROM findings f "
-        "JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
+        "SELECT f.run_id, f.hash, f.prior_hash, f.severity, f.stage, f.file, f.title, f.body "
+        "FROM findings f JOIN runs r ON r.id=f.run_id JOIN heads h ON h.id=r.head_id "
         "WHERE h.repo=? AND h.number=? AND h.sha=? AND f.phase=? AND f.stage IN ('posted','conceded') "
         "ORDER BY f.id",
         (ctx.repo, ctx.number, ctx.sha, phase),
@@ -6988,10 +7004,11 @@ def _standing_findings(
     )
     pub: dict[str, tuple[str, tuple[str, str]]] = {}
     titles: dict[str, str] = {}
+    carried: dict[str, str] = {}
     verified = False
     if run_id is not None:
         final = ctx.conn.execute(
-            "SELECT hash, severity, stage, file, title FROM findings WHERE run_id=? "
+            "SELECT hash, prior_hash, severity, stage, file, title FROM findings WHERE run_id=? "
             "AND phase='verify2' AND stage IN ('verified','verified-fresh')",
             (run_id,),
         ).fetchall()
@@ -7009,6 +7026,11 @@ def _standing_findings(
                     str(r["hash"]), (str(r["severity"]), _identity(r["file"], r["title"]))
                 )
                 titles.setdefault(str(r["hash"]), str(r["title"] or ""))
+        carried = {
+            str(r["hash"]): str(r["prior_hash"])
+            for r in [*(fresh or final), *(r for r in rows if int(r["run_id"]) == run_id)]
+            if r["prior_hash"] and r["prior_hash"] != r["hash"] and str(r["hash"]) in pub
+        }
     ever_posted = {
         str(r["hash"])
         for r in ctx.conn.execute(
@@ -7045,7 +7067,11 @@ def _standing_findings(
         tracking[h] = link or tracking.get(h, "")
         tracking[ident] = link or tracking.get(ident, "")
     gone_ids = {i for i in gone.values() if i[1]}
-    lifted_hashes = {h for h, (_, ident) in pub.items() if h in gone or ident in gone_ids}
+    lifted_hashes = {
+        h
+        for h, (_, ident) in pub.items()
+        if h in gone or carried.get(h) in gone or ident in gone_ids
+    }
     latest: dict[str, tuple[str, str]] = {}
     for r in rows:
         if r["stage"] == "conceded" and run_id is not None and int(r["run_id"]) >= run_id:
@@ -7068,6 +7094,7 @@ def _standing_findings(
         verified=verified,
         lifted_any=any(pub[h][0] != "nitpick" for h in lifted_hashes),
         titles=titles,
+        carried=carried,
         lifted=[
             publish.LiftedFinding(
                 hash=h,

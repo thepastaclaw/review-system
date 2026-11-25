@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 MIGRATIONS: dict[int, str] = {
     1: """
@@ -181,6 +181,11 @@ MIGRATIONS: dict[int, str] = {
     # A changed since the previous final review, B/C unchanged, U no anchor or unknown
     11: """
     ALTER TABLE findings ADD COLUMN code_status TEXT;
+    """,
+    # the finding a carried one continues: the hash its thread was posted under. A verifier
+    # that restates a carried finding's file, category or title gives it a new hash
+    12: """
+    ALTER TABLE findings ADD COLUMN prior_hash TEXT;
     """,
 }
 
