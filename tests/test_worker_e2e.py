@@ -2315,6 +2315,69 @@ def test_conversation_withdrawing_the_only_finding_approves(cfg, conn, gh, lanes
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
 
 
+def _restated_carry(cfg, conn, gh, lanes, change, *, also=()):
+    """The review of HEAD carries its prior blocker on the existing thread but restates it
+    (`change`), which re-hashes it; `also` are further findings it publishes. Returns the
+    thread's hash and the blocker."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    restated = {**blocker, **change, "finding_hash": bh}
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [])]
+    _standing_final(gh)
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [restated, *also],
+        "out_of_scope_findings": [],
+        "prior_finding_reconciliation": [
+            {"finding_hash": bh, "status": "STILL_VALID", "reason": "Still unhandled."}
+        ],
+    }
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([restated, *also])
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.MANUAL)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=lanes, heartbeat=False) == RunStatus.DONE
+    kept = conn.execute(
+        "SELECT DISTINCT hash, prior_hash FROM findings WHERE run_id=? AND phase='verify2' "
+        "AND prior_hash IS NOT NULL",
+        (rid,),
+    ).fetchall()
+    assert [(r["hash"] != bh, r["prior_hash"]) for r in kept] == [(True, bh)]
+    return bh, blocker
+
+
+@pytest.mark.parametrize(
+    "change",
+    [{"file": "g.rs"}, {"title": "Drainage costs are left out of the fee estimate"}],
+    ids=["another file", "another title"],
+)
+def test_withdrawing_a_blocker_the_review_restated_lifts_the_verdict(cfg, conn, gh, lanes, change):
+    """dashpay/dash#8159: the review of this commit carried its only blocker on the existing
+    thread but restated it at another file, which re-hashed it. The author's reply came on
+    that thread, the bot withdrew the finding there, and the request for changes stayed."""
+    bh, blocker = _restated_carry(cfg, conn, gh, lanes, change)
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}], first=False)
+    assert _updates(conn)[-1].split(" on ")[0].endswith("-> APPROVE")
+    assert gh.posted_reviews[-1]["event"] == "APPROVE"
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")
+
+
+def test_withdrawing_a_restated_blocker_leaves_the_other_blocker_standing(cfg, conn, gh, lanes):
+    other = {**_blocking("The refund path double-counts the fee"), "file": "h.rs"}
+    bh, blocker = _restated_carry(cfg, conn, gh, lanes, {"file": "g.rs"}, also=[other])
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 2 blocking")
+    reviews = len(gh.posted_reviews)
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    _converse(cfg, conn, gh, lanes, [{"finding_hash": bh, **WITHDRAW}], first=False)
+    assert not _updates(conn)
+    assert all(r["event"] != "APPROVE" for r in gh.posted_reviews[reviews:])
+    assert gh.gate_bodies[-1].splitlines()[1].startswith("⛔ Final review complete — 1 blocking")
+
+
 def test_conversation_approves_once_no_blocker_is_left(cfg, conn, gh, lanes):
     """Blocker withdrawn, a suggestion stands: an approval, saying the suggestion is optional.
     A later conversation withdrawing the suggestion moves nothing (already approved)."""
@@ -4320,14 +4383,16 @@ def _publish(conn, run_id, sha, *, step=None):
         )
 
 
-@pytest.mark.parametrize("case", ["conversation_follow_up", "ci_update", "stood_after_cutoff"])
+@pytest.mark.parametrize(
+    "case", ["conversation_follow_up", "ci_update", "stood_after_cutoff", "stood_elsewhere"]
+)
 def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, case):
     """The last review before the cutoff being a conversation's verdict follow-up or a CI
     update (ci.py; neither has a verifier set) proves nothing; and a finding deferred long ago that a review carried
     again after the cutoff was standing, so deferring it now is a new deferral."""
     cfg = _no_filing(cfg)
     bh, blocker = _full_review_deferral(gh, conn, lanes, "out of scope here")
-    if case == "stood_after_cutoff":
+    if case in ("stood_after_cutoff", "stood_elsewhere"):
         _old_deferral(conn, gh, bh, "event")
     with tx(conn):
         kv_set(conn, CUTOFF_KEY, "2026-10-01T00:00:00Z")
@@ -4335,7 +4400,9 @@ def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, 
             step = "converse" if case == "conversation_follow_up" else "ci_check"
             _publish(conn, _new_run(conn, "2026-09-20T00:00:00Z"), "c" * 40, step=step)
         else:
-            f = _blocking()  # carried again, re-hashed (another category): matched by title
+            # carried again, re-hashed: another category (matched by file and title), or
+            # another file (matched by the thread it stayed on)
+            f = _blocking()
             conn.execute(
                 worker._FINDINGS_INSERT,
                 (
@@ -4343,7 +4410,7 @@ def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, 
                     "verify2",
                     "verified",
                     "0123456789ab",
-                    f["file"],
+                    f["file"] if case == "stood_after_cutoff" else "g.rs",
                     11,
                     12,
                     "blocking",
@@ -4354,6 +4421,8 @@ def test_old_evidence_does_not_grandfather_a_new_deferral(cfg, conn, gh, lanes, 
                     None,
                 ),
             )
+            if case == "stood_elsewhere":
+                conn.execute("UPDATE findings SET prior_hash=? WHERE hash='0123456789ab'", (bh,))
     _rid, status = _run_repo(cfg, conn, gh, lanes, "dashpay/platform", 1, Trigger.REVIEW_REPLY)
     assert status == RunStatus.DONE
     assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
