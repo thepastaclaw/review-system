@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-26T02:57:04Z",
-  "generated_at": "2026-11-26T02:57:05Z",
+  "data_as_of": "2026-11-26T02:58:07Z",
+  "generated_at": "2026-11-26T02:58:08Z",
   "history": {
     "daily": [
       {
@@ -460,6 +460,22 @@
     },
     "recent_events": [
       {
+        "detail": null,
+        "kind": "phase1.model_selected",
+        "number": 5934,
+        "repo": "dashpay/platform",
+        "run_id": 14851,
+        "ts": "2026-11-26T02:57:16Z"
+      },
+      {
+        "detail": null,
+        "kind": "check.synced",
+        "number": 5934,
+        "repo": "dashpay/platform",
+        "run_id": null,
+        "ts": "2026-11-26T02:57:16Z"
+      },
+      {
         "detail": "attempt 1 sha=d009eff1",
         "kind": "run.spawned",
         "number": 5934,
@@ -762,22 +778,6 @@
         "repo": null,
         "run_id": 14848,
         "ts": "2026-11-26T02:16:46Z"
-      },
-      {
-        "detail": "a7d3882a trigger=new_push priority=0",
-        "kind": "head.queued",
-        "number": 954,
-        "repo": "PastaPastaPasta/dashwallet-desktop",
-        "run_id": null,
-        "ts": "2026-11-26T02:16:45Z"
-      },
-      {
-        "detail": "head 18841 superseded by a7d3882a",
-        "kind": "head.superseded",
-        "number": 954,
-        "repo": "PastaPastaPasta/dashwallet-desktop",
-        "run_id": null,
-        "ts": "2026-11-26T02:16:45Z"
       }
     ],
     "tokens_by_effort": [
@@ -1397,35 +1397,97 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-26T08:56:46Z",
-        "deadline_in_seconds": 21582,
+        "deadline_in_seconds": 21519,
         "degraded": false,
-        "elapsed_seconds": 18,
+        "elapsed_seconds": 81,
         "findings": null,
-        "heartbeat_age_seconds": 2,
-        "heartbeat_at": "2026-11-26T02:57:02Z",
+        "heartbeat_age_seconds": 5,
+        "heartbeat_at": "2026-11-26T02:58:02Z",
         "id": 14851,
         "lanes": [],
         "live_lanes": [
           {
-            "effort": "low",
+            "effort": "xhigh",
             "line_position": null,
-            "model": "gpt-6.2-sol",
-            "phase": "prep",
-            "pool": "gpt",
-            "role": "prep",
-            "since_seconds": 8,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "general",
+            "since_seconds": 51,
             "state": "running"
+          },
+          {
+            "effort": "xhigh",
+            "line_position": null,
+            "model": "muse-spark-1.3-contributor",
+            "phase": "phase1",
+            "pool": "muse",
+            "role": "rust-quality",
+            "since_seconds": 51,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "architecture-layering",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 50,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "general",
+            "since_seconds": 51,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_length": 2,
+            "line_position": 1,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 51,
+            "state": "waiting"
+          },
+          {
+            "effort": "high",
+            "line_length": 2,
+            "line_position": 2,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 51,
+            "state": "waiting"
           }
         ],
         "number": 5934,
         "overdue": false,
-        "phase": "triage",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/5934",
         "priority": false,
-        "progress": 0.017,
+        "progress": 0.049,
         "queue": "live",
         "queued_at": "2026-11-26T02:26:01Z",
-        "remaining_seconds": 1016,
+        "remaining_seconds": 1559,
         "repo": "dashpay/platform",
         "sha": "d009eff1d06c955ec7860ee51920269c8a470732",
         "started_at": "2026-11-26T02:56:46Z",
@@ -1439,29 +1501,86 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "selection": [
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
             "name": "select",
-            "seconds": 9,
+            "seconds": 10,
             "started_at": "2026-11-26T02:56:55Z",
-            "status": "running"
+            "status": "ok"
+          },
+          {
+            "info": {
+              "method": "llm:gpt-6.2-sol",
+              "reasoning": "The admission changes in `wallet/shielded/coordinator.rs` and the reset-and-wipe sequence in `PlatformWalletManager::clear_shielded` substantially change key handling by controlling when shielded viewing keys can be persisted, restored, or erased across native and host stores.",
+              "tier": "critical"
+            },
+            "name": "triage",
+            "seconds": 9,
+            "started_at": "2026-11-26T02:56:56Z",
+            "status": "ok"
           },
           {
             "info": {},
-            "name": "triage",
-            "seconds": 8,
-            "started_at": "2026-11-26T02:56:56Z",
+            "name": "context",
+            "seconds": 11,
+            "started_at": "2026-11-26T02:57:05Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "ffi-engineer",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "ffi-engineer",
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 5,
+            "name": "phase2",
+            "seconds": 51,
+            "started_at": "2026-11-26T02:57:16Z",
+            "status": "running"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "rust-quality"
+            ],
+            "lanes_total": 2,
+            "name": "phase1",
+            "seconds": 51,
+            "started_at": "2026-11-26T02:57:16Z",
             "status": "running"
           }
         ],
-        "tier": null,
+        "tier": "critical",
         "title": "fix(platform-wallet): own the shielded coordinator and wipe host rows inside Clear",
         "tokens_in": 0,
         "tokens_out": 0,
         "trigger": "new_push",
         "upcoming": [
-          "context",
-          "phase1",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1541,13 +1660,13 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 3,
         "slots": 4,
-        "waiting": 0
+        "waiting": 2
       },
       {
         "pool": "muse",
-        "running": 0,
+        "running": 2,
         "slots": 20,
         "waiting": 0
       }
@@ -1555,17 +1674,17 @@
     "last_run_done_at": "2026-11-26T02:52:44Z",
     "last_run_started_at": "2026-11-26T02:56:46Z",
     "median_run_minutes": 15.866666666666667,
-    "notify_last_at": "2026-11-26T02:54:34Z",
+    "notify_last_at": "2026-11-26T02:57:09Z",
     "oldest_queued_at": "2026-11-26T02:31:36Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1528,
+        "age_seconds": 1591,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-26T03:01:36Z",
-        "eligible_in_seconds": 272,
+        "eligible_in_seconds": 209,
         "number": 6209,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/6209",
@@ -1579,12 +1698,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1214,
+        "age_seconds": 1277,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-26T03:06:50Z",
-        "eligible_in_seconds": 586,
+        "eligible_in_seconds": 523,
         "number": 6315,
         "position": 2,
         "pr_url": "https://github.com/dashpay/platform/pull/6315",
@@ -1598,12 +1717,12 @@
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 618,
+        "age_seconds": 681,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-26T03:16:46Z",
-        "eligible_in_seconds": 1182,
+        "eligible_in_seconds": 1119,
         "number": 954,
         "position": 3,
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/954",
@@ -1617,12 +1736,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 320,
+        "age_seconds": 383,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-26T03:21:44Z",
-        "eligible_in_seconds": 1480,
+        "eligible_in_seconds": 1417,
         "number": 6316,
         "position": 4,
         "pr_url": "https://github.com/dashpay/platform/pull/6316",
@@ -1643,7 +1762,7 @@
       "reviews": 17,
       "tokens": 145678504
     },
-    "ts": "2026-11-26T02:57:04Z",
+    "ts": "2026-11-26T02:58:07Z",
     "typical_minutes_by_tier": {
       "critical": 21.8,
       "low": 23.8,
@@ -1654,7 +1773,7 @@
     "watchdog": {
       "active": 1,
       "eligible": 0,
-      "idle_minutes": 0.3,
+      "idle_minutes": 1.3666666666666667,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1662,7 +1781,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-26T02:57:04Z",
+    "generated_at": "2026-11-26T02:58:07Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
