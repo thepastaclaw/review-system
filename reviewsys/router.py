@@ -139,8 +139,11 @@ def _route_row(
     own_pr = str((meta.get("user") or {}).get("login") or "").lower() == cfg.bot_login.lower()
     head = str((meta.get("head") or {}).get("sha") or "")
     is_open = meta.get("state") == "open" and not meta.get("draft")
+    # someone asking (a review request, a mention) reaches a draft too: drafts are only kept
+    # from automatic review, and ingest leaves a head someone asked for open on a draft
+    asked_open = meta.get("state") == "open"
 
-    if kind == "review_requested" and watched and is_open and head and not own_pr:
+    if kind == "review_requested" and watched and asked_open and head and not own_pr:
         with tx(conn):
             _ask(
                 conn,
@@ -173,7 +176,7 @@ def _route_row(
 
     if (
         kind == "mention"
-        and is_open
+        and asked_open
         and head
         and mention_re.search(body)
         and not own_pr
