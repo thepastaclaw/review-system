@@ -259,8 +259,8 @@ def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict
     for quiet. Left alone while a run is in flight (a requested review, or one still winding
     down after ingest closed its head) and when a requested review finished on the commit (its
     body stands). A draft's failed review is the exception: its body is the draft body again,
-    whose boxes may have been ticked; any other body of it (the failure) is left as it is. Each (PR, commit) is checked once, so a labelled PR costs
-    no read per pass."""
+    whose boxes may have been ticked; any other body of it (the failure) is left as it is.
+    Each (PR, commit) is checked once, so a labelled PR costs no read per pass."""
     from .ingest import skip_noted_key
 
     rows = conn.execute(
