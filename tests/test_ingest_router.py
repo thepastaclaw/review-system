@@ -518,6 +518,141 @@ def test_review_requested_on_a_draft_runs_to_the_end(cfg, conn, gh):
     assert DEFERRED_MARKER in gh.routes[ep]["body"]
 
 
+def _draft_with_deferred_body(conn, cfg, gh, number, sha, **kw):
+    """An open draft whose gate comment is the deferred ("not started: a draft") body."""
+    from reviewsys.queue_status import DEFERRED_MARKER
+
+    gh.open_prs["dashpay/platform"] = [pr(number, sha, isDraft=True, **kw)]
+    ingest_prs(conn, cfg, gh)
+    ep = _gate(conn, gh, number)
+    gh.routes[ep]["node_id"] = f"IC_{number}"
+    gh.routes["graphql:userContentEdits"] = {
+        "node": {"userContentEdits": {"nodes": [{"editedAt": "t", "editor": {"login": "lklimek"}}]}}
+    }
+    update_queue_comments(conn, cfg, gh)
+    assert DEFERRED_MARKER in gh.routes[ep]["body"]
+    assert "because this PR is a draft" in gh.routes[ep]["body"]
+    return ep
+
+
+def _tick(gh, ep, box="priority"):
+    gh.routes[ep]["body"] = gh.routes[ep]["body"].replace(
+        f"- [ ] **Request {box}", f"- [x] **Request {box}"
+    )
+
+
+def test_priority_tick_on_a_draft_starts_a_review_at_once(cfg, conn, gh):
+    """dashpay/platform#6349 (2026-11-26): lklimek ticked the priority box on a draft for early
+    feedback. Pasta: "The manual tick on a PR always overrides". The draft gets a priority
+    review now, ingest leaves it alone while the PR stays a draft, and marking the PR ready
+    later neither duplicates nor delays it."""
+    sha = "6349" * 10
+    ep = _draft_with_deferred_body(conn, cfg, gh, 6349, sha)
+    assert conn.execute("SELECT COUNT(*) FROM heads WHERE number=6349").fetchone()[0] == 0
+    # unticked, a draft stays unreviewed, pass after pass
+    for _ in range(2):
+        ingest_prs(conn, cfg, gh)
+        update_queue_comments(conn, cfg, gh)
+    assert conn.execute("SELECT COUNT(*) FROM heads WHERE number=6349").fetchone()[0] == 0
+
+    _tick(gh, ep)
+    update_queue_comments(conn, cfg, gh)
+    head = conn.execute("SELECT * FROM heads WHERE number=6349").fetchone()
+    assert (head["status"], head["trigger"], head["priority"]) == (
+        "queued",
+        "priority_request",
+        1,
+    )
+    assert parse_ts(head["eligible_at"]) <= parse_ts(now()), "no push debounce for a tick"
+    assert queued_order(conn)[0]["id"] == head["id"]
+    update_queue_comments(conn, cfg, gh)
+    assert gh.routes[ep]["body"].splitlines()[1].startswith("⚡ Priority review")
+
+    ingest_prs(conn, cfg, gh)  # still a draft
+    assert conn.execute("SELECT status FROM heads WHERE id=?", (head["id"],)).fetchone()[0] == (
+        "queued"
+    )
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='running' WHERE id=?", (head["id"],))
+    ingest_prs(conn, cfg, gh)
+    gh.open_prs["dashpay/platform"] = [pr(6349, sha)]  # marked ready mid-review
+    stats = ingest_prs(conn, cfg, gh)["dashpay/platform"]
+    assert stats["created"] == stats["requeued"] == stats["promoted"] == 0
+    assert _heads(conn, 6349) == [(sha, "running")]
+
+
+def test_tick_on_a_draft_whose_automatic_head_was_closed(cfg, conn, gh):
+    """A PR turned draft closes its automatic head (`pr_draft`); a tick re-opens that head."""
+    sha = "7" * 40
+    gh.open_prs["dashpay/platform"] = [pr(24, sha)]
+    ingest_prs(conn, cfg, gh)
+    ep = _draft_with_deferred_body(conn, cfg, gh, 24, sha)
+    assert _heads(conn, 24) == [(sha, "closed")]
+    _tick(gh, ep)
+    update_queue_comments(conn, cfg, gh)
+    ingest_prs(conn, cfg, gh)
+    row = conn.execute("SELECT status, trigger, priority FROM heads WHERE number=24").fetchone()
+    assert tuple(row) == ("queued", "priority_request", 1)
+
+
+def test_tick_on_a_labelled_draft_after_a_failed_review_retries_it(cfg, conn, gh):
+    """A draft's failed review gets the draft body back so its boxes can retry it; once the PR
+    also carried a skip label, neither pass read that body, so a tick there did nothing."""
+    sha = "8" * 40
+    ep = _draft_with_deferred_body(conn, cfg, gh, 25, sha)
+    _tick(gh, ep, "normal")
+    update_queue_comments(conn, cfg, gh)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE number=25")
+    gh.routes[ep]["body"] = "<!-- thepastaclaw-gate v1 -->\n⚠️ Automated review could not complete"
+    update_queue_comments(conn, cfg, gh)
+    assert "- [ ] **Request priority" in gh.routes[ep]["body"]
+    gh.open_prs["dashpay/platform"] = [pr(25, sha, isDraft=True, labels=SKIP)]
+    ingest_prs(conn, cfg, gh)
+    _tick(gh, ep)
+    update_queue_comments(conn, cfg, gh)
+    row = conn.execute("SELECT status, trigger, priority FROM heads WHERE number=25").fetchone()
+    assert tuple(row) == ("queued", "priority_request", 1)
+    ingest_prs(conn, cfg, gh)
+    assert conn.execute("SELECT status FROM heads WHERE number=25").fetchone()[0] == "queued"
+
+
+def test_labelled_draft_after_a_failed_review_without_a_tick_is_noted(cfg, conn, gh):
+    sha = "9" * 40
+    ep = _draft_with_deferred_body(conn, cfg, gh, 26, sha)
+    _tick(gh, ep, "normal")
+    update_queue_comments(conn, cfg, gh)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE number=26")
+    gh.routes[ep]["body"] = "<!-- thepastaclaw-gate v1 -->\n⚠️ Automated review could not complete"
+    update_queue_comments(conn, cfg, gh)
+    gh.open_prs["dashpay/platform"] = [pr(26, sha, isDraft=True, labels=SKIP)]
+    ingest_prs(conn, cfg, gh)
+    update_queue_comments(conn, cfg, gh)
+    assert SKIP_LABEL_NOTE in gh.routes[ep]["body"] and "Request" not in gh.routes[ep]["body"]
+    assert _heads(conn, 26) == [(sha, "failed")]
+
+
+def test_labelled_draft_keeps_the_body_of_its_failed_review(cfg, conn, gh):
+    """A review asked for on a labelled draft failed: its comment says why, not "not reviewed"."""
+    sha = "a" * 40
+    ep = _draft_with_deferred_body(conn, cfg, gh, 27, sha)
+    _tick(gh, ep)
+    update_queue_comments(conn, cfg, gh)
+    gh.open_prs["dashpay/platform"] = [pr(27, sha, isDraft=True, labels=SKIP)]
+    failed = (
+        "<!-- thepastaclaw-gate v1 -->\n⚠️ Automated review could not complete (commit aaaaaaaa)"
+    )
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE number=27")
+    gh.routes[ep]["body"] = failed
+    for _ in range(2):
+        ingest_prs(conn, cfg, gh)
+        update_queue_comments(conn, cfg, gh)
+    assert gh.routes[ep]["body"] == failed
+    assert kv_get(conn, "queue.skip_noted:dashpay/platform#27") == sha
+
+
 def test_automatic_head_on_a_pr_turned_draft_is_closed(cfg, conn, gh):
     gh.open_prs["dashpay/platform"] = [pr(7, "7" * 40)]
     ingest_prs(conn, cfg, gh)
@@ -742,21 +877,50 @@ def test_box_ticked_before_the_label_is_honoured_not_erased(cfg, conn, gh):
     assert SKIP_LABEL_NOTE not in gh.routes[ep]["body"]
 
 
-def test_ticked_box_with_nothing_to_reopen_is_noted_once(cfg, conn, gh):
+def test_ticked_box_on_a_commit_a_force_push_brought_back_is_reviewed(cfg, conn, gh):
+    """A head left superseded by a force-push back to this commit was once a no-op for the
+    boxes: the tick was dropped and the label's note written over it."""
     sha = "c" * 40
     gh.open_prs["dashpay/platform"] = [pr(22, sha, labels=SKIP)]
     ingest_prs(conn, cfg, gh)
-    with tx(conn):  # left superseded by a force-push back to this commit
+    with tx(conn):
         conn.execute(
-            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) "
-            "VALUES ('dashpay/platform', 22, ?, 'new_pr', 0, 'superseded', ?, ?)",
-            (sha, now(), now()),
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, "
+            "eligible_at, superseded_at, finished_at, reason) VALUES ('dashpay/platform', 22, ?, "
+            "'new_pr', 0, 'superseded', ?, ?, ?, ?, 'new head dddddddd')",
+            (sha, now(), now(), now(), now()),
         )
     ep = _gate(conn, gh, 22)
     gh.routes[ep]["body"] += "\n- [x] **Request normal review** — click when ready."
     update_queue_comments(conn, cfg, gh)
-    assert SKIP_LABEL_NOTE in gh.routes[ep]["body"]
-    assert kv_get(conn, "queue.skip_noted:dashpay/platform#22") == sha
+    row = conn.execute("SELECT * FROM heads WHERE number=22").fetchone()
+    assert (row["status"], row["trigger"], row["superseded_at"], row["reason"]) == (
+        "queued",
+        "normal_request",
+        None,
+        None,
+    )
+    assert SKIP_LABEL_NOTE not in gh.routes[ep]["body"]
+    assert kv_get(conn, "queue.skip_noted:dashpay/platform#22") is None
+    ingest_prs(conn, cfg, gh)  # the label stays; the request survives
+    assert conn.execute("SELECT status FROM heads WHERE number=22").fetchone()[0] == "queued"
+
+
+def test_only_a_box_reopens_a_superseded_head(cfg, conn):
+    sha = "d" * 40
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO heads (repo, number, sha, trigger, priority, status, queued_at, eligible_at) "
+            "VALUES ('dashpay/platform', 23, ?, 'new_pr', 0, 'superseded', ?, ?)",
+            (sha, now(), now()),
+        )
+        for trigger in (Trigger.NEW_PUSH, Trigger.MENTION, Trigger.REVIEW_REPLY):
+            assert enqueue_head(conn, cfg, "dashpay/platform", 23, sha, trigger) == "noop"
+        assert enqueue_head(conn, cfg, "dashpay/platform", 23, sha, Trigger.PRIORITY_REQUEST) == (
+            "requeued"
+        )
+    row = conn.execute("SELECT status, priority, trigger FROM heads WHERE number=23").fetchone()
+    assert tuple(row) == ("queued", 1, "priority_request")
 
 
 def test_lagging_poll_leaves_a_newer_requested_review_alone(cfg, conn, gh):

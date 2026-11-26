@@ -113,6 +113,10 @@ def _has_skip_label(conn: sqlite3.Connection, repo: str, number: int) -> bool:
 REOPENING = frozenset(
     {Trigger.REVIEW_REPLY, Trigger.MANUAL, Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST}
 )
+# a gate-comment box ticked by hand: always a review of the commit, whatever would skip it
+# (a draft, a skip label, a head left superseded by a force-push back to this commit).
+# Pasta, 2026-11-26: "The manual tick on a PR always overrides"
+BOX_TRIGGERS = frozenset({Trigger.PRIORITY_REQUEST, Trigger.NORMAL_REQUEST})
 # ...except on a commit nothing reviewed itself (its review is carried over, `carried_from`,
 # or its review failed or ended without a verdict)
 ASKING = frozenset({Trigger.MENTION, Trigger.REVIEW_REQUESTED})
@@ -237,8 +241,11 @@ def enqueue_head(
         if priority or trigger == Trigger.NORMAL_REQUEST
         else fmt_ts(parse_ts(ts) + timedelta(minutes=cfg.debounce_minutes))
     )
-    if existing and skip_closed:
-        # the label is gone or the draft is ready (ingest), or someone asked
+    if existing and (
+        skip_closed or (trigger in BOX_TRIGGERS and existing["status"] == HeadStatus.SUPERSEDED)
+    ):
+        # the label is gone or the draft is ready (ingest), someone asked, or a box was ticked
+        # on a commit a force-push brought back
         supersede_other_heads(conn, repo, number, sha, ts)
         return _requeue(
             conn,
@@ -362,7 +369,7 @@ def _requeue(
 ) -> str:
     """Re-open a finished head, by default at the front of the line."""
     conn.execute(
-        "UPDATE heads SET status='queued', priority=?, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, reason=NULL, attempts=0 WHERE id=?",
+        "UPDATE heads SET status='queued', priority=?, trigger=?, queued_at=?, eligible_at=?, finished_at=NULL, superseded_at=NULL, reason=NULL, attempts=0 WHERE id=?",
         (priority, trigger.value, ts, eligible or ts, head_id),
     )
     event(

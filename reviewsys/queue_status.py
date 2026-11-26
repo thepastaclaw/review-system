@@ -258,14 +258,18 @@ def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict
     "starts in 30 min"), says the PR is not reviewed instead. Never creates one: the label asks
     for quiet. Left alone while a run is in flight (a requested review, or one still winding
     down after ingest closed its head) and when a requested review finished on the commit (its
-    body stands). Each (PR, commit) is checked once, so a labelled PR costs no read per pass."""
+    body stands). A draft's failed review is the exception: its body is the draft body again,
+    whose boxes may have been ticked; any other body of it (the failure) is left as it is.
+    Each (PR, commit) is checked once, so a labelled PR costs no read per pass."""
     from .ingest import skip_noted_key
 
     rows = conn.execute(
-        "SELECT p.repo,p.number,p.head_sha FROM prs p WHERE p.state='open' AND p.skip_label=1 "
+        "SELECT p.repo,p.number,p.head_sha,EXISTS (SELECT 1 FROM heads h WHERE h.repo=p.repo "
+        "AND h.number=p.number AND h.sha=p.head_sha AND h.queue='live' AND h.status='failed') "
+        "AS failed FROM prs p WHERE p.state='open' AND p.skip_label=1 "
         "AND NOT EXISTS (SELECT 1 FROM heads h WHERE h.repo=p.repo AND h.number=p.number "
         "AND h.queue='live' AND (h.status IN ('queued','running') "
-        "OR (h.sha=p.head_sha AND h.status IN ('done','failed')))) "
+        "OR (h.sha=p.head_sha AND (h.status='done' OR (h.status='failed' AND p.is_draft=0))))) "
         "AND NOT EXISTS (SELECT 1 FROM runs r JOIN heads h ON h.id=r.head_id "
         "WHERE h.repo=p.repo AND h.number=p.number AND r.status IN ('spawned','running'))"
     ).fetchall()
@@ -296,7 +300,9 @@ def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict
                 p["head_sha"],
                 reason=f"{SKIP_LABEL_NOTE}; `@{cfg.bot_login} review` still asks for one",
             )
-            if c and body != rendered:
+            # a failed review's own body says why it failed: only the draft body is replaced
+            keep = p["failed"] and DEFERRED_MARKER not in body
+            if c and body != rendered and not keep:
                 _write(conn, gh, p["repo"], p["number"], c, rendered)
                 stats["written"] += 1
             with tx(conn):
