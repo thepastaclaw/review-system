@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-26T04:50:07Z",
-  "generated_at": "2026-11-26T04:50:08Z",
+  "data_as_of": "2026-11-26T04:51:04Z",
+  "generated_at": "2026-11-26T04:51:05Z",
   "history": {
     "daily": [
       {
@@ -423,17 +423,17 @@
         "normal": {
           "duration": {
             "median_seconds": 1552,
-            "n": 1259,
-            "p90_seconds": 5110
+            "n": 1258,
+            "p90_seconds": 5112
           },
           "slot_wait": {
             "median_seconds": 25,
-            "n": 1259,
-            "p90_seconds": 3024
+            "n": 1258,
+            "p90_seconds": 3028
           },
           "wait": {
             "median_seconds": 1818,
-            "n": 1594,
+            "n": 1593,
             "p90_seconds": 1943
           }
         },
@@ -1397,16 +1397,16 @@
         "attempt": 1,
         "author": "shumkov",
         "deadline_at": "2026-11-26T10:41:29Z",
-        "deadline_in_seconds": 21082,
+        "deadline_in_seconds": 21025,
         "degraded": false,
-        "elapsed_seconds": 518,
+        "elapsed_seconds": 575,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 2
         },
-        "heartbeat_age_seconds": 7,
-        "heartbeat_at": "2026-11-26T04:50:00Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-26T04:51:00Z",
         "id": 14861,
         "lanes": [
           {
@@ -1458,7 +1458,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 38,
+            "since_seconds": 95,
             "state": "running"
           }
         ],
@@ -1467,10 +1467,10 @@
         "phase": "verify2",
         "pr_url": "https://github.com/dashpay/platform/pull/6317",
         "priority": false,
-        "progress": 0.889,
+        "progress": 0.986,
         "queue": "live",
         "queued_at": "2026-11-26T04:11:24Z",
-        "remaining_seconds": 65,
+        "remaining_seconds": 8,
         "repo": "dashpay/platform",
         "sha": "b3a79b5ba3211b241f70841099b62209102f354c",
         "started_at": "2026-11-26T04:41:29Z",
@@ -1566,7 +1566,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 38,
+            "seconds": 95,
             "started_at": "2026-11-26T04:49:29Z",
             "status": "running"
           }
@@ -1674,31 +1674,31 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1744,
+        "age_seconds": 1801,
         "attempts": 0,
         "author": "shumkov",
-        "eligible": false,
+        "eligible": true,
         "eligible_at": "2026-11-26T04:51:03Z",
-        "eligible_in_seconds": 56,
+        "eligible_in_seconds": 0,
         "number": 6316,
         "position": 1,
         "pr_url": "https://github.com/dashpay/platform/pull/6316",
         "prioritize_url": "https://github.com/dashpay/platform/issues/6316#issuecomment-7181178258",
         "priority": false,
         "queued_at": "2026-11-26T04:21:03Z",
-        "reason": "debounce (more pushes may follow)",
+        "reason": "waiting for a review slot",
         "repo": "dashpay/platform",
         "sha": "5e4e755e1c7f3e1dfaacbf572a2f99a47716b371",
         "title": "fix(dashmate): redact container environment and known secrets in the doctor report",
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1290,
+        "age_seconds": 1347,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-26T04:58:37Z",
-        "eligible_in_seconds": 510,
+        "eligible_in_seconds": 453,
         "number": 952,
         "position": 2,
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/952",
@@ -1712,12 +1712,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 303,
+        "age_seconds": 360,
         "attempts": 0,
         "author": "shumkov",
         "eligible": false,
         "eligible_at": "2026-11-26T05:15:04Z",
-        "eligible_in_seconds": 1497,
+        "eligible_in_seconds": 1440,
         "number": 6315,
         "position": 3,
         "pr_url": "https://github.com/dashpay/platform/pull/6315",
@@ -1738,9 +1738,9 @@
       "reviews": 27,
       "tokens": 213444700
     },
-    "ts": "2026-11-26T04:50:07Z",
+    "ts": "2026-11-26T04:51:04Z",
     "typical_minutes_by_tier": {
-      "critical": 21.7,
+      "critical": 21.8,
       "low": 23.8,
       "normal": 23.2,
       "trivial": 8.0,
@@ -1748,8 +1748,8 @@
     },
     "watchdog": {
       "active": 1,
-      "eligible": 0,
-      "idle_minutes": 8.633333333333333,
+      "eligible": 1,
+      "idle_minutes": 9.6,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1757,7 +1757,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-26T04:50:07Z",
+    "generated_at": "2026-11-26T04:51:04Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
@@ -2052,15 +2052,15 @@
       },
       "7d": {
         "overall": {
-          "mean": 3.66,
+          "mean": 3.67,
           "median": 2,
-          "n": 523
+          "n": 521
         },
         "repos": {
           "PastaPastaPasta/dashwallet-desktop": {
-            "mean": 1.94,
+            "mean": 1.95,
             "median": 1,
-            "n": 197
+            "n": 195
           },
           "PastaPastaPasta/yappr": {
             "mean": 6.31,
@@ -4632,29 +4632,29 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 297,
+          "approved_n": 295,
           "max": 35,
-          "mean": 3.66,
+          "mean": 3.67,
           "median": 2,
-          "n": 523,
+          "n": 521,
           "p90": 8,
-          "share_over_5": 0.178,
-          "to_approve_mean": 2.43,
+          "share_over_5": 0.179,
+          "to_approve_mean": 2.44,
           "to_approve_median": 1
         },
         "repos": [
           {
             "above_ceiling": false,
             "above_target": false,
-            "approved_n": 88,
+            "approved_n": 86,
             "max": 12,
-            "mean": 1.94,
+            "mean": 1.95,
             "median": 1,
-            "n": 197,
+            "n": 195,
             "p90": 4,
             "repo": "PastaPastaPasta/dashwallet-desktop",
-            "share_over_5": 0.03,
-            "to_approve_mean": 1.55,
+            "share_over_5": 0.031,
+            "to_approve_mean": 1.56,
             "to_approve_median": 1.0
           },
           {
