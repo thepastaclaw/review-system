@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-26T02:15:03Z",
-  "generated_at": "2026-11-26T02:15:04Z",
+  "data_as_of": "2026-11-26T02:16:05Z",
+  "generated_at": "2026-11-26T02:16:06Z",
   "history": {
     "daily": [
       {
@@ -406,7 +406,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 58252,
+        "count": 58253,
         "severity": "blocking"
       },
       {
@@ -414,7 +414,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 64991,
+        "count": 64994,
         "severity": "suggestion"
       }
     ],
@@ -807,9 +807,9 @@
       },
       {
         "effort": "high",
-        "lanes": 42065,
-        "tokens_in": 45599803659,
-        "tokens_out": 385826500
+        "lanes": 42066,
+        "tokens_in": 45601928277,
+        "tokens_out": 385838580
       },
       {
         "effort": "low",
@@ -834,11 +834,11 @@
         "tokens_out": 146439516
       },
       {
-        "avg_tokens_per_lane": 1042245.0,
-        "lanes": 8984,
+        "avg_tokens_per_lane": 1042367.0,
+        "lanes": 8985,
         "model": "gpt-6.2-sol",
-        "tokens_in": 9306824954,
-        "tokens_out": 56705968
+        "tokens_in": 9308949572,
+        "tokens_out": 56718048
       },
       {
         "avg_tokens_per_lane": 1019991.0,
@@ -884,8 +884,8 @@
       },
       {
         "run_id": 14847,
-        "tokens_in": 5511249,
-        "tokens_out": 145445
+        "tokens_in": 7635867,
+        "tokens_out": 157525
       },
       {
         "run_id": 14846,
@@ -1379,16 +1379,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 13009264,
+      "avg_tokens_per_completed_review": 13009446,
       "completed_reviews": 11722,
-      "findings": 128087,
+      "findings": 128091,
       "findings_posted": 16326,
       "reviews": 12605,
       "reviews_imported": 2245,
       "runs": 14848,
-      "tokens_in": 150816726985,
-      "tokens_out": 1677862441,
-      "tokens_total": 152494589426
+      "tokens_in": 150818851603,
+      "tokens_out": 1677874521,
+      "tokens_total": 152496726124
     }
   },
   "live": {
@@ -1397,16 +1397,16 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-26T07:58:32Z",
-        "deadline_in_seconds": 20609,
+        "deadline_in_seconds": 20547,
         "degraded": false,
-        "elapsed_seconds": 991,
+        "elapsed_seconds": 1053,
         "findings": {
           "blocking": 1,
           "nitpick": 1,
           "suggestion": 1
         },
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-26T02:15:02Z",
+        "heartbeat_age_seconds": 3,
+        "heartbeat_at": "2026-11-26T02:16:02Z",
         "id": 14847,
         "lanes": [
           {
@@ -1498,6 +1498,16 @@
             "status": "completed",
             "tokens_in": 1149562,
             "tokens_out": 6393
+          },
+          {
+            "attempt": 1,
+            "effort": "high",
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "role": "general",
+            "status": "completed",
+            "tokens_in": 2124618,
+            "tokens_out": 12080
           }
         ],
         "live_lanes": [
@@ -1508,19 +1518,39 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 313,
+            "since_seconds": 56,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 55,
+            "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_position": null,
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 55,
             "state": "running"
           }
         ],
         "number": 952,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "fresh_phase2",
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/952",
         "priority": false,
-        "progress": 0.576,
+        "progress": 0.747,
         "queue": "live",
         "queued_at": "2026-11-26T01:28:27Z",
-        "remaining_seconds": 728,
+        "remaining_seconds": 357,
         "repo": "PastaPastaPasta/dashwallet-desktop",
         "sha": "db775695f4ad95ff0de645dec78ebbb92bdbf9ec",
         "started_at": "2026-11-26T01:58:32Z",
@@ -1608,24 +1638,40 @@
                 "security-auditor"
               ]
             },
-            "lanes_done": 2,
-            "lanes_left": [
-              "general"
-            ],
+            "lanes_done": 3,
+            "lanes_left": [],
             "lanes_total": 3,
             "name": "phase2",
-            "seconds": 314,
+            "seconds": 320,
             "started_at": "2026-11-26T02:09:49Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "rust-quality",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 1,
+            "lanes_left": [
+              "rust-quality",
+              "security-auditor"
+            ],
+            "lanes_total": 3,
+            "name": "fresh_phase2",
+            "seconds": 56,
+            "started_at": "2026-11-26T02:15:09Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "fix(shielded): refuse spends-off calls before the pool opens, and keep Repair from promising a move into Shielded",
-        "tokens_in": 5511249,
-        "tokens_out": 145445,
+        "tokens_in": 7635867,
+        "tokens_out": 157525,
         "trigger": "new_pr",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1805
@@ -1634,12 +1680,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-26T08:12:35Z",
-        "deadline_in_seconds": 21452,
+        "deadline_in_seconds": 21390,
         "degraded": false,
-        "elapsed_seconds": 148,
+        "elapsed_seconds": 210,
         "findings": null,
-        "heartbeat_age_seconds": 12,
-        "heartbeat_at": "2026-11-26T02:14:51Z",
+        "heartbeat_age_seconds": 0,
+        "heartbeat_at": "2026-11-26T02:16:06Z",
         "id": 14848,
         "lanes": [
           {
@@ -1691,7 +1737,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 125,
+            "since_seconds": 187,
             "state": "running"
           },
           {
@@ -1701,7 +1747,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "rust-quality",
-            "since_seconds": 124,
+            "since_seconds": 186,
             "state": "running"
           }
         ],
@@ -1710,10 +1756,10 @@
         "phase": "phase1",
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/954",
         "priority": false,
-        "progress": 0.101,
+        "progress": 0.143,
         "queue": "live",
         "queued_at": "2026-11-26T01:42:23Z",
-        "remaining_seconds": 1319,
+        "remaining_seconds": 1257,
         "repo": "PastaPastaPasta/dashwallet-desktop",
         "sha": "b6028be3848f7d245d4bcfb94be39783daec3d0e",
         "started_at": "2026-11-26T02:12:35Z",
@@ -1770,7 +1816,7 @@
             ],
             "lanes_total": 2,
             "name": "phase1",
-            "seconds": 127,
+            "seconds": 189,
             "started_at": "2026-11-26T02:12:56Z",
             "status": "running"
           }
@@ -1862,7 +1908,7 @@
       },
       {
         "pool": "gpt",
-        "running": 1,
+        "running": 3,
         "slots": 4,
         "waiting": 0
       },
@@ -1887,7 +1933,7 @@
       "reviews": 14,
       "tokens": 132218038
     },
-    "ts": "2026-11-26T02:15:03Z",
+    "ts": "2026-11-26T02:16:05Z",
     "typical_minutes_by_tier": {
       "critical": 21.9,
       "low": 23.8,
@@ -1898,7 +1944,7 @@
     "watchdog": {
       "active": 2,
       "eligible": 0,
-      "idle_minutes": 2.466666666666667,
+      "idle_minutes": 3.5166666666666666,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1906,7 +1952,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-26T02:15:03Z",
+    "generated_at": "2026-11-26T02:16:05Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
