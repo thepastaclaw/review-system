@@ -633,6 +633,26 @@ def test_labelled_draft_after_a_failed_review_without_a_tick_is_noted(cfg, conn,
     assert _heads(conn, 26) == [(sha, "failed")]
 
 
+def test_labelled_draft_keeps_the_body_of_its_failed_review(cfg, conn, gh):
+    """A review asked for on a labelled draft failed: its comment says why, not "not reviewed"."""
+    sha = "a" * 40
+    ep = _draft_with_deferred_body(conn, cfg, gh, 27, sha)
+    _tick(gh, ep)
+    update_queue_comments(conn, cfg, gh)
+    gh.open_prs["dashpay/platform"] = [pr(27, sha, isDraft=True, labels=SKIP)]
+    failed = (
+        "<!-- thepastaclaw-gate v1 -->\n⚠️ Automated review could not complete (commit aaaaaaaa)"
+    )
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='failed' WHERE number=27")
+    gh.routes[ep]["body"] = failed
+    for _ in range(2):
+        ingest_prs(conn, cfg, gh)
+        update_queue_comments(conn, cfg, gh)
+    assert gh.routes[ep]["body"] == failed
+    assert kv_get(conn, "queue.skip_noted:dashpay/platform#27") == sha
+
+
 def test_automatic_head_on_a_pr_turned_draft_is_closed(cfg, conn, gh):
     gh.open_prs["dashpay/platform"] = [pr(7, "7" * 40)]
     ingest_prs(conn, cfg, gh)

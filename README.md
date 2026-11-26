@@ -1889,8 +1889,8 @@ what GitHub has is never rewritten.
 A box ticked by hand always starts a review of the commit (Pasta, 2026-11-26: "The manual tick on a
 PR always overrides"): on a draft, which then stays queued or running while the PR is still a draft;
 on a skip-labelled PR, including a labelled draft whose ticked review failed and got the draft body
-back; and on a commit whose head a force-push back to it left superseded. Unticked drafts and other
-skipped heads stay skipped.
+back; and, on a draft or labelled PR, on a commit whose head a force-push back to it left superseded.
+Unticked drafts and other skipped heads stay skipped.
 
 A priority run's gpt lanes also run in fast mode (`[scheduling] fast_priority`, on by default): every
 lane of the run sends `X-Reviewsys-Tier: priority` (Claude Code's `ANTHROPIC_CUSTOM_HEADERS`), and a
