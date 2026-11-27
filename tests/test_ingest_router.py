@@ -1824,3 +1824,197 @@ def test_promoting_an_already_queued_review_spends_nothing(cfg, conn, gh, notifi
     assert (
         kv_get(conn, f"router.asked_rereviews:review_requested:dashpay/platform#68:{sha}") is None
     )
+
+
+QEMU_TITLE = "The QEMU backport leaves the s390x profile without the target container"
+BARE_DISPUTE = (
+    "> 1 finding(s) not shown inline (the lines are not part of this PR's diff)\r\n"
+    f"> 🔴 Blocking: {QEMU_TITLE}\r\nImpact: Selecting BUILD_TARGET=s390x ...\r\n"
+    "ci/test/00_setup_env_s390x.sh:9-14\r\n\r\n@thepastaclaw \r\n\r\n"
+    "The only usages of QEMU_USER_CMD+x are removed, there's nothing else to do complete "
+    "backport. It's done in full\r\nthere's nothing to fix."
+)
+
+
+def _api_comment(cid, body, login, *, number=8159, assoc="MEMBER", created="2026-11-26T19:49:31Z"):
+    return {
+        "id": cid,
+        "url": f"https://api.github.com/repos/dashpay/platform/issues/comments/{cid}",
+        "html_url": f"https://github.com/dashpay/platform/pull/{number}#issuecomment-{cid}",
+        "issue_url": f"https://api.github.com/repos/dashpay/platform/issues/{number}",
+        "body": body,
+        "user": {"login": login},
+        "author_association": assoc,
+        "created_at": created,
+    }
+
+
+def _reviewed_with_summary_finding(conn, cfg, gh, number, sha, title):
+    gh.open_prs["dashpay/platform"] = [pr(number, sha, author={"login": "knst"})]
+    ingest_prs(conn, cfg, gh)
+    _reviewed(conn, cfg, number, sha)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE number=? AND sha=?", (number, sha))
+    _posted_summary_finding(conn, number=number, sha=sha)
+    with tx(conn):
+        conn.execute("UPDATE findings SET title=? WHERE hash='crlf'", (title,))
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+
+
+def test_a_quoted_dispute_hidden_by_the_bots_next_comment_reaches_review(cfg, conn, gh, notifier):
+    """dashpay/dash#8159 (2026-11-26): knst quoted a finding published only in the review body,
+    added a bare @thepastaclaw and disputed it. 35 s later the job runner's acknowledgement (as
+    thepastaclaw) became the PR's latest comment, the only one the notification names, so the
+    router read the bot's own comment, ignored it, and never saw the dispute."""
+    from reviewsys.ingest import ingest_pr_comments
+
+    sha = "8" * 40
+    _reviewed_with_summary_finding(conn, cfg, gh, 8159, sha, QEMU_TITLE)
+    dispute = _api_comment(7201999720, BARE_DISPUTE, "knst")
+    ack = _api_comment(
+        7202009637,
+        "@knst on it — I've queued this as job `cj-20261126-195005-ade5`",
+        "thepastaclaw",
+        assoc="COLLABORATOR",
+        created="2026-11-26T19:50:06Z",
+    )
+    for c in (dispute, ack):
+        gh.routes[c["url"].removeprefix("https://api.github.com/")] = c
+    gh.notifications = [
+        {
+            "id": "27233384687",
+            "reason": "mention",
+            "updated_at": "2026-11-26T19:50:30Z",
+            "subject": {
+                "type": "PullRequest",
+                "url": "https://api.github.com/repos/dashpay/platform/pulls/8159",
+                "latest_comment_url": ack["url"],
+            },
+            "repository": {"full_name": "dashpay/platform"},
+        }
+    ]
+    gh.issue_comments = [dispute, ack]
+    with tx(conn):
+        kv_set(conn, "comments.cursor:dashpay/platform", "2026-11-26T19:45:00Z")
+    assert ingest_notifications(conn, cfg, gh) == 1
+    assert ingest_pr_comments(conn, cfg, gh) == 1  # the bot's own acknowledgement is skipped
+    assert ingest_pr_comments(conn, cfg, gh) == 0  # idempotent by comment id
+    assert kv_get(conn, "comments.cursor:dashpay/platform") > "2026-11-26T19:45:00Z"
+    row = conn.execute("SELECT kind FROM inbox WHERE source_id='comment:7201999720'").fetchone()
+    assert row["kind"] == "mention"
+
+    route_inbox(conn, cfg, gh, notifier)
+    assert _action(conn, "27233384687:2026-11-26T19:50:30Z") == "ignored"  # the bot's comment
+    assert _action(conn, "comment:7201999720") == "discussion_reply"
+    head = conn.execute("SELECT status, trigger, priority FROM heads WHERE sha=?", (sha,))
+    assert tuple(head.fetchone()) == ("queued", "manual", 1)  # a full same-sha re-review
+    ev = conn.execute("SELECT detail FROM events WHERE kind='head.review_reply'").fetchone()
+    assert "knst answered a finding in PR comment 7201999720" in ev["detail"]
+
+    # the same comment named by a later notification is routed once
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE sha=?", (sha,))
+    _issue_comment_row(conn, gh, "n:again", 7201999720, kind="mention", body=BARE_DISPUTE)
+    with tx(conn):
+        conn.execute("UPDATE inbox SET number=8159 WHERE source_id='n:again'")
+    route_inbox(conn, cfg, gh, notifier)
+    assert conn.execute("SELECT status FROM heads WHERE sha=?", (sha,)).fetchone()[0] == "done"
+
+
+def test_a_quoted_dispute_that_says_review_is_a_dispute_not_a_vague_mention(
+    cfg, conn, gh, notifier
+):
+    """ "@bot this review is wrong" matches the mention rule but asks for no re-review of its
+    own, so a quoted finding beside it was dropped as a vague mention of a reviewed commit."""
+    sha = "f" * 40
+    _reviewed(conn, cfg, 7, sha)
+    _posted_summary_finding(conn)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    body = (
+        f"> 🔴 Blocking: {FINDING_TITLE}\n\n@thepastaclaw this review is wrong: MSVC is unsupported"
+    )
+    _issue_comment_row(conn, gh, "n:1", 100, kind="mention", body=body)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "review_reply"
+    assert _action(conn, "n:1") == "discussion_reply"
+    head = conn.execute("SELECT status, trigger FROM heads WHERE sha=?", (sha,)).fetchone()
+    assert tuple(head) == ("queued", "manual")
+    # a repeat of it is not a fresh explicit ask either: one re-review per comment
+    _finish(conn, 7)
+    _issue_comment_row(conn, gh, "n:2", 100, kind="mention", body=body)
+    _route_reply_at(conn, cfg, gh, "2026-09-08T12:02:00Z", "n:2")
+    assert conn.execute("SELECT status FROM heads WHERE sha=?", (sha,)).fetchone()[0] == "done"
+
+
+def test_pr_comment_poll_keeps_only_comments_reviewsys_can_act_on(cfg, conn, gh):
+    from reviewsys.ingest import ingest_pr_comments
+
+    gh.open_prs["dashpay/platform"] = [
+        pr(1, "a" * 40),
+        pr(2, "b" * 40, author={"login": "thepastaclaw"}),
+    ]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        kv_set(conn, "comments.cursor:dashpay/platform", "2026-11-26T19:00:00Z")
+    issue = _api_comment(10, "@thepastaclaw hi", "knst", number=1)
+    issue["html_url"] = "https://github.com/dashpay/platform/issues/1#issuecomment-10"
+    edited = _api_comment(17, "> quote\n\n@thepastaclaw", "knst", number=1)
+    edited["created_at"] = "2026-10-01T00:00:00Z"  # an old comment edited since
+    gh.issue_comments = [
+        _api_comment(11, "plain words, no quote", "knst", number=1),
+        _api_comment(12, "@ThePastaClaw review", "knst", number=1),
+        _api_comment(13, "mine", "thepastaclaw", number=1),
+        _api_comment(14, "> q\n\non the bot's own PR", "knst", number=2),
+        _api_comment(15, "> q\n\nunknown or closed PR", "knst", number=3),
+        _api_comment(16, "> q\n\nwalkthrough", "coderabbitai[bot]", number=1),
+        _api_comment(18, "> a quote\n\nanswered", "knst", number=1),
+        edited,
+        issue,
+    ]
+    assert ingest_pr_comments(conn, cfg, gh) == 2
+    rows = conn.execute("SELECT source_id, kind, number FROM inbox ORDER BY source_id")
+    assert [tuple(r) for r in rows] == [("comment:12", "mention", 1), ("comment:18", "comment", 1)]
+
+
+def test_pr_comment_poll_seeds_each_repo_from_now(cfg, conn, gh):
+    """A repo enabled after the first deploy must not replay everything since then."""
+    from reviewsys.ingest import ingest_pr_comments
+
+    with tx(conn):
+        kv_set(conn, "comments.cursor", "2026-01-01T00:00:00Z")
+    gh.issue_comments = []
+    ingest_pr_comments(conn, cfg, gh)
+    since = [c for c in gh.calls if any("issues/comments?" in a for a in c)]
+    assert since and "since=2026-01-01" not in " ".join(since[0])
+
+
+def test_an_explicit_review_ask_beside_a_quote_stays_a_review_ask(cfg, conn, gh, notifier):
+    """ "@bot please review" in so many words is a review ask even when it quotes a finding:
+    on a push nobody reviewed yet it is a priority review now, not the push's debounced one."""
+    old, new = "e" * 40, "f" * 40
+    _reviewed(conn, cfg, 7, old)
+    _posted_summary_finding(conn, sha=old)
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 7, new, Trigger.NEW_PUSH)
+    gh.pr = {**gh.pr, "head": {"sha": new}}
+    body = f"> 🔴 Blocking: {FINDING_TITLE}\n\nfixed, @thepastaclaw please review again"
+    _issue_comment_row(conn, gh, "n:1", 100, kind="mention", body=body)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "mention"
+    head = conn.execute("SELECT trigger, priority FROM heads WHERE sha=?", (new,)).fetchone()
+    assert tuple(head) == ("mention", 1)
+
+
+def test_a_dispute_already_routed_is_no_fresh_review_ask(cfg, conn, gh, notifier):
+    """The same comment arriving as a plain comment row (routed as a dispute) and then as a
+    mention row re-reviews the commit once."""
+    sha = "f" * 40
+    _reviewed(conn, cfg, 7, sha)
+    _posted_summary_finding(conn)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    body = f"> 🔴 Blocking: {FINDING_TITLE}\n\nwrong. @thepastaclaw please review again"
+    _issue_comment_row(conn, gh, "n:1", 100, kind="comment", body=body)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "review_reply"
+    assert _requeues(conn, 7) == 1
+    _finish(conn, 7)
+    _issue_comment_row(conn, gh, "n:2", 100, kind="mention", body=body)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:02:00Z", "n:2") == "mention"
+    assert _requeues(conn, 7) == 1
