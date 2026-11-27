@@ -7482,7 +7482,14 @@ def _conversation_verdict_update(
             ctx,
             result,
             blockers=0,
-            disputed=_disputed_links(ctx, standing.disputed_hashes, standing.titles),
+            disputed=_disputed_links(
+                ctx,
+                standing.disputed_hashes,
+                {
+                    **{h: str(t.get("title") or "") for h, t in ctx.open_threads.items()},
+                    **{h: t for h, t in standing.titles.items() if t},
+                },
+            ),
             degraded=bool(prov.degraded),
         )
     return result

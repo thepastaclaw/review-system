@@ -1437,8 +1437,8 @@ verifier lanes):
   for the link). The `conceded` row keeps the tracking link on a second line of its body
   (a later row without one keeps the earlier link); the corrected review summary and the
   root's Deferred line show it.
-- Lifted findings on threads that stay open (the bot has no write access, e.g.
-  dashpay/dash, so `resolveReviewThread` is refused; deferrals are never resolved) would
+- Lifted findings on threads that stay open (where the bot has no write access, e.g.
+  dashpay/platform, `resolveReviewThread` is refused; deferrals are never resolved) would
   still read as an open 🔴. The bot edits its own root comment instead: a quoted status
   line (``> ✅ **Withdrawn** at `<sha>` ``, `⏭️ **Deferred**`, …) under the finding marker,
   tagged `<!-- thepastaclaw-thread-status v1 -->`, replaced on change and removed when a
