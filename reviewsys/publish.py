@@ -915,6 +915,7 @@ class PublishResult:
     body: str
     review_id: int | None = None
     review_url: str | None = None
+    review_node_id: str | None = None
     comments: list[dict[str, Any]] = field(default_factory=list)
     suppressed: list[Suppressed] = field(default_factory=list)
     skipped_reason: str | None = None
@@ -1419,6 +1420,7 @@ def publish(
         body=body,
         review_id=int(resp["id"]),
         review_url=str(resp.get("html_url") or ""),
+        review_node_id=str(resp.get("node_id") or "") or None,
         comments=m.comments,
         suppressed=m.suppressed,
     )
@@ -2362,8 +2364,14 @@ def with_lifted_findings(body: str, lifted: list[LiftedFinding]) -> str:
         ),
         "",
     ]
+    return _under_heading(lines, block)
+
+
+def _under_heading(lines: list[str], block: list[str]) -> str:
+    """`lines` with `block` inserted right under the review's `## ` heading (after the
+    leading markers when it has none)."""
     title = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), None)
-    if title is None:  # no heading: after the leading markers
+    if title is None:
         title = next((i for i, ln in enumerate(lines) if not ln.startswith("<!--")), len(lines)) - 1
     at = title + 1
     if at < len(lines) and not lines[at].strip():
@@ -2651,35 +2659,34 @@ STALE_REQUEST_NOTE_MARKER = "<!-- thepastaclaw-stale-request v1 -->"
 def with_stale_request_note(
     body: str, stale: list[dict[str, Any]], disputed: list[tuple[str, str]]
 ) -> str:
-    """`body` (a review with only disputed blockers left) saying, under its heading, that the
-    bot's earlier CHANGES_REQUESTED review(s) still show on GitHub only because the dispute is
-    the maintainers' call, and that a maintainer can dismiss them; each disputed blocker linked
-    to its thread. `disputed`: (title, thread url). Unchanged when it says so already."""
+    """`body` saying, under its heading, that the bot's earlier CHANGES_REQUESTED review still
+    shows on GitHub and that a maintainer can dismiss it: with `disputed` blockers ((title,
+    thread url) each, linked) because the dispute is the maintainers' call, without them
+    because the bot could not dismiss it itself. Unchanged when it says so already."""
     if STALE_REQUEST_NOTE_MARKER in body:
         return body
     links = ", ".join(
         f"[review of `{str(c.get('commit_id') or '')[:8]}`]({c.get('html_url') or ''})"
         for c in stale
     )
+    why = (
+        "Nothing on this head blocks except the disputed finding(s) below, which are left to "
+        "the maintainers: a maintainer can dismiss that earlier review if they agree it no "
+        "longer applies."
+        if disputed
+        else "Nothing on this head blocks, and the bot could not dismiss that earlier review "
+        "itself: a maintainer can dismiss it."
+    )
     block = [
         STALE_REQUEST_NOTE_MARKER,
-        f"> **GitHub still shows changes requested** by this bot ({links}). Nothing on this "
-        "head blocks except the disputed finding(s) below, which are left to the maintainers: "
-        "a maintainer can dismiss that earlier review if they agree it no longer applies.",
+        f"> **GitHub still shows changes requested** by this bot ({links}). {why}",
         *(
             f"> - Disputed: [{_block_text(t)}]({u})" if u else f"> - Disputed: {_block_text(t)}"
             for t, u in disputed
         ),
         "",
     ]
-    lines = body.split("\n")
-    title = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), None)
-    if title is None:  # no heading: after the leading markers
-        title = next((i for i, ln in enumerate(lines) if not ln.startswith("<!--")), len(lines)) - 1
-    at = title + 1
-    if at < len(lines) and not lines[at].strip():
-        at += 1
-    return "\n".join(lines[:at] + block + lines[at:])
+    return _under_heading(body.split("\n"), block)
 
 
 def canonical_event(value: str) -> str:
@@ -2743,6 +2750,7 @@ def publish_verdict_update(
         body=body,
         review_id=int(resp["id"]),
         review_url=str(resp.get("html_url") or "") or None,
+        review_node_id=str(resp.get("node_id") or "") or None,
     )
 
 
@@ -2855,4 +2863,5 @@ def publish_ci_update(
         body=body,
         review_id=int(resp["id"]),
         review_url=str(resp.get("html_url") or "") or None,
+        review_node_id=str(resp.get("node_id") or "") or None,
     )

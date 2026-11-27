@@ -384,6 +384,11 @@ def test_conversation_marks_a_dispute_answered_before_disputed(cfg, conn, gh, la
     update = gh.posted_reviews[-1]
     assert update["event"] == "COMMENT"  # REQUEST_CHANGES lifted, but not approved
     assert "are disputed and left to the maintainers" in update["body"]
+    # the standing CHANGES_REQUESTED still shows: left to a maintainer, the dispute linked
+    assert gh.dismissals == []
+    assert publish.STALE_REQUEST_NOTE_MARKER in update["body"]
+    assert "a maintainer can dismiss" in update["body"]
+    assert "#discussion_r900)" in update["body"]
 
 
 # ---- untracked deferrals: asked once ----
