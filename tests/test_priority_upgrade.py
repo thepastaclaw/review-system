@@ -47,7 +47,8 @@ def test_a_ticked_box_upgrades_the_running_review_in_place(conn, cfg, gh):
     head = _head(conn)
     assert (head["priority"], head["status"], head["trigger"]) == (1, "running", "normal_request")
     run = conn.execute("SELECT status, path FROM runs WHERE id=?", (rid,)).fetchone()
-    assert run["path"] == progress.path_of("live", 1)  # the same run, not restarted
+    # the same run, not restarted; its timing stays on the path it started on
+    assert run["path"] == progress.path_of("live", 0)
     assert gh.gate_bodies[-1] == github.gate_body("in_progress", SHA, run_id=rid, priority=True)
     ev = conn.execute("SELECT detail FROM events WHERE kind='head.priority_requested'").fetchone()
     assert "mid-review" in ev[0]
@@ -77,3 +78,31 @@ def test_a_running_drafts_ticked_box_asks_for_no_second_review(conn, cfg, gh):
     update_queue_comments(conn, cfg, gh)
     assert _head(conn)["priority"] == 1
     assert kv_get(conn, f"rereview.after_run:{rid}") is None
+
+
+def test_a_push_replaces_the_old_commits_running_body(conn, cfg, gh):
+    """A push during a running review leaves its "in progress" body; the next pass replaces
+    it with the new head's own (a draft's boxes), and that body's box asks for nothing."""
+    from reviewsys.queue_status import DEFERRED_MARKER
+
+    rid = _running(conn, cfg)
+    new = "e" * 40
+    with tx(conn):
+        conn.execute("UPDATE prs SET is_draft=1, head_sha=? WHERE number=7", (new,))
+    old = github.gate_body("in_progress", SHA, run_id=rid, priority=False)
+    _gate(gh, old.replace("- [ ]", "- [x]"))
+    update_queue_comments(conn, cfg, gh)
+    assert gh.gate_bodies and DEFERRED_MARKER in gh.gate_bodies[-1]
+    assert f"Commit {new[:8]}" in gh.gate_bodies[-1]
+    # the old commit's run may take the tick (its own body); the new commit gets no review
+    assert conn.execute("SELECT COUNT(*) FROM heads WHERE sha=?", (new,)).fetchone()[0] == 0
+
+
+def test_a_priority_run_still_showing_the_box_loses_it(conn, cfg, gh):
+    rid = _running(conn, cfg)
+    with tx(conn):
+        conn.execute("UPDATE heads SET priority=1 WHERE number=7")
+    _gate(gh, github.gate_body("in_progress", SHA, run_id=rid, priority=False))
+    stats = update_queue_comments(conn, cfg, gh)
+    assert stats["promoted"] == 0
+    assert gh.gate_bodies[-1] == github.gate_body("in_progress", SHA, run_id=rid, priority=True)

@@ -1,7 +1,8 @@
 """Stable queue gate comments: every queued PR gets an immediate comment with a queue link
 and a checkbox that requests a priority review.
 
-Runs as a daemon task. Each pass reads the PR's gate comment back (one GET per queued head;
+Runs as a daemon task. Each pass reads the PR's gate comment back (one GET per queued or
+running head;
 the comment id is cached in `kv` so no search is needed after the first write), honours a
 ticked priority box, and rewrites only when the rendered body differs from what GitHub has.
 Comparing against the live body, not a cache, means a worker-written "in progress"/"failed"
@@ -24,7 +25,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from . import github, progress
+from . import github
 from .config import Config
 from .db import event, kv_get, kv_set, now, tx
 from .gh import Gh
@@ -111,12 +112,28 @@ def deferred_body(sha: str, *, draft: bool, debounce_minutes: int) -> str:
     )
 
 
+def _box_request(body: str) -> Trigger | None:
+    """The review a gate comment's ticked box asks for, or None. A running review's box (on
+    an "in progress" body, its own commit's or one a push left behind) only ever upgrades
+    that review (the running loop in `update_queue_comments`): it asks for no other."""
+    if github.IN_PROGRESS in body:
+        return None
+    if priority_requested(body):
+        return Trigger.PRIORITY_REQUEST
+    if normal_requested(body):
+        return Trigger.NORMAL_REQUEST
+    return None
+
+
 def promote_running(conn: sqlite3.Connection, head: sqlite3.Row, actor: str) -> bool:
     """Upgrade a running normal review to priority (Pasta, 2026-11-27: authors may upgrade
     mid-review, not only before it starts). Nothing restarts: the worker reads the head's
     priority as each lane starts, so the lanes after this line up ahead of normal ones and
-    take the fast tier (worker.lane_queue); the run counts as a priority one on the dashboard.
-    False when it already was priority or stopped running."""
+    take the fast tier (worker.main's lane_queue); the dashboard's badge reads the head, while
+    `runs.path` keeps the path the run started on (its timing samples stay that path's). The
+    trigger stays: changing it would make the run's end ask for another review. A failed
+    attempt's retry starts as priority, as after the queued box. False when it already was
+    priority or stopped running."""
     with tx(conn):
         n = conn.execute(
             "UPDATE heads SET priority=1 WHERE id=? AND status='running' AND priority=0",
@@ -124,10 +141,6 @@ def promote_running(conn: sqlite3.Connection, head: sqlite3.Row, actor: str) -> 
         ).rowcount
         if not n:
             return False
-        conn.execute(
-            "UPDATE runs SET path=? WHERE head_id=? AND status IN ('spawned','running')",
-            (progress.path_of("live", 1), head["id"]),
-        )
         event(
             conn,
             "head.priority_requested",
@@ -227,11 +240,13 @@ def update_queue_comments(
         return False
 
     ts = now()
-    # a running normal review whose author ticked its box (github.RUNNING_PRIORITY_BOX)
+    # a running review's gate comment: a normal one whose author ticked its box is upgraded
+    # (github.RUNNING_PRIORITY_BOX); a priority one still showing the box loses it
     for h in conn.execute(
-        "SELECT h.id, h.repo, h.number, h.sha, r.id AS run_id FROM heads h JOIN runs r "
-        "ON r.head_id=h.id AND r.status IN ('spawned','running') WHERE h.status='running' "
-        "AND h.queue='live' AND h.priority=0"
+        "SELECT h.id, h.repo, h.number, h.sha, h.priority, r.id AS run_id FROM heads h "
+        "JOIN runs r ON r.head_id=h.id AND r.status IN ('spawned','running') "
+        "WHERE h.status='running' AND h.queue='live' AND h.trigger<>?",
+        (Trigger.CI_FAILED.value,),
     ).fetchall():
         key = f"running:{h['id']}"
         if key in done:
@@ -241,24 +256,29 @@ def update_queue_comments(
         try:
             c = _read_comment(conn, gh, cfg, h["repo"], h["number"])
             body = str(c.get("body") or "") if c else ""
-            if not (
-                c
-                and github.IN_PROGRESS in body
-                and f"(commit {h['sha'][:8]})" in body
-                and priority_requested(body)
-                and promote_running(conn, h, _editor(gh, c))
-            ):
+            if not (c and github.IN_PROGRESS in body and f"(commit {h['sha'][:8]})" in body):
                 continue
-            stats["promoted"] += 1
-            _write(
-                conn,
-                gh,
-                h["repo"],
-                h["number"],
-                c,
-                github.gate_body("in_progress", h["sha"], run_id=h["run_id"], priority=True),
-            )
-            stats["written"] += 1
+            if h["priority"]:
+                if "**Request priority review**" not in body:
+                    continue
+            elif priority_requested(body) and promote_running(conn, h, _editor(gh, c)):
+                stats["promoted"] += 1
+            else:
+                continue
+            still = conn.execute(
+                "SELECT 1 FROM runs WHERE id=? AND status IN ('spawned','running')",
+                (h["run_id"],),
+            ).fetchone()
+            if still:  # an ended run's own body stands
+                _write(
+                    conn,
+                    gh,
+                    h["repo"],
+                    h["number"],
+                    c,
+                    github.gate_body("in_progress", h["sha"], run_id=h["run_id"], priority=True),
+                )
+                stats["written"] += 1
         except Exception as exc:
             log.warning("running review %s#%s upgrade failed: %s", h["repo"], h["number"], exc)
 
@@ -286,7 +306,9 @@ def update_queue_comments(
             log.warning("gate comment read %s#%s failed: %s", h["repo"], h["number"], exc)
             continue
         priority = bool(h["priority"])
-        ticked = c is not None and priority_requested(str(c.get("body") or ""))
+        ticked = (
+            c is not None and _box_request(str(c.get("body") or "")) == Trigger.PRIORITY_REQUEST
+        )
         if ticked and not priority and _promote(conn, h, _editor(gh, c or {})):
             stats["promoted"] += 1
             priority = True
@@ -328,12 +350,8 @@ def update_queue_comments(
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
             body = str(c.get("body") or "") if c else ""
-            if github.IN_PROGRESS in body:
-                continue  # a running review's box upgrades that review (above), asks no other
-            if normal_requested(body) or priority_requested(body):
-                trigger = (
-                    Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.NORMAL_REQUEST
-                )
+            trigger = _box_request(body)
+            if trigger:
                 from .ingest import enqueue_head
 
                 with tx(conn):
@@ -390,13 +408,11 @@ def _note_skip_labels(conn: sqlite3.Connection, cfg: Config, gh: Gh, stats: dict
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
             body = str(c.get("body") or "") if c else ""
-            if normal_requested(body) or priority_requested(body):
+            trigger = _box_request(body)
+            if trigger:
                 # a box ticked before the label landed is a request: honour it, never erase it
                 from .ingest import enqueue_head
 
-                trigger = (
-                    Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.NORMAL_REQUEST
-                )
                 with tx(conn):
                     res = enqueue_head(conn, cfg, p["repo"], p["number"], p["head_sha"], trigger)
                 if res != "noop":

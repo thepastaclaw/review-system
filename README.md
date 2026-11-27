@@ -2001,10 +2001,13 @@ A normal review keeps the box while it runs (Pasta, 2026-11-27: authors upgrade 
 before it starts): its "in progress" body ends with **Request priority review**, and ticking it makes
 the running review a priority one in place (`queue_status.promote_running`, `head.priority_requested`
 "mid-review"; the comment then reads "· priority"). Nothing restarts and no work is lost: the worker
-reads the head's priority as each lane starts (`worker.main`'s `lane_queue`), so every lane after
-the upgrade lines up ahead of normal lanes in its model pool and takes the fast tier, while lanes
-already running or already waiting in a line finish as they were. The `pastaclaw:review-now` label
-stays a normal request: it skips the debounce but does not make a review priority.
+reads the head's priority as each lane gets in line and as it starts (`worker.main`'s
+`lane_queue`), so every lane that lines up after the upgrade goes ahead of normal lanes in its
+model pool, and every lane (or correction turn) that starts after it takes the fast tier; a lane
+already waiting keeps its place in line, and a running one its tier. `runs.path` keeps the path the
+run started on, for the timing figures. The box on an older commit's "in progress" body (left by
+a push) asks for nothing. The `pastaclaw:review-now` label stays a normal request: it skips the
+debounce but does not make a review priority.
 
 A draft PR, and a new head still waiting out the push debounce (not priority, not a retry), get the
 "Review not started yet" body instead, with two boxes: **Request normal review** (queue it now) and

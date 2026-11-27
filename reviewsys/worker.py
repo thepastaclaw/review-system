@@ -684,6 +684,11 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
     full = _gate_defaults(ctx, kw)
     if status == "in_progress":
         full["run_id"] = ctx.run_id
+        if not ctx.priority and not ctx.is_audit:  # upgraded since the run started?
+            got = ctx.conn.execute(
+                "SELECT priority FROM heads WHERE id=?", (ctx.head_id,)
+            ).fetchone()
+            ctx.priority = bool(got and got["priority"])
         full["priority"] = ctx.priority
     body = github.gate_body(status, ctx.sha, **full)
     try:
@@ -9242,7 +9247,12 @@ def main(
             return queue
         if ctx.priority:
             return "priority"
-        got = ctx.conn.execute("SELECT priority FROM heads WHERE id=?", (ctx.head_id,)).fetchone()
+        try:
+            got = ctx.conn.execute(
+                "SELECT priority FROM heads WHERE id=?", (ctx.head_id,)
+            ).fetchone()
+        except sqlite3.Error:
+            return "priority" if ctx.priority else queue  # as it was; the next lane asks again
         ctx.priority = bool(got and got["priority"])
         return "priority" if ctx.priority else queue
 
