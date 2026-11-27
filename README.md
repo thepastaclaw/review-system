@@ -1997,6 +1997,15 @@ The same comment is reused by the worker for "in progress" / "done" / "failed" s
 more than one bot status comment. Writes are capped at 25 per pass to respect GitHub's content-creation
 limits; the rest catch up next pass.
 
+A normal review keeps the box while it runs (Pasta, 2026-11-27: authors upgrade mid-review, not only
+before it starts): its "in progress" body ends with **Request priority review**, and ticking it makes
+the running review a priority one in place (`queue_status.promote_running`, `head.priority_requested`
+"mid-review"; the comment then reads "· priority"). Nothing restarts and no work is lost: the worker
+reads the head's priority as each lane starts (`worker.main`'s `lane_queue`), so every lane after
+the upgrade lines up ahead of normal lanes in its model pool and takes the fast tier, while lanes
+already running or already waiting in a line finish as they were. The `pastaclaw:review-now` label
+stays a normal request: it skips the debounce but does not make a review priority.
+
 A draft PR, and a new head still waiting out the push debounce (not priority, not a retry), get the
 "Review not started yet" body instead, with two boxes: **Request normal review** (queue it now) and
 **Request priority review**. Each PR gets exactly one of the two bodies per pass, and a body equal to

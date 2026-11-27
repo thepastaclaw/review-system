@@ -24,7 +24,7 @@ import sqlite3
 from collections.abc import Callable
 from typing import Any
 
-from . import github
+from . import github, progress
 from .config import Config
 from .db import event, kv_get, kv_set, now, tx
 from .gh import Gh
@@ -109,6 +109,33 @@ def deferred_body(sha: str, *, draft: bool, debounce_minutes: int) -> str:
             f"_Commit {sha[:8]}. Normal review starts when eligible; priority review starts as soon as a slot is available._",
         ]
     )
+
+
+def promote_running(conn: sqlite3.Connection, head: sqlite3.Row, actor: str) -> bool:
+    """Upgrade a running normal review to priority (Pasta, 2026-11-27: authors may upgrade
+    mid-review, not only before it starts). Nothing restarts: the worker reads the head's
+    priority as each lane starts, so the lanes after this line up ahead of normal ones and
+    take the fast tier (worker.lane_queue); the run counts as a priority one on the dashboard.
+    False when it already was priority or stopped running."""
+    with tx(conn):
+        n = conn.execute(
+            "UPDATE heads SET priority=1 WHERE id=? AND status='running' AND priority=0",
+            (head["id"],),
+        ).rowcount
+        if not n:
+            return False
+        conn.execute(
+            "UPDATE runs SET path=? WHERE head_id=? AND status IN ('spawned','running')",
+            (progress.path_of("live", 1), head["id"]),
+        )
+        event(
+            conn,
+            "head.priority_requested",
+            repo=head["repo"],
+            number=head["number"],
+            detail=f"{head['sha'][:8]} mid-review, checkbox ticked by {actor or 'unknown'}",
+        )
+    return True
 
 
 def _promote(conn: sqlite3.Connection, head: sqlite3.Row, actor: str) -> bool:
@@ -200,6 +227,41 @@ def update_queue_comments(
         return False
 
     ts = now()
+    # a running normal review whose author ticked its box (github.RUNNING_PRIORITY_BOX)
+    for h in conn.execute(
+        "SELECT h.id, h.repo, h.number, h.sha, r.id AS run_id FROM heads h JOIN runs r "
+        "ON r.head_id=h.id AND r.status IN ('spawned','running') WHERE h.status='running' "
+        "AND h.queue='live' AND h.priority=0"
+    ).fetchall():
+        key = f"running:{h['id']}"
+        if key in done:
+            continue
+        if give_way(key):
+            return stats
+        try:
+            c = _read_comment(conn, gh, cfg, h["repo"], h["number"])
+            body = str(c.get("body") or "") if c else ""
+            if not (
+                c
+                and github.IN_PROGRESS in body
+                and f"(commit {h['sha'][:8]})" in body
+                and priority_requested(body)
+                and promote_running(conn, h, _editor(gh, c))
+            ):
+                continue
+            stats["promoted"] += 1
+            _write(
+                conn,
+                gh,
+                h["repo"],
+                h["number"],
+                c,
+                github.gate_body("in_progress", h["sha"], run_id=h["run_id"], priority=True),
+            )
+            stats["written"] += 1
+        except Exception as exc:
+            log.warning("running review %s#%s upgrade failed: %s", h["repo"], h["number"], exc)
+
     # the queued heads whose PR gets the deferred body (the loop over `deferred` below)
     in_debounce = {
         r["id"]
@@ -266,6 +328,8 @@ def update_queue_comments(
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
             body = str(c.get("body") or "") if c else ""
+            if github.IN_PROGRESS in body:
+                continue  # a running review's box upgrades that review (above), asks no other
             if normal_requested(body) or priority_requested(body):
                 trigger = (
                     Trigger.PRIORITY_REQUEST if priority_requested(body) else Trigger.NORMAL_REQUEST
