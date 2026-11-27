@@ -609,6 +609,9 @@ class Config:
     # (worker._settle_stale_request); with disputed blockers left it only says a maintainer
     # can dismiss it, unless this is on (pending Pasta's call, 2026-11-27)
     dismiss_stale_when_disputed: bool = False
+    # watch.py: seconds between the conditional reads that notice a review-now label or a
+    # ticked gate box (0 turns the watch off; the ingest and queue passes still find them)
+    watch_interval_seconds: int = 10
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -772,6 +775,10 @@ fast_priority = true
 # earlier CHANGES_REQUESTED review, linking the re-review. With disputed blockers left it
 # only says in the re-review that a maintainer can dismiss it, unless this is true
 dismiss_stale_when_disputed = false
+# a review-now label or a ticked gate-comment box is noticed this many seconds after it is
+# set (ETag reads GitHub does not count against the rate limit); 0 waits for the ingest and
+# queue passes instead
+watch_interval_seconds = 10
 # the general reviewer and the specialists of one phase run side by side, at most this
 # many at once per run (1 = one after another, 0 = all of them); the model pools below
 # still bound the machine
@@ -1317,6 +1324,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         ),
         fast_priority=bool(s.get("fast_priority", True)),
         dismiss_stale_when_disputed=bool(s.get("dismiss_stale_when_disputed", False)),
+        watch_interval_seconds=max(0, int(s.get("watch_interval_seconds", 10))),
         phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
         lane_pools={
             str(k): max(1, int(v))

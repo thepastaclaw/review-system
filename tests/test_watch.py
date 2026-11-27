@@ -1,0 +1,144 @@
+"""The watch: a review-now label or a ticked gate box runs its pass within seconds."""
+
+import json
+import subprocess
+
+from reviewsys import watch
+from reviewsys.daemon import Daemon
+from reviewsys.gh import Gh
+from reviewsys.github import GATE_MARKER
+from reviewsys.ingest import REVIEW_NOW_LABEL
+
+REPO = "dashpay/platform"
+EVENTS = f"repos/{REPO}/issues/events?per_page=30"
+COMMENTS = f"repos/{REPO}/issues/comments?sort=updated&direction=desc&per_page=30"
+A = "a" * 40
+TICKED = f"{GATE_MARKER}\n- [x] **Request normal review**\n"
+UNTICKED = f"{GATE_MARKER}\n- [ ] **Request normal review**\n"
+
+
+class Api:
+    """`gh api -i` replies per endpoint: a 304 unless the listing changed since its ETag."""
+
+    def __init__(self, remaining=4000):
+        self.listings = {EVENTS: [], COMMENTS: []}
+        self.versions = {EVENTS: 0, COMMENTS: 0}
+        self.remaining = remaining
+        self.calls = []
+
+    def set(self, endpoint, body):
+        self.listings[endpoint] = body
+        self.versions[endpoint] += 1
+
+    def __call__(self, argv, stdin, timeout):
+        args = list(argv[1:])
+        endpoint = args[2]
+        etag = args[args.index("-H") + 1].split(": ", 1)[1] if "-H" in args else ""
+        self.calls.append((endpoint, etag))
+        tag = f'"{self.versions.get(endpoint, 0)}"'
+        head = f"x-ratelimit-limit: 5000\nx-ratelimit-remaining: {self.remaining}\netag: {tag}"
+        if etag == tag:
+            return subprocess.CompletedProcess(
+                argv, 1, f"HTTP/2.0 304 Not Modified\n{head}\n\n", ""
+            )
+        body = json.dumps(self.listings.get(endpoint, []))
+        return subprocess.CompletedProcess(argv, 0, f"HTTP/2.0 200 OK\n{head}\n\n{body}", "")
+
+
+def labelled(eid, number=7, name=REVIEW_NOW_LABEL, pr=True):
+    issue = {"number": number, **({"pull_request": {"url": "u"}} if pr else {})}
+    return {"id": eid, "event": "labeled", "label": {"name": name}, "issue": issue}
+
+
+def gate(at, body, login="thepastaclaw"):
+    return {"updated_at": at, "user": {"login": login}, "body": body, "issue_url": "x/issues/7"}
+
+
+def watcher(api, clock=lambda: 0.0):
+    return watch.Watcher(Gh("gh", api), "thepastaclaw", [REPO], clock=clock)
+
+
+def test_parse_reads_status_headers_and_body():
+    res = watch.parse('HTTP/2.0 200 OK\r\nETag: "x"\r\nX-Ratelimit-Remaining: 9\r\n\r\n[1]')
+    assert (res.status, res.headers["etag"], res.headers["x-ratelimit-remaining"]) == (
+        200,
+        '"x"',
+        "9",
+    )
+    assert res.body == [1]
+    assert watch.parse("HTTP/2.0 304 Not Modified\netag: x\n\n").status == 304
+
+
+def test_a_new_review_now_label_on_a_pr_runs_ingest():
+    api = Api()
+    api.set(EVENTS, [labelled(10)])  # before the watch started: only sets where new ones start
+    w = watcher(api)
+    assert w.poll() == set()
+    assert w.poll() == set()  # unchanged: 304s, sent with the ETag
+    assert set(api.calls[-2:]) == {(EVENTS, '"1"'), (COMMENTS, '"0"')}
+    api.set(EVENTS, [labelled(12, name="bug"), labelled(11, pr=False), labelled(10)])
+    assert w.poll() == set()  # another label, an issue's label
+    api.set(EVENTS, [labelled(13), labelled(12, name="bug")])
+    assert w.poll() == {watch.INGEST}
+    assert w.spent == [0.0, 0.0, 0.0, 0.0]  # the 200s only
+
+
+def test_a_ticked_gate_box_runs_the_queue_pass():
+    api = Api()
+    api.set(COMMENTS, [gate("2026-11-27T10:00:00Z", TICKED)])
+    w = watcher(api)
+    assert w.poll() == set()
+    api.set(COMMENTS, [gate("2026-11-27T10:01:00Z", UNTICKED)])  # the bot's own rewrite
+    assert w.poll() == set()
+    api.set(COMMENTS, [gate("2026-11-27T10:02:00Z", TICKED, login="knst")])  # not a gate
+    assert w.poll() == set()
+    api.set(COMMENTS, [gate("2026-11-27T10:03:00Z", TICKED)])
+    assert w.poll() == {watch.QUEUE}
+
+
+def test_it_spends_little_and_never_the_reviews_share():
+    api = Api(remaining=499)  # under 10% of 5000 left
+    w = watcher(api)
+    w.poll()
+    seen = len(api.calls)  # the reads that saw it, then nothing
+    w.poll()
+    assert len(api.calls) == seen
+    api.remaining = 4000
+    now = [0.0]
+    w = watcher(api, clock=lambda: now[0])
+    w.spent = [0.0] * 250  # 5% of the limit in the last hour
+    assert w.poll() == set() and len(api.calls) == seen
+    now[0] = watch.HOUR_S
+    w.poll()
+    assert len(api.calls) == seen + 2
+
+
+def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, conn, gh, notifier):
+    gh.open_prs[REPO] = [
+        {
+            "number": 7,
+            "headRefOid": A,
+            "isDraft": False,
+            "title": "PR 7",
+            "updatedAt": "2026-11-27T00:00:00Z",
+            "author": {"login": "lklimek"},
+            "labels": {"nodes": [{"name": REVIEW_NOW_LABEL}]},
+        }
+    ]
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False)
+    api = Api()
+    d.watcher = watcher(api)
+    d.watch_round()
+    d.tick()  # the first ingest pass
+    api.set(EVENTS, [labelled(1)])
+    assert d.watch_round() == {watch.INGEST} and d.wake.is_set()
+    assert d.run_watched() == {watch.INGEST}
+    assert "ingest" in d.tick()  # due at once, not 180 s after the last pass
+    d.tick(force=True)  # the regular pass sees the same label
+    heads = conn.execute("SELECT trigger FROM heads WHERE number=7").fetchall()
+    assert [h["trigger"] for h in heads] == ["normal_request"]
+    n = conn.execute("SELECT COUNT(*) FROM events WHERE kind='head.review_now'").fetchone()[0]
+    assert n == 1
+    assert (
+        conn.execute("SELECT detail FROM events WHERE kind='watch.hit'").fetchone()[0] == "ingest"
+    )
