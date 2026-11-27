@@ -1,4 +1,7 @@
-"""Single-threaded tick loop. Each tick runs whichever tasks are due."""
+"""Single-threaded tick loop. Each tick runs whichever tasks are due.
+
+The one other thread is the watch (watch.py), which touches no database: it only says which
+passes to run now and wakes the loop."""
 
 from __future__ import annotations
 
@@ -7,13 +10,14 @@ import logging
 import os
 import signal
 import sqlite3
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import audit, checks, ci, converse, degraded, labels, slots
+from . import audit, checks, ci, converse, degraded, labels, slots, watch
 from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
@@ -85,6 +89,14 @@ class Daemon:
         if spawn:  # the first scheduling start with the tracking rule fixes when it took effect
             converse.tracking_required_since(conn, cfg.deferral.tracking_required_since)
         self.stop = False
+        self.wake = threading.Event()
+        self._due: set[str] = set()
+        self._due_lock = threading.Lock()
+        self.watcher = (
+            watch.Watcher(Gh(cfg.gh_bin), cfg.bot_login, cfg.enabled_repos)
+            if spawn and cfg.watch_interval_seconds
+            else None
+        )
         self.tasks = [
             Task("ingest", cfg.ingest_interval_seconds, self.t_ingest),
             Task("notify", cfg.notify_interval_seconds, self.t_notify),
@@ -288,6 +300,38 @@ class Daemon:
         return "\n".join(lines)
 
     # ---- loop ----
+    def watch_round(self) -> set[str]:
+        """One watch read (the watch thread's body): passes it finds due are run by the loop's
+        next tick, which it wakes."""
+        assert self.watcher is not None
+        try:
+            due = self.watcher.poll()
+        except Exception:
+            log.exception("watch round failed")
+            return set()
+        if due:
+            with self._due_lock:
+                self._due |= due
+            self.wake.set()
+        return due
+
+    def run_watched(self) -> set[str]:
+        """Make the passes the watch asked for due now (main thread)."""
+        with self._due_lock:
+            due, self._due = self._due, set()
+        for task in self.tasks:
+            if task.name in due:
+                task.last = 0.0
+        if due:
+            with tx(self.conn):
+                event(self.conn, "watch.hit", detail=",".join(sorted(due)))
+        return due
+
+    def _watch_forever(self) -> None:
+        while not self.stop:
+            self.watch_round()
+            time.sleep(self.cfg.watch_interval_seconds)
+
     def tick(self, *, force: bool = False) -> dict[str, object]:
         results: dict[str, object] = {}
         t = time.monotonic()
@@ -308,7 +352,7 @@ class Daemon:
 
     def run_forever(self) -> None:
         def _stop(*_: object) -> None:
-            self.stop = True
+            self.stop = True  # the wait below ends within tick_seconds, as the sleep did
 
         self._lock = acquire_singleton_lock(self.cfg.db_path.with_suffix(".daemon.lock"))
         signal.signal(signal.SIGTERM, _stop)
@@ -318,10 +362,14 @@ class Daemon:
         self.notifier.alert(
             "daemon started" + ("" if self.spawn else " in shadow mode (no reviews will run)")
         )
+        if self.watcher is not None:
+            threading.Thread(target=self._watch_forever, name="watch", daemon=True).start()
         try:
             while not self.stop:
+                self.wake.clear()  # before the read: a hit during the tick ends the wait
+                self.run_watched()
                 self.tick()
-                time.sleep(self.cfg.tick_seconds)
+                self.wake.wait(self.cfg.tick_seconds)
         finally:
             with tx(self.conn):
                 event(self.conn, "daemon.stop")

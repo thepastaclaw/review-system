@@ -1620,8 +1620,9 @@ Open-PR polling still covers only enabled repos; ad hoc is mention-driven by des
 
 A PR carrying `pastaclaw:review-now` (`ingest.REVIEW_NOW_LABEL`, matched case-insensitively)
 has its current head reviewed now, without the 30-minute push debounce: an agent that knows it
-is done with a PR adds it instead of waiting (lklimek, 2026-11-27). Ingest sees it on its next
-poll (every `ingest_interval_seconds`, 3 minutes) and asks for the head exactly as the gate
+is done with a PR adds it instead of waiting (lklimek, 2026-11-27). The watch (below) runs
+ingest within seconds of the label; failing that, ingest's next poll (every
+`ingest_interval_seconds`, 3 minutes) sees it. Ingest asks for the head exactly as the gate
 comment's **Request normal review** box does (`normal_request`: eligible at once, behind
 priority reviews; overriding the draft and skip-label rules like any explicit request; a head
 whose automatic run is under way becomes requested, so the run reviews it instead of
@@ -1648,6 +1649,27 @@ it alone. A no-spawn or shadow daemon neither creates nor removes it.
 Who may ask: anyone who can label the PR (triage access and up), a little wider than the
 gate box (editing the bot's comment). The request is a normal-priority review, the same
 quota as the box; on a `priority_authors` PR it is a priority one, as the box is.
+
+### The watch: seconds, not the next poll (label and gate boxes)
+
+A thread of the daemon (`watch.py`, every `[scheduling] watch_interval_seconds`, 10; 0 turns
+it off) reads each enabled repo's issue events and its 30 most recently updated issue
+comments with `If-None-Match`. GitHub answers an unchanged listing with a 304, which does not
+count against the bot's rate limit (2026-11-27: `x-ratelimit-used` stayed put over 15 of
+them), so the interval costs nothing; a changed listing costs one request (about 75 an hour
+over the enabled repos). A new `labeled` event for the review-now label on a PR makes the
+ingest task due now; a bot gate comment updated with a box ticked makes the queue-comment
+task due now (the **Request priority review** and **Request normal review** boxes). The
+thread touches no database and wakes the tick loop, which runs the task as the poll would
+(event `watch.hit`), so a label or box both have seen asks for one review, not two. GitHub's
+GraphQL, which ingest reads, can trail the REST event, so ingest runs once more 30 s after a
+label hit. The watch reads nothing once it has spent 5% of the hourly limit in the last hour,
+or while less than 10% is left until the limit resets; the polls carry on either way, and
+catch what the watch misses (over 30 events in one interval, a tick in the same second as a
+bot rewrite). Only a daemon that schedules runs it.
+
+A GitHub App webhook would make this push-driven; that needs the App's owner to add
+webhook delivery and the Pull requests and Issues read permissions, and a public receiver.
 
 ## Skip label (PRs that must not be reviewed)
 
