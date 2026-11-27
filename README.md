@@ -1650,8 +1650,7 @@ Who may ask: anyone who can label the PR (triage access and up), a little wider 
 gate box (editing the bot's comment). The request is a normal-priority review, the same
 quota as the box; on a `priority_authors` PR it is a priority one, as the box is.
 
-
-### The watch: seconds, not the next poll
+### The watch: seconds, not the next poll (label and gate boxes)
 
 A thread of the daemon (`watch.py`, every `[scheduling] watch_interval_seconds`, 10; 0 turns
 it off) reads each enabled repo's issue events and its 30 most recently updated issue
@@ -1662,9 +1661,12 @@ over the enabled repos). A new `labeled` event for the review-now label on a PR 
 ingest task due now; a bot gate comment updated with a box ticked makes the queue-comment
 task due now (the **Request priority review** and **Request normal review** boxes). The
 thread touches no database and wakes the tick loop, which runs the task as the poll would
-(event `watch.hit`), so a label or box both have seen asks for one review, not two. The
-watch reads nothing once it has spent 5% of the hourly limit in the last hour, or while less
-than 10% is left; the polls carry on either way. Only a daemon that schedules runs it.
+(event `watch.hit`), so a label or box both have seen asks for one review, not two. GitHub's
+GraphQL, which ingest reads, can trail the REST event, so ingest runs once more 30 s after a
+label hit. The watch reads nothing once it has spent 5% of the hourly limit in the last hour,
+or while less than 10% is left until the limit resets; the polls carry on either way, and
+catch what the watch misses (over 30 events in one interval, a tick in the same second as a
+bot rewrite). Only a daemon that schedules runs it.
 
 A GitHub App webhook would make this push-driven; that needs the App's owner to add
 webhook delivery and the Pull requests and Issues read permissions, and a public receiver.

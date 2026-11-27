@@ -8,6 +8,9 @@ not count against the rate limit (measured 2026-11-27: `x-ratelimit-used` unchan
 of them). A changed listing costs one request; it is a hit only when it carries a new
 `labeled` event for the review-now label on a PR, or a bot gate comment whose box is ticked.
 What the passes then do is unchanged, so a hit the poll also saw cannot start a second review.
+GitHub's GraphQL (which ingest reads) can trail its REST events, so ingest runs once more
+FOLLOW_UP_S after a label hit. What the watch misses (over PER_PAGE events between two reads,
+a tick in the same second as a bot rewrite) waits for the polls, as before.
 
 A push channel (a GitHub App webhook) would replace this; see the README.
 """
@@ -18,7 +21,7 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
@@ -35,10 +38,11 @@ INGEST = "ingest"  # a review-now label was added: the ingest pass enqueues it
 QUEUE = "queue_comments"  # a gate box was ticked: the queue-comment pass honours it
 # a changed listing costs a request (about 75 an hour over the enabled repos, 2026-11-27):
 # at most this share of the hourly limit goes to the watch, and it reads nothing while less
-# than RESERVE_SHARE of the limit is left, which the reviews need
+# than RESERVE_SHARE of the limit is left (until the limit resets), which the reviews need
 SPEND_SHARE = 0.05
 RESERVE_SHARE = 0.1
 HOUR_S = 3600
+FOLLOW_UP_S = 30
 # a read takes ~0.6 s through `gh` on Brody: two per repo one after another would take ~20 s
 READERS = 6
 
@@ -73,12 +77,15 @@ class _Listing:
 class Watcher:
     gh: Gh
     bot_login: str
-    repos: Iterable[str]
+    repos: Sequence[str]
     clock: Callable[[], float] = time.monotonic
+    wall: Callable[[], float] = time.time  # x-ratelimit-reset is epoch seconds
     listings: dict[str, _Listing] = field(default_factory=dict)
     spent: list[float] = field(default_factory=list)  # when each charged read was made
     limit: int = 5000
     remaining: int | None = None
+    reset_at: float = 0.0
+    follow_up_at: float | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
     def _get(self, endpoint: str) -> Response | None:
@@ -89,27 +96,21 @@ class Watcher:
         args = ["api", "-i", endpoint]
         if listing.etag:
             args += ["-H", f"If-None-Match: {listing.etag}"]
-        try:
-            proc = self.gh.runner([self.gh.bin, *args], None, 30)
-        except Exception as exc:
-            log.warning("watch %s: %s", endpoint, exc)
-            return None
+        proc = self.gh.runner([self.gh.bin, *args], None, 30)
         out = proc.stdout.decode() if isinstance(proc.stdout, bytes) else proc.stdout
-        try:
-            res = parse(out or "")
-        except ValueError as exc:
-            log.warning("watch %s: unreadable reply: %s", endpoint, exc)
-            return None
+        res = parse(out or "")
         if "x-ratelimit-limit" in res.headers:
             self.limit = int(res.headers["x-ratelimit-limit"])
             self.remaining = int(res.headers.get("x-ratelimit-remaining", self.limit))
+            self.reset_at = float(res.headers.get("x-ratelimit-reset", 0))
         if res.status == 200:
             with self._lock:
                 self.spent.append(self.clock())
             listing.etag = res.headers.get("etag", "")
             return res
         if res.status != 304:
-            log.warning("watch %s: HTTP %s", endpoint, res.status)
+            err = proc.stderr.decode() if isinstance(proc.stderr, bytes) else proc.stderr
+            log.warning("watch %s: HTTP %s %s", endpoint, res.status, (err or "").strip()[:200])
         return None
 
     def paused(self) -> bool:
@@ -118,6 +119,8 @@ class Watcher:
             self.spent = [t for t in self.spent if now - t < HOUR_S]
             if len(self.spent) >= self.limit * SPEND_SHARE:
                 return True
+        if self.remaining is not None and self.wall() >= self.reset_at:
+            self.remaining = None  # a new window: the next read says what is left
         return self.remaining is not None and self.remaining < self.limit * RESERVE_SHARE
 
     def poll(self) -> set[str]:
@@ -125,16 +128,24 @@ class Watcher:
         reads = [(INGEST, self._labelled, r) for r in self.repos]
         reads += [(QUEUE, self._ticked, r) for r in self.repos]
         with ThreadPoolExecutor(READERS) as pool:
-            hits = pool.map(lambda read: read[1](read[2]), reads)
-            return {task for (task, _, _), hit in zip(reads, hits, strict=True) if hit}
+            hits = list(pool.map(_safely, reads))
+        due = {task for (task, _, _), hit in zip(reads, hits, strict=True) if hit}
+        now = self.clock()
+        if INGEST in due:
+            self.follow_up_at = now + FOLLOW_UP_S
+        elif self.follow_up_at is not None and now >= self.follow_up_at:
+            self.follow_up_at = None
+            due.add(INGEST)
+        return due
 
     def _labelled(self, repo: str) -> bool:
         endpoint = f"repos/{repo}/issues/events?per_page={PER_PAGE}"
         res = self._get(endpoint)
         if res is None or not isinstance(res.body, list):
             return False
+        events = [e for e in res.body if isinstance(e, dict)]
         listing = self.listings[endpoint]
-        ids = [int(e.get("id") or 0) for e in res.body]
+        ids = [int(e.get("id") or 0) for e in events]
         last, listing.mark = listing.mark, max([listing.mark or 0, *ids])
         if last is None:
             return False  # the first read sets where new events start
@@ -143,7 +154,7 @@ class Watcher:
             and e.get("event") == "labeled"
             and str((e.get("label") or {}).get("name", "")).lower() == REVIEW_NOW_LABEL
             and (e.get("issue") or {}).get("pull_request")
-            for e in res.body
+            for e in events
         )
 
     def _ticked(self, repo: str) -> bool:
@@ -151,13 +162,14 @@ class Watcher:
         res = self._get(endpoint)
         if res is None or not isinstance(res.body, list):
             return False
+        comments = [c for c in res.body if isinstance(c, dict)]
         listing = self.listings[endpoint]
-        stamps = [str(c.get("updated_at") or "") for c in res.body]
+        stamps = [str(c.get("updated_at") or "") for c in comments]
         last, listing.mark = listing.mark, max([listing.mark or "", *stamps])
         if last is None:
             return False
         bot = self.bot_login.lower()
-        for c in res.body:
+        for c in comments:
             body = str(c.get("body") or "")
             if (
                 str(c.get("updated_at") or "") > last
@@ -166,4 +178,14 @@ class Watcher:
                 and (priority_requested(body) or normal_requested(body))
             ):
                 return True
+        return False
+
+
+def _safely(read: tuple[str, Callable[[str], bool], str]) -> bool:
+    """One read's hit; a failed read is no hit and leaves the others theirs."""
+    _, fn, repo = read
+    try:
+        return fn(repo)
+    except Exception as exc:
+        log.warning("watch %s (%s): %s", repo, read[0], exc)
         return False

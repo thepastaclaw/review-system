@@ -353,7 +353,9 @@ class Daemon:
     def run_forever(self) -> None:
         def _stop(*_: object) -> None:
             self.stop = True
-            self.wake.set()
+            # not from the handler itself: it may interrupt the main thread inside the Event's
+            # own lock (wake.clear / wake.wait), which is not reentrant
+            threading.Thread(target=self.wake.set, daemon=True).start()
 
         self._lock = acquire_singleton_lock(self.cfg.db_path.with_suffix(".daemon.lock"))
         signal.signal(signal.SIGTERM, _stop)

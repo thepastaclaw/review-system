@@ -36,7 +36,10 @@ class Api:
         etag = args[args.index("-H") + 1].split(": ", 1)[1] if "-H" in args else ""
         self.calls.append((endpoint, etag))
         tag = f'"{self.versions.get(endpoint, 0)}"'
-        head = f"x-ratelimit-limit: 5000\nx-ratelimit-remaining: {self.remaining}\netag: {tag}"
+        head = (
+            f"x-ratelimit-limit: 5000\nx-ratelimit-remaining: {self.remaining}\n"
+            f"x-ratelimit-reset: 1000000000\netag: {tag}"
+        )
         if etag == tag:
             return subprocess.CompletedProcess(
                 argv, 1, f"HTTP/2.0 304 Not Modified\n{head}\n\n", ""
@@ -98,19 +101,68 @@ def test_a_ticked_gate_box_runs_the_queue_pass():
 
 def test_it_spends_little_and_never_the_reviews_share():
     api = Api(remaining=499)  # under 10% of 5000 left
-    w = watcher(api)
+    wall = [0.0]
+    w = watch.Watcher(Gh("gh", api), "thepastaclaw", [REPO], wall=lambda: wall[0])
     w.poll()
     seen = len(api.calls)  # the reads that saw it, then nothing
     w.poll()
     assert len(api.calls) == seen
     api.remaining = 4000
+    wall[0] = 2e9  # past x-ratelimit-reset: a new window, the same watcher reads again
+    w.poll()
+    assert len(api.calls) == seen + 2
     now = [0.0]
     w = watcher(api, clock=lambda: now[0])
     w.spent = [0.0] * 250  # 5% of the limit in the last hour
-    assert w.poll() == set() and len(api.calls) == seen
+    calls = len(api.calls)
+    assert w.poll() == set() and len(api.calls) == calls
     now[0] = watch.HOUR_S
     w.poll()
-    assert len(api.calls) == seen + 2
+    assert len(api.calls) == calls + 2
+
+
+def test_a_failed_read_keeps_its_place_and_the_others_their_hits():
+    api = Api()
+    w = watcher(api)
+    w.poll()
+    real = api.__call__
+
+    def broken(argv, stdin, timeout):
+        if "comments" in argv[3]:
+            return subprocess.CompletedProcess(argv, 1, "", "error connecting to api.github.com")
+        return real(argv, stdin, timeout)
+
+    w.gh = Gh("gh", broken)
+    api.set(EVENTS, [labelled(5)])
+    api.set(COMMENTS, [gate("2026-11-27T10:03:00Z", TICKED)])
+    assert w.poll() == {watch.INGEST}
+    w.gh = Gh("gh", api)
+    assert w.poll() == {watch.QUEUE}  # its ETag and mark were not moved by the failure
+
+
+def test_ingest_runs_again_after_a_label_hit_for_a_lagging_graphql():
+    api = Api()
+    now = [0.0]
+    w = watcher(api, clock=lambda: now[0])
+    w.poll()
+    api.set(EVENTS, [labelled(5)])
+    assert w.poll() == {watch.INGEST}
+    now[0] = watch.FOLLOW_UP_S - 1
+    assert w.poll() == set()
+    now[0] = watch.FOLLOW_UP_S
+    assert w.poll() == {watch.INGEST}
+    now[0] = 2 * watch.FOLLOW_UP_S
+    assert w.poll() == set()
+
+
+def test_only_a_scheduling_daemon_watches(cfg, conn, gh, notifier):
+    import dataclasses
+
+    assert Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False).watcher is None
+    off = dataclasses.replace(cfg, watch_interval_seconds=0)
+    assert Daemon(off, conn, gh=gh, notifier=notifier).watcher is None
+    w = Daemon(cfg, conn, gh=gh, notifier=notifier).watcher
+    assert w is not None and tuple(w.repos) == cfg.enabled_repos
 
 
 def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, conn, gh, notifier):
