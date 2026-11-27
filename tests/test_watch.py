@@ -129,7 +129,7 @@ def test_a_failed_read_keeps_its_place_and_the_others_their_hits():
 
     def broken(argv, stdin, timeout):
         if "comments" in argv[3]:
-            return subprocess.CompletedProcess(argv, 1, "", "error connecting to api.github.com")
+            raise subprocess.TimeoutExpired(argv, timeout)
         return real(argv, stdin, timeout)
 
     w.gh = Gh("gh", broken)

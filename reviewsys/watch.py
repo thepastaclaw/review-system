@@ -100,9 +100,11 @@ class Watcher:
         out = proc.stdout.decode() if isinstance(proc.stdout, bytes) else proc.stdout
         res = parse(out or "")
         if "x-ratelimit-limit" in res.headers:
-            self.limit = int(res.headers["x-ratelimit-limit"])
-            self.remaining = int(res.headers.get("x-ratelimit-remaining", self.limit))
-            self.reset_at = float(res.headers.get("x-ratelimit-reset", 0))
+            with self._lock:
+                self.limit = int(res.headers["x-ratelimit-limit"])
+                self.remaining = int(res.headers.get("x-ratelimit-remaining", self.limit))
+                reset = res.headers.get("x-ratelimit-reset")
+                self.reset_at = float(reset) if reset else self.wall() + HOUR_S
         if res.status == 200:
             with self._lock:
                 self.spent.append(self.clock())
@@ -119,9 +121,9 @@ class Watcher:
             self.spent = [t for t in self.spent if now - t < HOUR_S]
             if len(self.spent) >= self.limit * SPEND_SHARE:
                 return True
-        if self.remaining is not None and self.wall() >= self.reset_at:
-            self.remaining = None  # a new window: the next read says what is left
-        return self.remaining is not None and self.remaining < self.limit * RESERVE_SHARE
+            if self.remaining is not None and self.wall() >= self.reset_at:
+                self.remaining = None  # a new window: the next read says what is left
+            return self.remaining is not None and self.remaining < self.limit * RESERVE_SHARE
 
     def poll(self) -> set[str]:
         """Read every repo once; the passes the daemon should run now."""
@@ -152,8 +154,10 @@ class Watcher:
         return any(
             int(e.get("id") or 0) > last
             and e.get("event") == "labeled"
-            and str((e.get("label") or {}).get("name", "")).lower() == REVIEW_NOW_LABEL
-            and (e.get("issue") or {}).get("pull_request")
+            and isinstance(e.get("label"), dict)
+            and str(e["label"].get("name", "")).lower() == REVIEW_NOW_LABEL
+            and isinstance(e.get("issue"), dict)
+            and e["issue"].get("pull_request")
             for e in events
         )
 
@@ -173,7 +177,8 @@ class Watcher:
             body = str(c.get("body") or "")
             if (
                 str(c.get("updated_at") or "") > last
-                and str((c.get("user") or {}).get("login", "")).lower() == bot
+                and isinstance(c.get("user"), dict)
+                and str(c["user"].get("login", "")).lower() == bot
                 and GATE_MARKER in body
                 and (priority_requested(body) or normal_requested(body))
             ):
@@ -183,9 +188,9 @@ class Watcher:
 
 def _safely(read: tuple[str, Callable[[str], bool], str]) -> bool:
     """One read's hit; a failed read is no hit and leaves the others theirs."""
-    _, fn, repo = read
+    task, fn, repo = read
     try:
         return fn(repo)
     except Exception as exc:
-        log.warning("watch %s (%s): %s", repo, read[0], exc)
+        log.warning("watch %s (%s): %s", repo, task, exc)
         return False
