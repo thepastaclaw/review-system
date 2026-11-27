@@ -1670,7 +1670,7 @@ bot rewrite). Only a daemon that schedules runs it.
 
 The tick loop runs a hit before its next task, and the gate-comment pass, which reads one
 comment per PR and can take minutes, stops before its next read when a hit is waiting (it
-runs again right after, and that pass runs to the end whatever arrives). A task that holds the loop over 10 s is logged.
+runs again right after, going on where it stopped, so it still gets to the end). A task that holds the loop over 10 s is logged.
 
 ### The webhook: the moment it happens
 

@@ -246,7 +246,7 @@ def test_the_queue_pass_gives_way_to_a_hit_and_runs_again(cfg, conn, gh, notifie
     reads = iter(range(100))
     raised = []
 
-    def queue_pass(conn, cfg, gh, *, should_yield):
+    def queue_pass(conn, cfg, gh, *, should_yield, done):
         order.append("queue_comments")
         for _ in reads:
             if should_yield():
@@ -268,9 +268,26 @@ def test_the_queue_pass_gives_way_to_a_hit_and_runs_again(cfg, conn, gh, notifie
     i = order.index("queue_comments")
     assert order[i : i + 3] == ["queue_comments", "ingest", "schedule"]
     assert q.last == 0.0  # due again
-    order.clear()
-    raised.clear()  # another hit during the resumed pass: it runs to the end this time
-    d.tick()
-    assert "queue_comments" in order
-    assert q.last > 0
-    assert not d._queue_yielded
+
+
+def test_a_pass_that_keeps_giving_way_still_gets_to_the_end(cfg, conn, gh):
+    """A hit waiting at every read: each call reads one more PR's comment and goes on where
+    the last one stopped, so the pass ends after one call per PR."""
+    from reviewsys.db import tx
+    from reviewsys.ingest import enqueue_head
+    from reviewsys.models import Trigger
+    from reviewsys.queue_status import update_queue_comments
+
+    with tx(conn):
+        for i in range(3):
+            enqueue_head(conn, cfg, "dashpay/platform", 300 + i, f"{i:040x}", Trigger.NEW_PR)
+        conn.execute("UPDATE heads SET eligible_at=queued_at")
+    done: set[str] = set()
+    calls = []
+    for _ in range(5):
+        stats = update_queue_comments(conn, cfg, gh, should_yield=lambda: True, done=done)
+        calls.append(stats["yielded"])
+        if not stats["yielded"]:
+            break
+    assert calls == [1, 1, 0]  # one read per call; the third reads the last and ends
+    assert len(done) == 3

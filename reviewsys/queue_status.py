@@ -173,19 +173,38 @@ def update_queue_comments(
     gh: Gh,
     *,
     should_yield: Callable[[], bool] = lambda: False,
+    done: set[str] | None = None,
 ) -> dict[str, int]:
     """Post or refresh the queue comment on every queued PR and honour ticked priority boxes.
 
     One comment read per PR makes a pass take minutes: when `should_yield` says a request is
     waiting (daemon.py: a watch or webhook hit), the pass ends before its next read, writing
-    nothing more, with `yielded` set, and the daemon runs it again after the request."""
+    nothing more, with `yielded` set, and the daemon runs it again after the request. The PRs
+    it got through are in `done`, which the next call skips, so a pass that keeps giving way
+    still gets to the end (each call reads at least one comment); the caller empties `done`
+    once a call ends without yielding. A queued head skipped that way keeps its comment until
+    the next whole pass."""
     stats = {"written": 0, "promoted": 0, "deferred": 0, "yielded": 0}
+    done = set() if done is None else done
+    progressed = False
+
+    def give_way(key: str) -> bool:
+        nonlocal progressed
+        if progressed and should_yield():
+            stats["yielded"] = 1
+            return True
+        progressed = True
+        done.add(key)
+        return False
+
     ts = now()
     rows = queued_order(conn, ts=ts)
     comments: dict[int, dict[str, Any] | None] = {}
     for h in rows:
-        if should_yield():
-            stats["yielded"] = 1
+        key = f"queued:{h['id']}"
+        if key in done:
+            continue
+        if give_way(key):
             return stats
         try:
             c = _read_comment(conn, gh, cfg, h["repo"], h["number"])
@@ -215,8 +234,10 @@ def update_queue_comments(
     ).fetchall()
     in_debounce = {p["id"] for p in deferred if p["id"] is not None}
     for p in deferred:
-        if should_yield():
-            stats["yielded"] = 1
+        key = f"deferred:{p['repo']}#{p['number']}"
+        if key in done:
+            continue
+        if give_way(key):
             return stats
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])

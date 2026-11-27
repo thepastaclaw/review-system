@@ -94,7 +94,7 @@ class Daemon:
         self.wake = threading.Event()
         self._due: set[str] = set()
         self._due_from: set[str] = set()  # "watch" / "webhook": who asked, for the event
-        self._queue_yielded = False  # the last gate-comment pass gave way to a hit
+        self._queue_done: set[str] = set()  # what the gate-comment pass got through so far
         self._due_lock = threading.Lock()
         self.watcher = (
             watch.Watcher(Gh(cfg.gh_bin), cfg.bot_login, cfg.enabled_repos)
@@ -163,20 +163,17 @@ class Daemon:
         return route_inbox(self.conn, self.cfg, self.gh, self.notifier)
 
     def t_queue_comments(self) -> object:
-        # a pass resumed after giving way runs to the end: hits less than a pass apart would
-        # otherwise keep its later loops (ticked draft boxes, the comment writes) from running
-        resumed, self._queue_yielded = self._queue_yielded, False
+        # a pass that gave way to a hit goes on where it stopped (`_queue_done`), so hits less
+        # than a pass apart cannot keep its later loops (ticked draft boxes, the writes) away
         stats = update_queue_comments(
-            self.conn,
-            self.cfg,
-            self.gh,
-            should_yield=(lambda: False) if resumed else self._hit_waiting,
+            self.conn, self.cfg, self.gh, should_yield=self._hit_waiting, done=self._queue_done
         )
         if stats["yielded"]:
-            self._queue_yielded = True
             for task in self.tasks:
                 if task.name == "queue_comments":
                     task.rerun = True  # once the hit ran, not a full interval later
+        else:
+            self._queue_done.clear()
         return stats
 
     def _hit_waiting(self) -> bool:
