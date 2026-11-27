@@ -1895,7 +1895,7 @@ def test_a_quoted_dispute_hidden_by_the_bots_next_comment_reaches_review(cfg, co
     ]
     gh.issue_comments = [dispute, ack]
     with tx(conn):
-        kv_set(conn, "comments.cursor", "2026-11-26T19:45:00Z")
+        kv_set(conn, "comments.cursor:dashpay/platform", "2026-11-26T19:45:00Z")
     assert ingest_notifications(conn, cfg, gh) == 1
     assert ingest_pr_comments(conn, cfg, gh) == 1  # the bot's own acknowledgement is skipped
     assert ingest_pr_comments(conn, cfg, gh) == 0  # idempotent by comment id
@@ -1953,16 +1953,68 @@ def test_pr_comment_poll_keeps_only_comments_reviewsys_can_act_on(cfg, conn, gh)
         pr(2, "b" * 40, author={"login": "thepastaclaw"}),
     ]
     ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        kv_set(conn, "comments.cursor:dashpay/platform", "2026-11-26T19:00:00Z")
     issue = _api_comment(10, "@thepastaclaw hi", "knst", number=1)
     issue["html_url"] = "https://github.com/dashpay/platform/issues/1#issuecomment-10"
+    edited = _api_comment(17, "> quote\n\n@thepastaclaw", "knst", number=1)
+    edited["created_at"] = "2026-10-01T00:00:00Z"  # an old comment edited since
     gh.issue_comments = [
-        _api_comment(11, "plain words", "knst", number=1),
+        _api_comment(11, "plain words, no quote", "knst", number=1),
         _api_comment(12, "@ThePastaClaw review", "knst", number=1),
         _api_comment(13, "mine", "thepastaclaw", number=1),
-        _api_comment(14, "on the bot's own PR", "knst", number=2),  # notifications cover it
-        _api_comment(15, "unknown or closed PR", "knst", number=3),
+        _api_comment(14, "> q\n\non the bot's own PR", "knst", number=2),
+        _api_comment(15, "> q\n\nunknown or closed PR", "knst", number=3),
+        _api_comment(16, "> q\n\nwalkthrough", "coderabbitai[bot]", number=1),
+        _api_comment(18, "> a quote\n\nanswered", "knst", number=1),
+        edited,
         issue,
     ]
     assert ingest_pr_comments(conn, cfg, gh) == 2
     rows = conn.execute("SELECT source_id, kind, number FROM inbox ORDER BY source_id")
-    assert [tuple(r) for r in rows] == [("comment:11", "comment", 1), ("comment:12", "mention", 1)]
+    assert [tuple(r) for r in rows] == [("comment:12", "mention", 1), ("comment:18", "comment", 1)]
+
+
+def test_pr_comment_poll_seeds_each_repo_from_now(cfg, conn, gh):
+    """A repo enabled after the first deploy must not replay everything since then."""
+    from reviewsys.ingest import ingest_pr_comments
+
+    with tx(conn):
+        kv_set(conn, "comments.cursor", "2026-01-01T00:00:00Z")
+    gh.issue_comments = []
+    ingest_pr_comments(conn, cfg, gh)
+    since = [c for c in gh.calls if any("issues/comments?" in a for a in c)]
+    assert since and "since=2026-01-01" not in " ".join(since[0])
+
+
+def test_an_explicit_review_ask_beside_a_quote_stays_a_review_ask(cfg, conn, gh, notifier):
+    """ "@bot please review" in so many words is a review ask even when it quotes a finding:
+    on a push nobody reviewed yet it is a priority review now, not the push's debounced one."""
+    old, new = "e" * 40, "f" * 40
+    _reviewed(conn, cfg, 7, old)
+    _posted_summary_finding(conn, sha=old)
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 7, new, Trigger.NEW_PUSH)
+    gh.pr = {**gh.pr, "head": {"sha": new}}
+    body = f"> 🔴 Blocking: {FINDING_TITLE}\n\nfixed, @thepastaclaw please review again"
+    _issue_comment_row(conn, gh, "n:1", 100, kind="mention", body=body)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "mention"
+    head = conn.execute("SELECT trigger, priority FROM heads WHERE sha=?", (new,)).fetchone()
+    assert tuple(head) == ("mention", 1)
+
+
+def test_a_dispute_already_routed_is_no_fresh_review_ask(cfg, conn, gh, notifier):
+    """The same comment arriving as a plain comment row (routed as a dispute) and then as a
+    mention row re-reviews the commit once."""
+    sha = "f" * 40
+    _reviewed(conn, cfg, 7, sha)
+    _posted_summary_finding(conn)
+    gh.pr = {**gh.pr, "head": {"sha": sha}}
+    body = f"> 🔴 Blocking: {FINDING_TITLE}\n\nwrong. @thepastaclaw please review again"
+    _issue_comment_row(conn, gh, "n:1", 100, kind="comment", body=body)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:01:00Z", "n:1") == "review_reply"
+    assert _requeues(conn, 7) == 1
+    _finish(conn, 7)
+    _issue_comment_row(conn, gh, "n:2", 100, kind="mention", body=body)
+    assert _route_reply_at(conn, cfg, gh, "2026-09-08T12:02:00Z", "n:2") == "mention"
+    assert _requeues(conn, 7) == 1

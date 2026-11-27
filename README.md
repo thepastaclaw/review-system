@@ -1151,8 +1151,9 @@ comment batch).
 A finding published only in the review body has no thread to reply under, so people
 answer it in a top-level PR comment. On a watched repo, a top-level comment from a trusted
 human that quotes (`> ...`) the title of one of the bot's posted findings on the PR is routed
-as above, whatever else it says (a bare `@thepastaclaw`, or "@thepastaclaw this review is
-wrong", is read as the dispute, not as a mention), once per comment however
+as above, before the mention rule (a bare `@thepastaclaw`, or "@thepastaclaw this review is
+wrong", is read as the dispute; only an ask in so many words, "@thepastaclaw please review",
+stays a mention), once per comment however
 often GitHub re-notifies for it (`discussion_reply` / `discussion_reply_queued` /
 `discussion_reply_expired`), except that a reviewed commit re-opens with trigger `manual`:
 the conversation lane answers finding threads only, so the commit gets a full same-sha
@@ -1163,10 +1164,13 @@ A notification names only the PR's latest comment, so a comment followed by anot
 the next poll (often the bot's own) got no row of its own (dashpay/dash#8159, 2026-11-26).
 The notify task therefore also lists each watched repo's top-level PR comments updated since
 its cursor (`ingest_pr_comments`, kv `comments.cursor:<repo>`, trailing the poll by two
-minutes) into `inbox` as `comment:<id>` rows, kind `mention` when they mention the bot. Only
-open PRs ingest knows that are not the bot's own get rows (its own PRs' comments keep coming
-from notifications into the own-PR batch), never the bot's own comments, and a comment
-both sources name is routed once.
+minutes; a repo's first poll starts from then) into `inbox` as `comment:<id>` rows, kind
+`mention` when they mention the bot. A comment that does not mention the bot gets a row only
+when it quotes something and is not a bot's; an edit of a comment written before the cursor
+gets none; and only open PRs ingest knows that are not the bot's own get rows (its own PRs'
+comments keep coming from notifications into the own-PR batch). A comment both sources name
+is routed once. Known gap: a comment in the first minutes of a PR ingest has not seen yet
+gets no poll row (a dispute needs a posted finding, so its PR is always known).
 
 The re-review carries the thread: prior findings that were replied to go into the
 prompt with their original `body` and `thread_replies`, the evidence bundle keeps the

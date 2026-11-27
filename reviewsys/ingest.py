@@ -709,6 +709,10 @@ def ingest_review_replies(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
 # ---- top-level PR comments -> inbox ----
 
 
+# router.ALLOWED_BOTS (router imports this module)
+ALLOWED_BOT_LOGINS = frozenset({"coderabbitai", "coderabbitai[bot]"})
+
+
 def _reviewed_open_pr(conn: sqlite3.Connection, cfg: Config, repo: str, number: int) -> bool:
     row = conn.execute(
         "SELECT author FROM prs WHERE repo=? AND number=? AND state='open'", (repo, number)
@@ -729,7 +733,8 @@ def ingest_pr_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
     added = 0
     for repo in cfg.enabled_repos:
         key = f"comments.cursor:{repo}"
-        since = kv_get(conn, key) or _poll_cursor(conn, "comments.cursor")
+        # seeded per repo: a repo enabled later starts from then, not from the first deploy
+        since = kv_get(conn, key) or _poll_cursor(conn, key)
         poll_start = now_dt()
         try:
             rows = (
@@ -746,9 +751,23 @@ def ingest_pr_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
             for c in rows:
                 if not isinstance(c, dict) or "/pull/" not in str(c.get("html_url") or ""):
                     continue
-                actor = str((c.get("user") or {}).get("login") or "")
+                actor = str((c.get("user") or {}).get("login") or "").lower()
                 tail = str(c.get("issue_url") or "").rsplit("/", 1)[-1]
-                if actor.lower() == cfg.bot_login.lower() or not tail.isdigit():
+                if actor == cfg.bot_login.lower() or not tail.isdigit():
+                    continue
+                # an edit of an older comment is listed again, but asks for nothing new
+                created = str(c.get("created_at") or "")
+                if not created or parse_ts(created) < parse_ts(since):
+                    continue
+                body = str(c.get("body") or "")
+                kind = "mention" if mention.search(body) else "comment"
+                # a comment that does not mention the bot is routed only as a quoted dispute
+                # by a human: no quote, or a bot's comment, cannot lead anywhere
+                if kind == "comment" and (
+                    actor.endswith("[bot]")
+                    or actor in ALLOWED_BOT_LOGINS
+                    or not any(ln.lstrip().startswith(">") for ln in body.splitlines())
+                ):
                     continue
                 if not _reviewed_open_pr(conn, cfg, repo, int(tail)):
                     continue
@@ -756,7 +775,7 @@ def ingest_pr_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
                     INBOX_INSERT,
                     (
                         f"comment:{c.get('id')}",
-                        "mention" if mention.search(str(c.get("body") or "")) else "comment",
+                        kind,
                         repo,
                         int(tail),
                         None,

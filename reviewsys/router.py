@@ -15,7 +15,8 @@
   published only in the review body has no thread to reply under; the conversation lane
   answers threads only): routed as a `review_reply` is, except that a reviewed head re-opens
   as a full same-sha re-review, which reads the comment in the discussion. Read before the
-  mention rule: a mention beside the quote is the dispute's, not a review ask of its own
+  mention rule: a mention beside the quote is the dispute's, unless it asks for a review in so
+  many words ("@bot please review"), which stays a mention
 - comments/reviews on the bot's own PRs from trusted humans or CodeRabbit ->
   batched per (repo, pr) and delivered to the OpenClaw agent as one wake event
 
@@ -34,7 +35,7 @@ from .config import Config
 from .db import event, fmt_ts, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .dedupe import FINDING_MARKER_RE
 from .gh import Gh
-from .ingest import AUTOMATIC_TRIGGERS, enqueue_head, push_trigger
+from .ingest import ALLOWED_BOT_LOGINS, AUTOMATIC_TRIGGERS, enqueue_head, push_trigger
 from .models import HeadStatus, Trigger
 from .notify import Notifier
 
@@ -47,7 +48,7 @@ BATCH_RETRY = timedelta(minutes=15)
 MAX_ASKED_REREVIEWS = 3
 DEFER_MAX = timedelta(hours=6)  # how long an inbox row may wait on a retryable condition
 TRUSTED_ASSOCIATIONS = frozenset({"MEMBER", "COLLABORATOR", "CONTRIBUTOR", "OWNER"})
-ALLOWED_BOTS = frozenset({"coderabbitai", "coderabbitai[bot]"})
+ALLOWED_BOTS = ALLOWED_BOT_LOGINS
 _MARKUP_RE = re.compile(r"[`*_]")
 
 
@@ -172,9 +173,9 @@ def _route_row(
     # is listed but disabled stays off no matter who asks
     adhoc_ok = cfg.repo(repo) is None and _trusted(cfg, comment or {}, actor)
 
-    # a comment quoting one of the bot's findings disputes or answers it, whatever else it
-    # says: a bare "@bot" or "@bot this review is wrong" beside the quote is no review ask of
-    # its own (dashpay/dash#8159), so it is read before the mention rule
+    # a comment quoting one of the bot's findings disputes or answers it: a bare "@bot" or
+    # "@bot this review is wrong" beside the quote is no review ask of its own
+    # (dashpay/dash#8159), so it is read before the mention rule
     if (
         kind != "review_reply"
         and comment
@@ -188,6 +189,9 @@ def _route_row(
         and _trusted(cfg, comment, actor)
         and _quotes_bot_finding(conn, repo, number, body)
         and not _already_routed(conn, row, "discussion_reply%")
+        # "@bot please review" in so many words stays a review ask (priority, even on a push
+        # nobody reviewed yet or a labelled PR); its re-review reads the quote too
+        and not (kind == "mention" and _rereview_re(cfg.bot_login).search(_own_words(body)))
     ):
         return _queue_reply(
             conn,
