@@ -81,6 +81,7 @@ class Daemon:
         self.spawn = spawn
         self.prober = prober or degraded.probe
         self.labels_repos: dict[str, bool] = {}  # repo -> has created the pastaclaw:* labels
+        self.review_now_checked: set[str] = set()  # repos whose review-now label was checked
         if spawn:  # the first scheduling start with the tracking rule fixes when it took effect
             converse.tracking_required_since(conn, cfg.deferral.tracking_required_since)
         self.stop = False
@@ -119,7 +120,20 @@ class Daemon:
 
     # ---- tasks ----
     def t_ingest(self) -> object:
-        return ingest_prs(self.conn, self.cfg, self.gh)
+        stats: dict[str, object] = dict(ingest_prs(self.conn, self.cfg, self.gh))
+        if not self.spawn:  # a no-spawn or shadow daemon writes nothing to GitHub
+            return stats
+        for repo in self.cfg.enabled_repos:
+            if repo not in self.review_now_checked:
+                try:
+                    labels.ensure_review_now_label(self.conn, self.gh, repo)
+                    self.review_now_checked.add(repo)
+                except Exception as exc:  # transient: tried again next pass
+                    log.warning("review-now label check on %s failed: %s", repo, exc)
+        released = labels.release_review_now(self.conn, self.gh)
+        if released:
+            stats["review_now_released"] = released
+        return stats
 
     def t_notify(self) -> object:
         added = ingest_notifications(self.conn, self.cfg, self.gh)

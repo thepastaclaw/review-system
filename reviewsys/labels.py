@@ -29,7 +29,7 @@ from urllib.parse import quote
 
 from .db import event, fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
 from .gh import Gh
-from .ingest import reviewed_sha
+from .ingest import REVIEW_NOW_LABEL, review_now_key, reviewed_sha
 from .models import FailKind, ReviewError
 from .publish import canonical_event
 
@@ -193,4 +193,113 @@ def _current(gh: Gh, repo: str, number: int) -> set[str]:
     if not isinstance(data, list):
         return set()
     names = {str(lbl.get("name") or "") for lbl in data if isinstance(lbl, dict)}
-    return {name for name in names if name.startswith(PREFIX)}
+    # only the verdict labels: `pastaclaw:review-now` is the PR's, until release_review_now
+    return names & set(VERDICT_LABELS.values())
+
+
+# ---- the review-now label (ingest.REVIEW_NOW_LABEL) ----
+
+REVIEW_NOW_COLOR = "0e8a16"
+REVIEW_NOW_DESCRIPTION = (
+    "PastaClaw: review the current head now, without the 30-minute push debounce; "
+    "removed once that review is done"
+)
+
+
+def ensure_review_now_label(conn: sqlite3.Connection, gh: Gh, repo: str) -> bool:
+    """Create the review-now label on `repo` when it lacks it. Needs write access: where the
+    bot has less, the label must be created by someone who may (GitHub also creates it when
+    such a person first adds it); that is recorded once (`label.review_now_missing`).
+    True when the label exists."""
+    name = quote(REVIEW_NOW_LABEL, safe="")
+    try:
+        gh.api(f"repos/{repo}/labels/{name}")
+        return True
+    except ReviewError as exc:
+        if exc.kind is FailKind.INFRA:
+            raise
+    try:
+        gh.api(
+            f"repos/{repo}/labels",
+            method="POST",
+            body={
+                "name": REVIEW_NOW_LABEL,
+                "color": REVIEW_NOW_COLOR,
+                "description": REVIEW_NOW_DESCRIPTION,
+            },
+        )
+    except ReviewError as err:
+        if err.kind is FailKind.INFRA:
+            raise
+        with tx(conn):
+            event(conn, "label.review_now_missing", repo=repo, detail=err.message[:200])
+        return False
+    with tx(conn):
+        event(conn, "label.review_now_created", repo=repo)
+    return True
+
+
+def release_review_now(conn: sqlite3.Connection, gh: Gh) -> int:
+    """Take the review-now label off each PR whose requested review ended (done or failed,
+    superseded with the label no longer asking for the new commit, or the PR closed), so the
+    next push waits out the debounce again. A label already gone (a person took it off) is
+    released all the same. One the bot cannot remove keeps its record, so nothing more is asked
+    under it (ingest._review_now_due), and is recorded once. Returns labels released."""
+    released = 0
+    rows = conn.execute("SELECT key, value FROM kv WHERE key LIKE 'review_now:%'").fetchall()
+    for row in rows:
+        ref, sha = str(row["key"]).removeprefix("review_now:"), str(row["value"])
+        repo, _, num = ref.rpartition("#")
+        if not num.isdigit():
+            continue
+        number = int(num)
+        pr = conn.execute(
+            "SELECT state FROM prs WHERE repo=? AND number=?", (repo, number)
+        ).fetchone()
+        head = conn.execute(
+            "SELECT status FROM heads WHERE repo=? AND number=? AND sha=? AND queue='live'",
+            (repo, number, sha),
+        ).fetchone()
+        open_ = pr is not None and pr["state"] == "open"
+        if open_ and head is not None and head["status"] in ("queued", "running"):
+            continue  # its review has not ended
+        if open_:
+            try:
+                gh.api(
+                    f"repos/{repo}/issues/{number}/labels/{quote(REVIEW_NOW_LABEL, safe='')}",
+                    method="DELETE",
+                )
+            except ReviewError as exc:
+                if "HTTP 404" not in exc.message:  # 404: no longer on the PR
+                    _unremovable(conn, repo, number, sha, exc)
+                    continue
+        with tx(conn):
+            conn.execute("DELETE FROM kv WHERE key=?", (review_now_key(repo, number),))
+            conn.execute("DELETE FROM kv WHERE key=?", (_unremovable_key(repo, number),))
+            event(
+                conn,
+                "label.review_now_released",
+                repo=repo,
+                number=number,
+                detail=f"{sha[:8]} {head['status'] if head else 'no head'}",
+            )
+        released += 1
+    return released
+
+
+def _unremovable_key(repo: str, number: int) -> str:
+    return f"review_now_unremovable:{repo}#{number}"
+
+
+def _unremovable(
+    conn: sqlite3.Connection, repo: str, number: int, sha: str, exc: ReviewError
+) -> None:
+    """The label could not come off: recorded once per commit, tried again each pass."""
+    if exc.kind is FailKind.INFRA or kv_get(conn, _unremovable_key(repo, number)) == sha:
+        return
+    log.warning("review-now label on %s#%s not removed: %s", repo, number, exc)
+    with tx(conn):
+        kv_set(conn, _unremovable_key(repo, number), sha)
+        event(
+            conn, "label.review_now_unremovable", repo=repo, number=number, detail=exc.message[:200]
+        )
