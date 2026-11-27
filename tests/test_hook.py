@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import http.client
 import json
+import socket
+import time
 import urllib.error
 import urllib.request
 from email.message import Message
@@ -133,7 +135,7 @@ def test_the_secret_file_is_the_owners_alone(tmp_path):
         hook.load_secret(tmp_path / "missing")
 
 
-def _post(port, body, sig, length=None):
+def _post(port, body, sig):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/github/webhook",
         data=body,
@@ -142,7 +144,6 @@ def _post(port, body, sig, length=None):
             "X-GitHub-Event": "pull_request",
             "X-GitHub-Delivery": "live-1",
             "X-Hub-Signature-256": sig,
-            **({"Content-Length": str(length)} if length is not None else {}),
         },
     )
     try:
@@ -152,7 +153,9 @@ def _post(port, body, sig, length=None):
         return exc.code
 
 
-def test_the_daemon_runs_a_delivered_label_as_a_watch_hit(cfg, conn, gh, notifier, tmp_path):
+def test_the_daemon_runs_a_delivered_label_as_a_watch_hit(
+    cfg, conn, gh, notifier, tmp_path, monkeypatch
+):
     secret = tmp_path / "secret"
     secret.write_bytes(SECRET)
     secret.chmod(0o600)
@@ -170,7 +173,20 @@ def test_the_daemon_runs_a_delivered_label_as_a_watch_hit(cfg, conn, gh, notifie
         body = json.dumps(labeled()).encode()
         assert _post(port, body, sign(body)) == 202
         assert _post(port, body, "sha256=00") == 401
-        assert _post(port, b"x" * 10, sign(b"x" * 10), length=hook.MAX_BODY + 1) == 413
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+            raw.sendall(  # the length alone is refused: no body is read
+                b"POST /github/webhook HTTP/1.1\r\nHost: x\r\n"
+                + f"Content-Length: {hook.MAX_BODY + 1}\r\n\r\n".encode()
+            )
+            assert raw.recv(64).split()[1] == b"413"
+        monkeypatch.setattr(hook, "READ_TIMEOUT_S", 0.5)
+        with socket.create_connection(("127.0.0.1", port), timeout=5) as raw:
+            raw.sendall(b"POST /github/webhook HTTP/1.1\r\nHost: x\r\nContent-Length: 100\r\n\r\n")
+            for _ in range(3):  # a byte at a time, past the deadline for the whole body
+                raw.sendall(b"{")
+                time.sleep(0.3)
+            raw.sendall(b"{")
+            assert raw.recv(64).split()[1] == b"408"
         conn_ = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
         conn_.request(
             "POST",

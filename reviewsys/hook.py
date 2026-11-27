@@ -20,6 +20,7 @@ import json
 import logging
 import stat
 import threading
+import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,9 +39,9 @@ MAX_BODY = 1 << 20  # GitHub caps payloads at 25 MB; the two we act on are a few
 SEEN_DELIVERIES = 1000
 MIN_SECRET_CHARS = 32
 READ_TIMEOUT_S = 10
-MAX_HANDLERS = (
-    16  # requests served at once; more get 503 (GitHub retries nothing, the watch has it)
-)
+# requests served at once; more get 503 (the watch still sees what they carried), and each
+# must send its body within READ_TIMEOUT_S in all, so slow senders cannot hold the slots
+MAX_HANDLERS = 16
 
 
 class HookError(Exception):
@@ -180,13 +181,29 @@ class Receiver:
                 if length < 0 or length > MAX_BODY:
                     status = 413
                 else:
-                    body = self.rfile.read(length) if length else b""
+                    body = self._body(length)
+                    if body is None:
+                        return 408
                     try:
                         status = receiver.handle(self.command, self.path, self.headers, body)
                     except Exception:
                         log.exception("webhook handler failed")
                         status = 500
                 return status
+
+            def _body(self, length: int) -> bytes | None:
+                deadline = time.monotonic() + READ_TIMEOUT_S
+                parts: list[bytes] = []
+                got = 0
+                while got < length:
+                    if time.monotonic() > deadline:
+                        return None
+                    part = self.rfile.read1(min(1 << 16, length - got))
+                    if not part:
+                        return None
+                    parts.append(part)
+                    got += len(part)
+                return b"".join(parts)
 
             do_POST = do_GET = do_PUT = do_DELETE = do_HEAD = _serve
 
