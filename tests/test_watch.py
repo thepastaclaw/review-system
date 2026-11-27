@@ -184,8 +184,8 @@ def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, con
     d.tick()  # the first ingest pass
     api.set(EVENTS, [labelled(1)])
     assert d.watch_round() == {watch.INGEST} and d.wake.is_set()
-    assert d.run_watched() == {watch.INGEST}
-    assert "ingest" in d.tick()  # due at once, not 180 s after the last pass
+    results = d.tick()  # the hit runs before the tick's first task, not 180 s later
+    assert "ingest" in results
     d.tick(force=True)  # the regular pass sees the same label
     heads = conn.execute("SELECT trigger FROM heads WHERE number=7").fetchall()
     assert [h["trigger"] for h in heads] == ["normal_request"]
@@ -194,3 +194,41 @@ def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, con
     assert (
         conn.execute("SELECT detail FROM events WHERE kind='watch.hit'").fetchone()[0] == "ingest"
     )
+
+
+def test_a_hit_during_a_tick_runs_before_the_next_task(cfg, conn, gh, notifier):
+    """With the daemon's real task order: the hit's pass, then the scheduler, then the tick
+    goes on, its own supersede, reap and schedule passes still in their order."""
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
+    order = []
+    names = [t.name for t in d.tasks]
+    assert names.index("schedule") < names.index("queue_comments")  # what the hit reorders
+
+    def run(name):
+        def fn():
+            order.append(name)
+            if name == "supersede":  # what the watch thread does while this task runs
+                with d._due_lock:
+                    d._due.add(watch.QUEUE)
+
+        return fn
+
+    for task in d.tasks:
+        task.fn = run(task.name)
+        task.last = 1e12 if task.interval_s else 0.0  # every interval task ran just now
+    d.tick()
+    assert order[:3] == ["supersede", "queue_comments", "schedule"]
+    rest = order[3:]
+    assert rest.index("reap") < rest.index("schedule")  # after the hit, as every tick
+    assert "queue_comments" not in rest  # its interval runs from the hit
+
+
+def test_an_ingest_hit_runs_ingest_then_the_scheduler(cfg, conn, gh, notifier):
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
+    order = []
+    for task in d.tasks:
+        task.fn = (lambda n: lambda: order.append(n))(task.name)
+        task.last = 1e12 if task.interval_s else 0.0
+    d._due.add(watch.INGEST)
+    d.tick()
+    assert order[:2] == ["ingest", "schedule"]
