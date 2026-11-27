@@ -172,6 +172,7 @@ class Daemon:
             )
         except Exception:
             self._queue_done.clear()  # the next pass starts over
+            self._queue_reread = False
             raise
         if stats["yielded"]:
             for task in self.tasks:
@@ -378,7 +379,7 @@ class Daemon:
         with tx(self.conn):
             detail = f"{','.join(sorted(due))} via {','.join(sorted(sources))}"
             event(self.conn, "watch.hit", detail=detail)
-        if watch.QUEUE in due and not self._queue_reread:
+        if watch.QUEUE in due and self._queue_done and not self._queue_reread:
             # the ticked box may be on a PR this pass already read: read them all again, once
             # per pass, so ticks arriving faster than a pass cannot keep it from ending
             self._queue_done.clear()

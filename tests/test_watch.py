@@ -337,3 +337,17 @@ def test_a_box_hit_sends_the_pass_back_to_the_start_once(cfg, conn, gh, notifier
     d._due.add(watch.QUEUE)
     d.run_watched()
     assert d._queue_done == {"queued:1@x"}  # once per pass
+
+
+def test_a_box_hit_with_no_pass_under_way_keeps_the_reread(cfg, conn, gh, notifier):
+    """Hit A starts a fresh pass (nothing to clear); hit B, mid-pass, still gets its reread."""
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
+    for task in d.tasks:
+        task.fn = lambda: None
+    d._due.add(watch.QUEUE)
+    d.run_watched()
+    assert not d._queue_reread
+    d._queue_done.add("queued:1@x")
+    d._due.add(watch.QUEUE)
+    d.run_watched()
+    assert d._queue_done == set() and d._queue_reread
