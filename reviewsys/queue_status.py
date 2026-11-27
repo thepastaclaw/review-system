@@ -40,7 +40,9 @@ DEFERRED_MARKER = "<!-- thepastaclaw-review-deferred v1 -->"
 PRIORITY_CHECKED_RE = re.compile(
     r"^\s*-\s*\[[xX]\]\s*\*\*Request priority review\*\*", re.MULTILINE
 )
-MAX_WRITES_PER_PASS = 25  # stay well under GitHub's content-creation secondary limit
+# stay well under GitHub's content-creation secondary limit: per call of the pass (one that
+# gives way to a hit and goes on later is several calls, each still paced by its reads)
+MAX_WRITES_PER_PASS = 25
 
 
 def queue_body(
@@ -173,31 +175,73 @@ def update_queue_comments(
     gh: Gh,
     *,
     should_yield: Callable[[], bool] = lambda: False,
+    done: set[str] | None = None,
 ) -> dict[str, int]:
     """Post or refresh the queue comment on every queued PR and honour ticked priority boxes.
 
     One comment read per PR makes a pass take minutes: when `should_yield` says a request is
     waiting (daemon.py: a watch or webhook hit), the pass ends before its next read, writing
-    nothing more, with `yielded` set, and the daemon runs it again after the request."""
+    nothing more, with `yielded` set, and the daemon runs it again after the request. The PRs
+    it got through are in `done`, which the next call skips, so a pass that keeps giving way
+    still gets to the end (each call reads at least one comment); the caller empties `done`
+    once a call ends without yielding. Each PR's comment is written right after its own read.
+    What follows the last yield check (the skip-label notes) runs without it."""
     stats = {"written": 0, "promoted": 0, "deferred": 0, "yielded": 0}
-    ts = now()
-    rows = queued_order(conn, ts=ts)
-    comments: dict[int, dict[str, Any] | None] = {}
-    for h in rows:
-        if should_yield():
+    done = set() if done is None else done
+    progressed = False
+
+    def give_way(key: str) -> bool:
+        nonlocal progressed
+        if progressed and should_yield():
             stats["yielded"] = 1
+            return True
+        progressed = True
+        done.add(key)
+        return False
+
+    ts = now()
+    # the queued heads whose PR gets the deferred body (the loop over `deferred` below)
+    in_debounce = {
+        r["id"]
+        for r in conn.execute(
+            "SELECT h.id FROM prs p JOIN heads h ON h.repo=p.repo AND h.number=p.number "
+            "AND h.sha=p.head_sha WHERE p.state='open' AND p.skip_label=0 AND h.status='queued' "
+            "AND h.eligible_at>? AND h.priority=0 AND h.attempts=0",
+            (ts,),
+        )
+    }
+    # each PR is finished right after its own read (promoted, then its body written), so a
+    # call that gives way leaves nothing half done and never writes from a stale read
+    for h in queued_order(conn, ts=ts):
+        key = f"queued:{h['id']}@{h['eligible_at']}"  # a requeued head is read again
+        if key in done:
+            continue
+        if give_way(key):
             return stats
         try:
             c = _read_comment(conn, gh, cfg, h["repo"], h["number"])
         except Exception as exc:
             log.warning("gate comment read %s#%s failed: %s", h["repo"], h["number"], exc)
             continue
-        comments[h["id"]] = c
+        priority = bool(h["priority"])
         ticked = c is not None and priority_requested(str(c.get("body") or ""))
-        if ticked and not h["priority"] and _promote(conn, h, _editor(gh, c or {})):
+        if ticked and not priority and _promote(conn, h, _editor(gh, c or {})):
             stats["promoted"] += 1
-    if stats["promoted"]:
-        rows = queued_order(conn, ts=ts)
+            priority = True
+        if h["id"] in in_debounce and not priority:
+            continue  # the deferred body's (below)
+        body = queue_body(h["sha"], priority=priority)
+        if c and str(c.get("body") or "") == body:
+            continue
+        if stats["written"] >= MAX_WRITES_PER_PASS:
+            stats["deferred"] += 1
+            continue
+        try:
+            _write(conn, gh, h["repo"], h["number"], c, body)
+        except Exception as exc:
+            log.warning("queue comment %s#%s failed: %s", h["repo"], h["number"], exc)
+            continue
+        stats["written"] += 1
 
     # Drafts and heads in push debounce need an actionable explanation too. A checked box is
     # an explicit request and is converted into a normal or priority queue entry. This pass is
@@ -213,10 +257,11 @@ def update_queue_comments(
         "OR (h.status='queued' AND h.eligible_at>? AND h.priority=0 AND h.attempts=0))",
         (ts,),
     ).fetchall()
-    in_debounce = {p["id"] for p in deferred if p["id"] is not None}
     for p in deferred:
-        if should_yield():
-            stats["yielded"] = 1
+        key = f"deferred:{p['repo']}#{p['number']}@{p['head_sha']}"
+        if key in done:
+            continue
+        if give_way(key):
             return stats
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
@@ -245,25 +290,6 @@ def update_queue_comments(
         except Exception as exc:
             log.warning("deferred comment %s#%s failed: %s", p["repo"], p["number"], exc)
     _note_skip_labels(conn, cfg, gh, stats)
-    for h in rows:
-        if h["id"] not in comments or h["id"] in in_debounce:
-            continue  # read failed this pass (try again next time), or the deferred body's
-        body = queue_body(
-            h["sha"],
-            priority=bool(h["priority"]),
-        )
-        existing = comments[h["id"]]
-        if existing and str(existing.get("body") or "") == body:
-            continue
-        if stats["written"] >= MAX_WRITES_PER_PASS:
-            stats["deferred"] += 1
-            continue
-        try:
-            _write(conn, gh, h["repo"], h["number"], existing, body)
-        except Exception as exc:
-            log.warning("queue comment %s#%s failed: %s", h["repo"], h["number"], exc)
-            continue
-        stats["written"] += 1
     return stats
 
 
