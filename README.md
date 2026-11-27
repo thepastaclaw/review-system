@@ -1103,6 +1103,33 @@ before publishing, so a push or base update during review invalidates the run an
 new head instead of approving an obsolete commit. The published provenance identifies when
 the fresh final gate ran.
 
+### The bot's own stale "changes requested"
+
+GitHub shows a reviewer's latest approval, change request or dismissal; a COMMENT never
+replaces it. A final verdict that leaves no blocker standing but posts as a COMMENT (disputed
+blockers withhold the approval, Phase 1 only, a same-sha summary, a conversation's verdict
+follow-up that cannot approve) therefore left the bot's earlier CHANGES_REQUESTED showing,
+and maintainers read the PR as still blocked (dashpay/dash#8198, 2026-11-27). After posting
+such a review, the worker finds the bot's newest change request GitHub still counts (after
+its last approval or dismissal, `publish.stale_change_requests`) and:
+
+- with no disputed blocker either, dismisses it (`dismissPullRequestReview`), the message
+  linking the new review (`review.stale_request_dismissed`). The dismissal is remembered
+  (kv `review.self_dismissed:…`), so the step-back hold never reads it as a maintainer
+  overruling the bot;
+- with disputed blockers left, does not dismiss: it adds under the new review's heading
+  that GitHub still shows the earlier change request, that a maintainer can dismiss it, and
+  links each disputed finding's thread (`review.stale_request_noted`, once per review, on
+  every such round while the change request stands).
+  `[scheduling] dismiss_stale_when_disputed = true` dismisses in this case too.
+
+A dismissal GitHub refuses (it needs write access to the repository) gets the same note,
+saying the bot could not dismiss it (`review.stale_request_failed`). An approval replaces the
+request by itself, a preliminary review or a degraded (stand-in) one never touches it, and
+policy v12 settles a dispute as a deferral, so it cannot tell them apart and skips
+(`review.stale_request_skipped`). A refused or failed settle is tried again on the next final
+round, not retried.
+
 A head that is obsolete when the worker checks it (at checkout, before publishing, before a
 conversation posts) is not a failed review: a push moved the PR's head past it, or the PR
 closed or merged. The run ends `cancelled` (reason `head superseded: live head … != assigned
@@ -1410,8 +1437,8 @@ verifier lanes):
   for the link). The `conceded` row keeps the tracking link on a second line of its body
   (a later row without one keeps the earlier link); the corrected review summary and the
   root's Deferred line show it.
-- Lifted findings on threads that stay open (the bot has no write access, e.g.
-  dashpay/dash, so `resolveReviewThread` is refused; deferrals are never resolved) would
+- Lifted findings on threads that stay open (where the bot has no write access, e.g.
+  dashpay/platform, `resolveReviewThread` is refused; deferrals are never resolved) would
   still read as an open 🔴. The bot edits its own root comment instead: a quoted status
   line (``> ✅ **Withdrawn** at `<sha>` ``, `⏭️ **Deferred**`, …) under the finding marker,
   tagged `<!-- thepastaclaw-thread-status v1 -->`, replaced on change and removed when a

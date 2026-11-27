@@ -704,13 +704,23 @@ def edit_review_comment(gh: Gh, repo: str, comment_id: int, body: str) -> None:
 
 
 def edit_review(gh: Gh, node_id: str, body: str) -> None:
-    """Replace the body of one of our own reviews. GraphQL, not REST: on dashpay/dash (triage
-    access) `PUT …/pulls/<n>/reviews/<id>` answers 404 for the bot's own review, while
-    `updatePullRequestReview` succeeds."""
+    """Replace the body of one of our own reviews. GraphQL, not REST: on dashpay/dash
+    `PUT …/pulls/<n>/reviews/<id>` answered 404 for the bot's own review (while it had
+    triage access), while `updatePullRequestReview` succeeds."""
     gh.graphql(
         "mutation($id: ID!, $body: String!) { updatePullRequestReview(input: "
         "{pullRequestReviewId: $id, body: $body}) { pullRequestReview { id } } }",
         {"id": node_id, "body": body},
+    )
+
+
+def dismiss_review(gh: Gh, node_id: str, message: str) -> None:
+    """Dismiss one of our own reviews. GraphQL, as `edit_review`: the REST review endpoints
+    answer 404 for the bot's own review on dashpay/dash."""
+    gh.graphql(
+        "mutation($id: ID!, $message: String!) { dismissPullRequestReview(input: "
+        "{pullRequestReviewId: $id, message: $message}) { pullRequestReview { id state } } }",
+        {"id": node_id, "message": message},
     )
 
 

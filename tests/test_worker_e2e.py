@@ -776,6 +776,47 @@ def test_trivial_tier_publishes_final_from_phase1(cfg, conn, gh, lanes):
     assert "Final review complete — Phase 1 only" in gate and "triage: trivial" in gate
 
 
+def test_a_clean_final_comment_dismisses_the_bots_stale_change_request(cfg, conn, gh, lanes):
+    """dashpay/dash#8198 (2026-11-27): a re-review that leaves nothing blocking but posts as a
+    COMMENT (here a Phase-1-only final) does not replace the bot's earlier CHANGES_REQUESTED
+    on GitHub; the run dismisses it, linking the new review."""
+    gh.posted_reviews.append(
+        {"id": 4000, "event": "REQUEST_CHANGES", "body": "old", "commit_id": "b" * 40}
+    )
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = {**_verifier([]), "review_action": "APPROVE"}
+    lanes.triage = {"tier": "trivial", "reasoning": "typo fix"}
+    _, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "COMMENT" and "phase=final" in review["body"]
+    assert len(gh.dismissals) == 1
+    node, message = gh.dismissals[0]
+    assert node == "PRR_4000" and f"pullrequestreview-{review['id']}" in message
+    assert (
+        conn.execute(
+            "SELECT detail FROM events WHERE kind='review.stale_request_dismissed'"
+        ).fetchone()["detail"]
+        == "4000"
+    )
+
+
+def test_a_preliminary_review_never_touches_the_stale_change_request(cfg, conn, gh, lanes):
+    """Only a final verdict settles the earlier change request: a clean preliminary (Phase 2
+    turned off) leaves it alone."""
+    cfg = dataclasses.replace(cfg, policy=dataclasses.replace(cfg.policy, phase2_enabled=False))
+    gh.posted_reviews.append(
+        {"id": 4000, "event": "REQUEST_CHANGES", "body": "old", "commit_id": "b" * 40}
+    )
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    _, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    review = gh.posted_reviews[-1]
+    assert "phase=preliminary" in review["body"] and review["event"] == "COMMENT"
+    assert gh.dismissals == [] and gh.review_edits == []
+
+
 def test_trivial_tier_with_blockers_stays_preliminary(cfg, conn, gh, lanes):
     lanes.reviewer["default"] = {
         "summary": "ok",
@@ -1873,6 +1914,10 @@ def test_conversation_conceding_every_blocker_lifts_request_changes(cfg, conn, g
     assert "conversation lane" in upd["body"] and "the code was not re-reviewed" in upd["body"]
     # the seeded publication has no verifier record: no approval can rest on it
     assert "Not approved: the verifier record an approval after discussion rests on" in upd["body"]
+    # the COMMENT does not replace the standing CHANGES_REQUESTED on GitHub: with nothing
+    # left blocking or disputed, the bot dismisses its own (dashpay/dash#8198)
+    [(node, message)] = gh.dismissals
+    assert node == "PRR_4242" and f"pullrequestreview-{upd['id']}" in message
     ev = conn.execute("SELECT detail FROM events WHERE kind='review.verdict_updated'").fetchone()
     assert "CHANGES_REQUESTED -> COMMENT" in ev["detail"] and "conversation" in ev["detail"]
     assert gh.gate_bodies[-1].splitlines()[1].startswith("✅ Final review complete — no blockers")

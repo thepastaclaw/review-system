@@ -141,7 +141,14 @@ def test_a_dispute_is_answered_on_its_argument_then_left_to_the_maintainers(cfg,
     assert '"prior_status": "DISPUTED"' in _verifier_prompts(lanes)[-1]
     body = gh.posted_reviews[-1]["body"]
     assert gh.posted_reviews[-1]["event"] != "REQUEST_CHANGES"
-    assert blocker["title"] not in body and "Disputed — left to maintainers" not in body
+    # the round-one change request still shows on GitHub: the review says a maintainer can
+    # dismiss it and links the dispute there, and nowhere else (dashpay/dash#8198)
+    lines = body.split("\n")
+    start = lines.index(publish.STALE_REQUEST_NOTE_MARKER)
+    end = lines.index("", start)
+    assert f"[{blocker['title']}]({URL})" in "\n".join(lines[start:end])
+    rest = "\n".join(lines[:start] + lines[end:])
+    assert blocker["title"] not in rest and "Disputed — left to maintainers" not in rest
     assert len(gh.replies) == replies
 
 
@@ -377,6 +384,11 @@ def test_conversation_marks_a_dispute_answered_before_disputed(cfg, conn, gh, la
     update = gh.posted_reviews[-1]
     assert update["event"] == "COMMENT"  # REQUEST_CHANGES lifted, but not approved
     assert "are disputed and left to the maintainers" in update["body"]
+    # the standing CHANGES_REQUESTED still shows: left to a maintainer, the dispute linked
+    assert gh.dismissals == []
+    assert publish.STALE_REQUEST_NOTE_MARKER in update["body"]
+    assert "a maintainer can dismiss" in update["body"]
+    assert "#discussion_r900)" in update["body"]
 
 
 # ---- untracked deferrals: asked once ----

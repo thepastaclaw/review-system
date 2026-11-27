@@ -173,6 +173,8 @@ class FakeGh(Gh):
     def __init__(self) -> None:
         super().__init__("gh", runner=self._runner)
         self.calls: list[list[str]] = []
+        self.dismissals: list[tuple[str, str]] = []
+        self.dismiss_error = ""
         self.routes: dict[str, Any] = {}
         self.posted_reviews: list[dict[str, Any]] = []
         self.submitted_reviews: list[dict[str, Any]] = []
@@ -423,6 +425,13 @@ class FakeGh(Gh):
                 return {
                     "data": {"resolveReviewThread": {"thread": {"id": "t", "isResolved": True}}}
                 }
+            if "dismissPullRequestReview" in q:
+                if self.dismiss_error:
+                    raise _GhFailure(self.dismiss_error)
+                node = next(a for a in args if a.startswith("id=")).split("=", 1)[1]
+                message = next(a for a in args if a.startswith("message=")).split("=", 1)[1]
+                self.dismissals.append((node, message))
+                return {"data": {"dismissPullRequestReview": {"pullRequestReview": {"id": node}}}}
             if "updatePullRequestReview" in q:
                 node = next(a for a in args if a.startswith("id=")).split("=", 1)[1]
                 new_body = next(a for a in args if a.startswith("body=")).split("=", 1)[1]
