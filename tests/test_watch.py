@@ -269,6 +269,8 @@ def test_the_queue_pass_gives_way_to_a_hit_and_runs_again(cfg, conn, gh, notifie
     assert order[i : i + 3] == ["queue_comments", "ingest", "schedule"]
     assert q.last == 0.0  # due again
     order.clear()
+    raised.clear()  # another hit during the resumed pass: it runs to the end this time
     d.tick()
     assert "queue_comments" in order
     assert q.last > 0
+    assert not d._queue_yielded

@@ -3,6 +3,7 @@
 import dataclasses
 import hashlib
 import hmac
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -108,6 +109,8 @@ def test_a_signed_label_is_a_hit_once_per_delivery():
     assert r.handle("POST", "/github/webhook", headers("pull_request", other, "d2"), other) == 204
     ping = b'{"zen": "x"}'
     assert r.handle("POST", "/github/webhook", headers("ping", ping, "d3"), ping) == 204
+    odd = json.dumps({"action": "labeled", "repository": "x", "label": 3}).encode()
+    assert r.handle("POST", "/github/webhook", headers("pull_request", odd, "d6"), odd) == 204
     junk = b"not json"
     assert r.handle("POST", "/github/webhook", headers("push", junk, "d4"), junk) == 400
     gate = json.dumps(edited()).encode()
@@ -168,6 +171,16 @@ def test_the_daemon_runs_a_delivered_label_as_a_watch_hit(cfg, conn, gh, notifie
         assert _post(port, body, sign(body)) == 202
         assert _post(port, body, "sha256=00") == 401
         assert _post(port, b"x" * 10, sign(b"x" * 10), length=hook.MAX_BODY + 1) == 413
+        conn_ = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        conn_.request(
+            "POST",
+            "/github/webhook",
+            body=iter([body]),
+            headers={"X-Hub-Signature-256": sign(body), "Transfer-Encoding": "chunked"},
+            encode_chunked=True,
+        )
+        assert conn_.getresponse().status == 411  # said, not a silent bad signature
+        conn_.close()
     finally:
         r.server.shutdown()
     assert d.wake.is_set() and d._due == {watch.INGEST}
@@ -175,7 +188,7 @@ def test_the_daemon_runs_a_delivered_label_as_a_watch_hit(cfg, conn, gh, notifie
         task.fn = lambda: None
     d.run_watched()
     row = conn.execute("SELECT detail FROM events WHERE kind='watch.hit'").fetchone()
-    assert row[0] == "ingest via webhook"
+    assert row[0] == "ingest via webhook pull_request.labeled dashpay/dash#8159"
 
 
 def test_a_receiver_that_cannot_start_leaves_the_polls(cfg, conn, gh, notifier, tmp_path):
@@ -185,3 +198,11 @@ def test_a_receiver_that_cannot_start_leaves_the_polls(cfg, conn, gh, notifier, 
     assert Daemon(cfg, conn, gh=gh, notifier=notifier).start_webhook() is None
     assert conn.execute("SELECT COUNT(*) FROM events WHERE kind='webhook.failed'").fetchone()[0]
     assert Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False).start_webhook() is None
+
+
+def test_listen_must_be_a_port():
+    from reviewsys.config import _webhook
+
+    with pytest.raises(ValueError, match="host:port"):
+        _webhook({"listen": "127.0.0.1:70000"})
+    assert _webhook({"listen": "127.0.0.1:0"}).listen == "127.0.0.1:0"

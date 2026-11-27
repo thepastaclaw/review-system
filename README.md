@@ -1670,7 +1670,7 @@ bot rewrite). Only a daemon that schedules runs it.
 
 The tick loop runs a hit before its next task, and the gate-comment pass, which reads one
 comment per PR and can take minutes, stops before its next read when a hit is waiting (it
-runs again right after). A task that holds the loop over 10 s is logged.
+runs again right after, and that pass runs to the end whatever arrives). A task that holds the loop over 10 s is logged.
 
 ### The webhook: the moment it happens
 
@@ -1684,7 +1684,8 @@ at least 32 characters; the daemon refuses a file others can read), compared in 
 an unsigned or wrongly signed one gets 401, a body over 1 MB 413. Two deliveries do anything:
 `pull_request.labeled` with the review-now label and `issue_comment.edited` on the bot's gate
 comment with a box ticked, both on an enabled repo; each is a hit like the watch's (event
-`watch.hit` with `via webhook`), and a redelivery of one already acted on is a no-op. The App
+`watch.hit … via webhook <event> <repo>#<n>`), and a redelivery of one already acted on is a
+no-op. A POST without Content-Length gets 411; at most 16 requests are served at once (503). The App
 needs the Pull requests and Issues read permissions and the Pull request and Issue comment
 events. A receiver that cannot start (`webhook.failed`) leaves the watch and the polls, which
 stay the fallback either way.

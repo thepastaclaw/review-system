@@ -94,6 +94,7 @@ class Daemon:
         self.wake = threading.Event()
         self._due: set[str] = set()
         self._due_from: set[str] = set()  # "watch" / "webhook": who asked, for the event
+        self._queue_yielded = False  # the last gate-comment pass gave way to a hit
         self._due_lock = threading.Lock()
         self.watcher = (
             watch.Watcher(Gh(cfg.gh_bin), cfg.bot_login, cfg.enabled_repos)
@@ -162,8 +163,17 @@ class Daemon:
         return route_inbox(self.conn, self.cfg, self.gh, self.notifier)
 
     def t_queue_comments(self) -> object:
-        stats = update_queue_comments(self.conn, self.cfg, self.gh, should_yield=self._hit_waiting)
+        # a pass resumed after giving way runs to the end: hits less than a pass apart would
+        # otherwise keep its later loops (ticked draft boxes, the comment writes) from running
+        resumed, self._queue_yielded = self._queue_yielded, False
+        stats = update_queue_comments(
+            self.conn,
+            self.cfg,
+            self.gh,
+            should_yield=(lambda: False) if resumed else self._hit_waiting,
+        )
         if stats["yielded"]:
+            self._queue_yielded = True
             for task in self.tasks:
                 if task.name == "queue_comments":
                     task.rerun = True  # once the hit ran, not a full interval later
@@ -331,7 +341,7 @@ class Daemon:
         """A signed delivery asked for `task` (the receiver's thread): as a watch hit."""
         with self._due_lock:
             self._due.add(task)
-            self._due_from.add("webhook")
+            self._due_from.add(f"webhook {detail}")
         self.wake.set()
 
     def start_webhook(self) -> hook.Receiver | None:
@@ -347,7 +357,7 @@ class Daemon:
                 self.webhook_hit,
             )
             receiver.start()
-        except (hook.HookError, OSError) as exc:
+        except (hook.HookError, OSError, OverflowError) as exc:
             log.error("webhook receiver not started: %s", exc)
             with tx(self.conn):
                 event(self.conn, "webhook.failed", detail=str(exc))

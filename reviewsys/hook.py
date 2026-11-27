@@ -1,12 +1,15 @@
 """GitHub App webhook receiver: a review-now label or a ticked gate box, the moment it happens.
 
-GitHub posts each delivery to a tunnel (Tailscale Funnel or a Cloudflare tunnel) that forwards
-it to this listener on a local port. Nothing is trusted before its X-Hub-Signature-256 matches
+GitHub posts each delivery to a Cloudflare tunnel that forwards only the webhook path to this
+listener on a local port. Nothing is trusted before its X-Hub-Signature-256 matches
 the shared secret (constant-time). Only two deliveries do anything: `pull_request.labeled` with
 the review-now label and `issue_comment.edited` on the bot's gate comment with a box ticked.
 Each makes the same pass a watch hit does (watch.py) due now, the ingest or the queue-comment
 pass, which is unchanged and idempotent: the polls and the watch stay the fallback, and a
 request all of them see asks for one review. The listener thread touches no database.
+
+GitHub signs the body only, so a captured delivery could be replayed under a new delivery id;
+all it can do is run one of those passes early, which they are made to bear.
 """
 
 from __future__ import annotations
@@ -35,6 +38,9 @@ MAX_BODY = 1 << 20  # GitHub caps payloads at 25 MB; the two we act on are a few
 SEEN_DELIVERIES = 1000
 MIN_SECRET_CHARS = 32
 READ_TIMEOUT_S = 10
+MAX_HANDLERS = (
+    16  # requests served at once; more get 503 (GitHub retries nothing, the watch has it)
+)
 
 
 class HookError(Exception):
@@ -62,21 +68,25 @@ def signed(secret: bytes, body: bytes, header: str | None) -> bool:
     return hmac.compare_digest(want.encode(), header.encode())
 
 
+def _obj(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def classify(event: str, payload: dict[str, Any], bot_login: str, repos: set[str]) -> str | None:
     """The pass a delivery asks for, or None."""
-    repo = str((payload.get("repository") or {}).get("full_name") or "").lower()
+    repo = str(_obj(payload.get("repository")).get("full_name") or "").lower()
     if repo not in repos:
         return None
     action = payload.get("action")
     if event == "pull_request" and action == "labeled":
-        name = str((payload.get("label") or {}).get("name") or "")
+        name = str(_obj(payload.get("label")).get("name") or "")
         return INGEST if name.lower() == REVIEW_NOW_LABEL else None
     if event == "issue_comment" and action == "edited":
-        comment = payload.get("comment") or {}
+        comment = _obj(payload.get("comment"))
         body = str(comment.get("body") or "")
         if (
-            (payload.get("issue") or {}).get("pull_request")
-            and str((comment.get("user") or {}).get("login") or "").lower() == bot_login.lower()
+            _obj(payload.get("issue")).get("pull_request")
+            and str(_obj(comment.get("user")).get("login") or "").lower() == bot_login.lower()
             and GATE_MARKER in body
             and (priority_requested(body) or normal_requested(body))
         ):
@@ -109,7 +119,7 @@ class Receiver:
         if method != "POST":
             return 405
         if not signed(self.secret, body, headers.get("X-Hub-Signature-256")):
-            log.warning("webhook: unsigned or bad signature, %d bytes", len(body))
+            log.debug("webhook: unsigned or bad signature, %d bytes", len(body))
             return 401
         delivery = str(headers.get("X-GitHub-Delivery") or "")
         with self._lock:
@@ -129,7 +139,7 @@ class Receiver:
         task = classify(event, payload, self.bot_login, self.repos)
         if task is None:
             return 204
-        number = (payload.get("pull_request") or payload.get("issue") or {}).get("number")
+        number = _obj(payload.get("pull_request") or payload.get("issue")).get("number")
         detail = f"{event}.{payload.get('action')} {payload['repository']['full_name']}#{number}"
         log.info("webhook %s (delivery %s) -> %s", detail, delivery, task)
         self.on_hit(task, detail)
@@ -138,13 +148,33 @@ class Receiver:
     def start(self) -> ThreadingHTTPServer:
         host, _, port = self.cfg.listen.rpartition(":")
         receiver = self
+        slots = threading.BoundedSemaphore(MAX_HANDLERS)
 
         class Handler(BaseHTTPRequestHandler):
             timeout = READ_TIMEOUT_S
 
             def _serve(self) -> None:
+                if not slots.acquire(blocking=False):
+                    self._answer(503)
+                    return
                 try:
-                    length = int(self.headers.get("Content-Length") or 0)
+                    self._answer(self._status())
+                finally:
+                    slots.release()
+
+            def _answer(self, status: int) -> None:
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def _status(self) -> int:
+                raw = self.headers.get("Content-Length")
+                if raw is None:
+                    # GitHub always sends a length; a chunked body would read as empty and
+                    # fail the signature unexplained
+                    return 411 if self.command == "POST" else 405
+                try:
+                    length = int(raw)
                 except ValueError:
                     length = -1
                 if length < 0 or length > MAX_BODY:
@@ -156,9 +186,7 @@ class Receiver:
                     except Exception:
                         log.exception("webhook handler failed")
                         status = 500
-                self.send_response(status)
-                self.send_header("Content-Length", "0")
-                self.end_headers()
+                return status
 
             do_POST = do_GET = do_PUT = do_DELETE = do_HEAD = _serve
 

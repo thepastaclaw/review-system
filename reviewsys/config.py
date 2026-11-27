@@ -1509,7 +1509,7 @@ def _webhook(c: dict[str, Any]) -> WebhookConfig:
         secret_file=Path(str(c.get("secret_file") or d.secret_file)).expanduser(),
     )
     host, _, port = out.listen.rpartition(":")
-    if not host or not port.isdigit():
+    if not host or not port.isdigit() or int(port) > 65535:
         raise ValueError(f"[webhook] listen must be host:port, not {out.listen!r}")
     if not out.path.startswith("/"):
         raise ValueError("[webhook] path must start with /")
