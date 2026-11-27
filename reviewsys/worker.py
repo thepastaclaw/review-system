@@ -684,11 +684,14 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
     full = _gate_defaults(ctx, kw)
     if status == "in_progress":
         full["run_id"] = ctx.run_id
-        if not ctx.priority and not ctx.is_audit:  # upgraded since the run started?
-            got = ctx.conn.execute(
-                "SELECT priority FROM heads WHERE id=?", (ctx.head_id,)
-            ).fetchone()
-            ctx.priority = bool(got and got["priority"])
+        if not ctx.priority:  # upgraded since the run started?
+            try:
+                got = ctx.conn.execute(
+                    "SELECT priority FROM heads WHERE id=?", (ctx.head_id,)
+                ).fetchone()
+                ctx.priority = bool(got and got["priority"])
+            except sqlite3.Error as exc:
+                log.warning("priority read for the gate comment failed: %s", exc)
         full["priority"] = ctx.priority
     body = github.gate_body(status, ctx.sha, **full)
     try:
