@@ -1616,6 +1616,28 @@ off), and discloses it: the provenance starts with "Ad hoc review: this reposito
 no PastaClaw review skill …" and the gate comment carries "ad hoc (no repo skill)".
 Open-PR polling still covers only enabled repos; ad hoc is mention-driven by design.
 
+## Review-now label (skip the push debounce)
+
+A PR carrying `pastaclaw:review-now` (`ingest.REVIEW_NOW_LABEL`, matched case-insensitively)
+has its current head reviewed now, without the 30-minute push debounce: an agent that knows it
+is done with a PR adds it instead of waiting (lklimek, 2026-11-27). Ingest sees it on its next
+poll (every `ingest_interval_seconds`, 3 minutes) and asks for the head exactly as the gate
+comment's **Request normal review** box does (`normal_request`: eligible at once, behind
+priority reviews; overriding the draft and skip-label rules like any explicit request). Each
+commit is asked for once per label (kv `review_now:<repo>#<n>`), so a label left on never
+re-reviews a finished head; a push while it is on is the new head, asked for at once too.
+
+Once the requested review ended (done or failed; or the PR closed), the ingest task takes
+the label off (`labels.release_review_now`, event `label.review_now_released`), so the next
+push waits out the debounce again unless someone adds it again. A label the bot cannot
+remove keeps its record (nothing is asked again for that commit) and is tried again next pass.
+
+The daemon creates the label (green, with a description) on each watched repo that lacks it,
+once per start (`label.review_now_created`); that needs write access, so where the bot has
+less it is recorded once (`label.review_now_missing`) and someone with write access must
+create it (GitHub also creates it when such a person first adds it to a PR). The verdict
+label sync (`pastaclaw:approved` etc.) leaves it alone.
+
 ## Skip label (PRs that must not be reviewed)
 
 A PR carrying a label from `[scheduling] skip_labels` (default `["tag:skip-review"]`,

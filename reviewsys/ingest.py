@@ -96,6 +96,18 @@ AUTOMATIC_TRIGGERS = frozenset({Trigger.NEW_PR.value, Trigger.NEW_PUSH.value})
 SKIPPABLE_TRIGGERS = AUTOMATIC_TRIGGERS | {Trigger.CI_FAILED.value}
 
 
+# a PR label anyone who may label the PR adds to have its current head reviewed now, without
+# the push debounce, like the gate comment's "Request normal review" box (lklimek,
+# 2026-11-27: agents that know they are done); labels.release_review_now takes it off once
+# that review ended, so the next push waits out the debounce again
+REVIEW_NOW_LABEL = "pastaclaw:review-now"
+
+
+def review_now_key(repo: str, number: int) -> str:
+    """kv: the commit the PR's review-now label already asked a review of."""
+    return f"review_now:{repo}#{number}"
+
+
 def skip_noted_key(repo: str, number: int) -> str:
     """kv: the commit whose gate comment last got the skip-label note (queue_status.py)."""
     return f"queue.skip_noted:{repo}#{number}"
@@ -530,6 +542,19 @@ def ingest_repo(
             if p.author.lower() in IGNORED_AUTHORS:
                 stats["ignored"] += 1
                 continue
+            if (
+                REVIEW_NOW_LABEL in (n.lower() for n in p.labels)
+                and kv_get(conn, review_now_key(repo, p.number)) != p.head_sha
+            ):
+                # an explicit request, as the normal box: no debounce, and the draft and skip
+                # label rules below leave it running. Once per commit the label is seen on
+                stats[
+                    enqueue_head(
+                        conn, cfg, repo, p.number, p.head_sha, Trigger.NORMAL_REQUEST, ts=ts
+                    )
+                ] += 1
+                kv_set(conn, review_now_key(repo, p.number), p.head_sha)
+                event(conn, "head.review_now", repo=repo, number=p.number, detail=p.head_sha[:8])
             if label:
                 # checked before the draft rule: a labelled draft gets no draft comment either
                 if skip_pr_heads(conn, repo, p.number, p.head_sha, ts=ts):

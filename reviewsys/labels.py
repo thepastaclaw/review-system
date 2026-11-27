@@ -29,7 +29,7 @@ from urllib.parse import quote
 
 from .db import event, fmt_ts, kv_get, kv_set, now_dt, parse_ts, tx
 from .gh import Gh
-from .ingest import reviewed_sha
+from .ingest import REVIEW_NOW_LABEL, review_now_key, reviewed_sha
 from .models import FailKind, ReviewError
 from .publish import canonical_event
 
@@ -193,4 +193,91 @@ def _current(gh: Gh, repo: str, number: int) -> set[str]:
     if not isinstance(data, list):
         return set()
     names = {str(lbl.get("name") or "") for lbl in data if isinstance(lbl, dict)}
-    return {name for name in names if name.startswith(PREFIX)}
+    # only the verdict labels: `pastaclaw:review-now` is the PR's, until release_review_now
+    return names & set(VERDICT_LABELS.values())
+
+
+# ---- the review-now label (ingest.REVIEW_NOW_LABEL) ----
+
+REVIEW_NOW_COLOR = "0e8a16"
+REVIEW_NOW_DESCRIPTION = (
+    "PastaClaw: review the current head now, without the 30-minute push debounce; "
+    "removed once that review is done"
+)
+
+
+def ensure_review_now_label(conn: sqlite3.Connection, gh: Gh, repo: str) -> bool:
+    """Create the review-now label on `repo` when it lacks it. Needs write access: where the
+    bot has less, the label must be created by someone who may (GitHub also creates it when
+    such a person first adds it); that is recorded once (`label.review_now_missing`).
+    True when the label exists."""
+    name = quote(REVIEW_NOW_LABEL, safe="")
+    try:
+        gh.api(f"repos/{repo}/labels/{name}")
+        return True
+    except ReviewError as exc:
+        if exc.kind is FailKind.INFRA:
+            raise
+    try:
+        gh.api(
+            f"repos/{repo}/labels",
+            method="POST",
+            body={
+                "name": REVIEW_NOW_LABEL,
+                "color": REVIEW_NOW_COLOR,
+                "description": REVIEW_NOW_DESCRIPTION,
+            },
+        )
+    except ReviewError as exc:
+        with tx(conn):
+            event(conn, "label.review_now_missing", repo=repo, detail=exc.message[:200])
+        return False
+    with tx(conn):
+        event(conn, "label.review_now_created", repo=repo)
+    return True
+
+
+def release_review_now(conn: sqlite3.Connection, gh: Gh) -> int:
+    """Take the review-now label off each PR whose requested review ended (done, failed, or
+    its commit superseded with no label left to ask for the new one; or its PR closed), so a later push waits out the debounce again. A label that cannot
+    be removed keeps its record, which stops ingest asking again for that commit; it is
+    tried again next pass. Returns labels released."""
+    released = 0
+    rows = conn.execute("SELECT key, value FROM kv WHERE key LIKE 'review_now:%'").fetchall()
+    for row in rows:
+        ref, sha = str(row["key"]).removeprefix("review_now:"), str(row["value"])
+        repo, _, num = ref.rpartition("#")
+        if not num.isdigit():
+            continue
+        number = int(num)
+        pr = conn.execute(
+            "SELECT state FROM prs WHERE repo=? AND number=?", (repo, number)
+        ).fetchone()
+        head = conn.execute(
+            "SELECT status FROM heads WHERE repo=? AND number=? AND sha=? AND queue='live'",
+            (repo, number, sha),
+        ).fetchone()
+        open_ = pr is not None and pr["state"] == "open"
+        if open_ and head is not None and head["status"] in ("queued", "running"):
+            continue  # its review has not ended
+        if open_:
+            try:
+                gh.api(
+                    f"repos/{repo}/issues/{number}/labels/{quote(REVIEW_NOW_LABEL, safe='')}",
+                    method="DELETE",
+                )
+            except ReviewError as exc:
+                if exc.kind is FailKind.INFRA or "not found" not in exc.message.lower():
+                    log.warning("review-now label on %s#%s not removed: %s", repo, number, exc)
+                    continue
+        with tx(conn):
+            conn.execute("DELETE FROM kv WHERE key=?", (review_now_key(repo, number),))
+            event(
+                conn,
+                "label.review_now_released",
+                repo=repo,
+                number=number,
+                detail=f"{sha[:8]} {head['status'] if head else 'no head'}",
+            )
+        released += 1
+    return released
