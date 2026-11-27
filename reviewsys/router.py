@@ -140,7 +140,12 @@ def _route_row(
     watched = repo in cfg.enabled_repos
     own_pr = str((meta.get("user") or {}).get("login") or "").lower() == cfg.bot_login.lower()
     head = str((meta.get("head") or {}).get("sha") or "")
-    is_open = meta.get("state") == "open" and not meta.get("draft")
+    # a draft counts: everything routed below is someone asking (a mention, a review request,
+    # an answer to a finding), and an ask runs on a draft as a ticked box does (Pasta,
+    # 2026-11-26: "the manual tick on a PR always overrides"); ingest keeps such a head
+    # running while the PR stays a draft. Before 2026-11-27 a reply on a draft was dropped
+    # (dashpay/dash#7638: an answer to a blocking finding was never read)
+    is_open = meta.get("state") == "open"
 
     if kind == "review_requested" and watched and is_open and head and not own_pr:
         with tx(conn):
