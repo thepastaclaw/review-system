@@ -1082,6 +1082,52 @@ def _finding_routes(gh, cid=2):
     }
 
 
+def test_review_reply_on_a_draft_is_read(cfg, conn, gh, notifier):
+    """dashpay/dash#7638 (2026-11-27): the author answered a blocking finding on a draft and
+    the reply was dropped, so the finding stood unanswered. An answer is an ask, and an ask
+    runs on a draft like a ticked box; ingest leaves the head alone while the PR stays a draft."""
+    from reviewsys.ingest import ingest_prs
+
+    reply = _reply_comment(2, 1)
+    gh.routes["repos/dashpay/platform/pulls/comments/1"] = {
+        "user": {"login": "thepastaclaw"},
+        "body": "<!-- thepastaclaw-review v1 finding=abc dedupe=x -->\n**🔴 Blocking: T**\n\nbody",
+    }
+    gh.routes["repos/dashpay/platform/pulls/comments/2"] = reply
+    _reviewed(conn, cfg, 7, "f" * 40)
+    gh.pr = {**gh.pr, "head": {"sha": "f" * 40}, "draft": True}
+    with tx(conn):
+        conn.execute(
+            "INSERT INTO inbox (source_id, kind, repo, number, actor, body, occurred_at, seen_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (
+                "reply:2",
+                "review_reply",
+                "dashpay/platform",
+                7,
+                "knst",
+                "https://api.github.com/repos/dashpay/platform/pulls/comments/2",
+                now(),
+                now(),
+            ),
+        )
+    assert route_inbox(conn, cfg, gh, notifier)["review_reply"] == 1
+    gh.open_prs["dashpay/platform"] = [
+        {
+            "number": 7,
+            "headRefOid": "f" * 40,
+            "isDraft": True,
+            "title": "PR 7",
+            "updatedAt": "2026-11-27T00:00:00Z",
+            "author": {"login": "lklimek"},
+            "labels": {"nodes": []},
+        }
+    ]
+    ingest_prs(conn, cfg, gh)  # still a draft: the asked-for head is not closed
+    head = conn.execute("SELECT status, trigger FROM heads WHERE number=7 AND sha=?", ("f" * 40,))
+    assert tuple(head.fetchone()) == ("queued", "review_reply")
+
+
 def test_reply_after_a_push_leaves_that_push_to_its_own_review(cfg, conn, gh, notifier):
     """ "Fixed in <sha>" right after a push: the push is reviewed like any other (no priority,
     the debounce intact, still carryable) and its review reads and answers the reply; the row

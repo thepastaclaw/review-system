@@ -1171,9 +1171,11 @@ run's context may predate the reply) waits until the run ends, then is routed as
 (a carried push included: no run read the reply), and a transient GitHub failure
 while looking up the thread root leaves the row for the next tick. Both waits are
 bounded by `DEFER_MAX` (6 h), after which the row is marked
-`review_reply_expired` / `ignored_unfetchable`. Replies to other people's threads, on
-draft PRs, or on the bot's own PRs are not review triggers (the last go to the own-PR
-comment batch).
+`review_reply_expired` / `ignored_unfetchable`. Replies to other people's threads or on
+the bot's own PRs are not review triggers (the last go to the own-PR comment batch). A
+draft is no exception: a reply, like a mention or a review request, is someone asking, and
+an ask runs on a draft as a ticked box does (until 2026-11-27 replies on drafts were dropped,
+so an author's answer to a blocking finding on dashpay/dash#7638 went unread).
 
 A finding published only in the review body has no thread to reply under, so people
 answer it in a top-level PR comment. On a watched repo, a top-level comment from a trusted
