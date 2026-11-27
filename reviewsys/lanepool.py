@@ -505,7 +505,7 @@ def gated(
     conn: Callable[[], sqlite3.Connection],
     cfg: Config,
     run_stopped: Callable[[], bool],
-    queue: str,
+    queue: str | Callable[[], str],
     run_id: int,
     clock: Callable[[], float] = time.monotonic,
 ) -> LaneRunner:
@@ -513,7 +513,8 @@ def gated(
     slot returns a result that never `started`. `conn` returns the calling thread's
     connection (lanes run on parallel threads); `queue` (`priority`, `live`, `audit`, or
     `replay` for a policy eval's own wait) and `run_id` are the run's place in every pool's
-    line. The run's deadline is pushed past the time its lanes only waited for slots
+    line; a callable `queue` is asked as each lane gets in line (a live run upgraded to
+    priority mid-review: the lanes after it line up ahead). The run's deadline is pushed past the time its lanes only waited for slots
     (`StallClock`), the stretches in which one waited for a paused pool among them, those
     uncapped (see the module docstring)."""
     slot_dir = cfg.work_dir / "lane-slots"
@@ -683,7 +684,7 @@ def gated(
                     pool,
                     lambda: limit(conn(), cfg, pool) or 1,
                     stop,
-                    rank=rank_of(queue, side=not spec.parallel),
+                    rank=rank_of(queue() if callable(queue) else queue, side=not spec.parallel),
                     run_id=run_id,
                     admit=gpt_idle if pool == COMPARE_POOL else None,
                     on_wait=lambda: credit(stall.flush()),

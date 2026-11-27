@@ -13,6 +13,11 @@ from .gh import Gh
 from .models import FailKind, ReviewError
 
 GATE_MARKER = "<!-- thepastaclaw-gate v1 -->"
+IN_PROGRESS = "🔍 Review in progress"
+# on a running normal review's gate comment; queue_status.promote_running honours the tick
+RUNNING_PRIORITY_BOX = (
+    "- [ ] **Request priority review** — click to give the rest of this review priority."
+)
 REVIEW_MARKER = "<!-- thepastaclaw-review v1 -->"
 # stand-in models were in use; prefixes gate comments, queue comments and review titles
 DEGRADED_BADGE = "⚠️ DEGRADED"
@@ -457,6 +462,7 @@ def gate_body(
     block_above: int | None = None,
     run_id: int | None = None,
     carried_from: str | None = None,
+    priority: bool | None = None,
 ) -> str:
     s = sha[:8]
     t = f" · triage: {tier}" if tier else ""
@@ -470,7 +476,12 @@ def gate_body(
     warn = f"{DEGRADED_BADGE} —" if degraded else ""
     if status == "in_progress":
         link = f" · [live progress]({DASHBOARD_URL}#run={run_id})" if run_id is not None else ""
-        return f"{GATE_MARKER}\n🔍 Review in progress (commit {s}){link}"
+        line = f"{GATE_MARKER}\n{IN_PROGRESS} (commit {s}){link}"
+        if priority:
+            return f"{line} · priority"
+        if priority is False:  # a normal review: its author may still upgrade it
+            return f"{line}\n\n{RUNNING_PRIORITY_BOX}"
+        return line
     if status == "done":
         if phase == "preliminary":
             # the score is only passed when the points gate deferred Phase 2

@@ -4500,3 +4500,34 @@ def test_fast_priority_off_keeps_priority_runs_on_the_default_tier(cfg, conn, gh
     cfg = dataclasses.replace(cfg, fast_priority=False)
     envs = _lane_envs(cfg, conn, gh, lanes, Trigger.MENTION)
     assert not any("ANTHROPIC_CUSTOM_HEADERS" in e for e in envs)
+
+
+def test_a_normal_review_upgraded_mid_run_takes_priority_from_its_next_lane(cfg, conn, gh, lanes):
+    """Pasta (2026-11-27): an author may upgrade a running normal review to priority. Nothing
+    restarts; the lanes after the upgrade take the fast tier (and line up ahead)."""
+    import sqlite3
+
+    tier = next(iter(FAST_TIER_ENV.items()))
+    seen = []
+
+    def upgrading(spec, artifact_dir, worktree):
+        seen.append(tier in spec.env)
+        if len(seen) == 1:  # queue_status.promote_running, from another process
+            other = sqlite3.connect(cfg.db_path)
+            other.execute("UPDATE heads SET priority=1 WHERE number=1")
+            other.commit()
+            other.close()
+        return lanes(spec, artifact_dir, worktree)
+
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    with tx(conn):
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.NORMAL_REQUEST)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert conn.execute("SELECT priority FROM heads WHERE number=1").fetchone()[0] == 0
+    status = worker.main(cfg, conn, rid, gh=gh, lane_runner=upgrading, heartbeat=False)
+    assert status == RunStatus.DONE
+    assert seen[0] is False and len(seen) > 1 and all(seen[1:])
+    in_progress = [b for b in gh.gate_bodies if "🔍 Review in progress" in b]
+    assert in_progress and "**Request priority review**" in in_progress[0]

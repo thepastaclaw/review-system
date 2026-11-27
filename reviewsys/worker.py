@@ -391,6 +391,8 @@ class RunContext:
     # deferrals recorded before this instant were accepted without tracking (see
     # converse.tracking_required_since); set by `main`
     deferral_cutoff: str = ""
+    # a priority run, or a normal one an author upgraded mid-review (read as each lane starts)
+    priority: bool = False
     # a conversation run (answers replies on a reviewed commit); None until run() knows
     conversation: bool | None = None
     # ---- policy v12 (`review_model_policy.pipeline`); untouched under v11 ----
@@ -682,6 +684,15 @@ def _gate_comment(ctx: RunContext, status: str, **kw: Any) -> None:
     full = _gate_defaults(ctx, kw)
     if status == "in_progress":
         full["run_id"] = ctx.run_id
+        if not ctx.priority:  # upgraded since the run started?
+            try:
+                got = ctx.conn.execute(
+                    "SELECT priority FROM heads WHERE id=?", (ctx.head_id,)
+                ).fetchone()
+                ctx.priority = bool(got and got["priority"])
+            except sqlite3.Error as exc:
+                log.warning("priority read for the gate comment failed: %s", exc)
+        full["priority"] = ctx.priority
     body = github.gate_body(status, ctx.sha, **full)
     try:
         github.upsert_gate_comment(ctx.gh, ctx.repo, ctx.number, ctx.cfg.bot_login, body)
@@ -9227,9 +9238,30 @@ def main(
     queue = "audit" if ctx.is_audit else "priority" if row["priority"] else "live"
     if replay:
         queue = "replay"
-    runner = lane_runner or run_claude_lane
-    if queue == "priority" and cfg.fast_priority:
-        runner = with_overrides(runner, env=FAST_TIER_ENV)
+    ctx.priority = queue == "priority"
+    base = lane_runner or run_claude_lane
+    fast = with_overrides(base, env=FAST_TIER_ENV) if cfg.fast_priority else base
+
+    def lane_queue() -> str:
+        """A live run's queue, read as each lane starts: an author may upgrade a running
+        normal review to priority (queue_status.promote_running); its later lanes then
+        line up ahead and take the fast tier, the lanes already running are left alone."""
+        if queue != "live":
+            return queue
+        if ctx.priority:
+            return "priority"
+        try:
+            got = ctx.conn.execute(
+                "SELECT priority FROM heads WHERE id=?", (ctx.head_id,)
+            ).fetchone()
+        except sqlite3.Error:
+            return "priority" if ctx.priority else queue  # as it was; the next lane asks again
+        ctx.priority = bool(got and got["priority"])
+        return "priority" if ctx.priority else queue
+
+    def runner(spec: LaneSpec, artifact_dir: Path, worktree: Path) -> LaneResult:
+        return (fast if lane_queue() == "priority" else base)(spec, artifact_dir, worktree)
+
     ctx.lane_runner = lanepool.gated(
         sandboxed(
             isolated(runner, cfg.policy.isolates_lane_env),
@@ -9238,7 +9270,7 @@ def main(
         lambda: ctx.conn,
         cfg,
         run_stopped=ctx.cancel_flag.is_set,
-        queue=queue,
+        queue=lane_queue if queue == "live" else queue,
         run_id=run_id,
     )
     ctx.quota_reader = quota_reader
