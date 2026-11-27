@@ -40,6 +40,7 @@ KV_PAGED_AT = "degraded.paged_at"  # last delivered @-mention page
 KV_PAGE_OPEN = "degraded.page_open"  # "1" while #claw has a page with no all-clear yet
 AUDIT_SWEEP_S = 600  # look for merges this often (GitHub search, one query per repo)
 AUDIT_INDEX_S = 900  # regenerate the audit index at most this often
+SLOW_TASK_S = 10  # a task that holds the tick loop longer is logged (and delays watch hits)
 
 
 def acquire_singleton_lock(path: Path) -> IO[str]:
@@ -315,16 +316,18 @@ class Daemon:
             self.wake.set()
         return due
 
-    def run_watched(self) -> set[str]:
-        """Make the passes the watch asked for due now (main thread)."""
+    def run_watched(self, results: dict[str, object] | None = None) -> set[str]:
+        """Run the passes the watch asked for now, then the scheduler (main thread). The tick
+        calls it before each task, so a hit waits for the task in progress, not the tick."""
         with self._due_lock:
             due, self._due = self._due, set()
+        if not due:
+            return due
+        with tx(self.conn):
+            event(self.conn, "watch.hit", detail=",".join(sorted(due)))
         for task in self.tasks:
-            if task.name in due:
-                task.last = 0.0
-        if due:
-            with tx(self.conn):
-                event(self.conn, "watch.hit", detail=",".join(sorted(due)))
+            if task.name in due or task.name == "schedule":
+                self._run(task, results if results is not None else {})
         return due
 
     def _watch_forever(self) -> None:
@@ -338,17 +341,25 @@ class Daemon:
         for task in self.tasks:
             if self.stop:
                 break
+            if self._due:
+                self.run_watched(results)
             if not force and task.last and t - task.last < task.interval_s:
                 continue
-            try:
-                results[task.name] = task.fn()
-            except Exception as exc:
-                log.exception("task %s failed", task.name)
-                results[task.name] = f"error: {exc}"
-                with tx(self.conn):
-                    event(self.conn, f"daemon.task_error.{task.name}", detail=str(exc))
-            task.last = time.monotonic()
+            self._run(task, results)
         return results
+
+    def _run(self, task: Task, results: dict[str, object]) -> None:
+        started = time.monotonic()
+        try:
+            results[task.name] = task.fn()
+        except Exception as exc:
+            log.exception("task %s failed", task.name)
+            results[task.name] = f"error: {exc}"
+            with tx(self.conn):
+                event(self.conn, f"daemon.task_error.{task.name}", detail=str(exc))
+        task.last = time.monotonic()
+        if task.last - started > SLOW_TASK_S:
+            log.info("task %s took %.0f s", task.name, task.last - started)
 
     def run_forever(self) -> None:
         def _stop(*_: object) -> None:
@@ -366,8 +377,7 @@ class Daemon:
             threading.Thread(target=self._watch_forever, name="watch", daemon=True).start()
         try:
             while not self.stop:
-                self.wake.clear()  # before the read: a hit during the tick ends the wait
-                self.run_watched()
+                self.wake.clear()  # before the tick: a hit during it ends the wait
                 self.tick()
                 self.wake.wait(self.cfg.tick_seconds)
         finally:

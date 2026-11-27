@@ -184,8 +184,8 @@ def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, con
     d.tick()  # the first ingest pass
     api.set(EVENTS, [labelled(1)])
     assert d.watch_round() == {watch.INGEST} and d.wake.is_set()
-    assert d.run_watched() == {watch.INGEST}
-    assert "ingest" in d.tick()  # due at once, not 180 s after the last pass
+    results = d.tick()  # the hit runs before the tick's first task, not 180 s later
+    assert "ingest" in results
     d.tick(force=True)  # the regular pass sees the same label
     heads = conn.execute("SELECT trigger FROM heads WHERE number=7").fetchall()
     assert [h["trigger"] for h in heads] == ["normal_request"]
@@ -194,3 +194,24 @@ def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, con
     assert (
         conn.execute("SELECT detail FROM events WHERE kind='watch.hit'").fetchone()[0] == "ingest"
     )
+
+
+def test_a_hit_during_a_tick_runs_before_the_next_task(cfg, conn, gh, notifier):
+    from reviewsys.daemon import Task
+
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False)
+    order = []
+
+    def slow():
+        order.append("slow")
+        with d._due_lock:  # what the watch thread does while this task runs
+            d._due.add("ingest")
+
+    d.tasks = [
+        Task("ingest", 180, lambda: order.append("ingest"), last=1e12),
+        Task("slow", 0, slow),
+        Task("late", 0, lambda: order.append("late")),
+        Task("schedule", 0, lambda: order.append("schedule")),
+    ]
+    d.tick()
+    assert order == ["slow", "ingest", "schedule", "late"]  # the scheduler just ran
