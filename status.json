@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-27T12:17:04Z",
-  "generated_at": "2026-11-27T12:17:05Z",
+  "data_as_of": "2026-11-27T12:18:07Z",
+  "generated_at": "2026-11-27T12:18:08Z",
   "history": {
     "daily": [
       {
@@ -411,7 +411,7 @@
     ],
     "findings_by_severity": [
       {
-        "count": 61374,
+        "count": 61375,
         "severity": "blocking"
       },
       {
@@ -419,7 +419,7 @@
         "severity": "nitpick"
       },
       {
-        "count": 69562,
+        "count": 69566,
         "severity": "suggestion"
       }
     ],
@@ -806,9 +806,9 @@
       },
       {
         "effort": "medium",
-        "lanes": 8553,
-        "tokens_in": 1811961320,
-        "tokens_out": 17028392
+        "lanes": 8555,
+        "tokens_in": 1812754181,
+        "tokens_out": 17034742
       },
       {
         "effort": "high",
@@ -839,11 +839,11 @@
         "tokens_out": 146439516
       },
       {
-        "avg_tokens_per_lane": 1040252.0,
-        "lanes": 10216,
+        "avg_tokens_per_lane": 1040126.0,
+        "lanes": 10218,
         "model": "gpt-6.2-sol",
-        "tokens_in": 10563362939,
-        "tokens_out": 63849466
+        "tokens_in": 10564155800,
+        "tokens_out": 63855816
       },
       {
         "avg_tokens_per_lane": 1019991.0,
@@ -894,8 +894,8 @@
       },
       {
         "run_id": 15284,
-        "tokens_in": 480498,
-        "tokens_out": 15249
+        "tokens_in": 765311,
+        "tokens_out": 17689
       },
       {
         "run_id": 15283,
@@ -904,8 +904,8 @@
       },
       {
         "run_id": 15282,
-        "tokens_in": 1727550,
-        "tokens_out": 62326
+        "tokens_in": 2235598,
+        "tokens_out": 66236
       },
       {
         "run_id": 15281,
@@ -1384,16 +1384,16 @@
       }
     ],
     "totals": {
-      "avg_tokens_per_completed_review": 12836069,
+      "avg_tokens_per_completed_review": 12836135,
       "completed_reviews": 12091,
-      "findings": 135858,
+      "findings": 135863,
       "findings_posted": 16997,
       "reviews": 12915,
       "reviews_imported": 2245,
       "runs": 15287,
-      "tokens_in": 153491165982,
-      "tokens_out": 1709740693,
-      "tokens_total": 155200906675
+      "tokens_in": 153491958843,
+      "tokens_out": 1709747043,
+      "tokens_total": 155201705886
     }
   },
   "live": {
@@ -1401,13 +1401,17 @@
       {
         "attempt": 1,
         "author": "lklimek",
-        "deadline_at": "2026-11-27T18:07:17Z",
-        "deadline_in_seconds": 21013,
+        "deadline_at": "2026-11-27T18:07:51Z",
+        "deadline_in_seconds": 20984,
         "degraded": false,
-        "elapsed_seconds": 587,
-        "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-27T12:17:03Z",
+        "elapsed_seconds": 650,
+        "findings": {
+          "blocking": 1,
+          "nitpick": 0,
+          "suggestion": 4
+        },
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-27T12:18:03Z",
         "id": 15282,
         "lanes": [
           {
@@ -1419,29 +1423,61 @@
             "status": "corrected",
             "tokens_in": 1727550,
             "tokens_out": 62326
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.2-sol",
+            "phase": "verify1",
+            "role": "verifier",
+            "status": "completed",
+            "tokens_in": 508048,
+            "tokens_out": 3910
           }
         ],
         "live_lanes": [
           {
-            "effort": "medium",
+            "effort": "high",
+            "line_length": 12,
+            "line_position": 1,
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "architecture-layering",
+            "since_seconds": 50,
+            "state": "waiting"
+          },
+          {
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.2-sol",
-            "phase": "verify1",
+            "phase": "phase2",
             "pool": "gpt",
-            "role": "verifier",
-            "since_seconds": 95,
+            "role": "general",
+            "since_seconds": 16,
             "state": "running"
+          },
+          {
+            "effort": "high",
+            "line_length": 12,
+            "line_position": 2,
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "security-auditor",
+            "since_seconds": 50,
+            "state": "waiting"
           }
         ],
         "number": 6350,
         "overdue": false,
-        "phase": "verify1",
+        "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/6350",
         "priority": false,
-        "progress": 0.301,
+        "progress": 0.327,
         "queue": "live",
         "queued_at": "2026-11-27T11:35:03Z",
-        "remaining_seconds": 1360,
+        "remaining_seconds": 1338,
         "repo": "dashpay/platform",
         "sha": "33b501149ed0982fafdedf5e83b97fe1f9a75b41",
         "started_at": "2026-11-27T12:07:17Z",
@@ -1499,21 +1535,54 @@
             "status": "ok"
           },
           {
-            "info": {},
+            "info": {
+              "blockers": 1,
+              "findings": 5
+            },
             "name": "verify1",
-            "seconds": 95,
+            "seconds": 108,
             "started_at": "2026-11-27T12:15:29Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "admit_phase2": true,
+              "blockers": 1,
+              "phase2_effort": "high",
+              "tier": "normal"
+            },
+            "name": "gate",
+            "seconds": 0,
+            "started_at": "2026-11-27T12:17:17Z",
+            "status": "ok"
+          },
+          {
+            "info": {
+              "roles": [
+                "general",
+                "architecture-layering",
+                "security-auditor"
+              ]
+            },
+            "lanes_done": 0,
+            "lanes_left": [
+              "general",
+              "architecture-layering",
+              "security-auditor"
+            ],
+            "lanes_total": 3,
+            "name": "phase2",
+            "seconds": 50,
+            "started_at": "2026-11-27T12:17:17Z",
             "status": "running"
           }
         ],
         "tier": "normal",
         "title": "chore: make gitleaks pre-commit pass on the existing tree",
-        "tokens_in": 1727550,
-        "tokens_out": 62326,
+        "tokens_in": 2235598,
+        "tokens_out": 66236,
         "trigger": "new_push",
         "upcoming": [
-          "gate",
-          "phase2",
           "verify2",
           "publish"
         ],
@@ -1523,12 +1592,12 @@
         "attempt": 1,
         "author": "QuantumExplorer",
         "deadline_at": "2026-11-27T18:12:47Z",
-        "deadline_in_seconds": 21343,
+        "deadline_in_seconds": 21280,
         "degraded": false,
-        "elapsed_seconds": 257,
+        "elapsed_seconds": 320,
         "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-27T12:17:03Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-27T12:18:03Z",
         "id": 15283,
         "lanes": [
           {
@@ -1570,7 +1639,7 @@
             "phase": "verify2",
             "pool": "gpt",
             "role": "verifier",
-            "since_seconds": 62,
+            "since_seconds": 125,
             "state": "running"
           }
         ],
@@ -1579,10 +1648,10 @@
         "phase": "verify2",
         "pr_url": "https://github.com/dashpay/grovedb/pull/1077",
         "priority": true,
-        "progress": 0.701,
+        "progress": 0.848,
         "queue": "live",
         "queued_at": "2026-11-27T12:12:17Z",
-        "remaining_seconds": 109,
+        "remaining_seconds": 57,
         "repo": "dashpay/grovedb",
         "sha": "b9df1f7e80b530e93e02ca78e4c729f59403e729",
         "started_at": "2026-11-27T12:12:47Z",
@@ -1654,7 +1723,7 @@
           {
             "info": {},
             "name": "verify2",
-            "seconds": 62,
+            "seconds": 125,
             "started_at": "2026-11-27T12:16:02Z",
             "status": "running"
           }
@@ -1673,16 +1742,16 @@
         "attempt": 1,
         "author": "DCG-Claude",
         "deadline_at": "2026-11-27T18:13:22Z",
-        "deadline_in_seconds": 21378,
+        "deadline_in_seconds": 21315,
         "degraded": false,
-        "elapsed_seconds": 257,
+        "elapsed_seconds": 320,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-27T12:17:03Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-27T12:18:03Z",
         "id": 15284,
         "lanes": [
           {
@@ -1724,29 +1793,39 @@
             "status": "completed",
             "tokens_in": 146388,
             "tokens_out": 1452
+          },
+          {
+            "attempt": 1,
+            "effort": "medium",
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "role": "backport-reviewer",
+            "status": "completed",
+            "tokens_in": 284813,
+            "tokens_out": 2440
           }
         ],
         "live_lanes": [
           {
-            "effort": "medium",
+            "effort": "high",
             "line_position": null,
             "model": "gpt-6.2-sol",
-            "phase": "phase2",
+            "phase": "verify2",
             "pool": "gpt",
-            "role": "backport-reviewer",
-            "since_seconds": 46,
+            "role": "verifier",
+            "since_seconds": 16,
             "state": "running"
           }
         ],
         "number": 8259,
         "overdue": false,
-        "phase": "phase2",
+        "phase": "verify2",
         "pr_url": "https://github.com/dashpay/dash/pull/8259",
         "priority": false,
-        "progress": 0.338,
+        "progress": 0.809,
         "queue": "live",
         "queued_at": "2026-11-27T11:39:57Z",
-        "remaining_seconds": 504,
+        "remaining_seconds": 75,
         "repo": "dashpay/dash",
         "sha": "ca3650ec3a0ecb5efeae389f46dc6ef820c50961",
         "started_at": "2026-11-27T12:12:47Z",
@@ -1833,24 +1912,28 @@
                 "dash-core-commit-history"
               ]
             },
-            "lanes_done": 2,
-            "lanes_left": [
-              "backport-reviewer"
-            ],
+            "lanes_done": 3,
+            "lanes_left": [],
             "lanes_total": 3,
             "name": "phase2",
-            "seconds": 94,
+            "seconds": 141,
             "started_at": "2026-11-27T12:15:30Z",
+            "status": "ok"
+          },
+          {
+            "info": {},
+            "name": "verify2",
+            "seconds": 16,
+            "started_at": "2026-11-27T12:17:51Z",
             "status": "running"
           }
         ],
         "tier": "low",
         "title": "backport: bitcoin#30468, bitcoin#29771",
-        "tokens_in": 480498,
-        "tokens_out": 15249,
+        "tokens_in": 765311,
+        "tokens_out": 17689,
         "trigger": "new_push",
         "upcoming": [
-          "verify2",
           "publish"
         ],
         "wait_seconds": 1970
@@ -1859,16 +1942,16 @@
         "attempt": 1,
         "author": "romchornyi",
         "deadline_at": "2026-11-27T18:14:18Z",
-        "deadline_in_seconds": 21434,
+        "deadline_in_seconds": 21371,
         "degraded": false,
-        "elapsed_seconds": 257,
+        "elapsed_seconds": 320,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 1
         },
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-27T12:17:03Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-27T12:18:03Z",
         "id": 15285,
         "lanes": [
           {
@@ -1905,35 +1988,35 @@
         "live_lanes": [
           {
             "effort": "medium",
-            "line_length": 10,
-            "line_position": 2,
-            "model": "gpt-6.2-sol",
-            "phase": "phase2",
-            "pool": "gpt",
-            "role": "architecture-layering",
-            "since_seconds": 100,
-            "state": "waiting"
-          },
-          {
-            "effort": "medium",
-            "line_length": 10,
-            "line_position": 1,
-            "model": "gpt-6.2-sol",
-            "phase": "phase2",
-            "pool": "gpt",
-            "role": "ffi-engineer",
-            "since_seconds": 100,
-            "state": "waiting"
-          },
-          {
-            "effort": "medium",
-            "line_length": 10,
+            "line_length": 12,
             "line_position": 4,
             "model": "gpt-6.2-sol",
             "phase": "phase2",
             "pool": "gpt",
+            "role": "architecture-layering",
+            "since_seconds": 163,
+            "state": "waiting"
+          },
+          {
+            "effort": "medium",
+            "line_length": 12,
+            "line_position": 3,
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "ffi-engineer",
+            "since_seconds": 163,
+            "state": "waiting"
+          },
+          {
+            "effort": "medium",
+            "line_length": 12,
+            "line_position": 6,
+            "model": "gpt-6.2-sol",
+            "phase": "phase2",
+            "pool": "gpt",
             "role": "general",
-            "since_seconds": 100,
+            "since_seconds": 163,
             "state": "waiting"
           },
           {
@@ -1943,18 +2026,18 @@
             "phase": "phase2",
             "pool": "gpt",
             "role": "platform-versioning",
-            "since_seconds": 9,
+            "since_seconds": 72,
             "state": "running"
           },
           {
             "effort": "medium",
-            "line_length": 10,
-            "line_position": 3,
+            "line_length": 12,
+            "line_position": 5,
             "model": "gpt-6.2-sol",
             "phase": "phase2",
             "pool": "gpt",
             "role": "rust-quality",
-            "since_seconds": 100,
+            "since_seconds": 163,
             "state": "waiting"
           }
         ],
@@ -1963,10 +2046,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/6309",
         "priority": false,
-        "progress": 0.34,
+        "progress": 0.424,
         "queue": "live",
         "queued_at": "2026-11-27T11:40:00Z",
-        "remaining_seconds": 498,
+        "remaining_seconds": 435,
         "repo": "dashpay/platform",
         "sha": "c6ba20073e7be44cf604d66cb56e5b84095bf981",
         "started_at": "2026-11-27T12:12:47Z",
@@ -2068,7 +2151,7 @@
             ],
             "lanes_total": 5,
             "name": "phase2",
-            "seconds": 100,
+            "seconds": 163,
             "started_at": "2026-11-27T12:15:24Z",
             "status": "running"
           }
@@ -2087,17 +2170,17 @@
       {
         "attempt": 1,
         "author": "llbartekll",
-        "deadline_at": "2026-11-27T18:13:08Z",
-        "deadline_in_seconds": 21364,
+        "deadline_at": "2026-11-27T18:14:08Z",
+        "deadline_in_seconds": 21361,
         "degraded": false,
-        "elapsed_seconds": 257,
+        "elapsed_seconds": 320,
         "findings": {
           "blocking": 0,
           "nitpick": 0,
           "suggestion": 0
         },
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-27T12:17:03Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-27T12:18:03Z",
         "id": 15286,
         "lanes": [
           {
@@ -2124,35 +2207,35 @@
         "live_lanes": [
           {
             "effort": "medium",
-            "line_length": 10,
-            "line_position": 6,
+            "line_length": 12,
+            "line_position": 8,
             "model": "gpt-6.2-sol",
             "phase": "phase2",
             "pool": "gpt",
             "role": "architecture-layering",
-            "since_seconds": 10,
+            "since_seconds": 73,
             "state": "waiting"
           },
           {
             "effort": "medium",
-            "line_length": 10,
-            "line_position": 7,
+            "line_length": 12,
+            "line_position": 9,
             "model": "gpt-6.2-sol",
             "phase": "phase2",
             "pool": "gpt",
             "role": "ffi-engineer",
-            "since_seconds": 10,
+            "since_seconds": 73,
             "state": "waiting"
           },
           {
             "effort": "medium",
-            "line_length": 10,
-            "line_position": 5,
+            "line_length": 12,
+            "line_position": 7,
             "model": "gpt-6.2-sol",
             "phase": "phase2",
             "pool": "gpt",
             "role": "general",
-            "since_seconds": 10,
+            "since_seconds": 73,
             "state": "waiting"
           }
         ],
@@ -2161,10 +2244,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/dashpay/platform/pull/6359",
         "priority": false,
-        "progress": 0.304,
+        "progress": 0.379,
         "queue": "live",
         "queued_at": "2026-11-27T11:40:00Z",
-        "remaining_seconds": 588,
+        "remaining_seconds": 525,
         "repo": "dashpay/platform",
         "sha": "7f6bd2ac512cbcc745c92ba99ba3b147abba2d3f",
         "started_at": "2026-11-27T12:12:47Z",
@@ -2259,7 +2342,7 @@
             ],
             "lanes_total": 3,
             "name": "phase2",
-            "seconds": 10,
+            "seconds": 73,
             "started_at": "2026-11-27T12:16:54Z",
             "status": "running"
           }
@@ -2279,12 +2362,12 @@
         "attempt": 1,
         "author": "PastaPastaPasta",
         "deadline_at": "2026-11-27T18:12:47Z",
-        "deadline_in_seconds": 21343,
+        "deadline_in_seconds": 21280,
         "degraded": false,
-        "elapsed_seconds": 257,
+        "elapsed_seconds": 320,
         "findings": null,
-        "heartbeat_age_seconds": 1,
-        "heartbeat_at": "2026-11-27T12:17:03Z",
+        "heartbeat_age_seconds": 4,
+        "heartbeat_at": "2026-11-27T12:18:03Z",
         "id": 15287,
         "lanes": [],
         "live_lanes": [
@@ -2295,7 +2378,7 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "general",
-            "since_seconds": 225,
+            "since_seconds": 288,
             "state": "running"
           },
           {
@@ -2305,40 +2388,40 @@
             "phase": "phase1",
             "pool": "muse",
             "role": "rust-quality",
-            "since_seconds": 225,
+            "since_seconds": 288,
             "state": "running"
           },
           {
             "effort": "high",
-            "line_length": 10,
-            "line_position": 8,
-            "model": "gpt-6.2-astra",
-            "phase": "phase2",
-            "pool": "gpt",
-            "role": "general",
-            "since_seconds": 225,
-            "state": "waiting"
-          },
-          {
-            "effort": "high",
-            "line_length": 10,
+            "line_length": 12,
             "line_position": 10,
             "model": "gpt-6.2-astra",
             "phase": "phase2",
             "pool": "gpt",
-            "role": "rust-quality",
-            "since_seconds": 225,
+            "role": "general",
+            "since_seconds": 288,
             "state": "waiting"
           },
           {
             "effort": "high",
-            "line_length": 10,
-            "line_position": 9,
+            "line_length": 12,
+            "line_position": 12,
+            "model": "gpt-6.2-astra",
+            "phase": "phase2",
+            "pool": "gpt",
+            "role": "rust-quality",
+            "since_seconds": 288,
+            "state": "waiting"
+          },
+          {
+            "effort": "high",
+            "line_length": 12,
+            "line_position": 11,
             "model": "gpt-6.2-astra",
             "phase": "phase2",
             "pool": "gpt",
             "role": "security-auditor",
-            "since_seconds": 225,
+            "since_seconds": 288,
             "state": "waiting"
           }
         ],
@@ -2347,10 +2430,10 @@
         "phase": "phase2",
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/962",
         "priority": false,
-        "progress": 0.147,
+        "progress": 0.182,
         "queue": "live",
         "queued_at": "2026-11-27T11:40:06Z",
-        "remaining_seconds": 1496,
+        "remaining_seconds": 1433,
         "repo": "PastaPastaPasta/dashwallet-desktop",
         "sha": "2545d85dc6b1a5c505471a88f187363a111d81b2",
         "started_at": "2026-11-27T12:12:47Z",
@@ -2409,7 +2492,7 @@
             ],
             "lanes_total": 3,
             "name": "phase2",
-            "seconds": 225,
+            "seconds": 288,
             "started_at": "2026-11-27T12:13:19Z",
             "status": "running"
           },
@@ -2427,7 +2510,7 @@
             ],
             "lanes_total": 2,
             "name": "phase1",
-            "seconds": 225,
+            "seconds": 288,
             "started_at": "2026-11-27T12:13:19Z",
             "status": "running"
           }
@@ -2477,7 +2560,7 @@
       "configured": true,
       "forced": null,
       "last_probe": {
-        "at": "2026-11-27T12:14:12Z",
+        "at": "2026-11-27T12:17:55Z",
         "quota_exhausted": false,
         "reason": "gpt-6.2-sol answered"
       },
@@ -2495,7 +2578,7 @@
       "superseded": 4326
     },
     "ingest_error_streak": 0,
-    "ingest_last_at": "2026-11-27T12:12:21Z",
+    "ingest_last_at": "2026-11-27T12:17:26Z",
     "lane_pools": [
       {
         "pool": "compare",
@@ -2519,7 +2602,7 @@
         "pool": "gpt",
         "running": 4,
         "slots": 4,
-        "waiting": 10
+        "waiting": 12
       },
       {
         "pool": "muse",
@@ -2531,17 +2614,17 @@
     "last_run_done_at": "2026-11-27T12:10:34Z",
     "last_run_started_at": "2026-11-27T12:12:47Z",
     "median_run_minutes": 9.5,
-    "notify_last_at": "2026-11-27T12:14:54Z",
+    "notify_last_at": "2026-11-27T12:17:27Z",
     "oldest_queued_at": "2026-11-27T11:50:22Z",
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1602,
+        "age_seconds": 1665,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-27T12:20:22Z",
-        "eligible_in_seconds": 198,
+        "eligible_in_seconds": 135,
         "number": 1535,
         "position": 1,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1535",
@@ -2555,12 +2638,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1421,
+        "age_seconds": 1484,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-27T12:23:23Z",
-        "eligible_in_seconds": 379,
+        "eligible_in_seconds": 316,
         "number": 1520,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1520",
@@ -2574,12 +2657,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1421,
+        "age_seconds": 1484,
         "attempts": 0,
         "author": "Claudius-Maginificent",
         "eligible": false,
         "eligible_at": "2026-11-27T12:23:23Z",
-        "eligible_in_seconds": 379,
+        "eligible_in_seconds": 316,
         "number": 1600,
         "position": 3,
         "pr_url": "https://github.com/dashpay/tenderdash/pull/1600",
@@ -2593,12 +2676,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1421,
+        "age_seconds": 1484,
         "attempts": 0,
         "author": "llbartekll",
         "eligible": false,
         "eligible_at": "2026-11-27T12:23:23Z",
-        "eligible_in_seconds": 379,
+        "eligible_in_seconds": 316,
         "number": 6357,
         "position": 4,
         "pr_url": "https://github.com/dashpay/platform/pull/6357",
@@ -2619,7 +2702,7 @@
       "reviews": 135,
       "tokens": 598484851
     },
-    "ts": "2026-11-27T12:17:04Z",
+    "ts": "2026-11-27T12:18:07Z",
     "typical_minutes_by_tier": {
       "critical": 22.0,
       "low": 21.4,
@@ -2630,7 +2713,7 @@
     "watchdog": {
       "active": 6,
       "eligible": 0,
-      "idle_minutes": 4.3,
+      "idle_minutes": 5.333333333333333,
       "ingest_stale": false,
       "stuck": false
     }
@@ -2638,20 +2721,20 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-27T12:17:04Z",
+    "generated_at": "2026-11-27T12:18:07Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
       "above_target": false,
-      "approved_n": 845,
+      "approved_n": 846,
       "max": 44,
-      "mean": 3.83,
-      "median": 2.0,
-      "n": 1268,
+      "mean": 3.84,
+      "median": 2,
+      "n": 1269,
       "p90": 9,
-      "share_over_5": 0.188,
+      "share_over_5": 0.189,
       "to_approve_mean": 2.43,
-      "to_approve_median": 1
+      "to_approve_median": 1.0
     },
     "repos": [
       {
@@ -2770,6 +2853,20 @@
         "above_ceiling": false,
         "above_target": false,
         "approved_n": 27,
+        "max": 21,
+        "mean": 3.42,
+        "median": 2.0,
+        "n": 36,
+        "p90": 6,
+        "repo": "dashpay/grovedb",
+        "share_over_5": 0.139,
+        "to_approve_mean": 2.67,
+        "to_approve_median": 2
+      },
+      {
+        "above_ceiling": false,
+        "above_target": false,
+        "approved_n": 27,
         "max": 11,
         "mean": 3.37,
         "median": 2,
@@ -2779,20 +2876,6 @@
         "share_over_5": 0.229,
         "to_approve_mean": 1.56,
         "to_approve_median": 1
-      },
-      {
-        "above_ceiling": false,
-        "above_target": false,
-        "approved_n": 26,
-        "max": 21,
-        "mean": 3.29,
-        "median": 2,
-        "n": 35,
-        "p90": 6,
-        "repo": "dashpay/grovedb",
-        "share_over_5": 0.114,
-        "to_approve_mean": 2.62,
-        "to_approve_median": 1.5
       },
       {
         "above_ceiling": true,
@@ -2840,9 +2923,9 @@
     "rolling": {
       "28d": {
         "overall": {
-          "mean": 3.83,
-          "median": 2.0,
-          "n": 1268
+          "mean": 3.84,
+          "median": 2,
+          "n": 1269
         },
         "repos": {
           "PastaPastaPasta/dashwallet-desktop": {
@@ -2896,9 +2979,9 @@
             "n": 2
           },
           "dashpay/grovedb": {
-            "mean": 3.29,
-            "median": 2,
-            "n": 35
+            "mean": 3.42,
+            "median": 2.0,
+            "n": 36
           },
           "dashpay/platform": {
             "mean": 4.97,
@@ -2914,9 +2997,9 @@
       },
       "7d": {
         "overall": {
-          "mean": 3.87,
-          "median": 2,
-          "n": 509
+          "mean": 3.88,
+          "median": 2.0,
+          "n": 510
         },
         "repos": {
           "PastaPastaPasta/dashwallet-desktop": {
@@ -2955,9 +3038,9 @@
             "n": 22
           },
           "dashpay/grovedb": {
-            "mean": 3.8,
-            "median": 4,
-            "n": 5
+            "mean": 4.5,
+            "median": 4.5,
+            "n": 6
           },
           "dashpay/platform": {
             "mean": 5.01,
@@ -3018,9 +3101,9 @@
           "week": "2026-W47"
         },
         {
-          "mean": 3.84,
-          "median": 2.0,
-          "n": 380,
+          "mean": 3.86,
+          "median": 2,
+          "n": 381,
           "week": "2026-W48"
         }
       ],
@@ -3654,9 +3737,9 @@
               "week": "2026-W47"
             },
             {
-              "mean": 3.8,
-              "median": 4,
-              "n": 5,
+              "mean": 4.5,
+              "median": 4.5,
+              "n": 6,
               "week": "2026-W48"
             }
           ]
@@ -4134,12 +4217,6 @@
         "rounds": 9
       },
       {
-        "author": "QuantumExplorer",
-        "number": 1075,
-        "repo": "dashpay/grovedb",
-        "rounds": 8
-      },
-      {
         "author": "lklimek",
         "number": 5519,
         "repo": "dashpay/platform",
@@ -4404,15 +4481,15 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 509,
+          "approved_n": 510,
           "max": 44,
-          "mean": 3.66,
-          "median": 2.0,
-          "n": 798,
+          "mean": 3.67,
+          "median": 2,
+          "n": 799,
           "p90": 8,
-          "share_over_5": 0.173,
-          "to_approve_mean": 2.36,
-          "to_approve_median": 1
+          "share_over_5": 0.174,
+          "to_approve_mean": 2.37,
+          "to_approve_median": 1.0
         },
         "repos": [
           {
@@ -4502,6 +4579,20 @@
           {
             "above_ceiling": false,
             "above_target": false,
+            "approved_n": 14,
+            "max": 8,
+            "mean": 2.95,
+            "median": 2,
+            "n": 21,
+            "p90": 5,
+            "repo": "dashpay/grovedb",
+            "share_over_5": 0.095,
+            "to_approve_mean": 2.0,
+            "to_approve_median": 1.5
+          },
+          {
+            "above_ceiling": false,
+            "above_target": false,
             "approved_n": 20,
             "max": 2,
             "mean": 1.24,
@@ -4512,20 +4603,6 @@
             "share_over_5": 0.0,
             "to_approve_mean": 1.0,
             "to_approve_median": 1.0
-          },
-          {
-            "above_ceiling": false,
-            "above_target": false,
-            "approved_n": 13,
-            "max": 6,
-            "mean": 2.7,
-            "median": 2.0,
-            "n": 20,
-            "p90": 5,
-            "repo": "dashpay/grovedb",
-            "share_over_5": 0.05,
-            "to_approve_mean": 1.85,
-            "to_approve_median": 1
           },
           {
             "above_ceiling": false,
@@ -4589,15 +4666,15 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 1740,
+          "approved_n": 1741,
           "max": 73,
           "mean": 3.37,
-          "median": 2,
-          "n": 2627,
+          "median": 2.0,
+          "n": 2628,
           "p90": 7,
           "share_over_5": 0.149,
-          "to_approve_mean": 2.33,
-          "to_approve_median": 1.0
+          "to_approve_mean": 2.34,
+          "to_approve_median": 1
         },
         "repos": [
           {
@@ -4729,16 +4806,16 @@
           {
             "above_ceiling": false,
             "above_target": false,
-            "approved_n": 36,
+            "approved_n": 37,
             "max": 21,
-            "mean": 3.0,
-            "median": 2.0,
-            "n": 48,
+            "mean": 3.1,
+            "median": 2,
+            "n": 49,
             "p90": 6,
             "repo": "dashpay/grovedb",
-            "share_over_5": 0.125,
-            "to_approve_mean": 2.31,
-            "to_approve_median": 1.0
+            "share_over_5": 0.143,
+            "to_approve_mean": 2.35,
+            "to_approve_median": 1
           },
           {
             "above_ceiling": false,
@@ -4816,15 +4893,15 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 845,
+          "approved_n": 846,
           "max": 44,
-          "mean": 3.83,
-          "median": 2.0,
-          "n": 1268,
+          "mean": 3.84,
+          "median": 2,
+          "n": 1269,
           "p90": 9,
-          "share_over_5": 0.188,
+          "share_over_5": 0.189,
           "to_approve_mean": 2.43,
-          "to_approve_median": 1
+          "to_approve_median": 1.0
         },
         "repos": [
           {
@@ -4943,6 +5020,20 @@
             "above_ceiling": false,
             "above_target": false,
             "approved_n": 27,
+            "max": 21,
+            "mean": 3.42,
+            "median": 2.0,
+            "n": 36,
+            "p90": 6,
+            "repo": "dashpay/grovedb",
+            "share_over_5": 0.139,
+            "to_approve_mean": 2.67,
+            "to_approve_median": 2
+          },
+          {
+            "above_ceiling": false,
+            "above_target": false,
+            "approved_n": 27,
             "max": 11,
             "mean": 3.37,
             "median": 2,
@@ -4952,20 +5043,6 @@
             "share_over_5": 0.229,
             "to_approve_mean": 1.56,
             "to_approve_median": 1
-          },
-          {
-            "above_ceiling": false,
-            "above_target": false,
-            "approved_n": 26,
-            "max": 21,
-            "mean": 3.29,
-            "median": 2,
-            "n": 35,
-            "p90": 6,
-            "repo": "dashpay/grovedb",
-            "share_over_5": 0.114,
-            "to_approve_mean": 2.62,
-            "to_approve_median": 1.5
           },
           {
             "above_ceiling": true,
@@ -5015,15 +5092,15 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 1740,
+          "approved_n": 1741,
           "max": 73,
           "mean": 3.37,
-          "median": 2,
-          "n": 2627,
+          "median": 2.0,
+          "n": 2628,
           "p90": 7,
           "share_over_5": 0.149,
-          "to_approve_mean": 2.33,
-          "to_approve_median": 1.0
+          "to_approve_mean": 2.34,
+          "to_approve_median": 1
         },
         "repos": [
           {
@@ -5155,16 +5232,16 @@
           {
             "above_ceiling": false,
             "above_target": false,
-            "approved_n": 36,
+            "approved_n": 37,
             "max": 21,
-            "mean": 3.0,
-            "median": 2.0,
-            "n": 48,
+            "mean": 3.1,
+            "median": 2,
+            "n": 49,
             "p90": 6,
             "repo": "dashpay/grovedb",
-            "share_over_5": 0.125,
-            "to_approve_mean": 2.31,
-            "to_approve_median": 1.0
+            "share_over_5": 0.143,
+            "to_approve_mean": 2.35,
+            "to_approve_median": 1
           },
           {
             "above_ceiling": false,
@@ -5242,15 +5319,15 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 1390,
+          "approved_n": 1391,
           "max": 73,
           "mean": 3.76,
-          "median": 2.0,
-          "n": 2058,
+          "median": 2,
+          "n": 2059,
           "p90": 8,
-          "share_over_5": 0.175,
-          "to_approve_mean": 2.49,
-          "to_approve_median": 1.0
+          "share_over_5": 0.176,
+          "to_approve_mean": 2.5,
+          "to_approve_median": 1
         },
         "repos": [
           {
@@ -5396,16 +5473,16 @@
           {
             "above_ceiling": false,
             "above_target": false,
-            "approved_n": 33,
+            "approved_n": 34,
             "max": 21,
-            "mean": 3.11,
-            "median": 2,
-            "n": 45,
+            "mean": 3.22,
+            "median": 2.0,
+            "n": 46,
             "p90": 6,
             "repo": "dashpay/grovedb",
-            "share_over_5": 0.133,
-            "to_approve_mean": 2.39,
-            "to_approve_median": 1
+            "share_over_5": 0.152,
+            "to_approve_mean": 2.44,
+            "to_approve_median": 1.0
           },
           {
             "above_ceiling": false,
@@ -5469,15 +5546,15 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 305,
+          "approved_n": 306,
           "max": 35,
-          "mean": 3.87,
-          "median": 2,
-          "n": 509,
+          "mean": 3.88,
+          "median": 2.0,
+          "n": 510,
           "p90": 9,
-          "share_over_5": 0.191,
-          "to_approve_mean": 2.55,
-          "to_approve_median": 1
+          "share_over_5": 0.192,
+          "to_approve_mean": 2.56,
+          "to_approve_median": 1.5
         },
         "repos": [
           {
@@ -5608,17 +5685,17 @@
           },
           {
             "above_ceiling": false,
-            "above_target": false,
-            "approved_n": 4,
-            "max": 6,
-            "mean": 3.8,
-            "median": 4,
-            "n": 5,
-            "p90": 6,
+            "above_target": true,
+            "approved_n": 5,
+            "max": 8,
+            "mean": 4.5,
+            "median": 4.5,
+            "n": 6,
+            "p90": 8,
             "repo": "dashpay/grovedb",
-            "share_over_5": 0.2,
-            "to_approve_mean": 2.0,
-            "to_approve_median": 1.5
+            "share_over_5": 0.333,
+            "to_approve_mean": 2.4,
+            "to_approve_median": 2
           }
         ]
       },
@@ -5626,15 +5703,15 @@
         "overall": {
           "above_ceiling": false,
           "above_target": false,
-          "approved_n": 1740,
+          "approved_n": 1741,
           "max": 73,
           "mean": 3.37,
-          "median": 2,
-          "n": 2627,
+          "median": 2.0,
+          "n": 2628,
           "p90": 7,
           "share_over_5": 0.149,
-          "to_approve_mean": 2.33,
-          "to_approve_median": 1.0
+          "to_approve_mean": 2.34,
+          "to_approve_median": 1
         },
         "repos": [
           {
@@ -5766,16 +5843,16 @@
           {
             "above_ceiling": false,
             "above_target": false,
-            "approved_n": 36,
+            "approved_n": 37,
             "max": 21,
-            "mean": 3.0,
-            "median": 2.0,
-            "n": 48,
+            "mean": 3.1,
+            "median": 2,
+            "n": 49,
             "p90": 6,
             "repo": "dashpay/grovedb",
-            "share_over_5": 0.125,
-            "to_approve_mean": 2.31,
-            "to_approve_median": 1.0
+            "share_over_5": 0.143,
+            "to_approve_mean": 2.35,
+            "to_approve_median": 1
           },
           {
             "above_ceiling": false,
