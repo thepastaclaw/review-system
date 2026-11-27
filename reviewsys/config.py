@@ -605,6 +605,10 @@ class Config:
     deferral: DeferralConfig = field(default_factory=DeferralConfig)
     checks: ChecksConfig = field(default_factory=ChecksConfig)
     stepback: StepbackConfig = field(default_factory=StepbackConfig)
+    # a clean final re-review dismisses the bot's own stale CHANGES_REQUESTED review
+    # (worker._settle_stale_request); with disputed blockers left it only says a maintainer
+    # can dismiss it, unless this is on (pending Pasta's call, 2026-11-27)
+    dismiss_stale_when_disputed: bool = False
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -764,6 +768,10 @@ priority_authors = ["QuantumExplorer"]
 # spends plan quota faster): every lane of a priority run sends X-Reviewsys-Tier: priority,
 # and a CLIProxyAPI payload rule on that header sets `service_tier: priority`
 fast_priority = true
+# a clean final re-review (no blocking finding open or disputed) dismisses the bot's own
+# earlier CHANGES_REQUESTED review, linking the re-review. With disputed blockers left it
+# only says in the re-review that a maintainer can dismiss it, unless this is true
+dismiss_stale_when_disputed = false
 # the general reviewer and the specialists of one phase run side by side, at most this
 # many at once per run (1 = one after another, 0 = all of them); the model pools below
 # still bound the machine
@@ -1308,6 +1316,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
             str(a).lower() for a in s.get("priority_authors", DEFAULT_PRIORITY_AUTHORS)
         ),
         fast_priority=bool(s.get("fast_priority", True)),
+        dismiss_stale_when_disputed=bool(s.get("dismiss_stale_when_disputed", False)),
         phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
         lane_pools={
             str(k): max(1, int(v))

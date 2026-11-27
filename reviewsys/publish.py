@@ -2624,6 +2624,64 @@ EVENT_STATE = {
 STATE_EVENT = {v: k for k, v in EVENT_STATE.items()}
 
 
+def stale_change_requests(reviews: list[dict[str, Any]], bot_login: str) -> list[dict[str, Any]]:
+    """The bot's CHANGES_REQUESTED reviews GitHub still counts: those after its last approval
+    or dismissal. A COMMENT never replaces a reviewer's decision on GitHub, so a re-review
+    posted as one leaves them standing however clean it is."""
+    stale: list[dict[str, Any]] = []
+    for r in sorted(
+        (
+            r
+            for r in reviews
+            if str((r.get("user") or {}).get("login") or "").lower() == bot_login.lower()
+        ),
+        key=lambda r: str(r.get("submitted_at") or ""),
+    ):
+        state = str(r.get("state") or "")
+        if state in {"APPROVED", "DISMISSED"}:
+            stale = []
+        elif state == "CHANGES_REQUESTED":
+            stale.append(r)
+    return stale
+
+
+STALE_REQUEST_NOTE_MARKER = "<!-- thepastaclaw-stale-request v1 -->"
+
+
+def with_stale_request_note(
+    body: str, stale: list[dict[str, Any]], disputed: list[tuple[str, str]]
+) -> str:
+    """`body` (a review with only disputed blockers left) saying, under its heading, that the
+    bot's earlier CHANGES_REQUESTED review(s) still show on GitHub only because the dispute is
+    the maintainers' call, and that a maintainer can dismiss them; each disputed blocker linked
+    to its thread. `disputed`: (title, thread url). Unchanged when it says so already."""
+    if STALE_REQUEST_NOTE_MARKER in body:
+        return body
+    links = ", ".join(
+        f"[review of `{str(c.get('commit_id') or '')[:8]}`]({c.get('html_url') or ''})"
+        for c in stale
+    )
+    block = [
+        STALE_REQUEST_NOTE_MARKER,
+        f"> **GitHub still shows changes requested** by this bot ({links}). Nothing on this "
+        "head blocks except the disputed finding(s) below, which are left to the maintainers: "
+        "a maintainer can dismiss that earlier review if they agree it no longer applies.",
+        *(
+            f"> - Disputed: [{_block_text(t)}]({u})" if u else f"> - Disputed: {_block_text(t)}"
+            for t, u in disputed
+        ),
+        "",
+    ]
+    lines = body.split("\n")
+    title = next((i for i, ln in enumerate(lines) if ln.startswith("## ")), None)
+    if title is None:  # no heading: after the leading markers
+        title = next((i for i, ln in enumerate(lines) if not ln.startswith("<!--")), len(lines)) - 1
+    at = title + 1
+    if at < len(lines) and not lines[at].strip():
+        at += 1
+    return "\n".join(lines[:at] + block + lines[at:])
+
+
 def canonical_event(value: str) -> str:
     """Normalise a `reviews.event` value: canonical events pass through, GitHub review states
     (as backfilled from an existing review) map back to the event that produced them."""

@@ -776,6 +776,47 @@ def test_trivial_tier_publishes_final_from_phase1(cfg, conn, gh, lanes):
     assert "Final review complete — Phase 1 only" in gate and "triage: trivial" in gate
 
 
+def test_a_clean_final_comment_dismisses_the_bots_stale_change_request(cfg, conn, gh, lanes):
+    """dashpay/dash#8198 (2026-11-27): a re-review that leaves nothing blocking but posts as a
+    COMMENT (here a Phase-1-only final) does not replace the bot's earlier CHANGES_REQUESTED
+    on GitHub; the run dismisses it, linking the new review."""
+    gh.posted_reviews.append(
+        {"id": 4000, "event": "REQUEST_CHANGES", "body": "old", "commit_id": "b" * 40}
+    )
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = {**_verifier([]), "review_action": "APPROVE"}
+    lanes.triage = {"tier": "trivial", "reasoning": "typo fix"}
+    _, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "COMMENT" and "phase=final" in review["body"]
+    assert len(gh.dismissals) == 1
+    node, message = gh.dismissals[0]
+    assert node == "PRR_4000" and f"pullrequestreview-{review['id']}" in message
+    assert (
+        conn.execute(
+            "SELECT detail FROM events WHERE kind='review.stale_request_dismissed'"
+        ).fetchone()["detail"]
+        == "4000"
+    )
+
+
+def test_a_preliminary_review_never_touches_the_stale_change_request(cfg, conn, gh, lanes):
+    gh.posted_reviews.append(
+        {"id": 4000, "event": "REQUEST_CHANGES", "body": "old", "commit_id": "b" * 40}
+    )
+    lanes.reviewer["default"] = {
+        "summary": "ok",
+        "findings": [_blocking()],
+        "out_of_scope_findings": [],
+    }
+    lanes.verifier["preliminary"] = _verifier([_blocking()])
+    _, status = _run(cfg, conn, gh, lanes)
+    assert status == RunStatus.DONE
+    assert gh.posted_reviews[-1]["event"] == "REQUEST_CHANGES"
+    assert gh.dismissals == []
+
+
 def test_trivial_tier_with_blockers_stays_preliminary(cfg, conn, gh, lanes):
     lanes.reviewer["default"] = {
         "summary": "ok",

@@ -714,6 +714,16 @@ def edit_review(gh: Gh, node_id: str, body: str) -> None:
     )
 
 
+def dismiss_review(gh: Gh, node_id: str, message: str) -> None:
+    """Dismiss one of our own reviews. GraphQL, as `edit_review`: the REST review endpoints
+    answer 404 for the bot's own review on dashpay/dash."""
+    gh.graphql(
+        "mutation($id: ID!, $message: String!) { dismissPullRequestReview(input: "
+        "{pullRequestReviewId: $id, message: $message}) { pullRequestReview { id state } } }",
+        {"id": node_id, "message": message},
+    )
+
+
 def react(gh: Gh, repo: str, comment_id: int, content: str) -> None:
     gh.api(
         f"repos/{repo}/pulls/comments/{comment_id}/reactions",

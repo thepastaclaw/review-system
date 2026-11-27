@@ -324,6 +324,7 @@ class RunContext:
     # blocking findings the latest verifier left DISPUTED, and how many of them turned an
     # approval into a COMMENT (a later step that would approve re-checks the first)
     disputed_blockers: int = 0
+    disputed_blocker_hashes: list[str] = field(default_factory=list)
     approval_withheld: int = 0
     prior_sha: str | None = None
     has_prior_review: bool = False
@@ -3161,15 +3162,15 @@ def _settle_discussions(ctx: RunContext, out: VerifierOutput, expected_phase: st
     if changed:
         out.prior_reconciliation = list(rows.values())
         _defer_event(ctx, "discussion.settled", f"{expected_phase}: {', '.join(changed)}")
-    disputed = sum(
-        1
+    ctx.disputed_blocker_hashes = [
+        h
         for h, r in {**recon, **rows}.items()
         if r.get("status") == converse.DISPUTED
         and h not in revived
         and (p := ctx.prior_findings.get(h)) is not None
         and p.severity == "blocking"
-    )
-    ctx.disputed_blockers = disputed
+    ]
+    disputed = ctx.disputed_blockers = len(ctx.disputed_blocker_hashes)
     approves = out.review_action == "APPROVE" or (_converges(ctx) and not out.blocker_count)
     ctx.approval_withheld = disputed if approves else 0
     if ctx.approval_withheld:
@@ -4928,6 +4929,8 @@ def _publish_step(
         "ok",
         {"posted": res.posted, "event": res.event, "skipped": res.skipped_reason},
     )
+    if phase == "final":
+        _settle_stale_request(ctx, verified, res)
     score = gate_score(verified, ctx.cfg.policy.phase1_gate) if gate_deferred else {}
     _gate_comment(
         ctx,
@@ -4939,6 +4942,67 @@ def _publish_step(
     )
     # the verifier weighed the checks that had failed when the context was read
     _watch_ci(ctx, known=ci.failing_names(ctx.evidence.get("ci"), ctx.cfg.ci.ignore_re))
+
+
+def _settle_stale_request(
+    ctx: RunContext, verified: VerifierOutput, res: publish.PublishResult
+) -> None:
+    """A final review that leaves no blocker standing, posted as a COMMENT, does not replace
+    the bot's earlier CHANGES_REQUESTED on GitHub, so the PR kept showing changes requested
+    (dashpay/dash#8198, 2026-11-27). With nothing disputed either, that review is dismissed
+    with a link to this one. With disputed blockers left, this review says the earlier one
+    still shows and a maintainer can dismiss it (`dismiss_stale_when_disputed` dismisses
+    instead). A degraded review never overrules a full-strength one. Policy v12 settles a
+    dispute as a deferral (ledger.OUTCOME_STATUS), so it cannot tell one from an accepted
+    deferral: there it is skipped, and says so. Best effort: the review is published."""
+    if ctx.dry_run or not res.posted or not res.review_id or verified.blocker_count:
+        return
+    if ctx.is_degraded:
+        return
+    try:
+        reviews = github.reviews(ctx.gh, ctx.repo, ctx.number)
+        stale = publish.stale_change_requests(reviews, ctx.cfg.bot_login)
+        if not stale:
+            return
+        url = res.review_url or f"https://github.com/{ctx.repo}/pull/{ctx.number}"
+        if ctx.cfg.policy.verifier_v12:
+            kind, detail = "review.stale_request_skipped", "policy v12 cannot tell disputes apart"
+        elif ctx.disputed_blockers and not ctx.cfg.dismiss_stale_when_disputed:
+            posted = next((r for r in reviews if r.get("id") == res.review_id), None)
+            if posted is None or not posted.get("node_id"):
+                raise ReviewError(FailKind.INFRA, f"review {res.review_id} not listed")
+            disputed = [
+                (ctx.prior_findings[h].title, _thread_url(ctx, h))
+                for h in ctx.disputed_blocker_hashes
+                if h in ctx.prior_findings
+            ]
+            body = str(posted.get("body") or res.body)
+            noted = publish.with_stale_request_note(body, stale, disputed)
+            if noted == body:
+                return  # a retry of this round: already said
+            github.edit_review(ctx.gh, str(posted["node_id"]), noted)
+            kind, detail = "review.stale_request_noted", f"{len(stale)} left to maintainers"
+        else:
+            why = (
+                f"{ctx.disputed_blockers} disputed blocker(s) left to the maintainers"
+                if ctx.disputed_blockers
+                else "no blocking finding stands"
+            )
+            for r in stale:
+                github.dismiss_review(
+                    ctx.gh,
+                    str(r.get("node_id") or ""),
+                    f"Superseded by the re-review of {ctx.sha[:8]} ({why}): {url}",
+                )
+            kind, detail = (
+                "review.stale_request_dismissed",
+                ", ".join(str(r.get("id")) for r in stale),
+            )
+    except Exception as exc:
+        log.warning("stale review of %s#%s not settled: %s", ctx.repo, ctx.number, exc)
+        kind, detail = "review.stale_request_failed", str(exc)[:300]
+    with tx(ctx.conn):
+        event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
 
 
 def _watch_ci(ctx: RunContext, *, known: list[str]) -> None:
