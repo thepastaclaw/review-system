@@ -1,0 +1,217 @@
+"""GitHub App webhook receiver: a review-now label or a ticked gate box, the moment it happens.
+
+GitHub posts each delivery to a Cloudflare tunnel that forwards only the webhook path to this
+listener on a local port. Nothing is trusted before its X-Hub-Signature-256 matches
+the shared secret (constant-time). Only two deliveries do anything: `pull_request.labeled` with
+the review-now label and `issue_comment.edited` on the bot's gate comment with a box ticked.
+Each makes the same pass a watch hit does (watch.py) due now, the ingest or the queue-comment
+pass, which is unchanged and idempotent: the polls and the watch stay the fallback, and a
+request all of them see asks for one review. The listener thread touches no database.
+
+GitHub signs the body only, so a captured delivery could be replayed under a new delivery id;
+all it can do is run one of those passes early, which they are made to bear.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import logging
+import stat
+import threading
+import time
+from collections import OrderedDict
+from collections.abc import Callable, Iterable
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+from .config import WebhookConfig
+from .github import GATE_MARKER
+from .ingest import REVIEW_NOW_LABEL
+from .queue_status import normal_requested, priority_requested
+from .watch import INGEST, QUEUE
+
+log = logging.getLogger(__name__)
+
+MAX_BODY = 1 << 20  # GitHub caps payloads at 25 MB; the two we act on are a few KB
+SEEN_DELIVERIES = 1000
+MIN_SECRET_CHARS = 32
+READ_TIMEOUT_S = 10
+# requests served at once; more get 503 (the watch still sees what they carried), and each
+# must send its body within READ_TIMEOUT_S in all, so slow senders cannot hold the slots
+MAX_HANDLERS = 16
+
+
+class HookError(Exception):
+    pass
+
+
+def load_secret(path: Path) -> bytes:
+    """The shared secret: the file must be the owner's alone (0600) and long enough."""
+    try:
+        st = path.stat()
+        secret = path.read_text().strip()
+    except OSError as exc:
+        raise HookError(f"cannot read the webhook secret {path}: {exc}") from exc
+    if st.st_mode & (stat.S_IRWXG | stat.S_IRWXO):
+        raise HookError(f"{path} is readable by others; chmod 600 it")
+    if len(secret) < MIN_SECRET_CHARS:
+        raise HookError(f"{path} holds under {MIN_SECRET_CHARS} characters")
+    return secret.encode()
+
+
+def signed(secret: bytes, body: bytes, header: str | None) -> bool:
+    if not header or not header.startswith("sha256="):
+        return False
+    want = "sha256=" + hmac.new(secret, body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(want.encode(), header.encode())
+
+
+def _obj(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def classify(event: str, payload: dict[str, Any], bot_login: str, repos: set[str]) -> str | None:
+    """The pass a delivery asks for, or None."""
+    repo = str(_obj(payload.get("repository")).get("full_name") or "").lower()
+    if repo not in repos:
+        return None
+    action = payload.get("action")
+    if event == "pull_request" and action == "labeled":
+        name = str(_obj(payload.get("label")).get("name") or "")
+        return INGEST if name.lower() == REVIEW_NOW_LABEL else None
+    if event == "issue_comment" and action == "edited":
+        comment = _obj(payload.get("comment"))
+        body = str(comment.get("body") or "")
+        if (
+            _obj(payload.get("issue")).get("pull_request")
+            and str(_obj(comment.get("user")).get("login") or "").lower() == bot_login.lower()
+            and GATE_MARKER in body
+            and (priority_requested(body) or normal_requested(body))
+        ):
+            return QUEUE
+    return None
+
+
+class Receiver:
+    def __init__(
+        self,
+        cfg: WebhookConfig,
+        secret: bytes,
+        bot_login: str,
+        repos: Iterable[str],
+        on_hit: Callable[[str, str], None],
+    ) -> None:
+        self.cfg = cfg
+        self.secret = secret
+        self.bot_login = bot_login
+        self.repos = {r.lower() for r in repos}
+        self.on_hit = on_hit
+        self._seen: OrderedDict[str, None] = OrderedDict()
+        self._lock = threading.Lock()
+        self.server: ThreadingHTTPServer | None = None
+
+    def handle(self, method: str, path: str, headers: Any, body: bytes) -> int:
+        """One request: its HTTP status. `headers` is case-insensitive (http.client)."""
+        if path.split("?", 1)[0] != self.cfg.path:
+            return 404
+        if method != "POST":
+            return 405
+        if not signed(self.secret, body, headers.get("X-Hub-Signature-256")):
+            log.debug("webhook: unsigned or bad signature, %d bytes", len(body))
+            return 401
+        delivery = str(headers.get("X-GitHub-Delivery") or "")
+        with self._lock:
+            if delivery and delivery in self._seen:
+                return 200  # GitHub's redelivery of one already acted on
+            if delivery:
+                self._seen[delivery] = None
+                while len(self._seen) > SEEN_DELIVERIES:
+                    self._seen.popitem(last=False)
+        event = str(headers.get("X-GitHub-Event") or "")
+        try:
+            payload = json.loads(body)
+        except ValueError:
+            return 400
+        if not isinstance(payload, dict):
+            return 400
+        task = classify(event, payload, self.bot_login, self.repos)
+        if task is None:
+            return 204
+        number = _obj(payload.get("pull_request") or payload.get("issue")).get("number")
+        detail = f"{event}.{payload.get('action')} {payload['repository']['full_name']}#{number}"
+        log.info("webhook %s (delivery %s) -> %s", detail, delivery, task)
+        self.on_hit(task, detail)
+        return 202
+
+    def start(self) -> ThreadingHTTPServer:
+        host, _, port = self.cfg.listen.rpartition(":")
+        receiver = self
+        slots = threading.BoundedSemaphore(MAX_HANDLERS)
+
+        class Handler(BaseHTTPRequestHandler):
+            timeout = READ_TIMEOUT_S
+
+            def _serve(self) -> None:
+                if not slots.acquire(blocking=False):
+                    self._answer(503)
+                    return
+                try:
+                    self._answer(self._status())
+                finally:
+                    slots.release()
+
+            def _answer(self, status: int) -> None:
+                self.send_response(status)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def _status(self) -> int:
+                raw = self.headers.get("Content-Length")
+                if raw is None:
+                    # GitHub always sends a length; a chunked body would read as empty and
+                    # fail the signature unexplained
+                    return 411 if self.command == "POST" else 405
+                try:
+                    length = int(raw)
+                except ValueError:
+                    length = -1
+                if length < 0 or length > MAX_BODY:
+                    status = 413
+                else:
+                    body = self._body(length)
+                    if body is None:
+                        return 408
+                    try:
+                        status = receiver.handle(self.command, self.path, self.headers, body)
+                    except Exception:
+                        log.exception("webhook handler failed")
+                        status = 500
+                return status
+
+            def _body(self, length: int) -> bytes | None:
+                deadline = time.monotonic() + READ_TIMEOUT_S
+                parts: list[bytes] = []
+                got = 0
+                while got < length:
+                    if time.monotonic() > deadline:
+                        return None
+                    part = self.rfile.read1(min(1 << 16, length - got))
+                    if not part:
+                        return None
+                    parts.append(part)
+                    got += len(part)
+                return b"".join(parts)
+
+            do_POST = do_GET = do_PUT = do_DELETE = do_HEAD = _serve
+
+            def log_message(self, format: str, *args: Any) -> None:
+                log.debug("webhook %s", format % args)
+
+        self.server = ThreadingHTTPServer((host, int(port)), Handler)
+        self.server.daemon_threads = True
+        threading.Thread(target=self.server.serve_forever, name="webhook", daemon=True).start()
+        log.info("webhook receiver on %s%s", self.cfg.listen, self.cfg.path)
+        return self.server

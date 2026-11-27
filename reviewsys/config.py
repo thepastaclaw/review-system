@@ -437,6 +437,7 @@ class CiConfig:
 
 
 DEFAULT_APP_KEY = Path("~/.reviewsys/github-app.pem").expanduser()
+DEFAULT_WEBHOOK_SECRET = Path("~/.reviewsys/webhook-secret").expanduser()
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,6 +453,17 @@ class ChecksConfig:
     name: str = "PastaClaw review"  # the check's name; consumers match on it, keep it stable
     interval_seconds: int = 30
     exclude_repos: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WebhookConfig:
+    """GitHub App webhook deliveries (hook.py): a review-now label or a ticked gate box runs its
+    pass at once, as a watch hit does. Listens on a local port only; a tunnel publishes it."""
+
+    enabled: bool = False
+    listen: str = "127.0.0.1:8787"
+    path: str = "/github/webhook"
+    secret_file: Path = DEFAULT_WEBHOOK_SECRET
 
 
 @dataclass(frozen=True, slots=True)
@@ -605,6 +617,7 @@ class Config:
     deferral: DeferralConfig = field(default_factory=DeferralConfig)
     checks: ChecksConfig = field(default_factory=ChecksConfig)
     stepback: StepbackConfig = field(default_factory=StepbackConfig)
+    webhook: WebhookConfig = field(default_factory=WebhookConfig)
     # a clean final re-review dismisses the bot's own stale CHANGES_REQUESTED review
     # (worker._settle_stale_request); with disputed blockers left it only says a maintainer
     # can dismiss it, unless this is on (pending Pasta's call, 2026-11-27)
@@ -872,6 +885,15 @@ private_key = "~/.reviewsys/github-app.pem"
 name = "PastaClaw review"
 interval_seconds = 30
 exclude_repos = []
+
+[webhook]
+# GitHub App webhook deliveries: a review-now label (pull_request.labeled) or a ticked gate box
+# (issue_comment.edited) runs its pass at once. Listens on `listen` only, for a local tunnel;
+# every delivery must carry X-Hub-Signature-256 made with the secret in `secret_file` (0600)
+enabled = false
+listen = "127.0.0.1:8787"
+path = "/github/webhook"
+secret_file = "~/.reviewsys/webhook-secret"
 
 [deferral]
 # a maintainer who defers a finding can ask the bot to file the follow-up's tracking issue;
@@ -1364,6 +1386,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         deferral=_deferral(t.get("deferral") or {}),
         checks=_checks(t.get("checks") or {}),
         stepback=_stepback(t.get("stepback") or {}),
+        webhook=_webhook(t.get("webhook") or {}),
     )
 
 
@@ -1474,6 +1497,22 @@ def _checks(c: dict[str, Any]) -> ChecksConfig:
     )
     if out.enabled and not out.app_id:
         raise ValueError("[checks] enabled needs app_id")
+    return out
+
+
+def _webhook(c: dict[str, Any]) -> WebhookConfig:
+    d = WebhookConfig()
+    out = WebhookConfig(
+        enabled=bool(c.get("enabled", d.enabled)),
+        listen=str(c.get("listen") or d.listen).strip(),
+        path=str(c.get("path") or d.path).strip(),
+        secret_file=Path(str(c.get("secret_file") or d.secret_file)).expanduser(),
+    )
+    host, _, port = out.listen.rpartition(":")
+    if not host or not port.isdigit() or int(port) > 65535:
+        raise ValueError(f"[webhook] listen must be host:port, not {out.listen!r}")
+    if not out.path.startswith("/"):
+        raise ValueError("[webhook] path must start with /")
     return out
 
 

@@ -1668,8 +1668,27 @@ or while less than 10% is left until the limit resets; the polls carry on either
 catch what the watch misses (over 30 events in one interval, a tick in the same second as a
 bot rewrite). Only a daemon that schedules runs it.
 
-A GitHub App webhook would make this push-driven; that needs the App's owner to add
-webhook delivery and the Pull requests and Issues read permissions, and a public receiver.
+The tick loop runs a hit before its next task, and the gate-comment pass, which reads one
+comment per PR and can take minutes, stops before its next read when a hit is waiting (it
+runs again right after, and that pass runs to the end whatever arrives). A task that holds the loop over 10 s is logged.
+
+### The webhook: the moment it happens
+
+With `[webhook] enabled = true` the daemon also listens on `listen` (127.0.0.1:8787) for the
+`pastaclaw-review` GitHub App's deliveries (`hook.py`), published by a tunnel. On Brody that is
+the Cloudflare tunnel `reviewsys-hook` (unit `reviewsys-hook-tunnel.service`, config
+`~/.cloudflared/reviewsys-hook.yml`), which sends only `https://reviewsys-hook.dashhq.org/github/webhook`
+to the listener and answers 404 for everything else. A delivery counts only with an
+`X-Hub-Signature-256` made with the secret in `secret_file` (`~/.reviewsys/webhook-secret`, 0600,
+at least 32 characters; the daemon refuses a file others can read), compared in constant time;
+an unsigned or wrongly signed one gets 401, a body over 1 MB 413. Two deliveries do anything:
+`pull_request.labeled` with the review-now label and `issue_comment.edited` on the bot's gate
+comment with a box ticked, both on an enabled repo; each is a hit like the watch's (event
+`watch.hit … via webhook <event> <repo>#<n>`), and a redelivery of one already acted on is a
+no-op. A POST without Content-Length gets 411; at most 16 requests are served at once (503). The App
+needs the Pull requests and Issues read permissions and the Pull request and Issue comment
+events. A receiver that cannot start (`webhook.failed`) leaves the watch and the polls, which
+stay the fallback either way.
 
 ## Skip label (PRs that must not be reviewed)
 

@@ -262,7 +262,7 @@ def test_queue_comments_are_static_when_the_order_changes(cfg, conn, gh):
     with tx(conn):
         conn.execute("UPDATE heads SET eligible_at=queued_at")
     stats = update_queue_comments(conn, cfg, gh)
-    assert stats == {"written": 3, "promoted": 0, "deferred": 0}
+    assert stats == {"written": 3, "promoted": 0, "deferred": 0, "yielded": 0}
     first = gh.gate_bodies[0]
     assert "thepastaclaw-gate" in first
     assert "Queued for automated review (commit 00000000)" in first
