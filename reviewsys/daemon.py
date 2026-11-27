@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
-from . import audit, checks, ci, converse, degraded, labels, slots, watch
+from . import audit, checks, ci, converse, degraded, hook, labels, slots, watch
 from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
@@ -67,6 +67,7 @@ class Task:
     interval_s: int
     fn: Callable[[], object]
     last: float = 0.0
+    rerun: bool = False  # due again at once (a pass that gave way to a hit)
 
 
 class Daemon:
@@ -92,6 +93,7 @@ class Daemon:
         self.stop = False
         self.wake = threading.Event()
         self._due: set[str] = set()
+        self._due_from: set[str] = set()  # "watch" / "webhook": who asked, for the event
         self._due_lock = threading.Lock()
         self.watcher = (
             watch.Watcher(Gh(cfg.gh_bin), cfg.bot_login, cfg.enabled_repos)
@@ -160,7 +162,15 @@ class Daemon:
         return route_inbox(self.conn, self.cfg, self.gh, self.notifier)
 
     def t_queue_comments(self) -> object:
-        return update_queue_comments(self.conn, self.cfg, self.gh)
+        stats = update_queue_comments(self.conn, self.cfg, self.gh, should_yield=self._hit_waiting)
+        if stats["yielded"]:
+            for task in self.tasks:
+                if task.name == "queue_comments":
+                    task.rerun = True  # once the hit ran, not a full interval later
+        return stats
+
+    def _hit_waiting(self) -> bool:
+        return bool(self._due)
 
     def t_labels(self) -> object:
         return labels.reconcile(self.conn, self.gh, repos=self.labels_repos)
@@ -313,18 +323,48 @@ class Daemon:
         if due:
             with self._due_lock:
                 self._due |= due
+                self._due_from.add("watch")
             self.wake.set()
         return due
+
+    def webhook_hit(self, task: str, detail: str) -> None:
+        """A signed delivery asked for `task` (the receiver's thread): as a watch hit."""
+        with self._due_lock:
+            self._due.add(task)
+            self._due_from.add("webhook")
+        self.wake.set()
+
+    def start_webhook(self) -> hook.Receiver | None:
+        """The receiver, when configured; one that cannot start leaves the polls and watch."""
+        if not (self.spawn and self.cfg.webhook.enabled):
+            return None
+        try:
+            receiver = hook.Receiver(
+                self.cfg.webhook,
+                hook.load_secret(self.cfg.webhook.secret_file),
+                self.cfg.bot_login,
+                self.cfg.enabled_repos,
+                self.webhook_hit,
+            )
+            receiver.start()
+        except (hook.HookError, OSError) as exc:
+            log.error("webhook receiver not started: %s", exc)
+            with tx(self.conn):
+                event(self.conn, "webhook.failed", detail=str(exc))
+            return None
+        return receiver
 
     def run_watched(self, results: dict[str, object] | None = None) -> set[str]:
         """Run the passes the watch asked for now, then the scheduler (main thread). The tick
         calls it before each task, so a hit waits for the task in progress, not the tick."""
         with self._due_lock:
             due, self._due = self._due, set()
+            sources, self._due_from = self._due_from, set()
         if not due:
             return due
         with tx(self.conn):
-            event(self.conn, "watch.hit", detail=",".join(sorted(due)))
+            detail = f"{','.join(sorted(due))} via {','.join(sorted(sources))}"
+            event(self.conn, "watch.hit", detail=detail)
         results = results if results is not None else {}
         for name in (*(t.name for t in self.tasks if t.name in due), "schedule"):
             for task in self.tasks:
@@ -361,9 +401,11 @@ class Daemon:
             results[task.name] = f"error: {exc}"
             with tx(self.conn):
                 event(self.conn, f"daemon.task_error.{task.name}", detail=str(exc))
-        task.last = time.monotonic()
-        if task.last - started > SLOW_TASK_S:
-            log.info("task %s took %.0f s", task.name, task.last - started)
+        ended = task.last = time.monotonic()
+        if task.rerun:
+            task.rerun, task.last = False, 0.0
+        if ended - started > SLOW_TASK_S:
+            log.info("task %s took %.0f s", task.name, ended - started)
 
     def run_forever(self) -> None:
         def _stop(*_: object) -> None:
@@ -379,6 +421,7 @@ class Daemon:
         )
         if self.watcher is not None:
             threading.Thread(target=self._watch_forever, name="watch", daemon=True).start()
+        self.start_webhook()
         try:
             while not self.stop:
                 self.wake.clear()  # before the tick: a hit during it ends the wait

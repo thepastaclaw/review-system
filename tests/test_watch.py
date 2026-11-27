@@ -192,7 +192,8 @@ def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, con
     n = conn.execute("SELECT COUNT(*) FROM events WHERE kind='head.review_now'").fetchone()[0]
     assert n == 1
     assert (
-        conn.execute("SELECT detail FROM events WHERE kind='watch.hit'").fetchone()[0] == "ingest"
+        conn.execute("SELECT detail FROM events WHERE kind='watch.hit'").fetchone()[0]
+        == "ingest via watch"
     )
 
 
@@ -232,3 +233,42 @@ def test_an_ingest_hit_runs_ingest_then_the_scheduler(cfg, conn, gh, notifier):
     d._due.add(watch.INGEST)
     d.tick()
     assert order[:2] == ["ingest", "schedule"]
+
+
+def test_the_queue_pass_gives_way_to_a_hit_and_runs_again(cfg, conn, gh, notifier, monkeypatch):
+    """The gate-comment pass reads one comment per PR and can take minutes (134 s on Brody,
+    2026-11-27): a hit arriving meanwhile ends it before its next read, the hit runs, and the
+    pass is due again at once."""
+    from reviewsys import daemon as daemon_mod
+
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
+    order = []
+    reads = iter(range(100))
+    raised = []
+
+    def queue_pass(conn, cfg, gh, *, should_yield):
+        order.append("queue_comments")
+        for _ in reads:
+            if should_yield():
+                return {"yielded": 1}
+            if not raised:  # the watch thread, mid-pass
+                raised.append(1)
+                with d._due_lock:
+                    d._due.add(watch.INGEST)
+        return {"yielded": 0}
+
+    monkeypatch.setattr(daemon_mod, "update_queue_comments", queue_pass)
+    for task in d.tasks:
+        if task.name not in ("queue_comments",):
+            task.fn = (lambda n: lambda: order.append(n))(task.name)
+        task.last = 1e12 if task.interval_s else 0.0
+    [q] = [t for t in d.tasks if t.name == "queue_comments"]
+    q.last = 0.0
+    d.tick()
+    i = order.index("queue_comments")
+    assert order[i : i + 3] == ["queue_comments", "ingest", "schedule"]
+    assert q.last == 0.0  # due again
+    order.clear()
+    d.tick()
+    assert "queue_comments" in order
+    assert q.last > 0

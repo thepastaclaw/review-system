@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+from collections.abc import Callable
 from typing import Any
 
 from . import github
@@ -166,13 +167,26 @@ def _write(
             kv_set(conn, _comment_key(repo, number), str(created["id"]))
 
 
-def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict[str, int]:
-    """Post or refresh the queue comment on every queued PR and honour ticked priority boxes."""
-    stats = {"written": 0, "promoted": 0, "deferred": 0}
+def update_queue_comments(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    gh: Gh,
+    *,
+    should_yield: Callable[[], bool] = lambda: False,
+) -> dict[str, int]:
+    """Post or refresh the queue comment on every queued PR and honour ticked priority boxes.
+
+    One comment read per PR makes a pass take minutes: when `should_yield` says a request is
+    waiting (daemon.py: a watch or webhook hit), the pass ends before its next read, writing
+    nothing more, with `yielded` set, and the daemon runs it again after the request."""
+    stats = {"written": 0, "promoted": 0, "deferred": 0, "yielded": 0}
     ts = now()
     rows = queued_order(conn, ts=ts)
     comments: dict[int, dict[str, Any] | None] = {}
     for h in rows:
+        if should_yield():
+            stats["yielded"] = 1
+            return stats
         try:
             c = _read_comment(conn, gh, cfg, h["repo"], h["number"])
         except Exception as exc:
@@ -201,6 +215,9 @@ def update_queue_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> dict
     ).fetchall()
     in_debounce = {p["id"] for p in deferred if p["id"] is not None}
     for p in deferred:
+        if should_yield():
+            stats["yielded"] = 1
+            return stats
         try:
             c = _read_comment(conn, gh, cfg, p["repo"], p["number"])
             body = str(c.get("body") or "") if c else ""
