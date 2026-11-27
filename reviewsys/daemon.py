@@ -18,7 +18,7 @@ from . import gc as gc_mod
 from .config import Config
 from .db import event, kv_get, kv_set, now, now_dt, parse_ts, tx
 from .gh import Gh
-from .ingest import ingest_notifications, ingest_prs, ingest_review_replies
+from .ingest import ingest_notifications, ingest_pr_comments, ingest_prs, ingest_review_replies
 from .models import ReviewError
 from .notify import Notifier
 from .queue_status import update_queue_comments
@@ -126,6 +126,7 @@ class Daemon:
         return {
             "notifications": added,
             "replies": ingest_review_replies(self.conn, self.cfg, self.gh),
+            "comments": ingest_pr_comments(self.conn, self.cfg, self.gh),
         }
 
     def t_route(self) -> object:

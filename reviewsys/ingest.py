@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import timedelta
@@ -702,4 +703,70 @@ def ingest_review_replies(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
             kv_set(conn, key, fmt_ts(poll_start - REPLY_OVERLAP))
     with tx(conn):
         kv_set(conn, "replies.last_at", now())
+    return added
+
+
+# ---- top-level PR comments -> inbox ----
+
+
+def _reviewed_open_pr(conn: sqlite3.Connection, cfg: Config, repo: str, number: int) -> bool:
+    row = conn.execute(
+        "SELECT author FROM prs WHERE repo=? AND number=? AND state='open'", (repo, number)
+    ).fetchone()
+    return row is not None and str(row["author"] or "").lower() != cfg.bot_login.lower()
+
+
+def ingest_pr_comments(conn: sqlite3.Connection, cfg: Config, gh: Gh) -> int:
+    """Pull the top-level PR comments of every watched repo updated since the cursor into
+    `inbox`, one row per comment (kind `mention` when it mentions the bot, else `comment`).
+    A notification names only the PR's latest comment, so a comment followed by another
+    before the next poll (often the bot's own) got no row of its own: dashpay/dash#8159
+    (2026-11-26), where a maintainer's dispute quoting a finding was hidden by the job
+    runner's acknowledgement 35 s later. Only open PRs ingest knows that are not the bot's
+    own get rows (every route but the own-PR batch needs an open PR, and that batch keeps
+    coming from notifications), and never for the bot's own comments. Returns rows added."""
+    mention = re.compile(rf"@{re.escape(cfg.bot_login)}\b", re.IGNORECASE)
+    added = 0
+    for repo in cfg.enabled_repos:
+        key = f"comments.cursor:{repo}"
+        since = kv_get(conn, key) or _poll_cursor(conn, "comments.cursor")
+        poll_start = now_dt()
+        try:
+            rows = (
+                gh.api(
+                    f"repos/{repo}/issues/comments?sort=updated&direction=asc&since={since}&per_page=100",
+                    paginate=True,
+                )
+                or []
+            )
+        except Exception as exc:
+            log.warning("comment ingest %s failed: %s", repo, exc)
+            continue
+        with tx(conn):
+            for c in rows:
+                if not isinstance(c, dict) or "/pull/" not in str(c.get("html_url") or ""):
+                    continue
+                actor = str((c.get("user") or {}).get("login") or "")
+                tail = str(c.get("issue_url") or "").rsplit("/", 1)[-1]
+                if actor.lower() == cfg.bot_login.lower() or not tail.isdigit():
+                    continue
+                if not _reviewed_open_pr(conn, cfg, repo, int(tail)):
+                    continue
+                cur = conn.execute(
+                    INBOX_INSERT,
+                    (
+                        f"comment:{c.get('id')}",
+                        "mention" if mention.search(str(c.get("body") or "")) else "comment",
+                        repo,
+                        int(tail),
+                        None,
+                        str(c.get("url") or ""),
+                        str(c.get("created_at") or now()),
+                        now(),
+                    ),
+                )
+                added += cur.rowcount
+            kv_set(conn, key, fmt_ts(poll_start - REPLY_OVERLAP))
+    with tx(conn):
+        kv_set(conn, "comments.last_at", now())
     return added
