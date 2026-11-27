@@ -4983,11 +4983,11 @@ def _settle_stale_request(
 ) -> None:
     """A review that leaves no blocker standing but posts as a COMMENT does not replace the
     bot's earlier CHANGES_REQUESTED on GitHub, so the PR kept showing changes requested
-    (dashpay/dash#8198, 2026-11-27). With nothing disputed either, the newest such review (the
-    one GitHub counts) is dismissed with a link to this one. With disputed blockers left
-    ((title, thread url) each), this review says the earlier one still shows and a maintainer
-    can dismiss it (`dismiss_stale_when_disputed` dismisses instead); it says the same when the
-    dismissal is refused. An approval replaces the request by itself, and a degraded review
+    (dashpay/dash#8198, 2026-11-27). The newest such review (the one GitHub counts) is
+    dismissed with a link to this one; disputed blockers left ((title, thread url) each) are
+    linked in the message as left to the maintainers (Dob, 2026-11-27). With
+    `dismiss_stale_when_disputed` off, or when the dismissal is refused, this review says
+    instead that the earlier one still shows and a maintainer can dismiss it. An approval replaces the request by itself, and a degraded review
     never overrules a full-strength one. Policy v12 settles a dispute as a deferral
     (ledger.OUTCOME_STATUS), so it cannot tell one from an accepted deferral: there it is
     skipped, and says so. Best effort: the review is published."""
@@ -5007,17 +5007,12 @@ def _settle_stale_request(
             noted = _note_stale_request(ctx, res, reviews, newest, disputed)
             kind, detail = "review.stale_request_noted", f"{newest.get('id')}: {noted}"
         else:
-            why = (
-                f"{len(disputed)} disputed blocker(s) left to the maintainers"
-                if disputed
-                else "no blocking finding stands"
-            )
             url = res.review_url or f"https://github.com/{ctx.repo}/pull/{ctx.number}"
             try:
                 github.dismiss_review(
                     ctx.gh,
                     str(newest.get("node_id") or ""),
-                    f"Superseded by the re-review of {ctx.sha[:8]} ({why}): {url}",
+                    _dismissal_message(ctx.sha, url, disputed),
                 )
             except Exception as exc:
                 noted = _note_stale_request(ctx, res, reviews, newest, disputed)
@@ -5034,6 +5029,25 @@ def _settle_stale_request(
         kind, detail = "review.stale_request_failed", str(exc)[:300]
     with tx(ctx.conn):
         event(ctx.conn, kind, repo=ctx.repo, number=ctx.number, run_id=ctx.run_id, detail=detail)
+
+
+DISMISSAL_LINKS = 10  # disputed findings linked in a dismissal message, the rest counted
+
+
+def _dismissal_message(sha: str, url: str, disputed: list[tuple[str, str]]) -> str:
+    """Why the bot's earlier change request is dismissed: the re-review that superseded it
+    and, when it only stands disputed, each disputed blocker's thread, left to maintainers."""
+    if not disputed:
+        return f"Superseded by the re-review of {sha[:8]} (no blocking finding stands): {url}"
+    links = "; ".join(f"[{title}]({thread})" for title, thread in disputed[:DISMISSAL_LINKS])
+    more = len(disputed) - DISMISSAL_LINKS
+    if more > 0:
+        links += f"; and {more} more in the re-review"
+    return (
+        f"Superseded by the re-review of {sha[:8]}: {url}. No blocking finding stands "
+        f"undisputed. {len(disputed)} disputed blocker(s) are left to the maintainers to "
+        f"decide: {links}"
+    )
 
 
 def _note_stale_request(
