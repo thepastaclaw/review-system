@@ -172,7 +172,8 @@ def test_the_label_is_created_where_the_bot_may(conn):
     assert labels.ensure_review_now_label(conn, gh, REPO)
     [(ep, body)] = gh.created
     assert ep == f"repos/{REPO}/labels" and body["name"] == REVIEW_NOW_LABEL
-    assert "30-minute" in body["description"]
+    assert "30-min" in body["description"]
+    assert len(body["description"]) <= 100  # GitHub's limit: longer is a 422
     gh = _LabelApi(
         exists=False, create_error="gh: Must have admin rights to Repository. (HTTP 403)"
     )

@@ -200,9 +200,9 @@ def _current(gh: Gh, repo: str, number: int) -> set[str]:
 # ---- the review-now label (ingest.REVIEW_NOW_LABEL) ----
 
 REVIEW_NOW_COLOR = "0e8a16"
+# GitHub refuses a label description over 100 characters (422 Validation Failed)
 REVIEW_NOW_DESCRIPTION = (
-    "PastaClaw: review the current head now, without the 30-minute push debounce; "
-    "removed once that review is done"
+    "PastaClaw reviews the head now, skipping the 30-min push debounce; removed after"
 )
 
 
