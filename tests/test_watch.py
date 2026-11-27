@@ -3,6 +3,8 @@
 import json
 import subprocess
 
+import pytest
+
 from reviewsys import watch
 from reviewsys.daemon import Daemon
 from reviewsys.gh import Gh
@@ -291,3 +293,47 @@ def test_a_pass_that_keeps_giving_way_still_gets_to_the_end(cfg, conn, gh):
             break
     assert calls == [1, 1, 0]  # one read per call; the third reads the last and ends
     assert len(done) == 3
+    assert len(gh.gate_bodies) == 3  # every PR's comment, each written after its own read
+
+
+def test_the_daemon_keeps_the_pass_place_and_starts_over_when_it_ends(
+    cfg, conn, gh, notifier, monkeypatch
+):
+    from reviewsys import daemon as daemon_mod
+
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
+    seen = []
+    script = iter([{"yielded": 1}, {"yielded": 0}])
+
+    def queue_pass(conn, cfg, gh, *, should_yield, done):
+        seen.append(set(done))
+        done.add(f"queued:{len(seen)}")
+        return next(script)
+
+    monkeypatch.setattr(daemon_mod, "update_queue_comments", queue_pass)
+    d.t_queue_comments()
+    d.t_queue_comments()
+    assert seen == [set(), {"queued:1"}] and d._queue_done == set()
+
+    def broken(conn, cfg, gh, *, should_yield, done):
+        done.add("queued:9")
+        raise RuntimeError("db")
+
+    monkeypatch.setattr(daemon_mod, "update_queue_comments", broken)
+    with pytest.raises(RuntimeError):
+        d.t_queue_comments()
+    assert d._queue_done == set()
+
+
+def test_a_box_hit_sends_the_pass_back_to_the_start_once(cfg, conn, gh, notifier):
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
+    for task in d.tasks:
+        task.fn = lambda: None
+    d._queue_done.update({"queued:1@x", "deferred:r#2@y"})
+    d._due.add(watch.QUEUE)
+    d.run_watched()
+    assert d._queue_done == set() and d._queue_reread
+    d._queue_done.add("queued:1@x")
+    d._due.add(watch.QUEUE)
+    d.run_watched()
+    assert d._queue_done == {"queued:1@x"}  # once per pass

@@ -534,11 +534,17 @@ class FakeGh(Gh):
             if "/issues/" in ep and ep.endswith("/comments") and method == "POST":
                 self.gate_bodies.append((body or {})["body"])
                 self.issue_comments.append(
-                    {"id": 77, "user": {"login": "thepastaclaw"}, "body": (body or {})["body"]}
+                    {
+                        "id": 77,
+                        "user": {"login": "thepastaclaw"},
+                        "body": (body or {})["body"],
+                        "_issue": ep.split("/comments")[0],  # posted ones stay on their PR
+                    }
                 )
                 return {"id": 77}
             if "/issues/" in ep and "/comments" in ep:
-                return self.issue_comments
+                issue = ep.split("/comments")[0]
+                return [c for c in self.issue_comments if c.get("_issue", issue) == issue]
             if "/pulls/" in ep:
                 return self.pr
             if ep.startswith("https://api.github.com/") or (
