@@ -120,6 +120,9 @@ class Daemon:
 
     # ---- tasks ----
     def t_ingest(self) -> object:
+        stats: dict[str, object] = dict(ingest_prs(self.conn, self.cfg, self.gh))
+        if not self.spawn:  # a no-spawn or shadow daemon writes nothing to GitHub
+            return stats
         for repo in self.cfg.enabled_repos:
             if repo not in self.review_now_checked:
                 try:
@@ -127,7 +130,6 @@ class Daemon:
                     self.review_now_checked.add(repo)
                 except Exception as exc:  # transient: tried again next pass
                     log.warning("review-now label check on %s failed: %s", repo, exc)
-        stats: dict[str, object] = dict(ingest_prs(self.conn, self.cfg, self.gh))
         released = labels.release_review_now(self.conn, self.gh)
         if released:
             stats["review_now_released"] = released

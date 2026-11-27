@@ -1,6 +1,9 @@
 """The `pastaclaw:review-now` label: review the current head now, then take the label off."""
 
+import pytest
+
 from reviewsys import labels
+from reviewsys.daemon import Daemon
 from reviewsys.db import kv_get, now, parse_ts, tx
 from reviewsys.ingest import REVIEW_NOW_LABEL, ingest_prs, review_now_key
 from reviewsys.models import FailKind, ReviewError
@@ -120,14 +123,21 @@ def test_a_label_that_cannot_be_removed_asks_nothing_more(cfg, conn, gh, monkeyp
         conn.execute("UPDATE heads SET status='done' WHERE sha=?", (A,))
 
     def refuse(*a, **kw):
-        raise ReviewError(FailKind.FATAL, "HTTP 403: Must have triage access")
+        raise ReviewError(FailKind.CONTRACT, "gh: Must have triage access to Issue. (HTTP 403)")
 
     monkeypatch.setattr(gh, "api", refuse)
+    assert labels.release_review_now(conn, gh) == 0
     assert labels.release_review_now(conn, gh) == 0
     assert kv_get(conn, review_now_key(REPO, 8)) == A
     monkeypatch.undo()
     ingest_prs(conn, cfg, gh)
     assert _head(conn, A)["status"] == "done"
+    # nor does it turn the debounce off for later pushes, and it is recorded once
+    gh.open_prs[REPO] = [pr(8, B, REVIEW_NOW_LABEL)]
+    ingest_prs(conn, cfg, gh)
+    assert not _now_eligible(_head(conn, B))
+    kinds = [r[0] for r in conn.execute("SELECT kind FROM events WHERE kind LIKE 'label.review%'")]
+    assert kinds == ["label.review_now_unremovable"]
 
 
 def test_verdict_label_sync_leaves_the_review_now_label_alone(gh):
@@ -140,16 +150,17 @@ def test_verdict_label_sync_leaves_the_review_now_label_alone(gh):
 class _LabelApi:
     """gh for the repo label endpoints: `exists`, and what creating it answers."""
 
-    def __init__(self, *, exists, create_error=None):
+    def __init__(self, *, exists, create_error=None, kind=FailKind.CONTRACT):
         self.exists, self.create_error, self.created = exists, create_error, []
+        self.kind = kind
 
     def api(self, ep, method="GET", body=None, **kw):
         if method == "GET":
             if not self.exists:
-                raise ReviewError(FailKind.FATAL, "HTTP 404: Not Found")
+                raise ReviewError(FailKind.CONTRACT, "gh: Not Found (HTTP 404)")
             return {"name": REVIEW_NOW_LABEL}
         if self.create_error:
-            raise ReviewError(FailKind.FATAL, self.create_error)
+            raise ReviewError(self.kind, self.create_error)
         self.created.append((ep, body))
         return body
 
@@ -162,7 +173,76 @@ def test_the_label_is_created_where_the_bot_may(conn):
     [(ep, body)] = gh.created
     assert ep == f"repos/{REPO}/labels" and body["name"] == REVIEW_NOW_LABEL
     assert "30-minute" in body["description"]
-    gh = _LabelApi(exists=False, create_error="HTTP 403: Must have admin rights")
+    gh = _LabelApi(
+        exists=False, create_error="gh: Must have admin rights to Repository. (HTTP 403)"
+    )
     assert not labels.ensure_review_now_label(conn, gh, REPO)
     kinds = [r[0] for r in conn.execute("SELECT kind FROM events WHERE kind LIKE 'label.review%'")]
     assert kinds == ["label.review_now_created", "label.review_now_missing"]
+    # a transient failure is no answer: raised, so the daemon tries again next pass
+    gh = _LabelApi(exists=False, create_error="gh: HTTP 502", kind=FailKind.INFRA)
+    with pytest.raises(ReviewError):
+        labels.ensure_review_now_label(conn, gh, REPO)
+
+
+def test_a_label_a_person_took_off_is_released(cfg, conn, gh):
+    """GitHub answers 404 for a label no longer on the PR: released, not retried forever."""
+    gh.open_prs[REPO] = [pr(10, A, REVIEW_NOW_LABEL)]
+    gh.labels = [REVIEW_NOW_LABEL]
+    ingest_prs(conn, cfg, gh)
+    gh.labels = []  # taken off by hand mid-review
+    gh.open_prs[REPO] = [pr(10, A)]
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE sha=?", (A,))
+    assert labels.release_review_now(conn, gh) == 1
+    assert kv_get(conn, review_now_key(REPO, 10)) is None
+
+
+def test_added_again_after_release_asks_again(cfg, conn, gh):
+    """Like ticking the box again: another review of the same commit."""
+    gh.open_prs[REPO] = [pr(11, A, REVIEW_NOW_LABEL)]
+    gh.labels = [REVIEW_NOW_LABEL]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE sha=?", (A,))
+    labels.release_review_now(conn, gh)
+    gh.labels = [REVIEW_NOW_LABEL]
+    ingest_prs(conn, cfg, gh)
+    assert _head(conn, A)["status"] == "queued"
+
+
+def test_a_push_after_the_review_ended_waits_out_the_debounce(cfg, conn, gh):
+    """The review ended but the label is not off yet (release runs after ingest, each pass):
+    a push in that window is not asked for under the old label."""
+    gh.open_prs[REPO] = [pr(12, A, REVIEW_NOW_LABEL)]
+    gh.labels = [REVIEW_NOW_LABEL]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='done' WHERE sha=?", (A,))
+    gh.open_prs[REPO] = [pr(12, B, REVIEW_NOW_LABEL)]
+    ingest_prs(conn, cfg, gh)
+    assert not _now_eligible(_head(conn, B))
+    assert labels.release_review_now(conn, gh) == 1 and gh.labels == []
+
+
+def test_the_label_on_a_running_automatic_head_makes_it_requested(cfg, conn, gh):
+    """Its run must review the commit, not carry an earlier review over it (worker._carry
+    re-reads the trigger)."""
+    gh.open_prs[REPO] = [pr(13, A)]
+    ingest_prs(conn, cfg, gh)
+    with tx(conn):
+        conn.execute("UPDATE heads SET status='running' WHERE sha=?", (A,))
+    gh.open_prs[REPO] = [pr(13, A, REVIEW_NOW_LABEL)]
+    ingest_prs(conn, cfg, gh)
+    head = _head(conn, A)
+    assert (head["status"], head["trigger"]) == ("running", "normal_request")
+
+
+def test_a_no_spawn_daemon_writes_no_labels(cfg, conn, gh, notifier):
+    gh.open_prs[REPO] = [pr(14, A, REVIEW_NOW_LABEL)]
+    gh.labels = [REVIEW_NOW_LABEL]
+    calls = len(gh.calls)
+    Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False).t_ingest()
+    assert gh.label_calls == []
+    assert not any(f"repos/{REPO}/labels" in " ".join(c) for c in gh.calls[calls:])
+    assert kv_get(conn, review_now_key(REPO, 14)) == A  # still asked for: ingest is DB only

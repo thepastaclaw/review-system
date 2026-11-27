@@ -1623,20 +1623,31 @@ has its current head reviewed now, without the 30-minute push debounce: an agent
 is done with a PR adds it instead of waiting (lklimek, 2026-11-27). Ingest sees it on its next
 poll (every `ingest_interval_seconds`, 3 minutes) and asks for the head exactly as the gate
 comment's **Request normal review** box does (`normal_request`: eligible at once, behind
-priority reviews; overriding the draft and skip-label rules like any explicit request). Each
-commit is asked for once per label (kv `review_now:<repo>#<n>`), so a label left on never
-re-reviews a finished head; a push while it is on is the new head, asked for at once too.
+priority reviews; overriding the draft and skip-label rules like any explicit request; a head
+whose automatic run is under way becomes requested, so the run reviews it instead of
+carrying an earlier review). Event `head.review_now`.
 
-Once the requested review ended (done or failed; or the PR closed), the ingest task takes
-the label off (`labels.release_review_now`, event `label.review_now_released`), so the next
-push waits out the debounce again unless someone adds it again. A label the bot cannot
-remove keeps its record (nothing is asked again for that commit) and is tried again next pass.
+One label is one review: each commit is asked for once (kv `review_now:<repo>#<n>`), so a
+label left on never re-reviews a finished head. A push while the review is still queued or
+running is the new head, asked for at once too; a push after it ended waits out the debounce
+(`ingest._review_now_due`). Once the requested review ended (done or failed, superseded with
+the label no longer asking, or the PR closed), the ingest task takes the label off
+(`labels.release_review_now`, event `label.review_now_released`; a label a person already took
+off counts as released). Adding it again asks again, as ticking the box again does. A label
+the bot cannot remove keeps its record, so nothing more is asked under it, is recorded once
+(`label.review_now_unremovable`) and is tried again each pass.
 
 The daemon creates the label (green, with a description) on each watched repo that lacks it,
-once per start (`label.review_now_created`); that needs write access, so where the bot has
-less it is recorded once (`label.review_now_missing`) and someone with write access must
-create it (GitHub also creates it when such a person first adds it to a PR). The verdict
-label sync (`pastaclaw:approved` etc.) leaves it alone.
+once per start (`label.review_now_created`). That needs write access: where the bot has less
+(dashpay/platform, dash-evo-tool, …) it is recorded once (`label.review_now_missing`) and
+someone with write access creates it (GitHub also creates it when such a person first adds it
+to a PR). Unlike the verdict labels, which a repo opts into by creating them, this one is
+created unasked, because it does nothing until someone adds it. The verdict label sync leaves
+it alone. A no-spawn or shadow daemon neither creates nor removes it.
+
+Who may ask: anyone who can label the PR (triage access and up), a little wider than the
+gate box (editing the bot's comment). The request is a normal-priority review, the same
+quota as the box; on a `priority_authors` PR it is a priority one, as the box is.
 
 ## Skip label (PRs that must not be reviewed)
 

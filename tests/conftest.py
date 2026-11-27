@@ -237,6 +237,8 @@ class FakeGh(Gh):
         if method == "DELETE":
             name = urllib.parse.unquote(ep.rsplit("/labels/", 1)[1])
             self.label_calls.append(("DELETE", name))
+            if name not in self.labels:  # what GitHub answers for a label not on the issue
+                raise _GhFailure("gh: Label does not exist (HTTP 404)")
             self.labels = [n for n in self.labels if n != name]
             return {}
         if method == "POST":

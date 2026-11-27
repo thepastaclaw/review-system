@@ -108,6 +108,28 @@ def review_now_key(repo: str, number: int) -> str:
     return f"review_now:{repo}#{number}"
 
 
+def _review_now_due(conn: sqlite3.Connection, repo: str, number: int, sha: str) -> bool:
+    """The review-now label asks for `sha`: nothing was asked under it yet, or the commit it
+    asked for was pushed over before its review ended. Once that review ended the label only
+    waits to come off (labels.release_review_now): a push in between waits out the debounce,
+    as one after the label is gone, and so does every push while a label stays that the bot
+    cannot remove."""
+    asked = kv_get(conn, review_now_key(repo, number))
+    if asked is None:
+        return True
+    if asked == sha:
+        return False
+    row = conn.execute(
+        "SELECT status FROM heads WHERE repo=? AND number=? AND sha=? AND queue='live'",
+        (repo, number, asked),
+    ).fetchone()
+    return row is None or row["status"] in (
+        HeadStatus.QUEUED,
+        HeadStatus.RUNNING,
+        HeadStatus.SUPERSEDED,
+    )
+
+
 def skip_noted_key(repo: str, number: int) -> str:
     """kv: the commit whose gate comment last got the skip-label note (queue_status.py)."""
     return f"queue.skip_noted:{repo}#{number}"
@@ -290,6 +312,18 @@ def enqueue_head(
             )
             if existing["status"] == HeadStatus.RUNNING and carried_from(conn, repo, number, sha):
                 # its run carried an earlier review and is finishing: review it right after
+                _rereview_after_run(conn, existing["id"])
+            return "promoted"
+        if (
+            trigger == Trigger.NORMAL_REQUEST
+            and existing["status"] == HeadStatus.RUNNING
+            and existing["trigger"] in AUTOMATIC_TRIGGERS
+        ):
+            # asked for while its automatic run is under way: no longer automatic, so the run
+            # reviews it rather than carrying an earlier review (worker._carry re-reads the
+            # trigger), and one that carried already is reviewed right after
+            conn.execute("UPDATE heads SET trigger=? WHERE id=?", (trigger.value, existing["id"]))
+            if carried_from(conn, repo, number, sha):
                 _rereview_after_run(conn, existing["id"])
             return "promoted"
         if (
@@ -542,19 +576,22 @@ def ingest_repo(
             if p.author.lower() in IGNORED_AUTHORS:
                 stats["ignored"] += 1
                 continue
-            if (
-                REVIEW_NOW_LABEL in (n.lower() for n in p.labels)
-                and kv_get(conn, review_now_key(repo, p.number)) != p.head_sha
+            if REVIEW_NOW_LABEL in (n.lower() for n in p.labels) and _review_now_due(
+                conn, repo, p.number, p.head_sha
             ):
                 # an explicit request, as the normal box: no debounce, and the draft and skip
-                # label rules below leave it running. Once per commit the label is seen on
-                stats[
-                    enqueue_head(
-                        conn, cfg, repo, p.number, p.head_sha, Trigger.NORMAL_REQUEST, ts=ts
-                    )
-                ] += 1
+                # label rules below leave it running
+                res = enqueue_head(
+                    conn, cfg, repo, p.number, p.head_sha, Trigger.NORMAL_REQUEST, ts=ts
+                )
                 kv_set(conn, review_now_key(repo, p.number), p.head_sha)
-                event(conn, "head.review_now", repo=repo, number=p.number, detail=p.head_sha[:8])
+                event(
+                    conn,
+                    "head.review_now",
+                    repo=repo,
+                    number=p.number,
+                    detail=f"{p.head_sha[:8]} {res}",
+                )
             if label:
                 # checked before the draft rule: a labelled draft gets no draft comment either
                 if skip_pr_heads(conn, repo, p.number, p.head_sha, ts=ts):
