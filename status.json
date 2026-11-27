@@ -1,6 +1,6 @@
 {
-  "data_as_of": "2026-11-27T00:45:04Z",
-  "generated_at": "2026-11-27T00:45:05Z",
+  "data_as_of": "2026-11-27T00:46:07Z",
+  "generated_at": "2026-11-27T00:46:08Z",
   "history": {
     "daily": [
       {
@@ -466,6 +466,14 @@
     "recent_events": [
       {
         "detail": null,
+        "kind": "gc.run",
+        "number": null,
+        "repo": null,
+        "run_id": null,
+        "ts": "2026-11-27T00:45:59Z"
+      },
+      {
+        "detail": null,
         "kind": "head.failed",
         "number": 1005,
         "repo": "PastaPastaPasta/dashwallet-desktop",
@@ -775,14 +783,6 @@
         "repo": "dashpay/dash",
         "run_id": null,
         "ts": "2026-11-27T00:30:10Z"
-      },
-      {
-        "detail": "ok in 3319s",
-        "kind": "run.done",
-        "number": 8257,
-        "repo": "dashpay/dash",
-        "run_id": 15122,
-        "ts": "2026-11-27T00:29:56Z"
       }
     ],
     "tokens_by_effort": [
@@ -1489,31 +1489,31 @@
     "priority_queued": 0,
     "queued": [
       {
-        "age_seconds": 1782,
+        "age_seconds": 1845,
         "attempts": 0,
         "author": "PastaPastaPasta",
-        "eligible": false,
+        "eligible": true,
         "eligible_at": "2026-11-27T00:45:22Z",
-        "eligible_in_seconds": 18,
+        "eligible_in_seconds": 0,
         "number": 1039,
         "position": 1,
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/1039",
         "prioritize_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/issues/1039#issuecomment-7206371780",
         "priority": false,
         "queued_at": "2026-11-27T00:15:22Z",
-        "reason": "debounce (more pushes may follow)",
+        "reason": "waiting for a review slot",
         "repo": "PastaPastaPasta/dashwallet-desktop",
         "sha": "1a554751adc218455dc90dc035ca23256bcaa176",
         "title": "fix(swift): name storage_refused and storage_not_private in ServiceErrorCode",
         "trigger": "new_pr"
       },
       {
-        "age_seconds": 1475,
+        "age_seconds": 1538,
         "attempts": 0,
         "author": "romchornyi",
         "eligible": false,
         "eligible_at": "2026-11-27T00:50:29Z",
-        "eligible_in_seconds": 325,
+        "eligible_in_seconds": 262,
         "number": 1494,
         "position": 2,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1494",
@@ -1527,12 +1527,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1475,
+        "age_seconds": 1538,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-27T00:50:29Z",
-        "eligible_in_seconds": 325,
+        "eligible_in_seconds": 262,
         "number": 1089,
         "position": 3,
         "pr_url": "https://github.com/dashpay/dashwallet-ios/pull/1089",
@@ -1546,12 +1546,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 1470,
+        "age_seconds": 1533,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-27T00:50:34Z",
-        "eligible_in_seconds": 330,
+        "eligible_in_seconds": 267,
         "number": 996,
         "position": 4,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/996",
@@ -1565,12 +1565,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 261,
+        "age_seconds": 324,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-27T01:10:43Z",
-        "eligible_in_seconds": 1539,
+        "eligible_in_seconds": 1476,
         "number": 997,
         "position": 5,
         "pr_url": "https://github.com/PastaPastaPasta/yappr/pull/997",
@@ -1584,12 +1584,12 @@
         "trigger": "new_push"
       },
       {
-        "age_seconds": 259,
+        "age_seconds": 322,
         "attempts": 0,
         "author": "PastaPastaPasta",
         "eligible": false,
         "eligible_at": "2026-11-27T01:10:45Z",
-        "eligible_in_seconds": 1541,
+        "eligible_in_seconds": 1478,
         "number": 1027,
         "position": 6,
         "pr_url": "https://github.com/PastaPastaPasta/dashwallet-desktop/pull/1027",
@@ -1610,7 +1610,7 @@
       "reviews": 10,
       "tokens": 56902079
     },
-    "ts": "2026-11-27T00:45:04Z",
+    "ts": "2026-11-27T00:46:07Z",
     "typical_minutes_by_tier": {
       "critical": 21.5,
       "low": 21.1,
@@ -1620,8 +1620,8 @@
     },
     "watchdog": {
       "active": 0,
-      "eligible": 0,
-      "idle_minutes": 9.083333333333334,
+      "eligible": 1,
+      "idle_minutes": 10.133333333333333,
       "ingest_stale": false,
       "stuck": false
     }
@@ -1629,7 +1629,7 @@
   "rounds": {
     "ceiling": 5.0,
     "definition": "A round is a distinct head commit of a PR that got its own review from the bot, including one stopped at the Phase-1 gate: a `reviews` row with phase 'preliminary' or 'final' and imported=0, counted once per (repo, number, sha). Carried heads, CI updates and conversation follow-ups reuse a reviewed sha and add no round. Completed PRs (merged or abandoned, both closed) are those no longer open, dated by the moment the poll saw them close (prs.updated_at, which a closed PR is never touched after). Only completed PRs with at least one round count. Rounds to first APPROVE is the position of the first round whose sha received an APPROVE verdict, among PRs that got one. Only enabled repos count. Target: mean <= 4, ceiling 5; a repo is flagged only at n >= 5.",
-    "generated_at": "2026-11-27T00:45:04Z",
+    "generated_at": "2026-11-27T00:46:07Z",
     "min_n": 5,
     "overall": {
       "above_ceiling": false,
