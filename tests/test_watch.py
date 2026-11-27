@@ -197,21 +197,38 @@ def test_a_watch_hit_runs_ingest_now_and_the_poll_adds_no_second_review(cfg, con
 
 
 def test_a_hit_during_a_tick_runs_before_the_next_task(cfg, conn, gh, notifier):
-    from reviewsys.daemon import Task
-
-    d = Daemon(cfg, conn, gh=gh, notifier=notifier, spawn=False)
+    """With the daemon's real task order: the hit's pass, then the scheduler, then the tick
+    goes on, its own supersede, reap and schedule passes still in their order."""
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
     order = []
+    names = [t.name for t in d.tasks]
+    assert names.index("schedule") < names.index("queue_comments")  # what the hit reorders
 
-    def slow():
-        order.append("slow")
-        with d._due_lock:  # what the watch thread does while this task runs
-            d._due.add("ingest")
+    def run(name):
+        def fn():
+            order.append(name)
+            if name == "supersede":  # what the watch thread does while this task runs
+                with d._due_lock:
+                    d._due.add(watch.QUEUE)
 
-    d.tasks = [
-        Task("ingest", 180, lambda: order.append("ingest"), last=1e12),
-        Task("slow", 0, slow),
-        Task("late", 0, lambda: order.append("late")),
-        Task("schedule", 0, lambda: order.append("schedule")),
-    ]
+        return fn
+
+    for task in d.tasks:
+        task.fn = run(task.name)
+        task.last = 1e12 if task.interval_s else 0.0  # every interval task ran just now
     d.tick()
-    assert order == ["slow", "ingest", "schedule", "late"]  # the scheduler just ran
+    assert order[:3] == ["supersede", "queue_comments", "schedule"]
+    rest = order[3:]
+    assert rest.index("reap") < rest.index("schedule")  # after the hit, as every tick
+    assert "queue_comments" not in rest  # its interval runs from the hit
+
+
+def test_an_ingest_hit_runs_ingest_then_the_scheduler(cfg, conn, gh, notifier):
+    d = Daemon(cfg, conn, gh=gh, notifier=notifier)
+    order = []
+    for task in d.tasks:
+        task.fn = (lambda n: lambda: order.append(n))(task.name)
+        task.last = 1e12 if task.interval_s else 0.0
+    d._due.add(watch.INGEST)
+    d.tick()
+    assert order[:2] == ["ingest", "schedule"]

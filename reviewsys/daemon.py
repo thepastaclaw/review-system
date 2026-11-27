@@ -302,8 +302,8 @@ class Daemon:
 
     # ---- loop ----
     def watch_round(self) -> set[str]:
-        """One watch read (the watch thread's body): passes it finds due are run by the loop's
-        next tick, which it wakes."""
+        """One watch read (the watch thread's body): passes it finds due run before the tick's
+        next task, and it wakes an idle loop."""
         assert self.watcher is not None
         try:
             due = self.watcher.poll()
@@ -325,9 +325,11 @@ class Daemon:
             return due
         with tx(self.conn):
             event(self.conn, "watch.hit", detail=",".join(sorted(due)))
-        for task in self.tasks:
-            if task.name in due or task.name == "schedule":
-                self._run(task, results if results is not None else {})
+        results = results if results is not None else {}
+        for name in (*(t.name for t in self.tasks if t.name in due), "schedule"):
+            for task in self.tasks:
+                if task.name == name and not self.stop:
+                    self._run(task, results)
         return due
 
     def _watch_forever(self) -> None:
@@ -343,7 +345,9 @@ class Daemon:
                 break
             if self._due:
                 self.run_watched(results)
-            if not force and task.last and t - task.last < task.interval_s:
+            # an every-tick task (interval 0) a hit ran early runs again in its place, so the
+            # tick keeps supersede and reap before schedule
+            if not force and task.interval_s and task.last and t - task.last < task.interval_s:
                 continue
             self._run(task, results)
         return results
