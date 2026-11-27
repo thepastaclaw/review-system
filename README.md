@@ -8,6 +8,12 @@ It replaces the crontab + `review_orchestrator.py` pipeline that lived in the
 OpenClaw workspace. Design goals, in order: **no silent stalls**, small, typed,
 tested, one daemon, one SQLite file, no lock files.
 
+## Using reviewsys
+
+**[User reference: comment commands, review controls, and status](docs/user-guide.md)**
+— compact human reference first, then read-only dashboard/JSON integration details.
+No review-host or administrator access required.
+
 ## Layout
 
 | module | responsibility |
