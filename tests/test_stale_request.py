@@ -104,12 +104,12 @@ def test_a_clean_rereview_dismisses_the_stale_request(conn, cfg, gh):
     assert kv_get(conn, worker._self_dismissed_key(REPO, 8198, 5966020750))
 
 
-def test_only_disputed_blockers_left_says_a_maintainer_can_dismiss(conn, cfg, gh):
-    """The #8198 case: nothing blocks but a disputed blocker. No dismissal; the re-review says,
-    under its heading, that the earlier review still shows, that a maintainer can dismiss it,
-    and links the dispute."""
+def test_with_dismissal_off_disputed_blockers_only_say_a_maintainer_can_dismiss(conn, cfg, gh):
+    """`dismiss_stale_when_disputed = false` (the behaviour before 2026-11-27): no dismissal;
+    the re-review says, under its heading, that the earlier review still shows, that a
+    maintainer can dismiss it, and links the dispute."""
     gh.routes[REVIEWS] = [STALE, POSTED]
-    ctx = _ctx(conn, cfg, gh)
+    ctx = _ctx(conn, dataclasses.replace(cfg, dismiss_stale_when_disputed=False), gh)
     _settle(ctx, disputed=DISPUTED)
     assert gh.dismissals == []
     assert len(gh.review_edits) == 1
@@ -131,17 +131,36 @@ def test_only_disputed_blockers_left_says_a_maintainer_can_dismiss(conn, cfg, gh
 
 def test_the_note_needs_no_listing_of_the_review_just_posted(conn, cfg, gh):
     gh.routes[REVIEWS] = [STALE]  # the listing lags the post
+    cfg = dataclasses.replace(cfg, dismiss_stale_when_disputed=False)
     _settle(_ctx(conn, cfg, gh), disputed=DISPUTED)
     assert len(gh.review_edits) == 1 and gh.review_edits[0][0] == POSTED["id"]
 
 
-def test_disputed_blockers_dismiss_too_when_configured(conn, cfg, gh):
-    """`dismiss_stale_when_disputed` (Pasta's pending call) turns the note into a dismissal."""
+def test_only_disputed_blockers_left_dismisses_and_leaves_them_to_maintainers(conn, cfg, gh):
+    """The #8198 case (knst; Dob, 2026-11-27): nothing the re-review still holds blocking, only
+    disputed blockers. The stale request is dismissed by default, the message linking the
+    re-review and each disputed finding's thread, left to the maintainers."""
+    assert cfg.dismiss_stale_when_disputed
     gh.routes[REVIEWS] = [STALE, POSTED]
-    cfg = dataclasses.replace(cfg, dismiss_stale_when_disputed=True)
-    _settle(_ctx(conn, cfg, gh), disputed=DISPUTED)
-    assert len(gh.dismissals) == 1 and "1 disputed blocker(s)" in gh.dismissals[0][1]
+    more = [*DISPUTED, ("wallet.cpp:12 skips the lock", THREAD + "2")]
+    _settle(_ctx(conn, cfg, gh), disputed=more)
+    [(node, message)] = gh.dismissals
+    assert node == "PRR_5966020750"
+    assert NEW_URL in message and "5971656a" in message
+    assert "2 disputed blocker(s) are left to the maintainers" in message
+    assert f"[spend.cpp:675 drops the fee check]({THREAD})" in message
+    assert f"[wallet.cpp:12 skips the lock]({THREAD}2)" in message
     assert gh.review_edits == []
+    assert _events(conn) == [("review.stale_request_dismissed", "5966020750")]
+    assert kv_get(conn, worker._self_dismissed_key(REPO, 8198, 5966020750))
+
+
+def test_a_long_dispute_list_is_capped_in_the_message():
+    many = [(f"finding {i}", f"https://x/{i}") for i in range(worker.DISMISSAL_LINKS + 3)]
+    message = worker._dismissal_message("a" * 40, "https://r", many)
+    assert "[finding 0](https://x/0)" in message and "finding 12" not in message
+    assert message.endswith("and 3 more in the re-review")
+    assert len(message) < 1500
 
 
 def test_a_review_that_still_blocks_leaves_the_request_alone(conn, cfg, gh):

@@ -1111,17 +1111,17 @@ blockers withhold the approval, Phase 1 only, a same-sha summary, a conversation
 follow-up that cannot approve) therefore left the bot's earlier CHANGES_REQUESTED showing,
 and maintainers read the PR as still blocked (dashpay/dash#8198, 2026-11-27). After posting
 such a review, the worker finds the bot's newest change request GitHub still counts (after
-its last approval or dismissal, `publish.stale_change_requests`) and:
-
-- with no disputed blocker either, dismisses it (`dismissPullRequestReview`), the message
-  linking the new review (`review.stale_request_dismissed`). The dismissal is remembered
-  (kv `review.self_dismissed:…`), so the step-back hold never reads it as a maintainer
-  overruling the bot;
-- with disputed blockers left, does not dismiss: it adds under the new review's heading
-  that GitHub still shows the earlier change request, that a maintainer can dismiss it, and
-  links each disputed finding's thread (`review.stale_request_noted`, once per review, on
-  every such round while the change request stands).
-  `[scheduling] dismiss_stale_when_disputed = true` dismisses in this case too.
+its last approval or dismissal, `publish.stale_change_requests`) and dismisses it
+(`dismissPullRequestReview`, `review.stale_request_dismissed`), the message linking the new
+review. With disputed blockers left (nothing it still holds blocking: knst on
+dashpay/dash#8198; Dob, 2026-11-27) it dismisses too, and the message links each disputed
+finding's thread and says they are left to the maintainers (the first ten, the rest counted).
+The dismissal is remembered (kv `review.self_dismissed:…`), so the step-back hold never reads
+it as a maintainer overruling the bot. `[scheduling] dismiss_stale_when_disputed = false`
+keeps the earlier behaviour for disputed blockers: no dismissal, but a note under the new
+review's heading that GitHub still shows the earlier change request, that a maintainer can
+dismiss it, and the disputed threads (`review.stale_request_noted`, once per review, on every
+such round while the change request stands).
 
 A dismissal GitHub refuses (it needs write access to the repository) gets the same note,
 saying the bot could not dismiss it (`review.stale_request_failed`). An approval replaces the
