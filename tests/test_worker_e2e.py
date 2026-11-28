@@ -4675,3 +4675,26 @@ def test_a_final_verifier_on_the_fallback_never_approves_and_is_named(cfg, conn,
     review = gh.posted_reviews[-1]
     assert review["event"] == "COMMENT"
     assert f"`grok-4.7` (standing in for `{calls[0]}`)" in review["body"]
+
+
+def test_a_conversation_on_the_fallback_never_approves(cfg, conn, gh, lanes):
+    """Opus review of #109: a conversation lane refused on its model and answered by the
+    fallback withdrew the only blocker and approved, credited to the model that refused. A
+    stand-in may lift REQUEST_CHANGES to COMMENT (as in degraded mode), never approve."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    _full_strength_prior(conn)
+    gh.can_resolve = False
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    _standing_final(gh)
+    lanes.conversation = {"threads": [{"finding_hash": bh, **WITHDRAW}]}
+    run, calls = _refusing(lanes, lambda m: m != "grok-4.7", role="conversation", prefix="")
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=run, heartbeat=False) == RunStatus.DONE
+    assert calls[-1] == "grok-4.7"
+    upd = gh.posted_reviews[-1]
+    assert upd["event"] == "COMMENT"
+    assert f"`grok-4.7` (standing in for `{calls[0]}`)" in upd["body"]

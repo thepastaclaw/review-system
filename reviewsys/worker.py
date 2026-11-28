@@ -411,8 +411,9 @@ class RunContext:
     dropped: list[dict[str, Any]] = field(default_factory=list)
     # a lane ran on the refusal fallback or was left out (`_mark_reduced`): no approval
     reduced: bool = False
-    # (fallback, primary) of the last verifier lane that ran on the refusal fallback
-    verifier_fallback: tuple[str, str] | None = None
+    # lane phase -> (fallback, primary): the verifier lane of that phase that answered last
+    # did so on the refusal fallback (verify1, verify2, converse, threads, ...)
+    verifier_fallbacks: dict[str, tuple[str, str]] = field(default_factory=dict)
     # a conversation run (answers replies on a reviewed commit); None until run() knows
     conversation: bool | None = None
     # ---- policy v12 (`review_model_policy.pipeline`); untouched under v11 ----
@@ -2315,6 +2316,12 @@ def _run_checked_lane[T](
             row(status=status, reason=reason)
             if not is_verifier:
                 _record_reviewer(ctx, phase, role, key, lm, fresh, attempt_id)
+            elif refused and lm.substitute_for:  # this phase's verifier answered on the fallback
+                with ctx.state_lock:
+                    ctx.verifier_fallbacks[phase] = (lm.model, lm.substitute_for)
+            else:  # ... or on its own model, a later run of the phase included
+                with ctx.state_lock:
+                    ctx.verifier_fallbacks.pop(phase, None)
             return cast(T, verdict.output)
         exc = verdict.error
         after = f" (after {len(res.followups)} correction turns)" if res.followups else ""
@@ -2347,8 +2354,6 @@ def _run_checked_lane[T](
                     "lane.refused",
                     f"{phase}/{key} {lm.model} refused the content; retrying on {fallback}",
                 )
-                if is_verifier:
-                    ctx.verifier_fallback = (fallback, lm.model)
                 lm = dataclasses.replace(
                     lm, model=fallback, substitute_for=lm.substitute_for or lm.model
                 )
@@ -4445,7 +4450,9 @@ def _verdict_update(
         reviewers=ctx.reviewers,
         dropped=list(ctx.dropped) or None,
         reduced_run=ctx.reduced,
-        verifier=_lane_provenance(verifier_lm, "final-verifier", ctx.verifier_fallback),
+        verifier=_lane_provenance(
+            verifier_lm, "final-verifier", ctx.verifier_fallbacks.get("verify2")
+        ),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
@@ -4599,7 +4606,7 @@ def _build_review(
         verifier=_lane_provenance(
             verifier_lm,
             "verifier" if phase == "preliminary" else "final-verifier",
-            ctx.verifier_fallback,
+            ctx.verifier_fallbacks.get("verify1" if phase == "preliminary" else "verify2"),
         ),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
@@ -5239,7 +5246,9 @@ def _audit_publish(
         reviewers=ctx.reviewers,
         dropped=list(ctx.dropped) or None,
         reduced_run=ctx.reduced,
-        verifier=_lane_provenance(verifier_lm, "final-verifier", ctx.verifier_fallback),
+        verifier=_lane_provenance(
+            verifier_lm, "final-verifier", ctx.verifier_fallbacks.get("verify2")
+        ),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
@@ -7652,13 +7661,20 @@ def _live_verdict_state(ctx: RunContext, phase: str) -> str | None:
 
 
 def _conversation_provenance(ctx: RunContext, lm: LaneModel) -> publish.Provenance:
+    # a conversation lane on the refusal fallback may move REQUEST_CHANGES to COMMENT, as a
+    # degraded stand-in may, but never approve (`reduced_run`), and is named as standing in
     return publish.Provenance(
         reviewers=[],
-        verifier=_lane_provenance(lm, "conversation"),
+        verifier=_lane_provenance(
+            lm,
+            "conversation",
+            ctx.verifier_fallbacks.get("converse") or ctx.verifier_fallbacks.get("threads"),
+        ),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         adhoc=ctx.adhoc,
         conversation=True,
         degraded=_degraded_provenance(ctx),
+        reduced_run=ctx.reduced,
     )
 
 
