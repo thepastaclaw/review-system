@@ -1356,11 +1356,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
         dismiss_stale_when_disputed=bool(s.get("dismiss_stale_when_disputed", False)),
         watch_interval_seconds=max(0, int(s.get("watch_interval_seconds", 10))),
         phase_parallelism=max(0, int(s.get("phase_parallelism", 0))),
-        lane_pools={
-            str(k): max(1, int(v))
-            for k, v in (s.get("lane_pools", DEFAULT_LANE_POOLS) or {}).items()
-            if str(k) != "gpt"  # gpt always follows the per-account budget (slots.py)
-        },
+        lane_pools=_lane_pools(s, t),
         lane_deny_exec=_deny_exec((t.get("lanes") or {}).get("deny_exec", DEFAULT_LANE_DENY_EXEC)),
         refusal_fallback=str((t.get("lanes") or {}).get("refusal_fallback", "grok-4.7")).strip(),
         lane_correction_turns=min(
@@ -1507,6 +1503,23 @@ def _checks(c: dict[str, Any]) -> ChecksConfig:
     if out.enabled and not out.app_id:
         raise ValueError("[checks] enabled needs app_id")
     return out
+
+
+REFUSAL_FALLBACK_SLOTS = 4  # the refusal fallback's pool when the config names none
+
+
+def _lane_pools(s: dict[str, Any], t: dict[str, Any]) -> dict[str, int]:
+    pools = {
+        str(k): max(1, int(v))
+        for k, v in (s.get("lane_pools", DEFAULT_LANE_POOLS) or {}).items()
+        if str(k) != "gpt"  # gpt always follows the per-account budget (slots.py)
+    }
+    # the refusal fallback's lanes are gated too: a burst of refusals must not start one
+    # lane per refused reviewer across every run at once
+    fallback = str((t.get("lanes") or {}).get("refusal_fallback", "grok-4.7")).strip()
+    if fallback and fallback.split("-", 1)[0] != "gpt":
+        pools.setdefault(fallback.split("-", 1)[0], REFUSAL_FALLBACK_SLOTS)
+    return pools
 
 
 def _webhook(c: dict[str, Any]) -> WebhookConfig:

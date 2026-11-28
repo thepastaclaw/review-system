@@ -251,6 +251,16 @@ class Provenance:
     # reviewer lanes left out because every model refused their content (worker._drop_refused):
     # {phase, role, key, fresh, models}
     dropped: list[dict[str, Any]] | None = None
+
+    @property
+    def reduced(self) -> bool:
+        """A reviewer was left out, or a lane ran on the refusal fallback (a stand-in outside
+        degraded mode): no full-strength review."""
+        lanes = [*self.reviewers, self.verifier]
+        return bool(self.dropped) or (
+            not self.degraded and any(lane.get("substitute_for") for lane in lanes)
+        )
+
     # the first full review ran every Phase-2 reviewer a second time, independently
     fresh_first: bool = False
     # a later round's new findings on code unchanged since the previous final review
@@ -371,12 +381,13 @@ def _fence(content: str) -> str:
 def _dropped_line(d: dict[str, Any]) -> str:
     """A reviewer the review went without: every model it ran on refused the content."""
     phase = "Phase 1" if d.get("phase") == "phase1" else "Phase 2"
-    run = " (second pass)" if d.get("fresh") else ""
+    run = ", second pass" if d.get("fresh") else ""
     models = ", ".join(f"`{m}`" for m in d.get("models") or ()) or "its model"
+    then = f"; the fallback then failed ({d['fallback_error']})" if d.get("fallback_error") else ""
     return (
         f"- **Not reviewed by the {d.get('role')} reviewer ({phase}{run}):** {models} refused "
-        "the content as a possible cybersecurity risk (a provider filter), so this review "
-        "was completed without that reviewer's pass"
+        f"the content as a possible cybersecurity risk (a provider filter){then}, so this "
+        "review was completed without that reviewer's pass and does not approve"
     )
 
 
@@ -2622,14 +2633,16 @@ def standing_verdict(
 
 def verdict_event(verified: VerifierOutput, provenance: Provenance) -> str:
     """Blockers always REQUEST_CHANGES. APPROVE only when the full-strength pipeline ran:
-    a Phase-1-only verdict (the second-round reviewers did not run) and a degraded-mode
-    verdict (stand-in models) both stop at COMMENT."""
+    a Phase-1-only verdict (the second-round reviewers did not run), a degraded-mode
+    verdict (stand-in models) and one with a reviewer refused onto the fallback or left out
+    (`Provenance.reduced`) all stop at COMMENT."""
     if verified.blocker_count:
         return "REQUEST_CHANGES"
     if (
         verified.review_action == "APPROVE"
         and not provenance.phase2_skipped
         and not provenance.degraded
+        and not provenance.reduced
     ):
         return "APPROVE"
     return "COMMENT"

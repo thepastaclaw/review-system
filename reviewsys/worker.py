@@ -164,13 +164,17 @@ class LaneFailed(ReviewError):
 
 
 class LaneRefused(LaneFailed):
-    """Every model the lane ran on refused the content (`LaneResult.refused`), the fallback
-    included, or the fallback could not run after the primary refused. A reviewer lane is
-    dropped from its phase rather than failing it; `models` were tried, in order."""
+    """The lane's provider refused its content (`LaneResult.refused`) and the fallback did
+    not save it: refused there too, failed otherwise (`fallback_error`), or there was none.
+    A reviewer lane is dropped from its phase rather than failing it. `models`: the ones that
+    refused, in order."""
 
-    def __init__(self, message: str, cause: str, models: list[str]) -> None:
+    def __init__(
+        self, message: str, cause: str, models: list[str], fallback_error: str = ""
+    ) -> None:
         super().__init__(FailKind.REFUSED, message, cause)
         self.models = models
+        self.fallback_error = fallback_error
 
 
 class UncheckedBlockers(ReviewError):
@@ -2126,6 +2130,7 @@ def _run_checked_lane[T](
     stop_reason: Callable[[], str] | None = None,
     schema: dict[str, Any] | None = None,
     primary_only: bool = False,
+    refusal_fallback: bool = True,
 ) -> T:
     """Run a lane with bounded retries until its answer passes `check`. Returns the output.
 
@@ -2327,6 +2332,8 @@ def _run_checked_lane[T](
             fallback = ctx.cfg.refusal_fallback
             if (
                 fallback
+                and refusal_fallback
+                and not primary_only
                 and fallback not in refused
                 and lm.model != fallback
                 and not (phase == "phase1" and not is_verifier)
@@ -2339,6 +2346,7 @@ def _run_checked_lane[T](
                 lm = dataclasses.replace(
                     lm, model=fallback, substitute_for=lm.substitute_for or lm.model
                 )
+                _mark_reduced(ctx)
                 budget = attempt + 1
                 continue
         pause = lanepool.held_by_pause(ctx.cfg, lm.model)
@@ -2353,9 +2361,8 @@ def _run_checked_lane[T](
         f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}"
     )
     if refused:
-        raise LaneRefused(
-            message, cause, [*refused, *([lm.model] if lm.model not in refused else [])]
-        )
+        names = list(dict.fromkeys(refused))
+        raise LaneRefused(message, cause, names, "" if lm.model in names else last)
     raise LaneFailed(
         FailKind.INFRA
         if not off_schema and ("timed out" in last or "exit" in last)
@@ -2409,9 +2416,17 @@ def _drop_refused(
     without it and its provenance says which reviewer is missing and why
     (`publish.Provenance.dropped`)."""
     log.warning("%s/%s dropped: %s", phase, key, exc.message)
+    _mark_reduced(ctx)
     with ctx.state_lock:
         ctx.dropped.append(
-            {"phase": phase, "role": role, "key": key, "fresh": fresh, "models": exc.models}
+            {
+                "phase": phase,
+                "role": role,
+                "key": key,
+                "fresh": fresh,
+                "models": exc.models,
+                "fallback_error": exc.fallback_error[:300],
+            }
         )
     try:
         with tx(ctx.conn):
@@ -2425,6 +2440,17 @@ def _drop_refused(
             )
     except sqlite3.Error as e:
         log.warning("could not record the dropped lane %s: %s", key, e)
+
+
+def _mark_reduced(ctx: RunContext) -> None:
+    """A reviewer ran on the refusal fallback or was left out: the run is no full-strength
+    review, so, as a degraded one, it never approves (`publish.verdict_event` reads the
+    provenance) and is no basis for treating its code as reviewed (`_pr_reviews`)."""
+    try:
+        with tx(ctx.conn):
+            ctx.conn.execute("UPDATE runs SET degraded=1 WHERE id=?", (ctx.run_id,))
+    except sqlite3.Error as exc:
+        log.warning("could not mark run %s reduced: %s", ctx.run_id, exc)
 
 
 def _record_reviewer(
@@ -5302,7 +5328,10 @@ def step_persistence(
         result = audit.parse_persistence(raw, hashes)
         status = "ok"
     except ReviewError as exc:
-        if ctx.audit["source"] == audit.SOURCE_LIVE and exc.kind is FailKind.INFRA:
+        if ctx.audit["source"] == audit.SOURCE_LIVE and exc.kind in (
+            FailKind.INFRA,
+            FailKind.REFUSED,
+        ):
             # a live audit posts an issue from this answer: never on a lane that merely died
             raise
         log.warning("persistence check failed: %s", exc)
@@ -5506,6 +5535,7 @@ def _fresh_first(ctx: RunContext, effort: TierEffort) -> dict[str, ReviewerOutpu
         _lane_event(ctx, "fresh_first.failed", exc.message)
         with ctx.state_lock:
             ctx.reviewers[:] = [r for r in ctx.reviewers if not r["fresh"]]
+            ctx.dropped[:] = [d for d in ctx.dropped if not d["fresh"]]
         return None
     ctx.fresh_first = True
     return {**ctx.phase2_outputs, **fresh}
@@ -6087,6 +6117,7 @@ def _confirm_late(
             prompt=prompt,
             is_verifier=True,
             check=OutputCheck(validate=validate, kind="confirm", ids=ids, repairable=False),
+            refusal_fallback=False,  # a stand-in never clears blockers (as below)
         )
     except ReviewError as exc:
         ctx.check_cancel()
@@ -9213,6 +9244,7 @@ def _discard_phase1(ctx: RunContext) -> None:
     ctx.phase1_outputs, ctx.verify1 = {}, None
     with ctx.state_lock:
         ctx.reviewers[:] = [r for r in ctx.reviewers if r["phase"] != "phase1"]
+        ctx.dropped[:] = [d for d in ctx.dropped if d["phase"] != "phase1"]
 
 
 def _record_phase1_failure(

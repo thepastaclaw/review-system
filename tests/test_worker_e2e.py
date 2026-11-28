@@ -4539,13 +4539,17 @@ REFUSAL = (
 )
 
 
-def _refusing(lanes, refuse):
-    """`lanes`, but a Phase-2 security-auditor lane on a model `refuse` names is refused by its
-    provider."""
+def _refusal():
+    return lane_mod.LaneResult(exit_code=1, stdout="", stderr="", duration_s=1, result_text=REFUSAL)
+
+
+def _refusing(lanes, refuse, role="security-auditor", prefix="phase2-"):
+    """`lanes`, but a `role` lane (artifact dir starting `prefix`) on a model `refuse` names is
+    refused by its provider."""
     calls = []
 
     def run(spec, artifact_dir, worktree):
-        if spec.role == "security-auditor" and Path(artifact_dir).name.startswith("phase2-"):
+        if spec.role == role and Path(artifact_dir).name.startswith(prefix):
             calls.append(spec.model)
             if refuse(spec.model):
                 return lane_mod.LaneResult(
@@ -4588,6 +4592,9 @@ def test_a_refused_lane_retries_on_the_fallback_provider(cfg, conn, gh, lanes):
     body = gh.posted_reviews[-1]["body"]
     assert f"`grok-4.7` (standing in for `{calls[0]}`) — security-auditor" in body
     assert "Not reviewed by" not in body
+    # a stand-in's review never approves, nor counts as full strength for later rounds
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"
+    assert conn.execute("SELECT degraded FROM runs").fetchone()[0] == 1
 
 
 def test_a_reviewer_refused_everywhere_is_left_out_and_the_review_says_so(cfg, conn, gh, lanes):
@@ -4602,6 +4609,56 @@ def test_a_reviewer_refused_everywhere_is_left_out_and_the_review_says_so(cfg, c
     assert "**Not reviewed by the security-auditor reviewer (Phase 2" in body
     assert "refused the content as a possible cybersecurity risk" in body
     assert "`grok-4.7`" in body.split("Not reviewed by the security-auditor")[1].split("\n")[0]
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"  # no approval without that pass
+    assert "(Phase 2, second pass)" in body or "(Phase 2)" in body
     dropped = conn.execute("SELECT detail FROM events WHERE kind='lane.refused_dropped'").fetchall()
     assert dropped and all("security-auditor" in d[0] for d in dropped)
     assert [s for s in lanes.calls if s.role == "general"]  # the other reviewers ran on
+
+
+def test_a_fallback_that_fails_otherwise_is_said_plainly(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    lanes.timeout_roles.add("security-auditor")  # the fallback times out instead
+    refused, _calls = _refusing(lanes, lambda m: m != "grok-4.7")
+    _rid, status = _run(cfg, conn, gh, refused)
+    assert status == RunStatus.DONE
+    line = next(x for x in gh.posted_reviews[-1]["body"].splitlines() if "Not reviewed by" in x)
+    assert "`grok-4.7`" not in line.split("refused")[0]  # it did not refuse
+    assert "the fallback then failed" in line
+
+
+def test_a_verifier_refused_on_both_models_fails_the_run_as_refused(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: True, role="verifier", prefix="")
+    rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.FAILED
+    # each verifier (the Phase-1 gate's, whose failure drops Phase 1 as before, then the final
+    # one): its model once, then the fallback; the final one refused on both fails the run
+    assert calls[-2] != "grok-4.7" and calls[-1] == "grok-4.7"
+    assert calls.count("grok-4.7") == len(calls) // 2
+    row = conn.execute("SELECT fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
+    assert row["fail_kind"] == "refused"
+
+
+def test_every_reviewer_refused_fails_the_phase(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    inner = lanes
+
+    def run(spec, artifact_dir, worktree):
+        if Path(artifact_dir).name.startswith("phase2-"):
+            return _refusal()
+        return inner(spec, artifact_dir, worktree)
+
+    rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.FAILED
+    reason = conn.execute("SELECT reason, fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
+    assert (
+        reason["fail_kind"] == "refused" and "every reviewer lane was refused" in reason["reason"]
+    )
+    assert gh.posted_reviews == []

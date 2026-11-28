@@ -241,8 +241,17 @@ Code's API error, never model output; `FailKind.REFUSED`). The lane's retry runs
 same model (event `lane.refused`), and the review names it as standing in for the model that
 refused. A reviewer lane refused there too is left out of its phase (`lane.refused_dropped`):
 the review finishes without it and its provenance says, in bold, which reviewer it went
-without and why. A phase every reviewer of which was refused, or a verifier refused on both
-models, fails the run as `refused`, retried with backoff like an infrastructure failure.
+without and why (and, when the fallback failed for another reason, that it did). A phase every
+reviewer of which was refused, or a verifier refused on both models, fails the run as
+`refused`, retried with backoff like an infrastructure failure.
+
+The fallback is a stand-in, and the pause-mode policy keeps stand-ins out of reviews because
+they found far less (2026-11-24); here the choice is between a stand-in for one lane and no
+review at all. So a review with a lane on the fallback or a reviewer left out is no
+full-strength review: it never approves (`Provenance.reduced`; blockers still request
+changes), the run is marked `degraded` so later rounds do not treat its code as reviewed, the
+late-blocker confirmation and the step-back (`primary_only`) never fall back, and the
+fallback's lanes take slots in their own model pool (4 unless `lane_pools` names it).
 
 ### Reviews are static: lanes never build
 

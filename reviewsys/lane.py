@@ -47,9 +47,9 @@ CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
 # adds ANTHROPIC_CUSTOM_HEADERS to each API call, and the box's CLIProxyAPI payload rule on
 # this header sets OpenAI's `service_tier: priority` (Codex fast mode) for gpt models. Other
 # providers ignore it. Fixed when the run starts, like the run's lane-pool rank.
+FAST_TIER_ENV = {"ANTHROPIC_CUSTOM_HEADERS": "X-Reviewsys-Tier: priority"}
 # a provider's content refusal, as Claude Code reports it ("API Error: 400 <this>"), lower case
 REFUSAL_MARKERS = ("flagged for possible cybersecurity risk",)
-FAST_TIER_ENV = {"ANTHROPIC_CUSTOM_HEADERS": "X-Reviewsys-Tier: priority"}
 # Every lane's environment: the proxied lanes resolve DNS in Go, and send no telemetry
 BASE_LANE_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
 # Policy v12 lanes (`pipeline.lane_env_isolation`) add these. `--add-dir` re-enables CLAUDE.md
