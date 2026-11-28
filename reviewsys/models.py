@@ -42,6 +42,10 @@ class FailKind(StrEnum):
     INFRA = "infra"  # transient: gh outage, proxy 5xx, lane crash -> retry with backoff
     CONTRACT = "contract"  # model output violated contract after repair -> retry once
     FATAL = "fatal"  # PR closed, head gone, config error -> no retry
+    # the provider refused the content (OpenAI's cyber-risk filter on a security review): the
+    # lane retries on `[lanes] refusal_fallback`, a reviewer still refused is dropped and the
+    # review says so; a run failed by one (a verifier) retries like an infra failure
+    REFUSED = "refused"
 
 
 class Trigger(StrEnum):

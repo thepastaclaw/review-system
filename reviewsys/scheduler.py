@@ -347,7 +347,12 @@ def _requeue_or_fail(
             detail=f"obsolete assigned head {head['sha'][:8]}: {reason[:300]}",
         )
         return
-    max_attempts = {FailKind.INFRA: cfg.max_attempts, FailKind.CONTRACT: 2, FailKind.FATAL: 0}[kind]
+    max_attempts = {
+        FailKind.INFRA: cfg.max_attempts,
+        FailKind.REFUSED: cfg.max_attempts,  # the filter is probabilistic: a later run may pass
+        FailKind.CONTRACT: 2,
+        FailKind.FATAL: 0,
+    }[kind]
     ts = now()
     if attempts < max_attempts:
         backoff = (

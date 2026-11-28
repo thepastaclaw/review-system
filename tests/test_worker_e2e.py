@@ -4531,3 +4531,170 @@ def test_a_normal_review_upgraded_mid_run_takes_priority_from_its_next_lane(cfg,
     assert seen[0] is False and len(seen) > 1 and all(seen[1:])
     in_progress = [b for b in gh.gate_bodies if "🔍 Review in progress" in b]
     assert in_progress and "**Request priority review**" in in_progress[0]
+
+
+REFUSAL = (
+    "API Error: 400 This content was flagged for possible cybersecurity risk. If this seems "
+    "wrong, try rephrasing your request."
+)
+
+
+def _refusal():
+    return lane_mod.LaneResult(exit_code=1, stdout="", stderr="", duration_s=1, result_text=REFUSAL)
+
+
+def _refusing(lanes, refuse, role="security-auditor", prefix="phase2-"):
+    """`lanes`, but a `role` lane (artifact dir starting `prefix`) on a model `refuse` names is
+    refused by its provider."""
+    calls = []
+
+    def run(spec, artifact_dir, worktree):
+        if spec.role == role and Path(artifact_dir).name.startswith(prefix):
+            calls.append(spec.model)
+            if refuse(spec.model):
+                return _refusal()
+        return lanes(spec, artifact_dir, worktree)
+
+    return run, calls
+
+
+def test_a_refusal_is_its_own_failure_never_model_output():
+    refused = lane_mod.LaneResult(
+        exit_code=1, stdout="", stderr="", duration_s=1, result_text=REFUSAL
+    )
+    assert refused.refused
+    said = lane_mod.LaneResult(exit_code=0, stdout="", stderr="", duration_s=1, result_text=REFUSAL)
+    assert not said.refused  # a review may quote the phrase; only a failed call's error counts
+    quota = lane_mod.LaneResult(
+        exit_code=1, stdout="", stderr="", duration_s=1, result_text="API Error: 429 rate limited"
+    )
+    assert not quota.refused
+
+
+def test_a_refused_lane_retries_on_the_fallback_provider(cfg, conn, gh, lanes):
+    """dashpay/platform#6354 (2026-11-27): OpenAI's cyber-risk filter refused the
+    security-auditor lane twice and the whole review failed. The retry now runs on
+    `[lanes] refusal_fallback` instead of the same model, and the review completes."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: m != "grok-4.7")
+    _rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.DONE
+    assert calls[0] != "grok-4.7" and calls[-1] == cfg.refusal_fallback == "grok-4.7"
+    # each pass (a first full review runs Phase 2 twice): the primary once, then the fallback,
+    # never a second try on the model that refused
+    assert calls == [calls[0], "grok-4.7"] * (len(calls) // 2) and len(calls) >= 2
+    ev = conn.execute("SELECT detail FROM events WHERE kind='lane.refused'").fetchone()
+    assert "retrying on grok-4.7" in ev[0]
+    body = gh.posted_reviews[-1]["body"]
+    assert f"`grok-4.7` (standing in for `{calls[0]}`) — security-auditor" in body
+    assert "Not reviewed by" not in body
+    # a stand-in's review never approves, nor counts as full strength for later rounds
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"
+    assert conn.execute("SELECT degraded FROM runs").fetchone()[0] == 1
+
+
+def test_a_reviewer_refused_everywhere_is_left_out_and_the_review_says_so(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: True)
+    _rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.DONE  # the review is not aborted
+    assert calls[-1] == "grok-4.7" and len(set(calls)) == 2
+    body = gh.posted_reviews[-1]["body"]
+    assert "**Not reviewed by the security-auditor reviewer (Phase 2" in body
+    assert "refused the content as a possible cybersecurity risk" in body
+    assert "`grok-4.7`" in body.split("Not reviewed by the security-auditor")[1].split("\n")[0]
+    assert gh.posted_reviews[-1]["event"] == "COMMENT"  # no approval without that pass
+    assert "(Phase 2" in body and "(Phase 2 (" not in body
+    dropped = conn.execute("SELECT detail FROM events WHERE kind='lane.refused_dropped'").fetchall()
+    assert dropped and all("security-auditor" in d[0] for d in dropped)
+    assert [s for s in lanes.calls if s.role == "general"]  # the other reviewers ran on
+
+
+def test_a_fallback_that_fails_otherwise_is_said_plainly(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    lanes.timeout_roles.add("security-auditor")  # the fallback times out instead
+    refused, _calls = _refusing(lanes, lambda m: m != "grok-4.7")
+    _rid, status = _run(cfg, conn, gh, refused)
+    assert status == RunStatus.DONE
+    line = next(x for x in gh.posted_reviews[-1]["body"].splitlines() if "Not reviewed by" in x)
+    assert "`grok-4.7`" not in line.split("refused")[0]  # it did not refuse
+    assert "the fallback then failed (it timed out)" in line
+
+
+def test_a_verifier_refused_on_both_models_fails_the_run_as_refused(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: True, role="verifier", prefix="")
+    rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.FAILED
+    # each verifier (the Phase-1 gate's, whose failure drops Phase 1 as before, then the final
+    # one): its model once, then the fallback; the final one refused on both fails the run
+    assert calls[-2] != "grok-4.7" and calls[-1] == "grok-4.7"
+    assert calls.count("grok-4.7") == len(calls) // 2
+    row = conn.execute("SELECT fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
+    assert row["fail_kind"] == "refused"
+
+
+def test_every_reviewer_refused_fails_the_phase(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    inner = lanes
+
+    def run(spec, artifact_dir, worktree):
+        if Path(artifact_dir).name.startswith("phase2-"):
+            return _refusal()
+        return inner(spec, artifact_dir, worktree)
+
+    rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.FAILED
+    reason = conn.execute("SELECT reason, fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
+    assert (
+        reason["fail_kind"] == "refused" and "every reviewer lane was refused" in reason["reason"]
+    )
+    assert gh.posted_reviews == []
+
+
+def test_a_final_verifier_on_the_fallback_never_approves_and_is_named(cfg, conn, gh, lanes):
+    """Opus review of #109: the final verifier refused on its model and answered by the
+    fallback still approved, credited to the model that refused."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: m != "grok-4.7", role="verifier", prefix="verify2-")
+    _rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.DONE
+    assert calls[-1] == "grok-4.7"
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "COMMENT"
+    assert f"`grok-4.7` (standing in for `{calls[0]}`)" in review["body"]
+
+
+def test_a_conversation_on_the_fallback_never_approves(cfg, conn, gh, lanes):
+    """Opus review of #109: a conversation lane refused on its model and answered by the
+    fallback withdrew the only blocker and approved, credited to the model that refused. A
+    stand-in may lift REQUEST_CHANGES to COMMENT (as in degraded mode), never approve."""
+    blocker = _blocking()
+    bh = _seed_prior(conn, blocker, body="blocker body")
+    _full_strength_prior(conn)
+    gh.can_resolve = False
+    gh.threads = [_finding_thread(bh, blocker["title"], 800, [KNST])]
+    _standing_final(gh)
+    lanes.conversation = {"threads": [{"finding_hash": bh, **WITHDRAW}]}
+    run, calls = _refusing(lanes, lambda m: m != "grok-4.7", role="conversation", prefix="")
+    with tx(conn):
+        conn.execute("UPDATE heads SET sha=?, status='done'", (HEAD,))
+        enqueue_head(conn, cfg, "dashpay/platform", 1, HEAD, Trigger.REVIEW_REPLY)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    assert worker.main(cfg, conn, rid, gh=gh, lane_runner=run, heartbeat=False) == RunStatus.DONE
+    assert calls[-1] == "grok-4.7"
+    upd = gh.posted_reviews[-1]
+    assert upd["event"] == "COMMENT"
+    assert f"`grok-4.7` (standing in for `{calls[0]}`)" in upd["body"]

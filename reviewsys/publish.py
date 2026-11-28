@@ -248,6 +248,23 @@ class Provenance:
     single_stage: bool = False
     # policy v12: the confirmation pass that ran on this head {roles, new}
     confirmation: dict[str, Any] | None = None
+    # reviewer lanes left out because every model refused their content (worker._drop_refused):
+    # {phase, role, key, fresh, models}
+    dropped: list[dict[str, Any]] | None = None
+    # some lane of the run ran on the refusal fallback or was left out (worker._mark_reduced)
+    reduced_run: bool = False
+
+    @property
+    def reduced(self) -> bool:
+        """A reviewer was left out, or a lane ran on the refusal fallback (a stand-in outside
+        degraded mode): no full-strength review."""
+        lanes = [*self.reviewers, self.verifier]
+        return (
+            self.reduced_run
+            or bool(self.dropped)
+            or (not self.degraded and any(lane.get("substitute_for") for lane in lanes))
+        )
+
     # the first full review ran every Phase-2 reviewer a second time, independently
     fresh_first: bool = False
     # a later round's new findings on code unchanged since the previous final review
@@ -363,6 +380,19 @@ def _ai_prompt(
 def _fence(content: str) -> str:
     longest = max((len(m.group(0)) for m in re.finditer(r"`+", content)), default=0)
     return "`" * max(3, longest + 1)
+
+
+def _dropped_line(d: dict[str, Any]) -> str:
+    """A reviewer the review went without: every model it ran on refused the content."""
+    phase = "Phase 1" if d.get("phase") == "phase1" else "Phase 2"
+    run = ", second pass" if d.get("fresh") else ""
+    models = ", ".join(f"`{m}`" for m in d.get("models") or ()) or "its model"
+    then = f"; the fallback then failed ({d['fallback_error']})" if d.get("fallback_error") else ""
+    return (
+        f"- **Not reviewed by the {d.get('role')} reviewer ({phase}{run}):** {models} refused "
+        f"the content as a possible cybersecurity risk (a provider filter){then}, so this "
+        "review was completed without that reviewer's pass and does not approve"
+    )
 
 
 def _model_label(lane: dict[str, Any]) -> str:
@@ -521,6 +551,8 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     lines.append(p1_line)
     if p.phase1_choice and not p.phase1_skipped:
         lines.append(_phase1_choice_line(p.phase1_choice))
+    for d in p.dropped or ():
+        lines.append(_dropped_line(d))
     if p.single_stage:
         lines.append(
             "- Single stage: Phase 1 and Phase 2 reviewed this head side by side, with no "
@@ -2605,14 +2637,16 @@ def standing_verdict(
 
 def verdict_event(verified: VerifierOutput, provenance: Provenance) -> str:
     """Blockers always REQUEST_CHANGES. APPROVE only when the full-strength pipeline ran:
-    a Phase-1-only verdict (the second-round reviewers did not run) and a degraded-mode
-    verdict (stand-in models) both stop at COMMENT."""
+    a Phase-1-only verdict (the second-round reviewers did not run), a degraded-mode
+    verdict (stand-in models) and one with a reviewer refused onto the fallback or left out
+    (`Provenance.reduced`) all stop at COMMENT."""
     if verified.blocker_count:
         return "REQUEST_CHANGES"
     if (
         verified.review_action == "APPROVE"
         and not provenance.phase2_skipped
         and not provenance.degraded
+        and not provenance.reduced
     ):
         return "APPROVE"
     return "COMMENT"

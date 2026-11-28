@@ -227,6 +227,35 @@ usable reading is the rung skipped. On the box itself the proxies should run as
 10`, priorities only so CI keeps full parallelism when the box is otherwise
 idle; that needs sudo (`~claw/prioritize-proxies.sh`).
 
+### A provider's content refusal never fails the review
+
+OpenAI's cyber-risk filter refuses some security-review requests at random ("API Error: 400
+This content was flagged for possible cybersecurity risk"): in the 7 days to 2026-11-28 it
+refused 352 lane attempts in 201 of 3,174 runs (155 sibling lanes were stopped with them),
+every one on `gpt-6.2-astra` or `gpt-6.2-sol`, three in four on the security-auditor, and 96
+runs failed outright, 87 of them on the security-auditor
+(dashpay/platform#6354, #6285). It is the accumulated review (the PR's code and the analysis
+of it, often 20 turns in), not the prompt's wording, that trips it, and the same request can
+pass the next time. Such a refusal is its own failure (`LaneResult.refused`, read from Claude
+Code's API error, never model output; `FailKind.REFUSED`). The lane's retry runs once on
+`[lanes] refusal_fallback` (`grok-4.7`, another provider; "" turns it off) instead of the
+same model (event `lane.refused`), and the review names it as standing in for the model that
+refused. A reviewer lane refused there too is left out of its phase (`lane.refused_dropped`):
+the review finishes without it and its provenance says, in bold, which reviewer it went
+without and why (and, when the fallback failed for another reason, that it did). A phase every
+reviewer of which was refused, or a verifier refused on both models, fails the run as
+`refused`, retried with backoff like an infrastructure failure.
+
+The fallback is a stand-in, and the pause-mode policy keeps stand-ins out of reviews because
+they found far less (2026-11-24); here the choice is between a stand-in for one lane and no
+review at all. So a review with a lane on the fallback or a reviewer left out is no
+full-strength review: it never approves (`Provenance.reduced`; blockers still request
+changes), the run is marked `degraded` so later rounds do not treat its code as reviewed, the
+late-blocker confirmation and the step-back (`primary_only`) never fall back, and the
+fallback's lanes take slots in their own model pool (4 unless `lane_pools` names it). Such a
+run shows as degraded on the dashboard; its `lane.refused` / `lane.refused_dropped` events say
+why (not a quota outage).
+
 ### Reviews are static: lanes never build
 
 Every lane runs under `sandbox-exec` with a profile that allows everything but

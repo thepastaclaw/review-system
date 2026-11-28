@@ -48,6 +48,8 @@ CLAUDE_SETTINGS = json.dumps({"permissions": {"disableAutoMode": "disable"}})
 # this header sets OpenAI's `service_tier: priority` (Codex fast mode) for gpt models. Other
 # providers ignore it. Fixed when the run starts, like the run's lane-pool rank.
 FAST_TIER_ENV = {"ANTHROPIC_CUSTOM_HEADERS": "X-Reviewsys-Tier: priority"}
+# a provider's content refusal, as Claude Code reports it ("API Error: 400 <this>"), lower case
+REFUSAL_MARKERS = ("flagged for possible cybersecurity risk",)
 # Every lane's environment: the proxied lanes resolve DNS in Go, and send no telemetry
 BASE_LANE_ENV = {"GODEBUG": "netdns=go", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"}
 # Policy v12 lanes (`pipeline.lane_env_isolation`) add these. `--add-dir` re-enables CLAUDE.md
@@ -165,6 +167,15 @@ class LaneResult:
         if self.exit_code != 0 and text.startswith("API Error"):
             return text.splitlines()[0][:500]
         return ""
+
+    @property
+    def refused(self) -> bool:
+        """The provider refused the content, not the lane's own failure: OpenAI's cyber-risk
+        filter ("This content was flagged for possible cybersecurity risk"), which trips at
+        random on security reviews of real code (352 lane attempts in the 7 days to 2026-11-28,
+        every one on gpt-6.2-astra or gpt-6.2-sol). Read from `api_error`, never model output."""
+        err = self.api_error.lower()
+        return any(marker in err for marker in REFUSAL_MARKERS)
 
     @property
     def infra_error(self) -> str:
