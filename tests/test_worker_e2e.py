@@ -4531,3 +4531,77 @@ def test_a_normal_review_upgraded_mid_run_takes_priority_from_its_next_lane(cfg,
     assert seen[0] is False and len(seen) > 1 and all(seen[1:])
     in_progress = [b for b in gh.gate_bodies if "🔍 Review in progress" in b]
     assert in_progress and "**Request priority review**" in in_progress[0]
+
+
+REFUSAL = (
+    "API Error: 400 This content was flagged for possible cybersecurity risk. If this seems "
+    "wrong, try rephrasing your request."
+)
+
+
+def _refusing(lanes, refuse):
+    """`lanes`, but a Phase-2 security-auditor lane on a model `refuse` names is refused by its
+    provider."""
+    calls = []
+
+    def run(spec, artifact_dir, worktree):
+        if spec.role == "security-auditor" and Path(artifact_dir).name.startswith("phase2-"):
+            calls.append(spec.model)
+            if refuse(spec.model):
+                return lane_mod.LaneResult(
+                    exit_code=1, stdout="", stderr="", duration_s=1, result_text=REFUSAL
+                )
+        return lanes(spec, artifact_dir, worktree)
+
+    return run, calls
+
+
+def test_a_refusal_is_its_own_failure_never_model_output():
+    refused = lane_mod.LaneResult(
+        exit_code=1, stdout="", stderr="", duration_s=1, result_text=REFUSAL
+    )
+    assert refused.refused
+    said = lane_mod.LaneResult(exit_code=0, stdout="", stderr="", duration_s=1, result_text=REFUSAL)
+    assert not said.refused  # a review may quote the phrase; only a failed call's error counts
+    quota = lane_mod.LaneResult(
+        exit_code=1, stdout="", stderr="", duration_s=1, result_text="API Error: 429 rate limited"
+    )
+    assert not quota.refused
+
+
+def test_a_refused_lane_retries_on_the_fallback_provider(cfg, conn, gh, lanes):
+    """dashpay/platform#6354 (2026-11-27): OpenAI's cyber-risk filter refused the
+    security-auditor lane twice and the whole review failed. The retry now runs on
+    `[lanes] refusal_fallback` instead of the same model, and the review completes."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: m != "grok-4.7")
+    _rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.DONE
+    assert calls[0] != "grok-4.7" and calls[-1] == cfg.refusal_fallback == "grok-4.7"
+    # each pass (a first full review runs Phase 2 twice): the primary once, then the fallback,
+    # never a second try on the model that refused
+    assert calls == [calls[0], "grok-4.7"] * (len(calls) // 2) and len(calls) >= 2
+    ev = conn.execute("SELECT detail FROM events WHERE kind='lane.refused'").fetchone()
+    assert "retrying on grok-4.7" in ev[0]
+    body = gh.posted_reviews[-1]["body"]
+    assert f"`grok-4.7` (standing in for `{calls[0]}`) — security-auditor" in body
+    assert "Not reviewed by" not in body
+
+
+def test_a_reviewer_refused_everywhere_is_left_out_and_the_review_says_so(cfg, conn, gh, lanes):
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: True)
+    _rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.DONE  # the review is not aborted
+    assert calls[-1] == "grok-4.7" and len(set(calls)) == 2
+    body = gh.posted_reviews[-1]["body"]
+    assert "**Not reviewed by the security-auditor reviewer (Phase 2" in body
+    assert "refused the content as a possible cybersecurity risk" in body
+    assert "`grok-4.7`" in body.split("Not reviewed by the security-auditor")[1].split("\n")[0]
+    dropped = conn.execute("SELECT detail FROM events WHERE kind='lane.refused_dropped'").fetchall()
+    assert dropped and all("security-auditor" in d[0] for d in dropped)
+    assert [s for s in lanes.calls if s.role == "general"]  # the other reviewers ran on

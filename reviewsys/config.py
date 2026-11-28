@@ -625,6 +625,10 @@ class Config:
     # watch.py: seconds between the conditional reads that notice a review-now label or a
     # ticked gate box (0 turns the watch off; the ingest and queue passes still find them)
     watch_interval_seconds: int = 10
+    # a lane whose provider refused the content (lane.LaneResult.refused) retries once on this
+    # model, from another provider; "" turns the fallback off (the lane fails, a reviewer is
+    # dropped)
+    refusal_fallback: str = "grok-4.7"
 
     @property
     def enabled_repos(self) -> tuple[str, ...]:
@@ -816,6 +820,10 @@ replay_pool_slots = {}
 # its own session (it keeps everything it read), at most this many times; 0 = never, only the
 # context-free repair lane (clamped to 0..5)
 correction_turns = 2
+# a lane the provider refuses (OpenAI's cyber-risk filter, which trips on security reviews of
+# real code) retries once on this model from another provider; a reviewer refused there too is
+# left out and the review says so. "" = no fallback
+refusal_fallback = "grok-4.7"
 # the Claude Code config dir lanes keep their sessions in (exported as CLAUDE_CONFIG_DIR to
 # every lane); set it to whatever a wrapping launcher forces, or the cleanup looks elsewhere
 # claude_config_dir = "~/.claude-proxy"
@@ -1354,6 +1362,7 @@ def load(path: Path | None = None, *, skills_override: Path | None = None) -> Co
             if str(k) != "gpt"  # gpt always follows the per-account budget (slots.py)
         },
         lane_deny_exec=_deny_exec((t.get("lanes") or {}).get("deny_exec", DEFAULT_LANE_DENY_EXEC)),
+        refusal_fallback=str((t.get("lanes") or {}).get("refusal_fallback", "grok-4.7")).strip(),
         lane_correction_turns=min(
             MAX_CORRECTION_TURNS,
             max(0, int((t.get("lanes") or {}).get("correction_turns", DEFAULT_CORRECTION_TURNS))),

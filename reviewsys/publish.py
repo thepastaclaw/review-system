@@ -248,6 +248,9 @@ class Provenance:
     single_stage: bool = False
     # policy v12: the confirmation pass that ran on this head {roles, new}
     confirmation: dict[str, Any] | None = None
+    # reviewer lanes left out because every model refused their content (worker._drop_refused):
+    # {phase, role, key, fresh, models}
+    dropped: list[dict[str, Any]] | None = None
     # the first full review ran every Phase-2 reviewer a second time, independently
     fresh_first: bool = False
     # a later round's new findings on code unchanged since the previous final review
@@ -363,6 +366,18 @@ def _ai_prompt(
 def _fence(content: str) -> str:
     longest = max((len(m.group(0)) for m in re.finditer(r"`+", content)), default=0)
     return "`" * max(3, longest + 1)
+
+
+def _dropped_line(d: dict[str, Any]) -> str:
+    """A reviewer the review went without: every model it ran on refused the content."""
+    phase = "Phase 1" if d.get("phase") == "phase1" else "Phase 2"
+    run = " (second pass)" if d.get("fresh") else ""
+    models = ", ".join(f"`{m}`" for m in d.get("models") or ()) or "its model"
+    return (
+        f"- **Not reviewed by the {d.get('role')} reviewer ({phase}{run}):** {models} refused "
+        "the content as a possible cybersecurity risk (a provider filter), so this review "
+        "was completed without that reviewer's pass"
+    )
 
 
 def _model_label(lane: dict[str, Any]) -> str:
@@ -521,6 +536,8 @@ def _provenance_lines(p: Provenance, phase: str) -> list[str]:
     lines.append(p1_line)
     if p.phase1_choice and not p.phase1_skipped:
         lines.append(_phase1_choice_line(p.phase1_choice))
+    for d in p.dropped or ():
+        lines.append(_dropped_line(d))
     if p.single_stage:
         lines.append(
             "- Single stage: Phase 1 and Phase 2 reviewed this head side by side, with no "

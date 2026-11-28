@@ -227,6 +227,23 @@ usable reading is the rung skipped. On the box itself the proxies should run as
 10`, priorities only so CI keeps full parallelism when the box is otherwise
 idle; that needs sudo (`~claw/prioritize-proxies.sh`).
 
+### A provider's content refusal never fails the review
+
+OpenAI's cyber-risk filter refuses some security-review requests at random ("API Error: 400
+This content was flagged for possible cybersecurity risk"): in the 7 days to 2026-11-28 it
+failed 507 lanes in 201 of 3,174 runs, every one on `gpt-6.2-astra` or `gpt-6.2-sol`, mostly
+the security-auditor and general Phase-2 reviewers, and 96 runs failed outright
+(dashpay/platform#6354, #6285). It is the accumulated review (the PR's code and the analysis
+of it, often 20 turns in), not the prompt's wording, that trips it, and the same request can
+pass the next time. Such a refusal is its own failure (`LaneResult.refused`, read from Claude
+Code's API error, never model output; `FailKind.REFUSED`). The lane's retry runs once on
+`[lanes] refusal_fallback` (`grok-4.7`, another provider; "" turns it off) instead of the
+same model (event `lane.refused`), and the review names it as standing in for the model that
+refused. A reviewer lane refused there too is left out of its phase (`lane.refused_dropped`):
+the review finishes without it and its provenance says, in bold, which reviewer it went
+without and why. A phase every reviewer of which was refused, or a verifier refused on both
+models, fails the run as `refused`, retried with backoff like an infrastructure failure.
+
 ### Reviews are static: lanes never build
 
 Every lane runs under `sandbox-exec` with a profile that allows everything but

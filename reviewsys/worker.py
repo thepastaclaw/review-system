@@ -163,6 +163,16 @@ class LaneFailed(ReviewError):
         self.cause = cause
 
 
+class LaneRefused(LaneFailed):
+    """Every model the lane ran on refused the content (`LaneResult.refused`), the fallback
+    included, or the fallback could not run after the primary refused. A reviewer lane is
+    dropped from its phase rather than failing it; `models` were tried, in order."""
+
+    def __init__(self, message: str, cause: str, models: list[str]) -> None:
+        super().__init__(FailKind.REFUSED, message, cause)
+        self.models = models
+
+
 class UncheckedBlockers(ReviewError):
     """A verify+match shard failed for good holding blocking candidates (v12 design §2.2): the
     run fails (INFRA) rather than publish without checking them, the confirmation pass's own
@@ -393,6 +403,8 @@ class RunContext:
     deferral_cutoff: str = ""
     # a priority run, or a normal one an author upgraded mid-review (read as each lane starts)
     priority: bool = False
+    # reviewer lanes left out because every model refused their content (`_drop_refused`)
+    dropped: list[dict[str, Any]] = field(default_factory=list)
     # a conversation run (answers replies on a reviewed commit); None until run() knows
     conversation: bool | None = None
     # ---- policy v12 (`review_model_policy.pipeline`); untouched under v11 ----
@@ -2157,6 +2169,7 @@ def _run_checked_lane[T](
     json_schema = schema if ctx.cfg.policy.structured_output else None
     last = cause = ""
     off_schema = False  # the last failure was Claude Code giving up on the schema
+    refused: list[str] = []  # models whose provider refused this lane's content
     attempt, budget = 0, 1 if comparison else 2
     while attempt < budget:
         attempt += 1
@@ -2306,6 +2319,28 @@ def _run_checked_lane[T](
                 lane_output(failed_turn)
             except ReviewError as turn_exc:
                 quota_exc = turn_exc
+        if (failed_turn or res).refused and not comparison:
+            # the provider's content filter, not the lane: the next (and last) attempt runs on
+            # the fallback from another provider, not the same model again. A Phase-1 reviewer
+            # stays on its rung (the ladder moves it); none of those models filter like this
+            refused.append(lm.model)
+            fallback = ctx.cfg.refusal_fallback
+            if (
+                fallback
+                and fallback not in refused
+                and lm.model != fallback
+                and not (phase == "phase1" and not is_verifier)
+            ):
+                _lane_event(
+                    ctx,
+                    "lane.refused",
+                    f"{phase}/{key} {lm.model} refused the content; retrying on {fallback}",
+                )
+                lm = dataclasses.replace(
+                    lm, model=fallback, substitute_for=lm.substitute_for or lm.model
+                )
+                budget = attempt + 1
+                continue
         pause = lanepool.held_by_pause(ctx.cfg, lm.model)
         switched = (
             None
@@ -2314,11 +2349,18 @@ def _run_checked_lane[T](
         )
         if switched is not None:
             lm, budget = switched, (budget + 1 if pause else attempt + 2)
+    message = (
+        f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}"
+    )
+    if refused:
+        raise LaneRefused(
+            message, cause, [*refused, *([lm.model] if lm.model not in refused else [])]
+        )
     raise LaneFailed(
         FailKind.INFRA
         if not off_schema and ("timed out" in last or "exit" in last)
         else FailKind.CONTRACT,
-        f"{phase}/{role} lane failed {'twice' if attempt == 2 else f'{attempt} times'}: {last}",
+        message,
         cause,
     )
 
@@ -2358,6 +2400,31 @@ def _correction_event(
         said = failed_turn.first_stderr_line or f"exit {failed_turn.exit_code}"
         how = f"resume failed: {said[:200]}"
     _lane_event(ctx, "lane.correction_failed", f"{head} ({how}): {failure[:400]}; {first}")
+
+
+def _drop_refused(
+    ctx: RunContext, phase: str, key: str, role: str, fresh: bool, exc: LaneRefused
+) -> None:
+    """A reviewer lane every model refused is left out of its phase: the review finishes
+    without it and its provenance says which reviewer is missing and why
+    (`publish.Provenance.dropped`)."""
+    log.warning("%s/%s dropped: %s", phase, key, exc.message)
+    with ctx.state_lock:
+        ctx.dropped.append(
+            {"phase": phase, "role": role, "key": key, "fresh": fresh, "models": exc.models}
+        )
+    try:
+        with tx(ctx.conn):
+            event(
+                ctx.conn,
+                "lane.refused_dropped",
+                repo=ctx.repo,
+                number=ctx.number,
+                run_id=ctx.run_id,
+                detail=f"{phase}/{key} refused on {', '.join(exc.models)}",
+            )
+    except sqlite3.Error as e:
+        log.warning("could not record the dropped lane %s: %s", key, e)
 
 
 def _record_reviewer(
@@ -2705,6 +2772,9 @@ def _reviewer_lanes(
                 schema=schemas.FINDER_SCHEMA if unanchored else None,
             )
         except Exception as exc:  # a comparison lane never fails the phase, whatever broke
+            if isinstance(exc, LaneRefused) and not comparison and not abandon.is_set():
+                _drop_refused(ctx, phase, key, role, fresh, exc)
+                return None  # the review goes on without it, and says so
             if not comparison or abandon.is_set() or isinstance(exc, Cancelled):
                 raise  # (a comparison lane stopped because the phase failed says nothing)
             if isinstance(exc, ReviewError):
@@ -2770,6 +2840,9 @@ def _reviewer_lanes(
     if len(results) < len(lanes):
         ctx.check_cancel()
         raise ReviewError(FailKind.INFRA, f"{phase}: a reviewer lane never ran")
+    if not any(results[k] is not None for k in keys if not k.endswith(COMPARE_SUFFIX)):
+        # every reviewer refused: there is no review of this phase to finish
+        raise ReviewError(FailKind.REFUSED, f"{phase}: every reviewer lane was refused")
     # provenance and finding rows in lane order, as if the lanes had run one after another.
     # Only this call's own entries move: on a single-stage run the other phase is appending
     # to the same list at the same time.
@@ -4328,6 +4401,7 @@ def _verdict_update(
         return None
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
+        dropped=list(ctx.dropped) or None,
         verifier=_lane_provenance(verifier_lm, "final-verifier"),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
@@ -4477,6 +4551,7 @@ def _build_review(
     compared = any(r["key"].endswith(COMPARE_SUFFIX) for r in ctx.reviewers)
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
+        dropped=list(ctx.dropped) or None,
         verifier=_lane_provenance(
             verifier_lm, "verifier" if phase == "preliminary" else "final-verifier"
         ),
@@ -5110,6 +5185,7 @@ def _audit_publish(
         return
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
+        dropped=list(ctx.dropped) or None,
         verifier=_lane_provenance(verifier_lm, "final-verifier"),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),

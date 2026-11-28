@@ -309,3 +309,15 @@ def test_daemon_singleton_lock(tmp_path):
     held.close()
     again = acquire_singleton_lock(tmp_path / "d.lock")
     again.close()
+
+
+def test_a_refused_run_is_retried_like_an_infra_failure(cfg, conn):
+    """A run a provider's content filter failed (a verifier refused on every model) is retried
+    with backoff: the filter is probabilistic, so a later run may get through."""
+    (hid,) = queue(conn, cfg, 1)
+    (rid,) = schedule(conn, cfg, spawn=False)
+    finish_run(conn, cfg, rid, RunStatus.FAILED, reason="refused", fail_kind=FailKind.REFUSED)
+    head = conn.execute("SELECT status, attempts FROM heads WHERE id=?", (hid,)).fetchone()
+    assert (head["status"], head["attempts"]) == ("queued", 1)
+    run = conn.execute("SELECT fail_kind FROM runs WHERE id=?", (rid,)).fetchone()
+    assert run["fail_kind"] == "refused"
