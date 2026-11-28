@@ -231,8 +231,9 @@ idle; that needs sudo (`~claw/prioritize-proxies.sh`).
 
 OpenAI's cyber-risk filter refuses some security-review requests at random ("API Error: 400
 This content was flagged for possible cybersecurity risk"): in the 7 days to 2026-11-28 it
-failed 507 lanes in 201 of 3,174 runs, every one on `gpt-6.2-astra` or `gpt-6.2-sol`, mostly
-the security-auditor and general Phase-2 reviewers, and 96 runs failed outright
+refused 352 lane attempts in 201 of 3,174 runs (155 sibling lanes were stopped with them),
+every one on `gpt-6.2-astra` or `gpt-6.2-sol`, three in four on the security-auditor, and 96
+runs failed outright, 87 of them on the security-auditor
 (dashpay/platform#6354, #6285). It is the accumulated review (the PR's code and the analysis
 of it, often 20 turns in), not the prompt's wording, that trips it, and the same request can
 pass the next time. Such a refusal is its own failure (`LaneResult.refused`, read from Claude
@@ -251,7 +252,9 @@ review at all. So a review with a lane on the fallback or a reviewer left out is
 full-strength review: it never approves (`Provenance.reduced`; blockers still request
 changes), the run is marked `degraded` so later rounds do not treat its code as reviewed, the
 late-blocker confirmation and the step-back (`primary_only`) never fall back, and the
-fallback's lanes take slots in their own model pool (4 unless `lane_pools` names it).
+fallback's lanes take slots in their own model pool (4 unless `lane_pools` names it). Such a
+run shows as degraded on the dashboard; its `lane.refused` / `lane.refused_dropped` events say
+why (not a quota outage).
 
 ### Reviews are static: lanes never build
 

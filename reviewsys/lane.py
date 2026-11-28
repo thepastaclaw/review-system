@@ -172,8 +172,8 @@ class LaneResult:
     def refused(self) -> bool:
         """The provider refused the content, not the lane's own failure: OpenAI's cyber-risk
         filter ("This content was flagged for possible cybersecurity risk"), which trips at
-        random on security reviews of real code (507 lanes in the 7 days to 2026-11-28, every
-        one on gpt-6.2-astra or gpt-6.2-sol). Read from `api_error`, never model output."""
+        random on security reviews of real code (352 lane attempts in the 7 days to 2026-11-28,
+        every one on gpt-6.2-astra or gpt-6.2-sol). Read from `api_error`, never model output."""
         err = self.api_error.lower()
         return any(marker in err for marker in REFUSAL_MARKERS)
 

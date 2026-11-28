@@ -251,14 +251,18 @@ class Provenance:
     # reviewer lanes left out because every model refused their content (worker._drop_refused):
     # {phase, role, key, fresh, models}
     dropped: list[dict[str, Any]] | None = None
+    # some lane of the run ran on the refusal fallback or was left out (worker._mark_reduced)
+    reduced_run: bool = False
 
     @property
     def reduced(self) -> bool:
         """A reviewer was left out, or a lane ran on the refusal fallback (a stand-in outside
         degraded mode): no full-strength review."""
         lanes = [*self.reviewers, self.verifier]
-        return bool(self.dropped) or (
-            not self.degraded and any(lane.get("substitute_for") for lane in lanes)
+        return (
+            self.reduced_run
+            or bool(self.dropped)
+            or (not self.degraded and any(lane.get("substitute_for") for lane in lanes))
         )
 
     # the first full review ran every Phase-2 reviewer a second time, independently

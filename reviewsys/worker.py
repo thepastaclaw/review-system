@@ -409,6 +409,10 @@ class RunContext:
     priority: bool = False
     # reviewer lanes left out because every model refused their content (`_drop_refused`)
     dropped: list[dict[str, Any]] = field(default_factory=list)
+    # a lane ran on the refusal fallback or was left out (`_mark_reduced`): no approval
+    reduced: bool = False
+    # (fallback, primary) of the last verifier lane that ran on the refusal fallback
+    verifier_fallback: tuple[str, str] | None = None
     # a conversation run (answers replies on a reviewed commit); None until run() knows
     conversation: bool | None = None
     # ---- policy v12 (`review_model_policy.pipeline`); untouched under v11 ----
@@ -2343,6 +2347,8 @@ def _run_checked_lane[T](
                     "lane.refused",
                     f"{phase}/{key} {lm.model} refused the content; retrying on {fallback}",
                 )
+                if is_verifier:
+                    ctx.verifier_fallback = (fallback, lm.model)
                 lm = dataclasses.replace(
                     lm, model=fallback, substitute_for=lm.substitute_for or lm.model
                 )
@@ -2362,7 +2368,7 @@ def _run_checked_lane[T](
     )
     if refused:
         names = list(dict.fromkeys(refused))
-        raise LaneRefused(message, cause, names, "" if lm.model in names else last)
+        raise LaneRefused(message, cause, names, "" if lm.model in names else _failure_kind(last))
     raise LaneFailed(
         FailKind.INFRA
         if not off_schema and ("timed out" in last or "exit" in last)
@@ -2442,10 +2448,20 @@ def _drop_refused(
         log.warning("could not record the dropped lane %s: %s", key, e)
 
 
+def _failure_kind(error: str) -> str:
+    """How a lane failed, in words fit for a published review (never the model's output)."""
+    if "timed out" in error:
+        return "it timed out"
+    if "[contract]" in error or "contract" in error.split(":", 1)[0]:
+        return "its answer broke the output contract"
+    return "it failed"
+
+
 def _mark_reduced(ctx: RunContext) -> None:
     """A reviewer ran on the refusal fallback or was left out: the run is no full-strength
     review, so, as a degraded one, it never approves (`publish.verdict_event` reads the
     provenance) and is no basis for treating its code as reviewed (`_pr_reviews`)."""
+    ctx.reduced = True
     try:
         with tx(ctx.conn):
             ctx.conn.execute("UPDATE runs SET degraded=1 WHERE id=?", (ctx.run_id,))
@@ -4428,7 +4444,8 @@ def _verdict_update(
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
         dropped=list(ctx.dropped) or None,
-        verifier=_lane_provenance(verifier_lm, "final-verifier"),
+        reduced_run=ctx.reduced,
+        verifier=_lane_provenance(verifier_lm, "final-verifier", ctx.verifier_fallback),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,
@@ -4578,8 +4595,11 @@ def _build_review(
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
         dropped=list(ctx.dropped) or None,
+        reduced_run=ctx.reduced,
         verifier=_lane_provenance(
-            verifier_lm, "verifier" if phase == "preliminary" else "final-verifier"
+            verifier_lm,
+            "verifier" if phase == "preliminary" else "final-verifier",
+            ctx.verifier_fallback,
         ),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
@@ -4654,8 +4674,14 @@ def _fresh_threads(ctx: RunContext) -> Callable[[Finding, Any], bool] | None:
     return fresh
 
 
-def _lane_provenance(lm: LaneModel, role: str) -> dict[str, Any]:
-    """How a verifier/conversation lane is disclosed in the published provenance."""
+def _lane_provenance(
+    lm: LaneModel, role: str, fallback: tuple[str, str] | None = None
+) -> dict[str, Any]:
+    """How a verifier/conversation lane is disclosed in the published provenance. `fallback`
+    (fallback, primary): the verifier ran on the refusal fallback, so it is named, standing
+    in for the model that refused."""
+    if fallback and lm.model == fallback[1]:
+        return {"model": fallback[0], "agent": lm.agent, "role": role, "substitute_for": lm.model}
     return {
         "model": lm.model,
         "agent": lm.agent,
@@ -5212,7 +5238,8 @@ def _audit_publish(
     prov = publish.Provenance(
         reviewers=ctx.reviewers,
         dropped=list(ctx.dropped) or None,
-        verifier=_lane_provenance(verifier_lm, "final-verifier"),
+        reduced_run=ctx.reduced,
+        verifier=_lane_provenance(verifier_lm, "final-verifier", ctx.verifier_fallback),
         policy_fingerprint=ctx.cfg.policy.fingerprint,
         triage=_triage_provenance(ctx),
         phase2_skipped=phase2_skipped,

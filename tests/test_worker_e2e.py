@@ -4552,9 +4552,7 @@ def _refusing(lanes, refuse, role="security-auditor", prefix="phase2-"):
         if spec.role == role and Path(artifact_dir).name.startswith(prefix):
             calls.append(spec.model)
             if refuse(spec.model):
-                return lane_mod.LaneResult(
-                    exit_code=1, stdout="", stderr="", duration_s=1, result_text=REFUSAL
-                )
+                return _refusal()
         return lanes(spec, artifact_dir, worktree)
 
     return run, calls
@@ -4610,7 +4608,7 @@ def test_a_reviewer_refused_everywhere_is_left_out_and_the_review_says_so(cfg, c
     assert "refused the content as a possible cybersecurity risk" in body
     assert "`grok-4.7`" in body.split("Not reviewed by the security-auditor")[1].split("\n")[0]
     assert gh.posted_reviews[-1]["event"] == "COMMENT"  # no approval without that pass
-    assert "(Phase 2, second pass)" in body or "(Phase 2)" in body
+    assert "(Phase 2" in body and "(Phase 2 (" not in body
     dropped = conn.execute("SELECT detail FROM events WHERE kind='lane.refused_dropped'").fetchall()
     assert dropped and all("security-auditor" in d[0] for d in dropped)
     assert [s for s in lanes.calls if s.role == "general"]  # the other reviewers ran on
@@ -4626,7 +4624,7 @@ def test_a_fallback_that_fails_otherwise_is_said_plainly(cfg, conn, gh, lanes):
     assert status == RunStatus.DONE
     line = next(x for x in gh.posted_reviews[-1]["body"].splitlines() if "Not reviewed by" in x)
     assert "`grok-4.7`" not in line.split("refused")[0]  # it did not refuse
-    assert "the fallback then failed" in line
+    assert "the fallback then failed (it timed out)" in line
 
 
 def test_a_verifier_refused_on_both_models_fails_the_run_as_refused(cfg, conn, gh, lanes):
@@ -4662,3 +4660,18 @@ def test_every_reviewer_refused_fails_the_phase(cfg, conn, gh, lanes):
         reason["fail_kind"] == "refused" and "every reviewer lane was refused" in reason["reason"]
     )
     assert gh.posted_reviews == []
+
+
+def test_a_final_verifier_on_the_fallback_never_approves_and_is_named(cfg, conn, gh, lanes):
+    """Opus review of #109: the final verifier refused on its model and answered by the
+    fallback still approved, credited to the model that refused."""
+    lanes.reviewer["default"] = {"summary": "ok", "findings": [], "out_of_scope_findings": []}
+    lanes.verifier["preliminary"] = _verifier([])
+    lanes.verifier["final"] = _verifier([])
+    run, calls = _refusing(lanes, lambda m: m != "grok-4.7", role="verifier", prefix="verify2-")
+    _rid, status = _run(cfg, conn, gh, run)
+    assert status == RunStatus.DONE
+    assert calls[-1] == "grok-4.7"
+    review = gh.posted_reviews[-1]
+    assert review["event"] == "COMMENT"
+    assert f"`grok-4.7` (standing in for `{calls[0]}`)" in review["body"]
